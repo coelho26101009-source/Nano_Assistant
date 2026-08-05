@@ -13,7 +13,11 @@ import os
 import re
 import tempfile
 import wave
-from pathlib import Path
+
+try:
+    import audioop                     # removido no Python 3.13
+except ImportError:                    # pragma: no cover
+    audioop = None                     # type: ignore[assignment]
 
 logger = logging.getLogger("helios.voice")
 
@@ -25,8 +29,15 @@ class VoiceEngine:
         self.tts_provider  = config.get("tts_provider", "auto")   # auto | elevenlabs | openai | edge
         self.edge_voice    = config.get("edge_voice", "pt-PT-DuarteNeural")
         self.edge_rate     = config.get("edge_rate", "-5%")
+        # STT: local (faster-whisper) por defeito quando disponível — sem rede, menor latência
+        self.stt_provider  = config.get("stt_provider", "auto")   # auto | faster_whisper | google
+        self.whisper_model = config.get("whisper_model", "tiny")  # tiny | base | small
+        self.whisper_compute = config.get("whisper_compute_type", "int8")
+        self.listen_seconds  = int(config.get("listen_seconds", 7))
+        self.silence_stop    = bool(config.get("stop_on_silence", True))
         self._mixer_init   = False
         self._stop_flag    = False
+        self._whisper      = None
 
     # ─── FALAR ────────────────────────────────────────────────────────────────
 
@@ -224,10 +235,10 @@ class VoiceEngine:
 
     # ─── STT ──────────────────────────────────────────────────────────────────
 
-    async def listen(self, duration_seconds: int = 7) -> str | None:
+    async def listen(self, duration_seconds: int | None = None) -> str | None:
         try:
             audio = await asyncio.get_event_loop().run_in_executor(
-                None, self._record_audio, duration_seconds
+                None, self._record_audio, duration_seconds or self.listen_seconds
             )
             if audio:
                 return await asyncio.get_event_loop().run_in_executor(
@@ -238,13 +249,36 @@ class VoiceEngine:
         return None
 
     def _record_audio(self, duration: int) -> bytes | None:
+        """
+        Grava até 'duration' segundos. Com stop_on_silence, pára assim que detecta
+        ~1s de silêncio depois de o Simão começar a falar (menos latência).
+        """
         try:
             import pyaudio
             CHUNK, FORMAT, CHANNELS, RATE = 1024, pyaudio.paInt16, 1, 16000
+            SILENCE_RMS    = int(self.config.get("silence_threshold", 500))
+            SILENCE_CHUNKS = int(RATE / CHUNK)     # ~1 segundo
+            detect_silence = self.silence_stop and audioop is not None
+
             p = pyaudio.PyAudio()
             stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE,
                             input=True, frames_per_buffer=CHUNK)
-            frames = [stream.read(CHUNK) for _ in range(int(RATE / CHUNK * duration))]
+
+            frames: list[bytes] = []
+            silent_run = 0
+            spoke      = False
+            for _ in range(int(RATE / CHUNK * duration)):
+                chunk = stream.read(CHUNK, exception_on_overflow=False)
+                frames.append(chunk)
+                if not detect_silence:
+                    continue
+                if audioop.rms(chunk, 2) >= SILENCE_RMS:
+                    spoke, silent_run = True, 0
+                elif spoke:
+                    silent_run += 1
+                    if silent_run >= SILENCE_CHUNKS:
+                        break
+
             stream.stop_stream(); stream.close(); p.terminate()
             buf = io.BytesIO()
             with wave.open(buf, "wb") as wf:
@@ -258,13 +292,59 @@ class VoiceEngine:
             return None
 
     def _transcribe(self, audio_bytes: bytes) -> str | None:
+        if self.stt_provider in ("auto", "faster_whisper"):
+            text = self._transcribe_whisper(audio_bytes)
+            if text is not None:
+                return text
+            if self.stt_provider == "faster_whisper":
+                return None
+        return self._transcribe_google(audio_bytes)
+
+    def _transcribe_whisper(self, audio_bytes: bytes) -> str | None:
+        """STT local com faster-whisper (sem rede, sem enviar áudio para terceiros)."""
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError:
+            logger.debug("faster-whisper não instalado — a usar STT online.")
+            return None
+
+        try:
+            if self._whisper is None:
+                logger.info(f"A carregar faster-whisper '{self.whisper_model}' ({self.whisper_compute})...")
+                self._whisper = WhisperModel(
+                    self.whisper_model,
+                    device=self.config.get("whisper_device", "cpu"),
+                    compute_type=self.whisper_compute,
+                )
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+                tmp.write(audio_bytes)
+                tmp_path = tmp.name
+            try:
+                segments, _info = self._whisper.transcribe(
+                    tmp_path, language="pt", vad_filter=True, beam_size=1
+                )
+                text = " ".join(seg.text.strip() for seg in segments).strip()
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
+
+            logger.info(f"STT (faster-whisper): '{text}'")
+            return text or None
+        except Exception as e:
+            logger.warning(f"faster-whisper falhou: {e}")
+            return None
+
+    def _transcribe_google(self, audio_bytes: bytes) -> str | None:
         try:
             import speech_recognition as sr
             r = sr.Recognizer()
             with sr.AudioFile(io.BytesIO(audio_bytes)) as src:
                 audio = r.record(src)
             text = r.recognize_google(audio, language="pt-PT")
-            logger.info(f"STT: '{text}'")
+            logger.info(f"STT (google): '{text}'")
             return text
         except Exception as e:
             logger.warning(f"STT falhou: {e}")

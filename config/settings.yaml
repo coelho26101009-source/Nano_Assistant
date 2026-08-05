@@ -5,9 +5,21 @@
 groq_api_key: ""          # Obter em: https://console.groq.com
 groq_model:   "llama-3.3-70b-versatile"
 
+# Modelo local (fallback quando o Groq falha ou está offline).
+# ollama_enabled: false  →  zero carga local, só nuvem (recomendado em PCs modestos)
+# Modelos leves sugeridos: qwen2.5:1.5b (~1GB RAM), llama3.2:1b, qwen2.5:3b, llama3.2:3b
 ollama_enabled: true
 ollama_url:     "http://localhost:11434"
 ollama_model:   "llama3.2:3b"
+
+# ── Memória persistente ────────────────────────────────────────────────────────
+memory:
+  history_messages:  20     # mensagens recuperadas do SQLite no arranque
+  max_history_chars: 8000   # tecto de caracteres do histórico injectado (trunca o mais antigo)
+  facts_enabled:     true   # injecta no system prompt os factos gravados sobre ti
+  rag_enabled:       true   # pesquisa nos PDFs indexados e junta excertos relevantes
+  rag_results:       3      # nº de excertos por pergunta
+  rag_max_chars:     1500   # tecto de caracteres dos excertos RAG
 
 # ── Voz ────────────────────────────────────────────────────────────────────────
 voice:
@@ -18,10 +30,49 @@ voice:
   openai_speed: 1.0
   edge_voice: "pt-PT-DuarteNeural"
   edge_rate: "-5%"
+
+  # ── STT (reconhecimento de fala) ──
+  stt_provider: "auto"       # auto | faster_whisper (local/privado) | google (online)
+  whisper_model: "tiny"      # tiny (mais rápido) | base | small
+  whisper_compute_type: "int8"
+  whisper_device: "cpu"      # cpu | cuda
+  listen_seconds: 7          # duração máxima da gravação
+  stop_on_silence: true      # pára de gravar ~1s depois de acabares de falar
+  silence_threshold: 500     # RMS abaixo do qual se considera silêncio
+
+  # ── Wake-word (escuta contínua "always-on") ──
+  # "helios" precisa de um modelo próprio (ver README). Sem modelo próprio usa
+  # uma frase já incluída: porcupine → "jarvis", "computer"; openwakeword → "hey jarvis".
+  wake_word_enabled: false      # true = HELIOS escuta sempre pela palavra de activação
+  wake_word_phrase: "hey jarvis"
+  wake_word_sensitivity: 0.6    # 0.0–1.0 (mais alto = menos falsos positivos)
+  wake_word_backend: "auto"     # auto | porcupine | openwakeword
+  wake_word_framework: "onnx"   # runtime do openwakeword: onnx | tflite
+  wake_word_cooldown_seconds: 2 # pausa após cada activação
+  wake_word_keyword_path: ""    # .ppn (Porcupine) ou .onnx (openWakeWord) personalizado
+
 # ── IoT / Smart Home ───────────────────────────────────────────────────────────
 iot:
   webhook_url:          ""   # URL do hub (Home Assistant, n8n, Make, etc.)
   notification_webhook: ""   # URL para notificações no telemóvel (ntfy, Pushover)
+
+# ── Lembretes ─────────────────────────────────────────────────────────────────
+reminders:
+  enabled: true              # scheduler em background que dispara os lembretes
+
+# ── Calendário ────────────────────────────────────────────────────────────────
+calendar:
+  google_enabled: false      # true = também lê o Google Calendar (ver README)
+
+# ── Monitorização proactiva ───────────────────────────────────────────────────
+monitor:
+  enabled:                true
+  interval_seconds:       60   # frequência das leituras (impacto desprezável)
+  cpu_threshold:          90   # % a partir da qual alerta
+  ram_threshold:          90
+  disk_threshold:         90
+  battery_threshold:      15
+  alert_cooldown_minutes: 30   # evita spam do mesmo alerta
 
 # ── Organizer ─────────────────────────────────────────────────────────────────
 organizer:
@@ -35,3 +86,5 @@ ui:
   width:  1200
   height: 800
   mode:   "chrome"    # chrome | default | edge | safari
+# Arranque escondido (só tray) é controlado pelo Electron:
+# tray → "Iniciar com o Windows", ou lançar com  HELIOS.exe --hidden

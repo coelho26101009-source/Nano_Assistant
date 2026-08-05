@@ -144,6 +144,71 @@
     (Requer configuração de webhook em settings.yaml)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🧠 FACTOS & HISTÓRICO  (plugin: memory_tools)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  remember_fact — Grava um facto permanente sobre ti
+    "Lembra-te que eu vivo no Porto"
+    "Guarda que trabalho das 9h às 18h"
+    → O HELIOS também grava sozinho o que descobre sobre ti
+
+  list_facts / forget_fact — Consulta ou apaga esses factos
+    "O que sabes sobre mim?"
+    "Esquece a minha cidade"
+
+  memory_search_history — Pesquisa em conversas antigas
+    "O que é que eu te disse sobre o projeto X?"
+    "Lembras-te de falarmos sobre o portátil novo?"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ⏰ LEMBRETES  (plugin: reminders)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  set_reminder — Cria lembretes/alarmes
+    "Lembra-me de tirar o bolo do forno daqui a 20 minutos"
+    "Avisa-me às 18:30 para ligar ao meu pai"
+    "Lembra-me a 2026-01-02 09:00 de pagar a renda"
+    → Dispara mesmo com a janela fechada (corre no tray)
+    → Envia notificação para o telemóvel se iot.notification_webhook estiver definido
+
+  list_reminders / cancel_reminder
+    "Que lembretes tenho?"
+    "Cancela o lembrete 3"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  📅 CALENDÁRIO  (plugin: calendar)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  calendar_add_event — Marca um evento no calendário local
+    "Marca dentista a 2026-01-05 10:00"
+
+  calendar_list_events — Mostra a agenda
+    "O que tenho esta semana?"
+    "Que eventos tenho nos próximos 3 dias?"
+
+  calendar_import_ics — Importa um ficheiro .ics
+    "Importa o calendário C:\Docs\agenda.ics"
+
+  calendar_delete_event — Apaga um evento local pelo id
+
+  Google Calendar (opcional, só leitura):
+    pip install google-api-python-client google-auth-oauthlib
+    settings.yaml → calendar.google_enabled: true
+    Credenciais OAuth em data/google_credentials.json
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  📈 MONITORIZAÇÃO PROACTIVA  (plugin: system_monitor)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Corre em background e avisa-te quando CPU, RAM, disco ou bateria passam
+  dos limites definidos em settings.yaml (secção 'monitor').
+
+  monitor_status — Estado actual + limites
+    "Como está o PC?"
+  monitor_start / monitor_stop — Liga/desliga a vigilância
+    "Desliga os alertas do sistema"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   ⚠️  AÇÕES QUE PEDEM CONFIRMAÇÃO (guardrails)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -177,12 +242,64 @@
       tts_provider: "elevenlabs" → Voz ultra-humana (precisa API key)
       tts_provider: "openai"   → OpenAI TTS (precisa API key)
 
+  Reconhecimento de fala (STT):
+      stt_provider: "auto"           → usa faster-whisper local se estiver instalado,
+                                        senão Google online
+      stt_provider: "faster_whisper" → 100% local e privado (pip install faster-whisper)
+      stt_provider: "google"         → online (envia o áudio para a Google)
+      whisper_model: tiny | base | small
+      stop_on_silence: true          → pára de gravar assim que acabas de falar
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔊 ESCUTA CONTÍNUA (WAKE-WORD)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Com wake_word_enabled: true o HELIOS escuta sempre em background e acorda
+  quando dizes a palavra de activação — sem clicar em nada.
+
+  Instalar um dos motores (leves, ~1% de CPU):
+    pip install pvporcupine     (Picovoice — grátis para uso pessoal,
+                                 precisa de PICOVOICE_ACCESS_KEY no .env)
+    pip install openwakeword    (100% offline, sem chave)
+
+  settings.yaml → voice:
+    wake_word_enabled: true
+    wake_word_phrase: "hey jarvis"   (frases já incluídas:
+                                      porcupine → jarvis, computer, alexa…
+                                      openwakeword → hey jarvis, hey mycroft, alexa)
+    wake_word_sensitivity: 0.6
+    wake_word_backend: auto | porcupine | openwakeword
+    wake_word_keyword_path: ""       (.ppn/.onnx próprio para dizeres mesmo "Helios")
+
+  Para a palavra "Helios" precisas de um modelo próprio:
+    → Porcupine: cria o .ppn em console.picovoice.ai (grátis)
+    → openWakeWord: treina um .onnx (github.com/dscripka/openWakeWord)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🪟 ARRANCAR COM O WINDOWS (sempre ligado, em background)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  • Clica com o botão direito no ícone do tray → "🪟 Iniciar com o Windows"
+  • Nesse arranque a janela fica escondida: só o ícone no tray
+  • Clica (ou duplo clique) no tray para abrir a janela
+  • Só corre uma instância — abrir de novo traz a janela existente para a frente
+  • Para um PC modesto: ollama_enabled: false (só nuvem, zero carga local)
+    ou um modelo local minúsculo, ex. ollama_model: "qwen2.5:1.5b"
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   💾 MEMÓRIA PERSISTENTE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  O HELIOS lembra-se das últimas 50 mensagens entre sessões.
-  Base de dados: data/helios.db (SQLite)
+  O HELIOS carrega o histórico no arranque — continua a conversa onde ficou,
+  mesmo depois de reiniciares o PC.
+
+  O que é injectado em cada resposta:
+    1. As últimas mensagens (memory.history_messages, truncadas para caber
+       na janela de contexto — memory.max_history_chars)
+    2. Os factos que já sabe sobre ti (remember_fact)
+    3. Excertos relevantes dos PDFs indexados (RAG, se chromadb instalado)
+
+  Base de dados: data/helios.db (SQLite) | Vetores: data/chroma
 
   Para limpar o histórico:
     → Clica no botão "Clear" no painel de conversa
@@ -197,8 +314,18 @@
     ELEVENLABS_API_KEY=...    → Chave ElevenLabs (opcional, voz humana)
     OPENAI_API_KEY=...        → Chave OpenAI (opcional)
 
+  Ficheiro .env (variáveis privadas, continuação):
+    PICOVOICE_ACCESS_KEY=...  → Chave Picovoice (opcional, wake-word Porcupine)
+
   settings.yaml (comportamento):
     groq_model: "llama-3.1-8b-instant"   → Modelo de IA (rápido)
+    ollama_enabled: true/false            → Modelo local de fallback
+    ollama_model: "qwen2.5:1.5b"          → Modelo leve para PCs modestos
+    memory.history_messages: 20           → Mensagens recuperadas no arranque
+    memory.rag_enabled: true              → Junta excertos dos teus PDFs
+    voice.wake_word_enabled: true         → Escuta contínua
+    voice.stt_provider: faster_whisper    → STT local e privado
+    monitor.cpu_threshold: 90             → Limites dos alertas proactivos
     tts_enabled: true/false               → Liga/desliga voz
     tts_provider: edge/elevenlabs/openai  → Motor de voz
     edge_voice: "pt-PT-DuarteNeural"      → Voz portuguesa masculina
@@ -242,6 +369,15 @@
   "Erro no plugin X"
     → Vê detalhes em: helios.log
     → Playwright (web_vision): playwright install chromium
+
+  "A wake-word não reage"
+    → Confirma wake_word_enabled: true e que instalaste pvporcupine ou openwakeword
+    → Vê o helios.log: diz sempre que backend arrancou ou porque falhou
+    → A frase tem de ter modelo: usa "hey jarvis" ou define wake_word_keyword_path
+
+  "Não se lembra de nada"
+    → Confirma que data/helios.db existe e não está a ser apagado
+    → memory.history_messages > 0 no settings.yaml
 
   Log completo: HELIOS_V7\helios.log
 
