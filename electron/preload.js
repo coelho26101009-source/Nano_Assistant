@@ -11,5 +11,7 @@ contextBridge.exposeInMainWorld('heliosApp', {
   maximize:  () => ipcRenderer.send('window-maximize'),
   hide:      () => ipcRenderer.send('window-hide'),
   close:     () => ipcRenderer.send('window-close'),
+  getAutoLaunch: ()        => ipcRenderer.invoke('autolaunch-get'),
+  setAutoLaunch: (enabled) => ipcRenderer.invoke('autolaunch-set', enabled),
   isElectron: true,
 });

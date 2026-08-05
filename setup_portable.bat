@@ -106,6 +106,12 @@ python_embedded\python.exe -m pip install ^
 echo  [OK] Dependencias instaladas!
 
 echo.
+echo  Extras opcionais (nao instalados por defeito):
+echo    Wake-word:  python_embedded\python.exe -m pip install openwakeword
+echo                (ou pvporcupine + PICOVOICE_ACCESS_KEY no .env)
+echo    STT local:  python_embedded\python.exe -m pip install faster-whisper
+
+echo.
 echo  [4/4] A criar launcher HELIOS.bat...
 
 REM Cria o launcher portátil

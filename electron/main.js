@@ -15,6 +15,13 @@ let tray          = null;
 let pythonProcess = null;
 let isQuitting    = false;
 
+// Instância única: arrancar de novo traz a janela existente para a frente
+const GOT_LOCK = app.requestSingleInstanceLock();
+if (!GOT_LOCK) app.quit();
+
+// Arranque silencioso: iniciado pelo Windows no login ou com --hidden
+let startedHidden = process.argv.includes('--hidden');
+
 const IS_DEV   = !app.isPackaged;
 const APP_ROOT = IS_DEV
   ? path.join(__dirname, '..')
@@ -157,6 +164,25 @@ function showOffline(code) {
   } catch(_) {}
 }
 
+// ── Arranque com o sistema ────────────────────────────────────────────────────
+function isAutoLaunchEnabled() {
+  try { return app.getLoginItemSettings().openAtLogin; }
+  catch (_) { return false; }
+}
+
+function setAutoLaunch(enabled) {
+  try {
+    app.setLoginItemSettings({
+      openAtLogin:  enabled,
+      openAsHidden: true,           // macOS
+      args:         ['--hidden'],   // Windows: arranca só no tray
+    });
+    console.log('[HELIOS] Iniciar com o sistema:', enabled);
+  } catch (e) {
+    console.warn('[HELIOS] setLoginItemSettings falhou:', e.message);
+  }
+}
+
 // ── Cria janela ───────────────────────────────────────────────────────────────
 function createWindow(port) {
   mainWindow = new BrowserWindow({
@@ -179,12 +205,18 @@ function createWindow(port) {
   mainWindow.loadURL(url);
 
   mainWindow.once('ready-to-show', () => {
+    if (startedHidden) {
+      console.log('[HELIOS] Arranque silencioso — a correr apenas no tray.');
+      return;
+    }
     mainWindow.show();
     console.log('[HELIOS] ✅ Janela visível!');
   });
 
   // Força mostrar após 12s mesmo que não emita ready-to-show
-  setTimeout(() => { if (mainWindow && !mainWindow.isVisible()) mainWindow.show(); }, 12000);
+  setTimeout(() => {
+    if (!startedHidden && mainWindow && !mainWindow.isVisible()) mainWindow.show();
+  }, 12000);
 
   mainWindow.on('close', (e) => { if (!isQuitting) { e.preventDefault(); mainWindow.hide(); } });
 
@@ -208,16 +240,29 @@ function createTray() {
       : nativeImage.createEmpty();
     tray = new Tray(icon);
     tray.setToolTip('H.E.L.I.O.S.');
-    tray.setContextMenu(Menu.buildFromTemplate([
-      { label: '⚡ Abrir HELIOS', click: () => { mainWindow?.show(); mainWindow?.focus(); } },
-      { type: 'separator' },
-      { label: '🔄 Reiniciar',    click: () => { app.relaunch(); app.exit(0); } },
-      { type: 'separator' },
-      { label: '✕ Sair',          click: () => { isQuitting = true; app.quit(); } },
-    ]));
+    refreshTrayMenu();
+    tray.on('click',        () => { mainWindow?.show(); mainWindow?.focus(); });
     tray.on('double-click', () => { mainWindow?.show(); mainWindow?.focus(); });
     console.log('[HELIOS] Tray criado.');
   } catch(e) { console.warn('[HELIOS] Tray:', e.message); }
+}
+
+function refreshTrayMenu() {
+  if (!tray) return;
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '⚡ Abrir HELIOS', click: () => { mainWindow?.show(); mainWindow?.focus(); } },
+    { type: 'separator' },
+    {
+      label:   '🪟 Iniciar com o Windows',
+      type:    'checkbox',
+      checked: isAutoLaunchEnabled(),
+      click:   (item) => { setAutoLaunch(item.checked); refreshTrayMenu(); },
+    },
+    { type: 'separator' },
+    { label: '🔄 Reiniciar',    click: () => { app.relaunch(); app.exit(0); } },
+    { type: 'separator' },
+    { label: '✕ Sair',          click: () => { isQuitting = true; app.quit(); } },
+  ]));
 }
 
 // ── IPC ───────────────────────────────────────────────────────────────────────
@@ -225,11 +270,27 @@ ipcMain.on('window-minimize', () => mainWindow?.minimize());
 ipcMain.on('window-maximize', () => mainWindow?.isMaximized() ? mainWindow.unmaximize() : mainWindow?.maximize());
 ipcMain.on('window-hide',     () => mainWindow?.hide());
 ipcMain.on('window-close',    () => { isQuitting = true; app.quit(); });
+ipcMain.handle('autolaunch-get', () => isAutoLaunchEnabled());
+ipcMain.handle('autolaunch-set', (_e, enabled) => {
+  setAutoLaunch(!!enabled);
+  refreshTrayMenu();
+  return isAutoLaunchEnabled();
+});
+
+app.on('second-instance', () => {
+  mainWindow?.show();
+  mainWindow?.focus();
+});
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
-app.whenReady().then(async () => {
+if (GOT_LOCK) app.whenReady().then(async () => {
   console.log('[HELIOS] Electron pronto.');
   try {
+    if (!startedHidden && app.getLoginItemSettings().wasOpenedAtLogin) {
+      startedHidden = true;
+      console.log('[HELIOS] Arrancado pelo login do Windows.');
+    }
+
     // 1. Porta livre
     const port = await getFreePort();
     console.log('[HELIOS] Porta escolhida:', port);

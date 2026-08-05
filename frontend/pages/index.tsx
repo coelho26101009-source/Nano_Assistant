@@ -95,6 +95,15 @@ export default function Home() {
       setConfirmReq({ requestId: reqId, message: msg, meta });
     }, "on_confirm_request");
 
+    // Conversas iniciadas pela wake-word aparecem no chat
+    eel["expose"]((userText: string, assistantText: string) => {
+      setMessages(prev => [
+        ...prev,
+        { id: crypto.randomUUID(), role: "user",      content: userText,      timestamp: new Date() },
+        { id: crypto.randomUUID(), role: "assistant", content: assistantText, timestamp: new Date() },
+      ]);
+    }, "on_voice_exchange");
+
     // Histórico
     eel.get_conversation_history()((history: any[]) => {
       if (!history?.length) return;
