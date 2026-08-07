@@ -1,5 +1,4 @@
 """H.E.L.I.O.S. — Main Entry Point."""
-
 from __future__ import annotations
 
 import argparse
@@ -26,22 +25,16 @@ from core.wake_word import WakeWordEngine
 sys.path.insert(0, str(ROOT))
 setup_logger()
 logger = logging.getLogger("helios.main")
-
 CONFIG = load_config()
 guardrails = GuardrailsEngine()
 memory = get_memory()
 voice = VoiceEngine(CONFIG.get("voice", {}))
-brain = Brain(
-    api_key=os.getenv("GROQ_API_KEY", ""),
-    guardrails=guardrails,
-    memory=memory,
-    config=CONFIG,
-)
+brain = Brain(api_key=os.getenv("GROQ_API_KEY", ""), guardrails=guardrails, memory=memory, config=CONFIG)
 brain.load_history()
 load_all_plugins(PLUGINS_DIR)
-
 wake_word: WakeWordEngine | None = None
 eel.init(str(FRONTEND_DIR) if FRONTEND_DIR.exists() else str(ROOT / "web"))
+guardrails.set_confirm_callback(guardrails.request_from_ui)
 
 
 @eel.expose
@@ -52,17 +45,16 @@ def send_message(user_text: str):
     try:
         asyncio.set_event_loop(loop)
         return loop.run_until_complete(_process_message(user_text))
-    except Exception as exc:
-        logger.error("Erro ao processar mensagem", exc_info=True)
-        return {"error": str(exc), "text": "Ups, ocorreu um erro ao processar o pedido."}
+    except Exception:
+        logger.exception("Erro ao processar mensagem")
+        return {"error": "Falha ao processar o pedido", "text": "Ups Simão, ocorreu um erro ao processar o pedido."}
     finally:
         loop.close()
 
 
 @eel.expose
 def confirm_action(request_id: str, confirmed: bool):
-    guardrails.resolve_confirmation(request_id, confirmed)
-    return {"ok": True}
+    return {"ok": guardrails.resolve_confirmation(request_id, confirmed)}
 
 
 @eel.expose
@@ -71,9 +63,9 @@ def start_voice_listen():
     try:
         asyncio.set_event_loop(loop)
         return {"text": loop.run_until_complete(voice.listen()) or ""}
-    except Exception as exc:
-        logger.error("Erro de voz", exc_info=True)
-        return {"error": str(exc)}
+    except Exception:
+        logger.exception("Erro de voz")
+        return {"error": "Não foi possível usar o microfone."}
     finally:
         loop.close()
 
@@ -123,7 +115,7 @@ def _on_wake_word():
             result = loop.run_until_complete(_process_message(user_text, blocking_tts=True))
             _notify_ui(user_text, result.get("text", ""))
     except Exception:
-        logger.error("Erro no fluxo wake-word", exc_info=True)
+        logger.exception("Erro no fluxo wake-word")
     finally:
         loop.close()
         if wake_word:
@@ -149,20 +141,17 @@ async def _process_message(user_text: str, blocking_tts: bool = False) -> dict:
                 status_updates.append(token.removeprefix("_thinking_:"))
             else:
                 full_response += token
-
         full_response = full_response.strip() or "Desculpa Simão, não consegui gerar uma resposta."
         memory.save_message("assistant", full_response)
-
         if CONFIG.get("voice", {}).get("tts_enabled", False):
             if blocking_tts:
                 await voice.speak(full_response)
             else:
                 threading.Thread(target=lambda: asyncio.run(voice.speak(full_response)), daemon=True).start()
-
         return {"text": full_response, "status": status_updates, "ok": True}
-    except Exception as exc:
-        logger.error("Erro no _process_message", exc_info=True)
-        return {"text": "Ups Simão, ocorreu um erro ao processar o pedido.", "ok": False, "error": str(exc)}
+    except Exception:
+        logger.exception("Erro no _process_message")
+        return {"text": "Ups Simão, ocorreu um erro ao processar o pedido.", "ok": False, "error": "processing_error"}
 
 
 def _free_port() -> int:
@@ -183,13 +172,11 @@ def main():
     logger.info("HELIOS V8 a iniciar")
     logger.info("Frontend: %s", FRONTEND_DIR)
     logger.info("Groq: %s", "configurado" if os.getenv("GROQ_API_KEY") else "não configurado")
-
     _start_wake_word()
     ui_cfg = CONFIG.get("ui", {}) or {}
     port = args.port or int(ui_cfg.get("port", 0) or 0) or _free_port()
     size = (int(ui_cfg.get("width", 1440)), int(ui_cfg.get("height", 900)))
     print(f"HELIOS_PORT={port}", flush=True)
-
     modes = [None] if args.mode == "electron" else [args.mode, "default"]
     for mode in modes:
         try:
