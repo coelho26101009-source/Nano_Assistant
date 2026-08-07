@@ -3,7 +3,7 @@ name: HELIOS tests
 on:
   pull_request:
   push:
-    branches: [main, v8-foundation]
+    branches: [main, v8-foundation, v8-hardening]
 
 jobs:
   test:
