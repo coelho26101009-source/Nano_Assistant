@@ -1,19 +1,18 @@
-"""
-H.E.L.I.O.S. Memory Engine
-SQLite para histórico de conversas.
-ChromaDB para RAG sobre PDFs e documentos locais.
-"""
+"""HELIOS memory: SQLite history plus optional ChromaDB RAG."""
+
+from __future__ import annotations
 
 import json
 import logging
 import sqlite3
-from datetime import datetime
-from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any
 
-logger = logging.getLogger("helios.memory")
+from core.app_paths import DATA_DIR
 
-DB_PATH     = Path(__file__).parent.parent / "data" / "helios.db"
+logger = logging.getLogger("helios.memory")
+DB_PATH = DATA_DIR / "helios.db"
+CHROMA_PATH = DATA_DIR / "chroma"
 FACT_PREFIX = "fact:"
 
 
@@ -26,75 +25,46 @@ class MemoryEngine:
     def __init__(self):
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA foreign_keys=ON")
         self._init_db()
-        self._chroma = None  # lazy-loaded
+        self._chroma = None
 
     def _init_db(self):
-        self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS messages (
-                id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                role      TEXT NOT NULL,
-                content   TEXT NOT NULL,
-                timestamp TEXT NOT NULL,
-                metadata  TEXT DEFAULT '{}'
-            )
-        """)
-        self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS preferences (
-                key   TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )
-        """)
+        self.conn.execute("CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT NOT NULL, content TEXT NOT NULL, timestamp TEXT NOT NULL, metadata TEXT DEFAULT '{}')")
+        self.conn.execute("CREATE TABLE IF NOT EXISTS preferences (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         self.conn.commit()
 
-    # ─── Mensagens ─────────────────────────────────────────────────────────
-
     def save_message(self, role: str, content: str, metadata: dict | None = None):
+        if not content:
+            return
         try:
             self.conn.execute(
                 "INSERT INTO messages (role, content, timestamp, metadata) VALUES (?,?,?,?)",
-                (role, content, datetime.now().isoformat(), json.dumps(metadata or {}))
+                (role, content, datetime.now(timezone.utc).isoformat(), json.dumps(metadata or {}, ensure_ascii=False)),
             )
             self.conn.commit()
-        except Exception as exc:
-            logger.error(f"Erro ao guardar mensagem: {exc}")
+        except Exception:
+            logger.exception("Erro ao guardar mensagem")
 
     def get_recent_messages(self, limit: int = 50) -> list[dict]:
         try:
-            rows = self.conn.execute(
-                "SELECT role, content, timestamp FROM messages ORDER BY id DESC LIMIT ?",
-                (limit,)
-            ).fetchall()
+            rows = self.conn.execute("SELECT role, content, timestamp FROM messages ORDER BY id DESC LIMIT ?", (max(1, int(limit)),)).fetchall()
             return [{"role": r[0], "content": r[1], "timestamp": r[2]} for r in reversed(rows)]
-        except Exception as exc:
-            logger.error(f"Erro ao ler mensagens: {exc}")
+        except Exception:
+            logger.exception("Erro ao ler mensagens")
             return []
 
     def get_context_window(self, limit: int = 20, max_chars: int = 8000) -> list[dict]:
-        """
-        Devolve mensagens formatadas para o LLM (role + content apenas),
-        truncadas para caber na janela de contexto:
-          - apenas roles 'user'/'assistant' (tool calls antigas não são reconstituíveis)
-          - mensagens individuais gigantes são cortadas
-          - mensagens mais antigas são descartadas até caber em max_chars
-        """
-        msgs = [
-            {"role": m["role"], "content": _truncate(m["content"], max_chars // 4)}
-            for m in self.get_recent_messages(limit)
-            if m["role"] in ("user", "assistant") and (m["content"] or "").strip()
-        ]
-
-        window: list[dict] = []
-        total = 0
-        for msg in reversed(msgs):          # do mais recente para o mais antigo
+        msgs = [{"role": m["role"], "content": _truncate(m["content"], max_chars // 4)} for m in self.get_recent_messages(limit) if m["role"] in ("user", "assistant") and (m["content"] or "").strip()]
+        window, total = [], 0
+        for msg in reversed(msgs):
             size = len(msg["content"])
             if total + size > max_chars:
                 break
             window.append(msg)
             total += size
         window.reverse()
-
-        # A janela deve começar num 'user' para o histórico fazer sentido
         while window and window[0]["role"] != "user":
             window.pop(0)
         return window
@@ -106,25 +76,19 @@ class MemoryEngine:
         except Exception:
             return 0
 
-    # ─── Preferências ──────────────────────────────────────────────────────
-
     def set_preference(self, key: str, value: Any):
         try:
-            self.conn.execute(
-                "INSERT OR REPLACE INTO preferences (key, value) VALUES (?,?)",
-                (key, json.dumps(value))
-            )
+            self.conn.execute("INSERT OR REPLACE INTO preferences (key, value) VALUES (?,?)", (key, json.dumps(value, ensure_ascii=False)))
             self.conn.commit()
-        except Exception as exc:
-            logger.error(f"Erro ao guardar preferência: {exc}")
+        except Exception:
+            logger.exception("Erro ao guardar preferência")
 
     def get_preference(self, key: str, default: Any = None) -> Any:
         try:
-            row = self.conn.execute(
-                "SELECT value FROM preferences WHERE key=?", (key,)
-            ).fetchone()
+            row = self.conn.execute("SELECT value FROM preferences WHERE key=?", (key,)).fetchone()
             return json.loads(row[0]) if row else default
         except Exception:
+            logger.exception("Erro ao ler preferência '%s'", key)
             return default
 
     def delete_preference(self, key: str) -> bool:
@@ -132,13 +96,9 @@ class MemoryEngine:
             cur = self.conn.execute("DELETE FROM preferences WHERE key=?", (key,))
             self.conn.commit()
             return cur.rowcount > 0
-        except Exception as exc:
-            logger.error(f"Erro ao apagar preferência: {exc}")
+        except Exception:
+            logger.exception("Erro ao apagar preferência")
             return False
-
-    # ─── Factos sobre o utilizador ─────────────────────────────────────────
-    # Guardados nas preferências com prefixo 'fact:' para poderem ser injectados
-    # no system prompt em cada conversa.
 
     def set_fact(self, key: str, value: Any):
         self.set_preference(f"{FACT_PREFIX}{key.strip().lower()}", value)
@@ -151,57 +111,42 @@ class MemoryEngine:
 
     def get_facts(self) -> dict[str, Any]:
         try:
-            rows = self.conn.execute(
-                "SELECT key, value FROM preferences WHERE key LIKE ? ORDER BY key",
-                (f"{FACT_PREFIX}%",)
-            ).fetchall()
-        except Exception as exc:
-            logger.error(f"Erro ao ler factos: {exc}")
+            rows = self.conn.execute("SELECT key, value FROM preferences WHERE key LIKE ? ORDER BY key", (f"{FACT_PREFIX}%",)).fetchall()
+            facts = {}
+            for key, raw in rows:
+                try:
+                    facts[key[len(FACT_PREFIX):]] = json.loads(raw)
+                except json.JSONDecodeError:
+                    facts[key[len(FACT_PREFIX):]] = raw
+            return facts
+        except Exception:
+            logger.exception("Erro ao ler factos")
             return {}
-
-        facts: dict[str, Any] = {}
-        for key, raw in rows:
-            try:
-                facts[key[len(FACT_PREFIX):]] = json.loads(raw)
-            except json.JSONDecodeError:
-                facts[key[len(FACT_PREFIX):]] = raw
-        return facts
-
-    # ─── RAG (ChromaDB) ────────────────────────────────────────────────────
 
     def _get_chroma(self):
         if self._chroma is None:
             try:
                 import chromadb
-                chroma_path = Path(__file__).parent.parent / "data" / "chroma"
-                chroma_path.mkdir(parents=True, exist_ok=True)
-                self._chroma = chromadb.PersistentClient(path=str(chroma_path))
+                CHROMA_PATH.mkdir(parents=True, exist_ok=True)
+                self._chroma = chromadb.PersistentClient(path=str(CHROMA_PATH))
             except ImportError:
                 logger.warning("chromadb não instalado. RAG desactivado.")
         return self._chroma
 
     def index_document(self, doc_id: str, text: str, metadata: dict | None = None) -> bool:
-        """Indexa um documento para pesquisa semântica."""
         client = self._get_chroma()
-        if client is None:
+        if client is None or not text.strip():
             return False
         try:
             col = client.get_or_create_collection("helios_docs")
-            # Divide em chunks de ~500 chars
-            chunks = [text[i:i+500] for i in range(0, len(text), 400)]
-            col.upsert(
-                documents=chunks,
-                ids=[f"{doc_id}_chunk_{i}" for i in range(len(chunks))],
-                metadatas=[{**(metadata or {}), "doc_id": doc_id, "chunk": i} for i in range(len(chunks))],
-            )
-            logger.info(f"Documento '{doc_id}' indexado ({len(chunks)} chunks)")
+            chunks = [text[i:i + 800] for i in range(0, len(text), 650)]
+            col.upsert(documents=chunks, ids=[f"{doc_id}_chunk_{i}" for i in range(len(chunks))], metadatas=[{**(metadata or {}), "doc_id": doc_id, "chunk": i} for i in range(len(chunks))])
             return True
-        except Exception as exc:
-            logger.error(f"Erro ao indexar documento: {exc}")
+        except Exception:
+            logger.exception("Erro ao indexar documento '%s'", doc_id)
             return False
 
     def search_documents(self, query: str, n_results: int = 5) -> list[dict]:
-        """Pesquisa semântica nos documentos indexados."""
         client = self._get_chroma()
         if client is None:
             return []
@@ -210,19 +155,22 @@ class MemoryEngine:
             results = col.query(query_texts=[query], n_results=n_results)
             docs = results.get("documents", [[]])[0]
             metas = results.get("metadatas", [[]])[0]
-            return [{"text": d, "metadata": m} for d, m in zip(docs, metas)]
-        except Exception as exc:
-            logger.error(f"Erro na pesquisa RAG: {exc}")
+            return [{"text": d, "metadata": m or {}} for d, m in zip(docs, metas)]
+        except Exception:
+            logger.exception("Erro na pesquisa RAG")
             return []
 
+    def close(self):
+        try:
+            self.conn.close()
+        except Exception:
+            pass
 
-# ─── Instância partilhada ─────────────────────────────────────────────────────
 
 _shared: MemoryEngine | None = None
 
 
 def get_memory() -> MemoryEngine:
-    """MemoryEngine partilhado entre core e plugins (evita ligações SQLite duplicadas)."""
     global _shared
     if _shared is None:
         _shared = MemoryEngine()
