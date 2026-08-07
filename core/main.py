@@ -11,6 +11,7 @@ import threading
 from pathlib import Path
 
 import eel
+import psutil
 
 from core.app_paths import FRONTEND_DIR, PLUGINS_DIR, ROOT
 from core.brain import Brain
@@ -95,6 +96,21 @@ def get_wake_word_status():
 @eel.expose
 def get_memory_facts():
     return memory.get_facts()
+
+
+@eel.expose
+def get_system_stats():
+    memory_info = psutil.virtual_memory()
+    disk = psutil.disk_usage(str(ROOT.anchor or ROOT))
+    return {
+        "cpu": round(psutil.cpu_percent(interval=None), 1),
+        "ram": round(memory_info.percent, 1),
+        "ramUsed": round(memory_info.used / 1024**3, 1),
+        "ramTotal": round(memory_info.total / 1024**3, 1),
+        "disk": round(disk.percent, 1),
+        "diskUsed": round(disk.used / 1024**3, 1),
+        "diskTotal": round(disk.total / 1024**3, 1),
+    }
 
 
 def _notify_ui(user_text: str, assistant_text: str):
