@@ -23,7 +23,10 @@ jobs:
       - name: Prepare embedded Python runtime
         shell: pwsh
         run: ./scripts/prepare_windows_runtime.ps1
-      - name: Install frontend dependencies
+      - name: Build frontend
+        working-directory: frontend
+        run: npm ci && npm run build
+      - name: Install Electron dependencies
         working-directory: electron
         run: npm ci
       - name: Build installers
