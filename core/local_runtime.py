@@ -7,12 +7,9 @@ primary brain when configured.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 
 import httpx
-
-logger = logging.getLogger("helios.local_runtime")
 
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 
@@ -25,23 +22,18 @@ class LocalProfile:
 
 
 def detect_profile() -> LocalProfile:
-    """Choose a conservative model for the current machine.
-
-    Qwen2.5 0.5B is ~398 MB, 1.5B is ~986 MB and 3B is ~1.9 GB in the
-    standard Ollama Q4 variants. We intentionally stay conservative because
-    HELIOS itself also uses RAM for Electron, Python, browser/RAG and voice.
-    """
+    """Choose a conservative model for the current machine."""
     try:
         import psutil
-
         ram_gb = psutil.virtual_memory().total / (1024**3)
     except Exception:
         ram_gb = 8.0
 
+    # Official Ollama tags: 0.5b (~398 MB), 1.5b (~986 MB), 3b (~1.9 GB).
     if ram_gb < 6:
-        return LocalProfile("qwen2.5:0.5b-instruct", ram_gb, "RAM limitada")
+        return LocalProfile("qwen2.5:0.5b", ram_gb, "RAM limitada")
     if ram_gb < 12:
-        return LocalProfile("qwen2.5:1.5b-instruct", ram_gb, "equilíbrio qualidade/consumo")
+        return LocalProfile("qwen2.5:1.5b", ram_gb, "equilíbrio qualidade/consumo")
     return LocalProfile("qwen2.5:3b", ram_gb, "mais capacidade disponível")
 
 
@@ -49,18 +41,10 @@ def choose_model(config: dict | None = None) -> LocalProfile:
     cfg = config or {}
     local = cfg.get("local") or {}
     configured = str(local.get("model") or "auto").strip()
-
     profile = detect_profile()
     if configured.lower() in {"", "auto", "automatic", "automatico", "automático"}:
         return profile
-
-    try:
-        import psutil
-        ram_gb = psutil.virtual_memory().total / (1024**3)
-    except Exception:
-        ram_gb = profile.ram_gb
-
-    return LocalProfile(configured, ram_gb, "modelo definido na configuração")
+    return LocalProfile(configured, profile.ram_gb, "modelo definido na configuração")
 
 
 async def ollama_available(base_url: str = DEFAULT_OLLAMA_URL) -> bool:
@@ -79,14 +63,10 @@ async def model_available(model: str, base_url: str = DEFAULT_OLLAMA_URL) -> boo
             if not response.is_success:
                 return False
             names = {m.get("name") for m in response.json().get("models", [])}
-            return model in names or model.split(":")[0] in names
+            return model in names
     except Exception:
         return False
 
 
 def profile_summary(profile: LocalProfile) -> dict:
-    return {
-        "model": profile.model,
-        "ram_gb": round(profile.ram_gb, 1),
-        "reason": profile.reason,
-    }
+    return {"model": profile.model, "ram_gb": round(profile.ram_gb, 1), "reason": profile.reason}
