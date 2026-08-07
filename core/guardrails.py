@@ -1,16 +1,11 @@
-"""
-H.E.L.I.O.S. Guardrails Engine
-Human-in-the-loop para ações sensíveis ou destrutivas.
+"""HELIOS human-in-the-loop security policy."""
 
-A política é conservadora: PowerShell arbitrário requer confirmação por
-padrão. Só comandos explicitamente classificados como leitura/diagnóstico
-podem passar sem confirmação.
-"""
+from __future__ import annotations
 
 import asyncio
 import logging
 import re
-from typing import Any, Callable, Awaitable
+from typing import Awaitable, Callable
 
 logger = logging.getLogger("helios.guardrails")
 
@@ -22,31 +17,25 @@ SENSITIVE_TOOLS: dict[str, dict] = {
     "system_registry_write": {"check": lambda _: True, "message": "Vou escrever no registo do Windows."},
     "system_format_drive": {"check": lambda _: True, "message": "⚠️ ATENÇÃO: Vou formatar uma drive!"},
 }
-
-ALWAYS_CONFIRM: set[str] = {"system_delete_file", "system_format_drive", "system_registry_write", "system_kill_process"}
-
-# Apenas operações de leitura/diagnóstico muito explícitas ficam sem confirmação.
+ALWAYS_CONFIRM = {"system_delete_file", "system_format_drive", "system_registry_write", "system_kill_process"}
 _SAFE_POWERSHELL = (
     r"^(get-date|whoami|hostname|ver|systeminfo|ipconfig(?:\s+/all)?|"
     r"get-process(?:\s+[^|;&]+)?|get-service(?:\s+[^|;&]+)?|"
-    r"get-childitem(?:\s+[^|;&]+)?|dir(?:\s+[^|;&]+)?|"
-    r"get-location|pwd|echo(?:\s+[^|;&]+)?)$"
+    r"get-childitem(?:\s+[^|;&]+)?|dir(?:\s+[^|;&]+)?|get-location|pwd|"
+    r"echo(?:\s+[^|;&]+)?)$"
 )
 
 
 def _is_form_submit(args: dict) -> bool:
-    sel = (args.get("selector") or "").lower()
-    text = (args.get("text") or "").lower()
-    danger = ["submit", "comprar", "pagar", "confirmar", "apagar", "eliminar", "deletar", "checkout"]
-    return any(d in sel or d in text for d in danger)
+    sel = str(args.get("selector") or "").lower()
+    text = str(args.get("text") or "").lower()
+    return any(d in sel or d in text for d in ("submit", "comprar", "pagar", "confirmar", "apagar", "eliminar", "deletar", "checkout"))
 
 
 def _requires_powershell_confirmation(args: dict) -> bool:
     command = str(args.get("command") or "").strip().lower()
     if not command:
         return True
-    # Pipelines, redirection, variables, script blocks and encoded commands are
-    # deliberately treated as sensitive because static inspection is unreliable.
     if any(token in command for token in (";", "&&", "||", "|", ">", "<", "`", "$", "{", "}", "-encodedcommand", "iex", "invoke-expression")):
         return True
     return re.fullmatch(_SAFE_POWERSHELL, command, flags=re.IGNORECASE) is None
@@ -55,29 +44,56 @@ def _requires_powershell_confirmation(args: dict) -> bool:
 class GuardrailsEngine:
     def __init__(self):
         self._confirm_callback: Callable[[str, dict], Awaitable[bool]] | None = None
-        self._pending: dict[str, asyncio.Future] = {}
+        self._pending: dict[str, asyncio.Future[bool]] = {}
 
-    def set_confirm_callback(self, cb: Callable[[str, dict], Awaitable[bool]]):
+    def set_confirm_callback(self, cb: Callable[[str, dict], Awaitable[bool]]) -> None:
         self._confirm_callback = cb
 
     def requires_confirmation(self, tool_name: str, args: dict) -> bool:
         if tool_name in ALWAYS_CONFIRM:
             return True
-        if tool_name in SENSITIVE_TOOLS:
-            check = SENSITIVE_TOOLS[tool_name].get("check")
-            if check and check(args):
-                return True
-        return False
+        rule = SENSITIVE_TOOLS.get(tool_name)
+        return bool(rule and rule.get("check") and rule["check"](args))
 
     async def ask_confirmation(self, tool_name: str, args: dict) -> bool:
         rule = SENSITIVE_TOOLS.get(tool_name, {})
         message = rule.get("message", f"Vou executar '{tool_name}'. Confirmas?")
-        logger.warning("Guardrail: '%s' args=%s", tool_name, args)
         if self._confirm_callback is None:
-            logger.error("Guardrail sem callback — operação bloqueada por segurança.")
+            logger.error("Guardrail sem callback — operação bloqueada")
             return False
         try:
-            return await asyncio.wait_for(self._confirm_callback(message, {"tool": tool_name, "args": args}), timeout=60.0)
+            return await asyncio.wait_for(self._confirm_callback(message, {"tool": tool_name, "args": args}), timeout=60)
         except asyncio.TimeoutError:
-            logger.warning("Timeout no guardrail '%s' — cancelado.", tool_name)
+            logger.warning("Timeout no guardrail '%s'", tool_name)
             return False
+        except Exception:
+            logger.exception("Erro no guardrail '%s'", tool_name)
+            return False
+
+    async def request_from_ui(self, message: str, meta: dict) -> bool:
+        """Create a one-shot confirmation request and wait for the UI."""
+        import uuid
+        request_id = uuid.uuid4().hex
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        self._pending[request_id] = future
+        try:
+            import eel
+            eel.on_confirm_request(request_id, message, meta)
+        except Exception:
+            self._pending.pop(request_id, None)
+            logger.exception("Não foi possível abrir confirmação na UI")
+            return False
+        try:
+            return await asyncio.wait_for(future, timeout=60)
+        except asyncio.TimeoutError:
+            return False
+        finally:
+            self._pending.pop(request_id, None)
+
+    def resolve_confirmation(self, request_id: str, confirmed: bool) -> bool:
+        future = self._pending.get(request_id)
+        if not future or future.done():
+            return False
+        future.set_result(bool(confirmed))
+        return True
