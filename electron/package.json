@@ -15,40 +15,14 @@
     "appId": "com.helios.assistant",
     "productName": "HELIOS",
     "copyright": "© 2026 Simão Coelho",
-    "directories": {
-      "output": "../dist-electron"
-    },
-    "files": [
-      "main.js",
-      "preload.js",
-      "assets/**"
-    ],
+    "directories": { "output": "../dist-electron" },
+    "files": ["main.js", "preload.js", "assets/**"],
     "extraResources": [
-      {
-        "from": "../core",
-        "to": "app/core",
-        "filter": ["**/*"]
-      },
-      {
-        "from": "../plugins",
-        "to": "app/plugins",
-        "filter": ["**/*"]
-      },
-      {
-        "from": "../config",
-        "to": "app/config",
-        "filter": ["**/*"]
-      },
-      {
-        "from": "../frontend/out",
-        "to": "app/frontend/out",
-        "filter": ["**/*"]
-      },
-      {
-        "from": "../runtime",
-        "to": "app/runtime",
-        "filter": ["**/*"]
-      }
+      { "from": "../core", "to": "app/core", "filter": ["**/*"] },
+      { "from": "../plugins", "to": "app/plugins", "filter": ["**/*"] },
+      { "from": "../config", "to": "app/config", "filter": ["**/*"] },
+      { "from": "../frontend/out", "to": "app/frontend/out", "filter": ["**/*"] },
+      { "from": "../runtime", "to": "app/runtime", "filter": ["**/*"] }
     ],
     "win": {
       "target": [
@@ -85,8 +59,5 @@
   "devDependencies": {
     "electron": "^30.0.0",
     "electron-builder": "^24.0.0"
-  },
-  "dependencies": {
-    "node-pty": "^1.0.0"
   }
 }
