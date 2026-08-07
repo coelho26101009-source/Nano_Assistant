@@ -14,7 +14,10 @@ const ICON_PATH = path.join(__dirname, 'assets', 'icon.ico');
 const MAIN_PY = path.join(APP_ROOT, 'core', 'main.py');
 
 function findPython() {
-  const candidates = [path.join(APP_ROOT, 'runtime', 'python', 'python.exe'), path.join(APP_ROOT, '.venv', 'Scripts', 'python.exe')];
+  const candidates = [
+    path.join(APP_ROOT, 'runtime', 'python', 'python.exe'),
+    path.join(APP_ROOT, '.venv', 'Scripts', 'python.exe'),
+  ];
   for (const candidate of candidates) if (fs.existsSync(candidate)) return candidate;
   if (IS_DEV) return 'py';
   throw new Error('Runtime Python do HELIOS não encontrado. Reinstala a aplicação.');
@@ -39,7 +42,10 @@ function getFreePort() {
   return new Promise((resolve, reject) => {
     const srv = net.createServer();
     srv.on('error', reject);
-    srv.listen(0, '127.0.0.1', () => { const p = srv.address().port; srv.close(() => resolve(p)); });
+    srv.listen(0, '127.0.0.1', () => {
+      const p = srv.address().port;
+      srv.close(() => resolve(p));
+    });
   });
 }
 
@@ -48,7 +54,8 @@ function waitForServer(port, maxMs = 45000) {
     const deadline = Date.now() + maxMs;
     const tryConnect = () => {
       if (Date.now() > deadline) return reject(new Error('Servidor HELIOS não ficou pronto a tempo.'));
-      const socket = new net.Socket(); socket.setTimeout(500);
+      const socket = new net.Socket();
+      socket.setTimeout(500);
       socket.once('connect', () => { socket.destroy(); setTimeout(resolve, 300); });
       socket.once('error', () => { socket.destroy(); setTimeout(tryConnect, 300); });
       socket.once('timeout', () => { socket.destroy(); setTimeout(tryConnect, 300); });
@@ -62,6 +69,7 @@ function launchPython(port) {
   return new Promise((resolve, reject) => {
     let pythonCmd;
     try { pythonCmd = findPython(); } catch (err) { reject(err); return; }
+    if (!fs.existsSync(MAIN_PY)) { reject(new Error('Core do HELIOS não encontrado.')); return; }
     const env = {
       ...loadEnv(),
       HELIOS_MODE: 'electron',
@@ -80,7 +88,8 @@ function launchPython(port) {
         if (line.includes('HELIOS_PORT=') && !resolved) { resolved = true; resolve(); }
       }
     };
-    pythonProcess.stdout.on('data', onData); pythonProcess.stderr.on('data', onData);
+    pythonProcess.stdout.on('data', onData);
+    pythonProcess.stderr.on('data', onData);
     pythonProcess.on('error', err => { if (!resolved) { resolved = true; reject(err); } });
     pythonProcess.on('exit', code => {
       if (!resolved) { resolved = true; reject(new Error(`Motor HELIOS terminou (${code})`)); }
@@ -91,7 +100,9 @@ function launchPython(port) {
 }
 
 function showOffline(code) {
-  try { mainWindow?.webContents.executeJavaScript(`document.body.innerHTML='<h1>HELIOS OFFLINE</h1><p>Motor terminou (código ${code}). Reinicia a aplicação.</p>';`); } catch (_) {}
+  try {
+    mainWindow?.webContents.executeJavaScript(`document.body.innerHTML='<h1>HELIOS OFFLINE</h1><p>O motor terminou (código ${code}). Reinicia a aplicação.</p>';`);
+  } catch (_) {}
 }
 function isAutoLaunchEnabled() { try { return app.getLoginItemSettings().openAtLogin; } catch (_) { return false; } }
 function setAutoLaunch(enabled) { try { app.setLoginItemSettings({ openAtLogin: enabled, openAsHidden: true, args: ['--hidden'] }); } catch (e) { console.warn(e.message); } }
@@ -100,14 +111,27 @@ function createWindow(port) {
   mainWindow = new BrowserWindow({
     width: 1440, height: 900, minWidth: 1100, minHeight: 700, frame: false,
     backgroundColor: '#030508', icon: fs.existsSync(ICON_PATH) ? ICON_PATH : undefined, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true },
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      spellcheck: true,
+    },
   });
   const url = `http://127.0.0.1:${port}`;
   mainWindow.loadURL(url);
+  mainWindow.webContents.on('will-navigate', (event, navigationUrl) => {
+    if (!navigationUrl.startsWith(url)) event.preventDefault();
+  });
+  mainWindow.webContents.setWindowOpenHandler(({ url: externalUrl }) => {
+    try { shell.openExternal(externalUrl); } catch (_) {}
+    return { action: 'deny' };
+  });
   mainWindow.once('ready-to-show', () => { if (!startedHidden) mainWindow.show(); });
   mainWindow.on('close', e => { if (!isQuitting) { e.preventDefault(); mainWindow.hide(); } });
   mainWindow.webContents.on('did-fail-load', () => { if (!isQuitting) setTimeout(() => mainWindow?.loadURL(url), 2000); });
-  mainWindow.webContents.setWindowOpenHandler(({ url: externalUrl }) => { shell.openExternal(externalUrl); return { action: 'deny' }; });
 }
 
 function createTray() {
@@ -125,7 +149,8 @@ function refreshTrayMenu() {
     { label: '🪟 Iniciar com o Windows', type: 'checkbox', checked: isAutoLaunchEnabled(), click: item => { setAutoLaunch(item.checked); refreshTrayMenu(); } },
     { type: 'separator' },
     { label: '🔄 Reiniciar', click: () => { app.relaunch(); app.exit(0); } },
-    { type: 'separator' }, { label: '✕ Sair', click: () => { isQuitting = true; app.quit(); } },
+    { type: 'separator' },
+    { label: '✕ Sair', click: () => { isQuitting = true; app.quit(); } },
   ]));
 }
 
@@ -141,10 +166,14 @@ if (GOT_LOCK) app.whenReady().then(async () => {
   try {
     if (!startedHidden && app.getLoginItemSettings().wasOpenedAtLogin) startedHidden = true;
     const port = await getFreePort();
-    await launchPython(port); await waitForServer(port); createWindow(port); createTray();
+    await launchPython(port);
+    await waitForServer(port);
+    createWindow(port);
+    createTray();
   } catch (err) {
     console.error('[HELIOS] Erro fatal:', err.message);
-    dialog.showErrorBox('HELIOS — Erro ao iniciar', `Não foi possível iniciar.\n\n${err.message}`); app.quit();
+    dialog.showErrorBox('HELIOS — Erro ao iniciar', `Não foi possível iniciar.\n\n${err.message}`);
+    app.quit();
   }
 });
 app.on('activate', () => mainWindow?.show());
