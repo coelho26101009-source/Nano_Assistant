@@ -1,9 +1,5 @@
-"""
-H.E.L.I.O.S. Plugin Loader
-Auto-descoberta de plugins. Larga um .py em plugins/ → carrega automaticamente.
-Contrato obrigatório: o ficheiro deve expor get_tools() → list[dict]
-Contrato opcional:    TOOL_HANDLERS: dict[str, Callable]
-"""
+"""HELIOS plugin loader with defensive contract validation."""
+from __future__ import annotations
 
 import asyncio
 import importlib.util
@@ -12,91 +8,105 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("helios.plugin_loader")
-
 _loaded_plugins: dict[str, Any] = {}
-_all_tools:      list[dict]     = []
-_all_handlers:   dict[str, Any] = {}
+_all_tools: list[dict] = []
+_all_handlers: dict[str, Any] = {}
 
 
-def load_all_plugins(plugins_dir: Path | None = None) -> tuple[list[dict], dict]:
-    global _all_tools, _all_handlers
-
-    if plugins_dir is None:
-        plugins_dir = Path(__file__).parent.parent / "plugins"
-
-    if not plugins_dir.exists():
-        logger.warning(f"Pasta de plugins não encontrada: {plugins_dir}")
-        return [], {}
-
-    _all_tools.clear()
-    _all_handlers.clear()
-
-    for plugin_path in sorted(plugins_dir.glob("*.py")):
-        if plugin_path.name.startswith("_"):
-            continue
-
-        name = plugin_path.stem
-        try:
-            module = _import_module(name, plugin_path)
-
-            if not hasattr(module, "get_tools"):
-                logger.debug(f"'{name}' ignorado: sem get_tools()")
-                continue
-
-            tools = module.get_tools()
-            if not isinstance(tools, list):
-                logger.warning(f"'{name}': get_tools() deve devolver list")
-                continue
-
-            _all_tools.extend(tools)
-            _loaded_plugins[name] = module
-
-            if hasattr(module, "TOOL_HANDLERS"):
-                _all_handlers.update(module.TOOL_HANDLERS)
-
-            tool_names = [t["function"]["name"] for t in tools]
-            logger.info(f"✅ Plugin '{name}' → {tool_names}")
-
-        except Exception as exc:
-            logger.error(f"❌ Falha ao carregar '{name}': {exc}", exc_info=True)
-
-    logger.info(f"Arsenal: {len(_loaded_plugins)} plugins, {len(_all_tools)} ferramentas")
-    return _all_tools, _all_handlers
+def _validate_tool(tool: Any) -> tuple[bool, str]:
+    if not isinstance(tool, dict):
+        return False, "tool não é um objeto"
+    function = tool.get("function")
+    if tool.get("type") != "function" or not isinstance(function, dict):
+        return False, "tool tem de usar type=function"
+    name = function.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return False, "nome da ferramenta inválido"
+    if not isinstance(function.get("description", ""), str):
+        return False, "description inválida"
+    parameters = function.get("parameters", {"type": "object"})
+    if not isinstance(parameters, dict) or parameters.get("type") != "object":
+        return False, "parameters tem de ser um schema object"
+    return True, ""
 
 
 def _import_module(name: str, path: Path):
-    spec   = importlib.util.spec_from_file_location(f"helios.plugins.{name}", path)
+    spec = importlib.util.spec_from_file_location(f"helios.plugins.{name}", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"não foi possível criar loader para {path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
+def _register_plugin(name: str, module: Any) -> bool:
+    if not callable(getattr(module, "get_tools", None)):
+        logger.debug("'%s' ignorado: sem get_tools()", name)
+        return False
+    tools = module.get_tools()
+    if not isinstance(tools, list):
+        raise TypeError("get_tools() deve devolver list")
+    handlers = getattr(module, "TOOL_HANDLERS", {})
+    if not isinstance(handlers, dict):
+        raise TypeError("TOOL_HANDLERS deve ser dict")
+
+    valid_tools: list[dict] = []
+    for tool in tools:
+        ok, reason = _validate_tool(tool)
+        if not ok:
+            logger.warning("'%s': ferramenta rejeitada: %s", name, reason)
+            continue
+        tool_name = tool["function"]["name"]
+        handler = handlers.get(tool_name)
+        if not callable(handler):
+            logger.warning("'%s': ferramenta '%s' sem handler callable", name, tool_name)
+            continue
+        if tool_name in _all_handlers:
+            logger.warning("'%s': ferramenta duplicada '%s' rejeitada", name, tool_name)
+            continue
+        valid_tools.append(tool)
+        _all_handlers[tool_name] = handler
+
+    if not valid_tools:
+        return False
+    _all_tools.extend(valid_tools)
+    _loaded_plugins[name] = module
+    logger.info("Plugin '%s' carregado: %d ferramentas", name, len(valid_tools))
+    return True
+
+
+def load_all_plugins(plugins_dir: Path | None = None) -> tuple[list[dict], dict]:
+    _all_tools.clear(); _all_handlers.clear(); _loaded_plugins.clear()
+    plugins_dir = plugins_dir or Path(__file__).parent.parent / "plugins"
+    if not plugins_dir.exists():
+        logger.warning("Pasta de plugins não encontrada: %s", plugins_dir)
+        return [], {}
+    for plugin_path in sorted(plugins_dir.glob("*.py")):
+        if plugin_path.name.startswith("_"):
+            continue
+        try:
+            _register_plugin(plugin_path.stem, _import_module(plugin_path.stem, plugin_path))
+        except Exception as exc:
+            logger.error("Falha ao carregar plugin '%s': %s", plugin_path.stem, exc, exc_info=True)
+    return get_all_tools(), dict(_all_handlers)
+
+
 async def execute_tool(tool_name: str, arguments: dict) -> dict:
     handler = _all_handlers.get(tool_name)
     if handler is None:
-        return {
-            "error": (
-                f"Ups Simão, a ferramenta '{tool_name}' não está registada. "
-                f"Disponíveis: {list(_all_handlers.keys())}"
-            )
-        }
+        return {"ok": False, "error": "tool_not_registered", "tool": tool_name}
     try:
         result = handler(arguments)
         if asyncio.iscoroutine(result):
             result = await result
-        return result if isinstance(result, dict) else {"result": result}
-    except Exception as exc:
-        logger.error(f"Erro ao executar '{tool_name}': {exc}", exc_info=True)
-        return {
-            "error": (
-                f"Ups Simão, '{tool_name}' falhou: {exc}. "
-                "Já registei no log. Queres que tente outra abordagem?"
-            )
-        }
+        return result if isinstance(result, dict) else {"ok": True, "result": result}
+    except Exception:
+        logger.exception("Erro ao executar '%s'", tool_name)
+        return {"ok": False, "error": "tool_execution_failed", "tool": tool_name}
 
 
 def get_all_tools() -> list[dict]:
-    return _all_tools.copy()
+    return list(_all_tools)
 
 
 def list_plugins() -> dict[str, list[str]]:
@@ -107,30 +117,20 @@ def list_plugins() -> dict[str, list[str]]:
 
 
 async def reload_plugin(plugin_name: str, plugins_dir: Path | None = None) -> bool:
-    if plugins_dir is None:
-        plugins_dir = Path(__file__).parent.parent / "plugins"
-
+    plugins_dir = plugins_dir or Path(__file__).parent.parent / "plugins"
     plugin_path = plugins_dir / f"{plugin_name}.py"
     if not plugin_path.exists():
         return False
-
-    if plugin_name in _loaded_plugins:
-        old = _loaded_plugins[plugin_name]
-        if hasattr(old, "get_tools"):
-            old_names = {t["function"]["name"] for t in old.get_tools()}
-            _all_tools[:]  = [t for t in _all_tools if t["function"]["name"] not in old_names]
-            for n in old_names:
-                _all_handlers.pop(n, None)
-
+    old = _loaded_plugins.pop(plugin_name, None)
+    if old and hasattr(old, "get_tools"):
+        for tool in old.get_tools() or []:
+            if isinstance(tool, dict):
+                name = (tool.get("function") or {}).get("name")
+                if name:
+                    _all_handlers.pop(name, None)
+                    _all_tools[:] = [t for t in _all_tools if (t.get("function") or {}).get("name") != name]
     try:
-        module = _import_module(plugin_name, plugin_path)
-        if hasattr(module, "get_tools"):
-            _all_tools.extend(module.get_tools())
-        if hasattr(module, "TOOL_HANDLERS"):
-            _all_handlers.update(module.TOOL_HANDLERS)
-        _loaded_plugins[plugin_name] = module
-        logger.info(f"🔄 Plugin recarregado: '{plugin_name}'")
-        return True
-    except Exception as exc:
-        logger.error(f"Falha ao recarregar '{plugin_name}': {exc}")
+        return _register_plugin(plugin_name, _import_module(plugin_name, plugin_path))
+    except Exception:
+        logger.exception("Falha ao recarregar '%s'", plugin_name)
         return False

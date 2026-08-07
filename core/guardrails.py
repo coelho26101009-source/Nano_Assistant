@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import threading
 from typing import Awaitable, Callable
 
 logger = logging.getLogger("helios.guardrails")
@@ -44,7 +45,8 @@ def _requires_powershell_confirmation(args: dict) -> bool:
 class GuardrailsEngine:
     def __init__(self):
         self._confirm_callback: Callable[[str, dict], Awaitable[bool]] | None = None
-        self._pending: dict[str, asyncio.Future[bool]] = {}
+        self._pending: dict[str, tuple[asyncio.AbstractEventLoop, asyncio.Future[bool]]] = {}
+        self._lock = threading.RLock()
 
     def set_confirm_callback(self, cb: Callable[[str, dict], Awaitable[bool]]) -> None:
         self._confirm_callback = cb
@@ -53,7 +55,11 @@ class GuardrailsEngine:
         if tool_name in ALWAYS_CONFIRM:
             return True
         rule = SENSITIVE_TOOLS.get(tool_name)
-        return bool(rule and rule.get("check") and rule["check"](args))
+        try:
+            return bool(rule and rule.get("check") and rule["check"](args))
+        except Exception:
+            logger.exception("Falha a avaliar guardrail '%s' — a bloquear", tool_name)
+            return True
 
     async def ask_confirmation(self, tool_name: str, args: dict) -> bool:
         rule = SENSITIVE_TOOLS.get(tool_name, {})
@@ -76,24 +82,31 @@ class GuardrailsEngine:
         request_id = uuid.uuid4().hex
         loop = asyncio.get_running_loop()
         future = loop.create_future()
-        self._pending[request_id] = future
+        with self._lock:
+            self._pending[request_id] = (loop, future)
         try:
             import eel
             eel.on_confirm_request(request_id, message, meta)
         except Exception:
-            self._pending.pop(request_id, None)
+            with self._lock:
+                self._pending.pop(request_id, None)
             logger.exception("Não foi possível abrir confirmação na UI")
             return False
         try:
-            return await asyncio.wait_for(future, timeout=60)
+            return bool(await asyncio.wait_for(future, timeout=60))
         except asyncio.TimeoutError:
             return False
         finally:
-            self._pending.pop(request_id, None)
+            with self._lock:
+                self._pending.pop(request_id, None)
 
     def resolve_confirmation(self, request_id: str, confirmed: bool) -> bool:
-        future = self._pending.get(request_id)
-        if not future or future.done():
+        with self._lock:
+            pending = self._pending.get(request_id)
+        if not pending:
             return False
-        future.set_result(bool(confirmed))
+        loop, future = pending
+        if future.done():
+            return False
+        loop.call_soon_threadsafe(future.set_result, bool(confirmed))
         return True
