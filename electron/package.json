@@ -1,6 +1,6 @@
 {
-  "name": "helios-v7",
-  "version": "7.0.0",
+  "name": "helios-v8",
+  "version": "8.0.0",
   "description": "H.E.L.I.O.S. — High-Efficiency Local Intelligence & Operating System",
   "main": "main.js",
   "author": "Simão Coelho",
@@ -8,7 +8,8 @@
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --win --x64",
-    "build:installer": "electron-builder --win nsis --x64"
+    "build:installer": "electron-builder --win msi --x64",
+    "build:all": "electron-builder --win nsis msi --x64"
   },
   "build": {
     "appId": "com.helios.assistant",
@@ -24,38 +25,61 @@
     ],
     "extraResources": [
       {
-        "from": "../",
-        "to": "app",
-        "filter": [
-          "core/**",
-          "plugins/**",
-          "config/**",
-          "data/**",
-          "frontend/out/**",
-          ".env",
-          "requirements.txt"
-        ]
+        "from": "../core",
+        "to": "app/core",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../plugins",
+        "to": "app/plugins",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../config",
+        "to": "app/config",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../frontend/out",
+        "to": "app/frontend/out",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../runtime",
+        "to": "app/runtime",
+        "filter": ["**/*"]
       }
     ],
     "win": {
       "target": [
-        {
-          "target": "nsis",
-          "arch": ["x64"]
-        }
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "msi", "arch": ["x64"] }
       ],
       "icon": "assets/icon.ico",
-      "requestedExecutionLevel": "asUser"
+      "requestedExecutionLevel": "asInvoker"
     },
     "nsis": {
       "oneClick": false,
+      "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "installerIcon": "assets/icon.ico",
       "uninstallerIcon": "assets/icon.ico",
       "installerHeader": "assets/installer-header.bmp",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "HELIOS"
+      "shortcutName": "HELIOS",
+      "runAfterFinish": true
+    },
+    "msi": {
+      "oneClick": false,
+      "perMachine": false,
+      "upgradeCode": "{B7A1E6A8-8B1B-4E5B-9A13-4B9C5D5E6F71}",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "HELIOS",
+      "runAfterFinish": true,
+      "artifactName": "HELIOS-Setup-${version}.${ext}",
+      "warningsAsErrors": true
     }
   },
   "devDependencies": {
