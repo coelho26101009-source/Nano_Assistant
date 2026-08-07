@@ -3,39 +3,75 @@ name: Build HELIOS Windows
 on:
   workflow_dispatch:
   push:
-    tags: ['v*']
+    tags:
+      - 'v*'
 
 jobs:
-  build:
-    runs-on: windows-latest
-    permissions:
-      contents: write
+  test:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - uses: actions/setup-node@v4
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements-test.txt
+      - run: pytest -q
+
+  build:
+    needs: test
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Prepare embedded Python runtime
-        shell: pwsh
-        run: ./scripts/prepare_windows_runtime.ps1
-      - name: Build frontend
+          cache: npm
+          cache-dependency-path: electron/package-lock.json
+
+      - name: Install Python dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+
+      - name: Install frontend dependencies
         working-directory: frontend
-        run: npm install && npm run build
+        run: npm install
+
+      - name: Export frontend
+        working-directory: frontend
+        run: npm run build
+
       - name: Install Electron dependencies
         working-directory: electron
-        run: npm install
+        run: npm ci
+
+      - name: Prepare embedded Python runtime
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force runtime\python | Out-Null
+          python -c "import sys,shutil; print(sys.executable); shutil.copy2(sys.executable, 'runtime/python/python.exe')"
+          python -m pip install --target runtime\python -r requirements.txt
+
       - name: Build installers
         working-directory: electron
         run: npm run build:all
+
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
           name: HELIOS-Windows
           path: dist-electron/*.{exe,msi}
           if-no-files-found: error
+
       - name: Publish GitHub release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
