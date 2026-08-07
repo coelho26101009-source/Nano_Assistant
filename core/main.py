@@ -1,6 +1,6 @@
-"""
-H.E.L.I.O.S. — Main Entry Point
-"""
+"""H.E.L.I.O.S. — Main Entry Point."""
+
+from __future__ import annotations
 
 import argparse
 import asyncio
@@ -12,11 +12,8 @@ import threading
 from pathlib import Path
 
 import eel
-from dotenv import load_dotenv
 
-load_dotenv()
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
+from core.app_paths import FRONTEND_DIR, PLUGINS_DIR, ROOT
 from core.brain import Brain
 from core.config import load_config
 from core.guardrails import GuardrailsEngine
@@ -26,48 +23,40 @@ from core.logger import setup_logger
 from core.voice import VoiceEngine
 from core.wake_word import WakeWordEngine
 
+sys.path.insert(0, str(ROOT))
 setup_logger()
 logger = logging.getLogger("helios.main")
 
 CONFIG = load_config()
-
 guardrails = GuardrailsEngine()
-memory     = get_memory()
-voice      = VoiceEngine(CONFIG.get("voice", {}))
-brain      = Brain(
-    api_key    = os.getenv("GROQ_API_KEY", ""),
-    guardrails = guardrails,
-    memory     = memory,
-    config     = CONFIG,
+memory = get_memory()
+voice = VoiceEngine(CONFIG.get("voice", {}))
+brain = Brain(
+    api_key=os.getenv("GROQ_API_KEY", ""),
+    guardrails=guardrails,
+    memory=memory,
+    config=CONFIG,
 )
 brain.load_history()
-
-load_all_plugins(Path(__file__).parent.parent / "plugins")
+load_all_plugins(PLUGINS_DIR)
 
 wake_word: WakeWordEngine | None = None
-
-FRONTEND_DIR = Path(__file__).parent.parent / "frontend" / "out"
-eel.init(str(FRONTEND_DIR) if FRONTEND_DIR.exists() else "web")
+eel.init(str(FRONTEND_DIR) if FRONTEND_DIR.exists() else str(ROOT / "web"))
 
 
 @eel.expose
 def send_message(user_text: str):
     if not user_text or not user_text.strip():
         return {"error": "Mensagem vazia"}
-    logger.info(f"Mensagem recebida: '{user_text[:80]}'")
+    loop = asyncio.new_event_loop()
     try:
-        loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        result = loop.run_until_complete(_process_message(user_text))
-        return result
+        return loop.run_until_complete(_process_message(user_text))
     except Exception as exc:
-        logger.error(f"Erro ao processar: {exc}", exc_info=True)
-        return {"error": str(exc), "text": f"Ups, ocorreu um erro: {exc}"}
+        logger.error("Erro ao processar mensagem", exc_info=True)
+        return {"error": str(exc), "text": "Ups, ocorreu um erro ao processar o pedido."}
     finally:
-        try:
-            loop.close()
-        except Exception:
-            pass
+        loop.close()
 
 
 @eel.expose
@@ -78,19 +67,15 @@ def confirm_action(request_id: str, confirmed: bool):
 
 @eel.expose
 def start_voice_listen():
+    loop = asyncio.new_event_loop()
     try:
-        loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        text = loop.run_until_complete(voice.listen())
-        return {"text": text or ""}
+        return {"text": loop.run_until_complete(voice.listen()) or ""}
     except Exception as exc:
-        logger.error(f"Erro de voz: {exc}")
+        logger.error("Erro de voz", exc_info=True)
         return {"error": str(exc)}
     finally:
-        try:
-            loop.close()
-        except Exception:
-            pass
+        loop.close()
 
 
 @eel.expose
@@ -120,37 +105,27 @@ def get_memory_facts():
     return memory.get_facts()
 
 
-# ─── Wake-word (always-on) ──────────────────────────────────────────────
-
 def _notify_ui(user_text: str, assistant_text: str):
-    """Empurra uma conversa iniciada por voz para a UI, se estiver aberta."""
     try:
-        eel.on_voice_exchange(user_text, assistant_text)()   # type: ignore[attr-defined]
+        eel.on_voice_exchange(user_text, assistant_text)()
     except Exception:
-        pass   # UI fechada (modo tray) — a conversa fica na memória na mesma
+        pass
 
 
 def _on_wake_word():
-    """Corre na thread da wake-word: escuta o pedido, responde e fala."""
     if wake_word:
         wake_word.pause()
     loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     try:
+        asyncio.set_event_loop(loop)
         user_text = loop.run_until_complete(voice.listen())
-        if not user_text or not user_text.strip():
-            logger.info("Wake-word: nada percebido, a voltar a escutar.")
-            return
-        logger.info(f"Wake-word → pedido: '{user_text[:80]}'")
-        result = loop.run_until_complete(_process_message(user_text, blocking_tts=True))
-        _notify_ui(user_text, result.get("text", ""))
-    except Exception as exc:
-        logger.error(f"Erro no fluxo da wake-word: {exc}", exc_info=True)
+        if user_text and user_text.strip():
+            result = loop.run_until_complete(_process_message(user_text, blocking_tts=True))
+            _notify_ui(user_text, result.get("text", ""))
+    except Exception:
+        logger.error("Erro no fluxo wake-word", exc_info=True)
     finally:
-        try:
-            loop.close()
-        except Exception:
-            pass
+        loop.close()
         if wake_word:
             wake_word.resume()
 
@@ -159,100 +134,72 @@ def _start_wake_word():
     global wake_word
     voice_cfg = CONFIG.get("voice", {}) or {}
     if not voice_cfg.get("wake_word_enabled", False):
-        logger.info("Wake-word desactivada em settings.yaml.")
         return
     wake_word = WakeWordEngine(voice_cfg, on_wake=_on_wake_word)
-    if wake_word.start():
-        logger.info(f"🎙️  Escuta contínua activa — diz '{wake_word.phrase}'.")
+    wake_word.start()
 
 
 async def _process_message(user_text: str, blocking_tts: bool = False) -> dict:
     try:
         memory.save_message("user", user_text)
         full_response = ""
-        status_updates = []
-
+        status_updates: list[str] = []
         async for token in brain.chat(user_text, stream=False):
             if token.startswith("_thinking_:"):
-                status = token.replace("_thinking_:", "")
-                status_updates.append(status)
-                logger.info(f"Status: {status}")
+                status_updates.append(token.removeprefix("_thinking_:"))
             else:
                 full_response += token
 
-        if not full_response.strip():
-            full_response = "Desculpa Simão, não consegui gerar uma resposta. Tenta de novo."
-
+        full_response = full_response.strip() or "Desculpa Simão, não consegui gerar uma resposta."
         memory.save_message("assistant", full_response)
-        logger.info(f"Resposta gerada ({len(full_response)} chars): {full_response[:80]}")
 
         if CONFIG.get("voice", {}).get("tts_enabled", False):
             if blocking_tts:
-                # Fluxo de voz: espera pela fala para não se ouvir a si próprio
                 await voice.speak(full_response)
             else:
-                def _falar():
-                    loop2 = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop2)
-                    try:
-                        loop2.run_until_complete(voice.speak(full_response))
-                    finally:
-                        loop2.close()
-                threading.Thread(target=_falar, daemon=True).start()
+                threading.Thread(target=lambda: asyncio.run(voice.speak(full_response)), daemon=True).start()
 
         return {"text": full_response, "status": status_updates, "ok": True}
-
     except Exception as exc:
-        logger.error(f"Erro no _process_message: {exc}", exc_info=True)
-        return {"text": f"Ups Simão, ocorreu um erro: {exc}", "ok": False, "error": str(exc)}
+        logger.error("Erro no _process_message", exc_info=True)
+        return {"text": "Ups Simão, ocorreu um erro ao processar o pedido.", "ok": False, "error": str(exc)}
 
 
 def _free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+        return int(sock.getsockname()[1])
 
 
 def _parse_args():
     parser = argparse.ArgumentParser(description="H.E.L.I.O.S.")
-    parser.add_argument("--mode", default=os.getenv("HELIOS_MODE", "chrome"),
-                        help="chrome | default | edge | electron (electron = sem browser próprio)")
-    parser.add_argument("--port", type=int, default=0, help="Porta do servidor Eel (0 = automática)")
-    args, _unknown = parser.parse_known_args()
-    return args
+    parser.add_argument("--mode", default=os.getenv("HELIOS_MODE", "electron"))
+    parser.add_argument("--port", type=int, default=0)
+    return parser.parse_known_args()[0]
 
 
 def main():
     args = _parse_args()
-
-    logger.info("🌟 H.E.L.I.O.S. V7 a iniciar...")
-    logger.info(f"   Frontend : {FRONTEND_DIR} ({'✅' if FRONTEND_DIR.exists() else '❌ não existe!'})")
-    logger.info(f"   API Key  : {'✅' if os.getenv('GROQ_API_KEY') else '❌ FALTA!'}")
-    logger.info(f"   Memória  : {memory.count_messages()} mensagens no histórico")
+    logger.info("HELIOS V8 a iniciar")
+    logger.info("Frontend: %s", FRONTEND_DIR)
+    logger.info("Groq: %s", "configurado" if os.getenv("GROQ_API_KEY") else "não configurado")
 
     _start_wake_word()
-
     ui_cfg = CONFIG.get("ui", {}) or {}
-    port   = args.port or int(ui_cfg.get("port", 0) or 0) or _free_port()
-    size   = (int(ui_cfg.get("width", 1440)), int(ui_cfg.get("height", 900)))
-
-    # O Electron lê esta linha do stdout para saber onde ligar-se
+    port = args.port or int(ui_cfg.get("port", 0) or 0) or _free_port()
+    size = (int(ui_cfg.get("width", 1440)), int(ui_cfg.get("height", 900)))
     print(f"HELIOS_PORT={port}", flush=True)
 
-    # Em modo Electron o Python só serve a UI — quem a mostra é o Electron
     modes = [None] if args.mode == "electron" else [args.mode, "default"]
-
     for mode in modes:
         try:
             eel.start("index.html", mode=mode, size=size, port=port, block=True)
             return
         except (SystemExit, KeyboardInterrupt):
-            logger.info("H.E.L.I.O.S. encerrado.")
             return
-        except Exception as exc:
-            logger.warning(f"Falha a abrir UI (mode={mode}): {exc}")
-
-    logger.critical("Impossível abrir a UI do H.E.L.I.O.S.")
+        except Exception:
+            logger.warning("Falha a iniciar UI em modo %s", mode, exc_info=True)
+    raise RuntimeError("Impossível iniciar a UI do HELIOS")
 
 
 if __name__ == "__main__":
