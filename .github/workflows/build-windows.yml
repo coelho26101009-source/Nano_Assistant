@@ -3,49 +3,38 @@ name: Build HELIOS Windows
 on:
   workflow_dispatch:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
 
 jobs:
   build:
     runs-on: windows-latest
     permissions:
       contents: write
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: npm
           cache-dependency-path: electron/package-lock.json
-
-      - name: Install Python dependencies
-        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
-
-      - name: Install frontend
+      - name: Prepare embedded Python runtime
+        shell: pwsh
+        run: ./scripts/prepare_windows_runtime.ps1
+      - name: Install frontend dependencies
         working-directory: electron
         run: npm ci
-
-      - name: Build installer
+      - name: Build installers
         working-directory: electron
         run: npm run build:all
-
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
           name: HELIOS-Windows
           path: dist-electron/*.{exe,msi}
           if-no-files-found: error
-
       - name: Publish GitHub release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
