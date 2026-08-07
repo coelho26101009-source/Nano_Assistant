@@ -1,0 +1,8 @@
+# Optional capabilities. The MSI does not install these by default.
+chromadb>=0.5,<1
+faster-whisper>=1.0,<2
+SpeechRecognition>=3.10,<4
+beautifulsoup4>=4.12,<5
+Pillow>=10,<12
+pypdf>=5,<7
+playwright>=1.45,<2
