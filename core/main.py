@@ -12,6 +12,7 @@ from pathlib import Path
 
 import eel
 import psutil
+from dotenv import load_dotenv
 
 from core.app_paths import FRONTEND_DIR, PLUGINS_DIR, ROOT
 from core.brain import Brain
@@ -24,6 +25,8 @@ from core.voice import VoiceEngine
 from core.wake_word import WakeWordEngine
 
 sys.path.insert(0, str(ROOT))
+if not getattr(sys, "frozen", False):
+    load_dotenv(ROOT / ".env")
 setup_logger()
 logger = logging.getLogger("helios.main")
 CONFIG = load_config()
