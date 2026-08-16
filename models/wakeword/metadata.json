@@ -1,0 +1,10 @@
+{
+  "model_name": "nano",
+  "target_phrase": ["Nano"],
+  "training_version": "v1",
+  "provider": "openwakeword",
+  "model_format": "onnx",
+  "threshold": 0.7,
+  "created_at": "TBD",
+  "notes": "Placeholder metadata. Populate this only after a real custom model is generated and validated."
+}

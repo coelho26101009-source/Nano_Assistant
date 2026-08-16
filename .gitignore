@@ -1,0 +1,38 @@
+# Secrets — never commit credentials
+.env
+.env.local
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+env/
+
+# Generated embedded runtime
+runtime/python/
+runtime/wheels/
+
+# User data / databases / logs
+*.db
+*.sqlite3
+chroma_db/
+data/
+memoria/
+*.log
+
+# Node / frontend build output
+node_modules/
+dist/
+out/
+.next/
+build/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,20 @@
+# Modo Foco — trabalho profundo sem distracções
+name: "Modo Foco 🎯"
+description: "Deep work — sem notificações, sem redes sociais"
+message: "Modo Foco activo. 90 minutos de trabalho profundo, Simão. Vai!"
+
+close_apps:
+  - "Discord.exe"
+  - "slack.exe"
+  - "Teams.exe"
+  - "WhatsApp.exe"
+  - "Telegram.exe"
+
+open_apps:
+  - "code"
+
+open_urls:
+  - "https://notion.so"
+
+volume: 30
+focus_assist: true

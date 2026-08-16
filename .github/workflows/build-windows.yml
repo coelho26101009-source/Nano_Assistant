@@ -1,0 +1,130 @@
+name: Build HELIOS Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements-test.txt
+      - run: pytest -q
+
+  build:
+    needs: test
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python (build host)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            electron/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Install Electron dependencies
+        working-directory: electron
+        run: npm ci
+
+      - name: Prepare relocatable embedded Python runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $runtime = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $zip = Join-Path $env:RUNNER_TEMP 'python-3.12.10-embed-amd64.zip'
+          New-Item -ItemType Directory -Force -Path $runtime | Out-Null
+          Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip' -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $runtime -Force
+
+          $pth = Get-ChildItem -Path $runtime -Filter '*._pth' | Select-Object -First 1
+          if (-not $pth) { throw 'Embedded Python ._pth file not found.' }
+          $lines = Get-Content -LiteralPath $pth.FullName
+          if (-not ($lines -contains 'Lib\site-packages')) { Add-Content -LiteralPath $pth.FullName -Value 'Lib\site-packages' }
+          $lines = Get-Content -LiteralPath $pth.FullName
+          $lines = $lines | ForEach-Object { if ($_ -eq '#import site') { 'import site' } else { $_ } }
+          if (-not ($lines -contains $env:GITHUB_WORKSPACE)) { $lines += $env:GITHUB_WORKSPACE }
+          Set-Content -LiteralPath $pth.FullName -Value $lines -Encoding ascii
+
+          $sitePackages = Join-Path $runtime 'Lib\site-packages'
+          New-Item -ItemType Directory -Force -Path $sitePackages | Out-Null
+          python -m pip install --upgrade pip
+          # Eel is published on PyPI as a source distribution. Use the public
+          # PyPI index explicitly so the Windows runner's package mirror does
+          # not incorrectly report it as unavailable.
+          python -m pip install --index-url https://pypi.org/simple --target $sitePackages -r requirements.txt
+
+          $embeddedPython = Join-Path $runtime 'python.exe'
+          & $embeddedPython -c "import sys; assert sys.version_info[:2] == (3, 12); import eel, httpx, groq, psutil, yaml, dotenv; print('HELIOS embedded dependencies OK')"
+          & $embeddedPython -c "import core.main; print('HELIOS embedded core import OK')"
+
+      - name: Validate plugin source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pluginFiles = Get-ChildItem -Path plugins -Filter '*.py' -Recurse -File
+          if (-not $pluginFiles) { throw 'No Python plugin files found.' }
+          foreach ($plugin in $pluginFiles) {
+            python -m py_compile $plugin.FullName
+            if ($LASTEXITCODE -ne 0) { throw "Plugin syntax check failed: $($plugin.FullName)" }
+          }
+          Write-Host "HELIOS plugin syntax validation OK ($($pluginFiles.Count) files)"
+
+      - name: Build installers
+        working-directory: electron
+        run: npm run build:all
+
+      - name: Verify installer artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $artifacts = @(
+            Get-ChildItem -Path 'electron/dist-electron' -Filter '*.exe' -File -ErrorAction SilentlyContinue
+            Get-ChildItem -Path 'electron/dist-electron' -Filter '*.msi' -File -ErrorAction SilentlyContinue
+          )
+          if ($artifacts.Count -eq 0) { throw 'No .exe or .msi installer artifacts were produced.' }
+          foreach ($artifact in $artifacts) { Write-Host "Installer artifact: $($artifact.FullName) ($($artifact.Length) bytes)" }
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: HELIOS-Windows
+          path: |
+            electron/dist-electron/*.exe
+            electron/dist-electron/*.msi
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist-electron/*.exe
+            dist-electron/*.msi

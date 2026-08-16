@@ -1,0 +1,42 @@
+model_name: "nano"
+target_phrase:
+  - "Nano"
+custom_negative_phrases: []
+
+n_samples: 20000
+n_samples_val: 4000
+
+tts_batch_size: 32
+augmentation_batch_size: 64
+
+piper_sample_generator_path: "REQUIRED BEFORE TRAINING"
+
+output_dir: "models/wakeword/train-output"
+
+rir_paths: []
+background_paths: []
+background_paths_duplication_rate: []
+false_positive_validation_data_path: "REQUIRED BEFORE TRAINING"
+
+augmentation_rounds: 2
+
+feature_data_files: {}
+batch_n_per_class: 32
+
+model_type: "dnn"
+layer_size: 32
+
+steps: 20000
+max_negative_weight: 1000
+target_false_positives_per_hour: 0.5
+
+# This is the first-pass v1 config for the custom Nano keyword model.
+# It is intentionally conservative and does not claim readiness before the required
+# training resources and validation data are prepared.
+#
+# Notes:
+# - layer_size=32 is a deliberate baseline for a small, low-latency wake-word model.
+# - steps=20000 is a pragmatic v1 value for a single phrase and a first-quality pass.
+# - piper_sample_generator_path and false_positive_validation_data_path are placeholders
+#   and must be populated before training begins.
+# - The final runtime output will be versioned before deployment as nano-v1, nano-v2, etc.

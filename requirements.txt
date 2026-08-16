@@ -1,0 +1,10 @@
+# HELIOS V8 core runtime — intentionally kept lightweight.
+eel>=0.18,<1
+Groq>=0.11,<1
+httpx>=0.27,<1
+python-dotenv>=1.0,<2
+PyYAML>=6.0,<7
+psutil>=6.0,<7
+edge-tts>=7.0,<8
+pygame>=2.6,<3
+PyAudio>=0.2.14,<1

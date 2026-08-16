@@ -1,0 +1,11 @@
+provider: "openwakeword"
+phrase: "Nano"
+model_path: "tools/wakeword/output/nano.onnx"
+threshold: 0.7
+cooldown_seconds: 2.0
+check:
+  file_exists: true
+  extension: ".onnx"
+  loadable: true
+  phrase_matches: false
+  custom_verifier: false

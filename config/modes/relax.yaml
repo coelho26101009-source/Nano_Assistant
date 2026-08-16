@@ -1,0 +1,18 @@
+# Modo Relax — fim de dia, descanso
+name: "Modo Relax 🌅"
+description: "Spotify, nada de trabalho, luzes suaves"
+message: "Modo Relax activado, Simão. Mereces descansar."
+
+close_apps:
+  - "code.exe"
+  - "WindowsTerminal.exe"
+  - "Docker Desktop.exe"
+
+open_apps:
+  - "Spotify.exe"
+
+open_urls:
+  - "https://youtube.com"
+
+volume: 65
+focus_assist: false

@@ -1,0 +1,88 @@
+# Nano Assistant — Configuração principal
+# Não guardar API keys neste ficheiro. Use NANO_API_KEY/GROQ_API_KEY no ambiente
+# ou configure-as no onboarding da aplicação.
+
+# ── LLM cloud ──────────────────────────────────────────────────────────────────
+groq_model: "llama-3.3-70b-versatile"
+
+# ── LLM local ─────────────────────────────────────────────────────────────────
+local:
+  enabled: true
+  model: "auto"                 # auto | qwen2.5:0.5b | qwen2.5:1.5b | qwen2.5:3b
+  url: "http://127.0.0.1:11434"
+  auto_download: false          # ativado pelo onboarding quando o utilizador pedir modo local
+  max_context: 4096
+
+# ── Memória persistente ────────────────────────────────────────────────────────
+memory:
+  history_messages: 20
+  max_history_chars: 8000
+  facts_enabled: true
+  rag_enabled: true
+  rag_results: 3
+  rag_max_chars: 1500
+
+# ── Voz ────────────────────────────────────────────────────────────────────────
+voice:
+  enabled: true
+  local_first: true
+  cloud_audio: false
+  listen_seconds: 7
+  session_timeout_seconds: 30
+  tts_enabled: true
+  tts_provider: "edge"
+  elevenlabs_voice_id: "RROBrqjHiRb8zmRgGV11"
+  openai_voice: "onyx"
+  openai_speed: 1.0
+  edge_voice: "pt-PT-DuarteNeural"
+  edge_rate: "-5%"
+  stt_provider: "auto"
+  whisper_model: "tiny"
+  whisper_compute_type: "int8"
+  whisper_device: "cpu"
+  stop_on_silence: true
+  silence_threshold: 500
+  wake_word:
+    enabled: true
+    provider: "openwakeword"
+    phrase: "Nano"
+    model_path: ""
+    keyword_path: ""
+    threshold: 0.7
+    cooldown_seconds: 2.0
+    backend: "auto"
+    framework: "onnx"
+    custom_verifier_model_path: ""
+
+# ── Funcionalidades opcionais ──────────────────────────────────────────────────
+iot:
+  webhook_url: ""
+  notification_webhook: ""
+
+reminders:
+  enabled: true
+
+calendar:
+  google_enabled: false
+
+monitor:
+  enabled: true
+  interval_seconds: 60
+  cpu_threshold: 90
+  ram_threshold: 90
+  disk_threshold: 90
+  battery_threshold: 15
+  alert_cooldown_minutes: 30
+
+organizer:
+  watch_downloads: true
+  auto_organize: false
+  cache_clean_day: "sunday"
+
+# ── UI ─────────────────────────────────────────────────────────────────────────
+# 0 = escolher uma porta livre automaticamente. Evita conflitos com outras apps.
+ui:
+  port: 0
+  width: 1440
+  height: 900
+  mode: "default"
