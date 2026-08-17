@@ -698,6 +698,12 @@ export default function Home() {
                 <h1 className="hero-title">Olá de novo, Simão</h1>
               </div>
 
+              <p className="hero-subtitle">
+                O teu assistente pessoal local-first. Privado, seguro e super-rápido.
+                <br />
+                Controla o teu computador com voz, texto e automações inteligentes.
+              </p>
+
               <div className="prompt-card">
                 <textarea
                   className="prompt-textarea"
