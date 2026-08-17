@@ -376,11 +376,11 @@ export default function Home() {
   };
 
   const quickPrompts = [
-    { label: "Código", prompt: "Escreve uma função Python para automatizar tarefas no Windows." },
+    { label: "Codigo", prompt: "Escreve uma funcao Python para automatizar tarefas no Windows." },
     { label: "Aprender", prompt: "Explica de forma concisa como funcionam os modelos de linguagem locais." },
-    { label: "Dia a dia", prompt: "Quais são as minhas tarefas e lembretes para hoje?" },
-    { label: "Escrever", prompt: "Redige um e-mail profissional e direto." },
-    { label: "Surpreende-me", prompt: "Dá-me uma sugestão de automação útil para o meu computador." },
+    { label: "Dia a dia", prompt: "Quais sao as minhas tarefas e lembretes para hoje?" },
+    { label: "Escrever", prompt: "Redige um email profissional e direto." },
+    { label: "Surpreende-me", prompt: "Da-me uma sugestao de automacao util para o meu computador." },
   ];
 
   return (
@@ -460,7 +460,7 @@ export default function Home() {
               <span className="brand-name">Nano</span>
             </div>
             {/* Settings trigger */}
-            <button className="sidebar-settings-btn" onClick={() => setSettingsVisible(true)}>⚙️</button>
+            <button className="sidebar-settings-btn" onClick={() => setSettingsVisible(true)}>⚙</button>
           </div>
 
           <div className="sidebar-nav-tabs">
