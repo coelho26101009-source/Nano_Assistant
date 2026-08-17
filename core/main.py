@@ -56,19 +56,19 @@ guardrails = GuardrailsEngine()
 memory = get_memory()
 voice = VoiceEngine(CONFIG.get("voice", {}))
 API_KEY = os.getenv("NANO_API_KEY") or os.getenv("HELIOS_API_KEY") or os.getenv("GROQ_API_KEY") or str(CONFIG.get("groq_api_key") or "")
-brain = Brain(api_key=API_KEY, guardrails=guardrails, memory=memory, config=CONFIG)
-brain.load_history()
-load_all_plugins(PLUGINS_DIR)
 
 # Agent-core foundations for Nano: queue, context, events and autonomous task planning.
 event_bus = EventBus()
 task_engine = TaskEngine()
-permission_manager = PermissionManager(confirmation_callback=lambda action_name, args: True)
+permission_manager = PermissionManager()
 context_engine = ContextEngine(memory, task_engine)
 agent_registry = AgentRegistry()
 agent_orchestrator = AgentOrchestrator(memory, task_engine=task_engine, event_bus=event_bus, context_engine=context_engine, permission_manager=permission_manager, agent_registry=agent_registry)
 tool_executor = ToolExecutor(permission_manager=permission_manager, event_bus=event_bus)
 background_worker = BackgroundTaskWorker(task_engine=task_engine, event_bus=event_bus, context_engine=context_engine, memory=memory, tool_executor=tool_executor, permission_manager=permission_manager)
+brain = Brain(api_key=API_KEY, guardrails=guardrails, memory=memory, config=CONFIG, permission_manager=permission_manager)
+brain.load_history()
+load_all_plugins(PLUGINS_DIR)
 voice_runtime = VoiceRuntime(
     voice,
     brain=brain,
@@ -81,7 +81,6 @@ voice_runtime = VoiceRuntime(
 
 wake_word: WakeWordEngine | None = None
 eel.init(str(FRONTEND_DIR) if FRONTEND_DIR.exists() else str(ROOT / "web"))
-guardrails.set_confirm_callback(guardrails.request_from_ui)
 
 _EVENT_LOOP: asyncio.AbstractEventLoop | None = None
 _EVENT_LOOP_THREAD: threading.Thread | None = None
@@ -104,6 +103,25 @@ def run_coro(coro):
     loop = _get_or_create_loop()
     future = asyncio.run_coroutine_threadsafe(coro, loop)
     return future.result()
+
+def _permission_confirmation_message(action_name: str, args: dict) -> str:
+    target = args.get("path") or args.get("target") or args.get("url") or args.get("command")
+    if target:
+        return f"O Nano pretende executar '{action_name}' sobre '{target}'. Confirmas?"
+    return f"O Nano pretende executar '{action_name}'. Confirmas?"
+
+def _permission_confirmation_callback(action_name: str, args: dict) -> bool:
+    """Bridge síncrono entre PermissionManager e confirmação humana na UI."""
+    message = _permission_confirmation_message(action_name, args or {})
+    meta = {"tool": action_name, "args": args or {}, "source": "permission_manager"}
+    try:
+        return bool(run_coro(guardrails.request_from_ui(message, meta)))
+    except Exception:
+        logger.exception("Falha na confirmação de permissão para '%s'", action_name)
+        return False
+
+permission_manager.confirmation_callback = _permission_confirmation_callback
+guardrails.set_confirm_callback(guardrails.request_from_ui)
 
 @eel.expose
 def send_message(user_text: str, msg_id: str | None = None) -> dict:
@@ -172,6 +190,15 @@ def set_permission_policy(capability: str, decision: str, scope: str = "workspac
     """Atualiza uma policy de permissão por capability."""
     if not capability:
         return {"ok": False, "error": "missing_capability"}
+    normalized_decision = str(decision).lower()
+    canonical = permission_manager._canonical_capability(capability)
+    if normalized_decision in {"allow", "allow_persistent", "autonomous"}:
+        if permission_manager.is_critical_capability(canonical):
+            return {"ok": False, "error": "critical_capability_requires_approval_gate"}
+        if permission_manager.is_approval_gated(canonical):
+            return {"ok": False, "error": "approval_gated_capability_cannot_be_autonomous"}
+    if normalized_decision in {"allow_persistent", "allow"}:
+        return {"ok": False, "error": "persistent_allow_disabled"}
     return {"ok": True, "policy": permission_manager.register_policy(capability, decision=decision, scope=scope, reason=reason or "User configured policy.")}
 
 @eel.expose
@@ -315,6 +342,14 @@ def get_task_detail(task_id: str) -> dict:
 @eel.expose
 def resolve_permission(request_id: str, decision: str) -> dict:
     """Responde a uma autorização pendente."""
+    if not request_id or not decision:
+        return {"ok": False, "error": "missing_request_or_decision"}
+    normalized = str(decision).lower()
+    if normalized in {"allow", "allow_persistent"}:
+        return {"ok": False, "error": "persistent_allow_disabled"}
+    pending = permission_manager.get_pending_permissions()
+    if not any(item.get("id") == request_id for item in pending):
+        return {"ok": False, "error": "request_not_found"}
     return permission_manager.resolve_permission(request_id, decision)
 
 @eel.expose
@@ -431,8 +466,11 @@ def _start_wake_word() -> None:
         return
     try:
         wake_word = WakeWordEngine(CONFIG.get("voice", {}).get("wake_word", {}), on_wake=_on_wake_word)
-        wake_word.start()
-        logger.info("Wake word started")
+        started = wake_word.start()
+        if started:
+            logger.info("Wake word started")
+        else:
+            logger.warning("Wake word not started: %s", wake_word.status().get("error") or "setup required")
     except Exception:
         logger.exception("Erro ao iniciar wake-word")
 

@@ -67,6 +67,31 @@ class ModelInfo:
     capability_states: dict[str, str] = field(default_factory=dict)
 
 
+def _normalize_capability_name(name: str) -> str:
+    return str(name).strip().lower().replace("-", "_")
+
+
+def _capability_state_from_value(value: Any) -> CapabilityState:
+    if value is True:
+        return CapabilityState.SUPPORTED
+    if value is False:
+        return CapabilityState.UNSUPPORTED
+    return CapabilityState.UNKNOWN
+
+
+def _states_to_bools(states: dict[str, str]) -> dict[str, bool | None]:
+    mapped: dict[str, bool | None] = {}
+    for key, value in states.items():
+        normalized = str(value).upper()
+        if normalized == CapabilityState.SUPPORTED.value:
+            mapped[key] = True
+        elif normalized == CapabilityState.UNSUPPORTED.value:
+            mapped[key] = False
+        else:
+            mapped[key] = None
+    return mapped
+
+
 @dataclass
 class ModelRequest:
     task_type: str | TaskType = TaskType.CHAT
@@ -124,88 +149,86 @@ class OllamaProvider(ModelProvider):
         self.base_url = base_url.rstrip("/")
         self.api_url = self.base_url + "/api"
 
-    def _capability_states(self, *, model_name: str, capabilities: Iterable[str], details: dict[str, Any] | None = None) -> dict[str, str]:
-        capability_names = {str(value).lower() for value in capabilities}
-        lower_name = model_name.lower()
-        details = details or {}
-        family = str(details.get("family") or "").lower()
-        families = [str(value).lower() for value in (details.get("families") or [])]
+    def _capability_states(self, *, raw_model: dict[str, Any]) -> dict[str, str]:
+        capabilities = {
+            _normalize_capability_name(value)
+            for value in (raw_model.get("capabilities") or [])
+            if value is not None
+        }
+        details = raw_model.get("details") or {}
+        model_info = raw_model.get("model_info") or {}
+        explicit_sources = (raw_model, details, model_info)
 
-        is_coder = "coder" in capability_names or "coding" in capability_names or any(token in lower_name for token in ("coder", "code")) or any(token in family for token in ("coder", "code")) or any(token in token_list for token_list in families for token in ("coder", "code"))
-        is_vision = "vision" in capability_names or any(token in lower_name for token in ("vision", "llava", "miniomni")) or any(token in family for token in ("vision", "llava")) or any(token in family_list for family_list in families for token in ("vision", "llava"))
-        is_reasoning = "thinking" in capability_names or "reasoning" in capability_names or any(token in lower_name for token in ("qwen3", "deepseek", "phi", "mistral", "llama3"))
-        has_tools = "tools" in capability_names or any(token in lower_name for token in ("qwen", "llama", "mistral", "phi", "deepseek"))
-        has_streaming = True
-        has_json = "json" in capability_names or "structured" in capability_names
+        def explicit_value(capability: str) -> CapabilityState:
+            normalized = _normalize_capability_name(capability)
+            for source in explicit_sources:
+                if not isinstance(source, dict):
+                    continue
+                for key in (
+                    f"supports_{normalized}",
+                    f"{normalized}_supported",
+                    f"support_{normalized}",
+                    f"{normalized}_support",
+                ):
+                    if key in source:
+                        return _capability_state_from_value(source.get(key))
+            if normalized in capabilities:
+                return CapabilityState.SUPPORTED
+            return CapabilityState.UNKNOWN
 
         states = {
-            "tools": CapabilityState.SUPPORTED if has_tools else CapabilityState.UNKNOWN,
-            "vision": CapabilityState.SUPPORTED if is_vision else CapabilityState.UNKNOWN,
-            "coding": CapabilityState.SUPPORTED if is_coder else CapabilityState.UNKNOWN,
-            "reasoning": CapabilityState.SUPPORTED if is_reasoning else CapabilityState.UNKNOWN,
-            "streaming": CapabilityState.SUPPORTED if has_streaming else CapabilityState.UNKNOWN,
-            "json": CapabilityState.SUPPORTED if has_json else CapabilityState.UNKNOWN,
+            "tools": explicit_value("tools"),
+            "vision": explicit_value("vision"),
+            "coding": explicit_value("coding"),
+            "reasoning": explicit_value("reasoning"),
+            "streaming": explicit_value("streaming"),
+            "json": explicit_value("json"),
         }
-        if "tool" in capability_names or "tools" in capability_names:
-            states["tools"] = CapabilityState.SUPPORTED
-        if "vision" in capability_names and "llava" not in capability_names:
-            states["vision"] = CapabilityState.SUPPORTED
-        if "coding" in capability_names or "coder" in capability_names:
-            states["coding"] = CapabilityState.SUPPORTED
-        if "thinking" in capability_names or "reasoning" in capability_names:
-            states["reasoning"] = CapabilityState.SUPPORTED
         return {key: value.value for key, value in states.items()}
 
     def _build_model_entry(self, raw_model: Any) -> ModelInfo:
         raw = raw_model or {}
         name = str(raw.get("name") or raw.get("model") or raw)
         details = raw.get("details") or {}
-        capabilities = [str(item).lower() for item in (raw.get("capabilities") or [])]
+        capability_states = self._capability_states(raw_model=raw)
+        capability_values = _states_to_bools(capability_states)
         metadata = {
             "source": "ollama_tags",
             "details": details,
-            "capabilities": capabilities,
+            "capabilities": [str(item).lower() for item in (raw.get("capabilities") or [])],
             "size": raw.get("size"),
             "modified_at": raw.get("modified_at"),
+            "discovery": raw,
         }
-        family = str((details.get("family") or "")).lower()
-        families = [str(item).lower() for item in (details.get("families") or [])]
         parameter_size = str(details.get("parameter_size") or "")
-        context_length = details.get("context_length") or 4096
-        lower_name = name.lower()
-        supports_vision = any(token in lower_name for token in ("vision", "llava", "miniomni")) or any(token in family for token in ("vision", "llava")) or any(token in families for token in ("vision", "llava"))
-        supports_coding = any(token in lower_name for token in ("coder", "code")) or any(token in family for token in ("coder", "code")) or any(token in families for token in ("coder", "code")) or "coding" in capabilities or "coder" in capabilities
-        supports_reasoning = "thinking" in capabilities or "reasoning" in capabilities or any(token in lower_name for token in ("qwen3", "deepseek", "phi", "mistral", "llama3")) or any(token in family for token in ("qwen3", "deepseek", "phi", "mistral", "llama3"))
-        supports_tools = "tools" in capabilities or any(token in lower_name for token in ("qwen", "llama", "mistral", "phi", "deepseek"))
-        supports_streaming = True
-        supports_json = "json" in capabilities or "structured" in capabilities
+        context_length = details.get("context_length") or raw.get("context_length") or 4096
         estimated_memory = 1.5
+        lower_name = name.lower()
         if any(token in lower_name for token in ("7b", "8b", "8b-instruct", "7b-instruct")):
             estimated_memory = 5.0
         elif any(token in lower_name for token in ("3b", "3b-instruct", "1.5b")):
             estimated_memory = 2.0
         elif any(token in lower_name for token in ("14b", "13b", "32b")):
             estimated_memory = 8.0
-        if supports_vision:
+        if capability_values.get("vision") is True:
             estimated_memory = max(estimated_memory, 4.5)
-        capability_states = self._capability_states(model_name=name, capabilities=capabilities, details=details)
         return ModelInfo(
             name=name,
             provider="ollama",
             context_window=int(context_length or 4096),
-            supports_tools=supports_tools,
-            supports_vision=supports_vision,
-            supports_coding=supports_coding,
-            supports_reasoning=supports_reasoning,
-            supports_streaming=supports_streaming,
-            supports_json=supports_json,
+            supports_tools=capability_values.get("tools"),
+            supports_vision=capability_values.get("vision"),
+            supports_coding=capability_values.get("coding"),
+            supports_reasoning=capability_values.get("reasoning"),
+            supports_streaming=capability_values.get("streaming"),
+            supports_json=capability_values.get("json"),
             local=True,
             estimated_memory=estimated_memory,
             speed_class="fast" if any(token in lower_name for token in ("3b", "1.5b")) else "balanced",
             quality_class="strong" if any(token in lower_name for token in ("7b", "8b", "14b", "32b")) else "balanced",
             online=True,
             health="online",
-            metadata={**metadata, "parameter_size": parameter_size, "family": family},
+            metadata={**metadata, "parameter_size": parameter_size},
             capability_states=capability_states,
         )
 
@@ -223,7 +246,7 @@ class OllamaProvider(ModelProvider):
                 entry = self._build_model_entry(model)
                 if entry.name:
                     discovered.append(entry)
-            self.online = bool(discovered)
+            self.online = True
             self._models = discovered
             return discovered
         except Exception:
@@ -233,7 +256,7 @@ class OllamaProvider(ModelProvider):
 
     async def health_check(self) -> dict[str, Any]:
         discovered = self.discover_models()
-        return {"provider": self.name, "health": "online" if discovered else "offline", "online": bool(discovered), "models": len(discovered)}
+        return {"provider": self.name, "health": "online" if self.online else "offline", "online": self.online, "models": len(discovered)}
 
     async def generate(self, request: ModelRequest, messages: list[dict[str, Any]], *, stream: bool = False, **kwargs):
         model_name = kwargs.get("model_name") or (self._models[0].name if self._models else "llama3.2")
@@ -252,6 +275,7 @@ class OllamaProvider(ModelProvider):
 
 
 class CloudProvider(ModelProvider):
+
     def __init__(self, api_key: str | None = None, default_model: str = "llama-3.3-70b-versatile"):
         super().__init__("cloud", online=bool(api_key))
         self.api_key = api_key or ""
@@ -361,7 +385,7 @@ class ModelRouter:
 
     def _capability_state(self, model: ModelInfo, capability: str) -> str:
         states = getattr(model, "capability_states", {}) or {}
-        key = str(capability).lower().replace("-", "_")
+        key = _normalize_capability_name(capability)
         if key in states:
             return str(states[key]).upper()
         mapping = {
@@ -397,26 +421,18 @@ class ModelRouter:
             state = self._capability_state(model, "tools")
             if state == CapabilityState.SUPPORTED.value:
                 score += self.routing_weights["capability"] * 3
-            elif state == CapabilityState.UNKNOWN.value:
-                score += 0.4
         if request.requires_vision:
             state = self._capability_state(model, "vision")
             if state == CapabilityState.SUPPORTED.value:
                 score += self.routing_weights["capability"] * 4
-            elif state == CapabilityState.UNKNOWN.value:
-                score += 0.5
         if request.requires_coding:
             state = self._capability_state(model, "coding")
             if state == CapabilityState.SUPPORTED.value:
                 score += self.routing_weights["capability"] * 4
-            elif state == CapabilityState.UNKNOWN.value:
-                score += 0.6
         if request.requires_reasoning:
             state = self._capability_state(model, "reasoning")
             if state == CapabilityState.SUPPORTED.value:
                 score += self.routing_weights["capability"] * 3
-            elif state == CapabilityState.UNKNOWN.value:
-                score += 0.5
         if request.task_type in {TaskType.CHAT, TaskType.SUMMARIZATION, TaskType.MEMORY}:
             score += self.routing_weights["latency"] * (1.5 if model.speed_class == "fast" else 0.8)
         if request.task_type in {TaskType.GENERAL_REASONING, TaskType.CODING}:
@@ -477,6 +493,8 @@ class ModelRouter:
                     "vision": self._capability_state(model, "vision"),
                     "coding": self._capability_state(model, "coding"),
                     "reasoning": self._capability_state(model, "reasoning"),
+                    "streaming": self._capability_state(model, "streaming"),
+                    "json": self._capability_state(model, "json"),
                 },
             })
         selection = self.select(request)

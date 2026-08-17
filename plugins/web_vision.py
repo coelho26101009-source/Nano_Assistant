@@ -8,11 +8,11 @@ private/link-local, file:// e outros esquemas não são aceites.
 
 import asyncio
 import base64
-import ipaddress
 import json
 import logging
-import socket
 from urllib.parse import parse_qs, quote_plus, urlparse
+
+from core.browser_agent import validate_public_http_url
 
 logger = logging.getLogger("helios.plugins.web_vision")
 
@@ -51,35 +51,19 @@ def _is_tracker(url: str) -> bool:
     return any(b in url for b in ["google-analytics", "doubleclick", "facebook.net", "hotjar", "clarity.ms", "googletagmanager"])
 
 
-def _is_public_host(host: str) -> bool:
-    if not host:
-        return False
-    if host.lower() in {"localhost", "localhost.localdomain"} or host.endswith(".local"):
-        return False
-    try:
-        addresses = {info[4][0] for info in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)}
-    except socket.gaierror:
-        return False
-    for address in addresses:
-        try:
-            ip = ipaddress.ip_address(address)
-        except ValueError:
-            return False
-        if not ip.is_global:
-            return False
-    return True
-
-
 async def _validate_url(url: str) -> tuple[bool, str]:
     try:
         parsed = urlparse(str(url).strip())
-        if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        ok, error = validate_public_http_url(parsed.geturl())
+        if ok:
+            return True, ""
+        if error in {"invalid_scheme", "invalid_url"}:
             return False, "Apenas URLs HTTP/HTTPS públicas são permitidas."
-        if parsed.username or parsed.password:
+        if error in {"credentials_not_allowed"}:
             return False, "URLs com credenciais embutidas não são permitidas."
-        if not _is_public_host(parsed.hostname):
+        if error in {"unresolvable_host", "private_or_reserved_destination"}:
             return False, "O destino não é um endereço público permitido."
-        return True, ""
+        return False, "URL inválida."
     except Exception:
         return False, "URL inválida."
 

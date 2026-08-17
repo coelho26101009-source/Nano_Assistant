@@ -35,8 +35,11 @@ def test_config_normalizes_legacy_wake_word_settings():
 
 
 def test_wake_word_engine_requires_live_keyword_model():
-    engine = WakeWordEngine({"enabled": True, "phrase": "Nano"}, lambda: None)
+    calls = []
+    engine = WakeWordEngine({"enabled": True, "phrase": "Nano"}, lambda: calls.append("wake"))
     assert engine.start() is False
+    assert calls == []
+    assert engine.status()["model_status"] in {"MISSING", "INVALID", "LOAD_ERROR"}
     assert "No live wake-word model configured" in (engine.last_error or "")
 
 
@@ -203,9 +206,10 @@ def test_permission_manager_tracks_pending_requests_and_task_scope():
     request_id = manager.request_permission("filesystem.delete", {"path": "C:/tmp/example_delete_me.txt"}, task_id="task-42", reason="Delete obsolete file", target="C:/tmp/example_delete_me.txt")
     assert request_id
     assert manager.get_pending_permissions()[0]["action"] == "filesystem.delete"
-    resolved = manager.resolve_permission(request_id, "allow_for_task")
+    resolved = manager.resolve_permission(request_id, "allow_once")
     assert resolved["ok"] is True
     assert manager.get_pending_permissions() == []
+    assert manager.ask_for_confirmation("filesystem.delete", {"path": "C:/tmp/example_delete_me.txt"}, task_id="task-42") is True
 
 
 def test_agent_registry_selects_specialized_agents_for_supported_tasks():
@@ -228,8 +232,8 @@ def test_task_engine_status_summary_and_event_history_are_real(tmp_path):
 def test_permission_manager_persists_custom_policy_state(tmp_path):
     manager = PermissionManager(policy_store_path=tmp_path / "permissions.json")
     policy = manager.register_policy("shell.execute", decision="allow", scope="workspace", reason="Trusted local shell usage.")
-    assert policy["decision"] == "allow"
-    assert manager.get_decision_for_action("shell.execute") == "allow"
+    assert policy["decision"] == "approval_required"
+    assert manager.get_decision_for_action("shell.execute", {"command": "echo hello"}) == "ask"
     assert manager.list_policies()
 
 
@@ -431,9 +435,71 @@ def test_voice_provider_interfaces_are_registered_and_graceful_when_unavailable(
     wake = LocalWakeWordProvider({"enabled": False, "phrase": "Nano"})
     assert wake.status()["phrase"] == "nano"
     assert wake.status()["enabled"] is False
+    assert "model_status" in wake.status()
 
 
-def test_voice_runtime_routes_quick_commands_and_long_tasks_through_nano_core():
+def test_voice_engine_does_not_fake_wake_word_start_success():
+    from core.voice import VoiceEngine, VoiceSessionState
+
+    engine = VoiceEngine({"enabled": True, "wake_word": {"enabled": True, "phrase": "Nano"}})
+
+    class FailingWakeWordProvider:
+        def start(self, callback=None):
+            return False
+
+        def status(self):
+            return {"error": "No live wake-word model configured."}
+
+        def stop(self):
+            pass
+
+    engine.wake_word_provider = FailingWakeWordProvider()
+
+    assert engine.start_wake_word() is False
+    assert engine.session.status()["state"] == VoiceSessionState.ERROR.value
+
+
+def test_local_stt_uses_real_tempfile_and_cleans_up(monkeypatch, tmp_path):
+    import sys
+    import tempfile
+
+    from core.voice import LocalSTTProvider
+
+    class FakeModel:
+        seen_paths = []
+
+        def transcribe(self, path, language=None, vad_filter=None):
+            self.seen_paths.append(path)
+            assert path.endswith(".wav")
+            return ([type("Seg", (), {"text": "olá"})()], None)
+
+    class FakeWhisperModule:
+        WhisperModel = lambda *args, **kwargs: FakeModel()
+
+    monkeypatch.setattr("importlib.util.find_spec", lambda name: True if name == "faster_whisper" else None)
+    monkeypatch.setitem(sys.modules, "faster_whisper", FakeWhisperModule())
+
+    created_paths = []
+    real_named_tempfile = tempfile.NamedTemporaryFile
+
+    def tracked_named_tempfile(*args, **kwargs):
+        handle = real_named_tempfile(*args, **kwargs)
+        created_paths.append(handle.name)
+        return handle
+
+    monkeypatch.setattr(tempfile, "NamedTemporaryFile", tracked_named_tempfile)
+
+    provider = LocalSTTProvider({"language": "pt-PT", "model": "tiny", "device": "cpu", "compute_type": "int8"})
+    result = provider.transcribe(b"RIFF....fakewav")
+
+    assert result.ok is True
+    assert result.text == "olá"
+    assert created_paths
+    for path in created_paths:
+        assert not Path(path).exists()
+
+
+def test_voice_runtime_routes_quick_commands_and_long_tasks_through_nano_core(tmp_path):
     from core.agent_orchestrator import AgentOrchestrator
     from core.brain import Brain
     from core.guardrails import GuardrailsEngine
@@ -443,7 +509,7 @@ def test_voice_runtime_routes_quick_commands_and_long_tasks_through_nano_core():
     from core.voice import VoiceEngine, VoiceRuntime
 
     memory = MemoryEngine()
-    task_engine = TaskEngine()
+    task_engine = TaskEngine(db_path=tmp_path / "voice_runtime_tasks.db")
     permission_manager = PermissionManager(confirmation_callback=lambda *_: True)
     orchestrator = AgentOrchestrator(memory, task_engine=task_engine, permission_manager=permission_manager)
     brain = Brain("", GuardrailsEngine(), memory, {"ollama_enabled": False, "local": {"enabled": False}})
@@ -514,78 +580,70 @@ def test_voice_diagnostics_model_router_and_config_validations():
     assert report["voice_system"] in {"READY FOR LIVE TEST", "SETUP REQUIRED", "NOT AVAILABLE"}
 
 
-def test_ollama_provider_discovers_real_local_models_and_capabilities():
-    import pytest
-
+def test_ollama_provider_uses_explicit_metadata_and_does_not_infer_capabilities(monkeypatch):
+    from core import model_router as model_router_module
     from core.model_router import OllamaProvider
+
+    class FakeResponse:
+        is_success = True
+        content = b"{}"
+
+        def json(self):
+            return {
+                "models": [
+                    {
+                        "name": "mystery:latest",
+                        "details": {"context_length": 2048},
+                        "size": 123,
+                    },
+                    {
+                        "name": "explicit:latest",
+                        "details": {"context_length": 4096},
+                        "capabilities": ["tools", "json"],
+                        "supports_coding": False,
+                    },
+                ]
+            }
+
+    monkeypatch.setattr(model_router_module.httpx, "get", lambda *args, **kwargs: FakeResponse())
 
     provider = OllamaProvider("http://127.0.0.1:11434")
     models = provider.discover_models()
-    if not models:
-        pytest.skip("Ollama local models are not available in this environment")
 
-    names = {model.name for model in models}
-    assert "qwen2.5-coder:3b" in names
-    assert "qwen3:8b" in names
+    assert provider.online is True
+    assert len(models) == 2
 
-    coder = next(model for model in models if model.name == "qwen2.5-coder:3b")
-    qwen3 = next(model for model in models if model.name == "qwen3:8b")
+    mystery = next(model for model in models if model.name == "mystery:latest")
+    explicit = next(model for model in models if model.name == "explicit:latest")
 
-    assert coder.capability_states["coding"] == "SUPPORTED"
-    assert coder.capability_states["tools"] == "SUPPORTED"
-    assert qwen3.capability_states["reasoning"] == "SUPPORTED"
-    assert qwen3.capability_states["tools"] == "SUPPORTED"
-
-
-def test_model_router_selects_real_chat_and_coding_models_from_ollama():
-    import pytest
-
-    from core.model_router import ModelRouter, PrivacyLevel, TaskType
-
-    router = ModelRouter({
-        "local": {"url": "http://127.0.0.1:11434"},
-        "groq_api_key": "",
-        "model_router": {
-            "enabled": True,
-            "local_first": True,
-            "routing": {"capability_weight": 4.0, "quality_weight": 2.5, "speed_weight": 2.0, "privacy_weight": 4.0, "context_weight": 1.5, "resource_weight": 1.5},
-        },
-    })
-    if not router.models():
-        pytest.skip("Ollama not reachable, so live router selection is unavailable")
-
-    chat = router.select({"task_type": TaskType.CHAT, "privacy_level": PrivacyLevel.NORMAL, "local_only": True})
-    coding = router.select({"task_type": TaskType.CODING, "privacy_level": PrivacyLevel.NORMAL, "requires_coding": True, "requires_tools": True, "local_only": True})
-
-    assert chat["provider"] == "ollama"
-    assert chat["model"] in {"qwen2.5-coder:3b", "qwen3:8b"}
-    assert coding["provider"] == "ollama"
-    assert coding["model"] == "qwen2.5-coder:3b"
-
-    explanation = router.explain_selection({"task_type": TaskType.CHAT, "privacy_level": PrivacyLevel.NORMAL, "local_only": True})
-    assert explanation["selected"] == chat["model"]
+    assert mystery.capability_states["tools"] == "UNKNOWN"
+    assert mystery.supports_tools is None
+    assert explicit.capability_states["tools"] == "SUPPORTED"
+    assert explicit.capability_states["json"] == "SUPPORTED"
+    assert explicit.capability_states["coding"] == "UNSUPPORTED"
+    assert explicit.supports_coding is False
 
 
-def test_model_router_generates_real_response_with_local_ollama_model():
-    import asyncio
-    import pytest
+def test_model_router_requires_explicit_capabilities_for_selection():
+    from core.model_router import ModelInfo, ModelProvider, ModelRequest, ModelRouter, TaskType
 
-    from core.model_router import ModelRouter, ModelRequest, PrivacyLevel, TaskType
+    router = ModelRouter({"local": {"url": "http://127.0.0.1:11434"}, "groq_api_key": "", "model_router": {"enabled": True, "local_first": True}})
+    provider = ModelProvider("ollama")
+    provider._models = [
+        ModelInfo(
+            "mystery:latest",
+            "ollama",
+            context_window=4096,
+            local=True,
+            estimated_memory=1.0,
+            speed_class="fast",
+            quality_class="balanced",
+            capability_states={"tools": "UNKNOWN", "vision": "UNKNOWN", "coding": "UNKNOWN", "reasoning": "UNKNOWN", "streaming": "UNKNOWN", "json": "UNKNOWN"},
+        )
+    ]
+    router.providers = [provider]
+    router.registry = __import__("core.model_router", fromlist=["ModelRegistry"]).ModelRegistry(router.providers)
 
-    router = ModelRouter({
-        "local": {"url": "http://127.0.0.1:11434"},
-        "groq_api_key": "",
-        "model_router": {
-            "enabled": True,
-            "local_first": True,
-            "routing": {"capability_weight": 4.0, "quality_weight": 2.5, "speed_weight": 2.0, "privacy_weight": 4.0, "context_weight": 1.5, "resource_weight": 1.5},
-        },
-    })
-    if not router.models():
-        pytest.skip("Ollama live model generation is unavailable in this environment")
-
-    request = ModelRequest(task_type=TaskType.CHAT, privacy_level=PrivacyLevel.STRICT_LOCAL, local_only=True, context_size=2048)
-    payload = asyncio.run(router.generate(request, [{"role": "user", "content": "Responde em 5 palavras: ola Nano"}]))
-    assert payload["model"]
-    assert payload["message"]["role"] == "assistant"
-    assert payload["done"] is True
+    selection = router.select(ModelRequest(task_type=TaskType.CODING, requires_coding=True, requires_tools=True, local_only=True))
+    assert selection["provider"] == "none"
+    assert selection["model"] is None

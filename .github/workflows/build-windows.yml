@@ -105,11 +105,22 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $expectedPaths = @(
+            'electron/dist-electron/*.exe'
+            'electron/dist-electron/*.msi'
+          )
           $artifacts = @(
             Get-ChildItem -Path 'electron/dist-electron' -Filter '*.exe' -File -ErrorAction SilentlyContinue
             Get-ChildItem -Path 'electron/dist-electron' -Filter '*.msi' -File -ErrorAction SilentlyContinue
           )
           if ($artifacts.Count -eq 0) { throw 'No .exe or .msi installer artifacts were produced.' }
+          $actualPaths = @($artifacts | ForEach-Object { $_.FullName.Replace($env:GITHUB_WORKSPACE + '\', '').Replace('\', '/') })
+          if (($actualPaths | Sort-Object) -join ';' -ne ($expectedPaths | Sort-Object) -join ';') {
+            throw "Artifact discovery does not match publish paths: $($actualPaths -join ', ')"
+          }
+          if (($expectedPaths | Sort-Object) -join ';' -ne ('electron/dist-electron/*.exe;electron/dist-electron/*.msi')) {
+            throw 'Publish paths are not aligned with verified artifact paths.'
+          }
           foreach ($artifact in $artifacts) { Write-Host "Installer artifact: $($artifact.FullName) ($($artifact.Length) bytes)" }
 
       - name: Upload installers
@@ -126,5 +137,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist-electron/*.exe
-            dist-electron/*.msi
+            electron/dist-electron/*.exe
+            electron/dist-electron/*.msi

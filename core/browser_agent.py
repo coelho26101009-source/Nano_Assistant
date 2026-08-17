@@ -1,9 +1,58 @@
 """Browser agent primitives for public web navigation and research."""
 from __future__ import annotations
 
+import ipaddress
+import socket
 from urllib.parse import quote_plus
+from urllib.parse import urlparse
 
 import httpx
+
+
+def validate_public_http_url(url: str) -> tuple[bool, str]:
+    raw = str(url or "").strip()
+    if not raw:
+        return False, "url_required"
+    try:
+        parsed = urlparse(raw)
+    except Exception:
+        return False, "invalid_url"
+    if parsed.scheme.lower() not in {"http", "https"}:
+        return False, "invalid_scheme"
+    if not parsed.hostname:
+        return False, "invalid_url"
+    if parsed.username or parsed.password:
+        return False, "credentials_not_allowed"
+
+    host = parsed.hostname.strip()
+    try:
+        resolved_hosts = {
+            info[4][0]
+            for info in socket.getaddrinfo(host, parsed.port or None, type=socket.SOCK_STREAM)
+        }
+    except socket.gaierror:
+        return False, "unresolvable_host"
+    except Exception:
+        return False, "invalid_url"
+
+    if not resolved_hosts:
+        return False, "unresolvable_host"
+
+    for resolved in resolved_hosts:
+        try:
+            ip = ipaddress.ip_address(resolved)
+        except ValueError:
+            return False, "invalid_ip"
+        if (
+            ip.is_loopback
+            or ip.is_private
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            return False, "private_or_reserved_destination"
+    return True, ""
 
 
 class BrowserProvider:
@@ -60,8 +109,9 @@ def search_web(query: str, engine: str = "duckduckgo") -> dict:
 
 
 def fetch_url(url: str) -> dict:
-    if not url:
-        return {"success": False, "error": "url_required"}
+    ok, error = validate_public_http_url(url)
+    if not ok:
+        return {"success": False, "error": error}
     try:
         response = httpx.get(url, timeout=20)
         response.raise_for_status()

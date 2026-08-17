@@ -20,6 +20,33 @@ class PermissionDecision:
     reason: str
 
 
+# Capabilities that always require explicit confirmation per execution.
+_APPROVAL_GATED_CAPABILITIES = frozenset({
+    "filesystem.delete",
+    "filesystem.write",
+    "process.kill",
+    "process.start",
+    "git.destructive",
+    "git.write",
+    "financial.transaction",
+    "credential.write",
+    "shell.execute",
+    "external.send",
+    "browser.submit",
+    "browser.interact",
+    "system",
+})
+
+# Critical capabilities: never allow persistent/autonomous bypass.
+_CRITICAL_CAPABILITIES = frozenset({
+    "filesystem.delete",
+    "process.kill",
+    "git.destructive",
+    "financial.transaction",
+    "credential.write",
+})
+
+
 class PermissionManager:
     """Centralized safety authority for all Nano permissions and policy decisions."""
 
@@ -31,9 +58,11 @@ class PermissionManager:
     ):
         self.confirmation_callback = confirmation_callback
         self.policy_engine = PolicyEngine(autonomy_mode=autonomy_mode)
-        self._policies: dict[str, dict[str, Any]] = self.policy_engine.get_rules()
+        self._policies: dict[str, dict[str, Any]] = {}
         self._pending_requests: dict[str, dict[str, Any]] = {}
         self._audit_log: list[dict[str, Any]] = []
+        self._once_grants: set[tuple[str, str]] = set()
+        self._task_grants: dict[str, set[str]] = {}
         self._policy_store_path = Path(policy_store_path) if policy_store_path else DATA_DIR / "permission_policies.json"
         self._policy_store_path.parent.mkdir(parents=True, exist_ok=True)
         self._register_default_policies()
@@ -45,6 +74,77 @@ class PermissionManager:
 
     def _canonical_capability(self, action_name: str) -> str:
         return self.policy_engine.canonical_capability(action_name)
+
+    def is_approval_gated(self, capability: str) -> bool:
+        return self._canonical_capability(capability) in _APPROVAL_GATED_CAPABILITIES
+
+    def is_critical_capability(self, capability: str) -> bool:
+        return self._canonical_capability(capability) in _CRITICAL_CAPABILITIES
+
+    def resolve_tool_capability(self, tool_name: str, args: dict | None = None) -> str:
+        """Map a plugin/tool name to the canonical policy capability."""
+        args = args or {}
+        if tool_name == "system_files":
+            operation = str(args.get("operation", "")).lower()
+            if operation in {"delete", "remove", "unlink", "rmdir"}:
+                return "filesystem.delete"
+            if operation in {"read", "list"}:
+                return "filesystem.read"
+            return "filesystem.write"
+        return self._canonical_capability(tool_name)
+
+    def _resolve_target(self, args: dict | None) -> str | None:
+        args = args or {}
+        for key in ("path", "target", "url", "command", "cwd"):
+            value = args.get(key)
+            if value not in (None, ""):
+                return str(value)
+        return None
+
+    def _grant_key(self, capability: str, args: dict | None) -> tuple[str, str]:
+        target = self._resolve_target(args) or "*"
+        return (self._canonical_capability(capability), target)
+
+    def _has_execution_grant(self, capability: str, args: dict | None = None, *, task_id: str | None = None) -> bool:
+        key = self._grant_key(capability, args)
+        if key in self._once_grants:
+            return True
+        return self._has_task_execution_grant(capability, task_id=task_id)
+
+    def _has_task_execution_grant(self, capability: str, *, task_id: str | None = None) -> bool:
+        canonical = self._canonical_capability(capability)
+        if task_id and canonical in self._task_grants.get(task_id, set()):
+            return True
+        return False
+
+    def _consume_execution_grant(self, capability: str, args: dict | None = None, *, task_id: str | None = None) -> bool:
+        key = self._grant_key(capability, args)
+        if key in self._once_grants:
+            self._once_grants.discard(key)
+            self.log_decision(
+                self._canonical_capability(capability),
+                "allow_once",
+                risk=self.classify_action(capability, args),
+                target=self._resolve_target(args),
+                task_id=task_id,
+                reason="One-shot permission grant consumed.",
+                event_name="PermissionConsumed",
+            )
+            return True
+        if self._has_task_execution_grant(capability, task_id=task_id):
+            return True
+        return False
+
+    def _sanitize_stored_decision(self, capability: str, decision: str) -> str:
+        normalized = self._canonical_capability(capability)
+        decision_lower = str(decision).lower()
+        if decision_lower in {"deny", "blocked"}:
+            return decision_lower
+        if normalized in _CRITICAL_CAPABILITIES and decision_lower in {"allow", "allow_persistent", "allow_once", "allow_for_task"}:
+            return "approval_required"
+        if normalized in _APPROVAL_GATED_CAPABILITIES and decision_lower in {"allow", "allow_persistent"}:
+            return "approval_required"
+        return decision_lower
 
     def log_decision(self, action_name: str, decision: str, *, risk: str | RiskLevel | None = None, target: str | None = None, task_id: str | None = None, reason: str | None = None, event_name: str | None = None) -> dict:
         payload = {
@@ -92,7 +192,7 @@ class PermissionManager:
             "credential.write": {"risk": RiskLevel.CRITICAL, "default": "deny", "requires_confirmation": True, "decision": "APPROVAL_REQUIRED", "scope": "system", "description": "Write credentials or secrets."},
         }
         for capability, config in default_policies.items():
-            self.register_policy(capability, **config)
+            self.register_policy(capability, **config, persist=False)
 
     def _load_policy_store(self) -> None:
         if not self._policy_store_path.exists():
@@ -101,12 +201,20 @@ class PermissionManager:
             raw = json.loads(self._policy_store_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return
-        if isinstance(raw, dict):
-            for capability, details in raw.items():
-                if isinstance(details, dict):
-                    policy = {"decision": details.get("decision", "AUTONOMOUS"), "scope": details.get("scope", "current_workspace"), "risk": details.get("risk", RiskLevel.LOW.value), "reason": details.get("reason", "")}
-                    self.policy_engine.register_rule(capability, **policy)
-                    self._policies[capability] = policy
+        if not isinstance(raw, dict):
+            return
+        for capability, details in raw.items():
+            if not isinstance(details, dict):
+                continue
+            sanitized = self._sanitize_stored_decision(capability, details.get("decision", "AUTONOMOUS"))
+            self.register_policy(
+                capability,
+                decision=sanitized,
+                scope=details.get("scope", "current_workspace"),
+                risk=details.get("risk", RiskLevel.LOW.value),
+                reason=details.get("reason", ""),
+                persist=False,
+            )
 
     def _save_policy_store(self) -> None:
         payload = {
@@ -120,11 +228,27 @@ class PermissionManager:
         }
         self._policy_store_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    def register_policy(self, capability: str, *, risk: RiskLevel | str = RiskLevel.LOW, default: str = "allow", requires_confirmation: bool = False, description: str = "", decision: str | None = None, scope: str = "workspace", reason: str | None = None, created_at: str | None = None, expires_at: str | None = None) -> dict:
+    def register_policy(
+        self,
+        capability: str,
+        *,
+        risk: RiskLevel | str = RiskLevel.LOW,
+        default: str = "allow",
+        requires_confirmation: bool = False,
+        description: str = "",
+        decision: str | None = None,
+        scope: str = "workspace",
+        reason: str | None = None,
+        created_at: str | None = None,
+        expires_at: str | None = None,
+        persist: bool = True,
+    ) -> dict:
         normalized = self._canonical_capability(capability)
-        stored_decision = str(decision or default)
+        stored_decision = self._sanitize_stored_decision(normalized, str(decision or default))
         decision_value = stored_decision.upper()
-        if decision_value in {"ALLOW", "ALLOW_ONCE", "ALLOW_FOR_TASK", "ALLOW_PERSISTENT"}:
+        if normalized in _APPROVAL_GATED_CAPABILITIES:
+            engine_decision = "APPROVAL_REQUIRED"
+        elif decision_value in {"ALLOW", "ALLOW_ONCE", "ALLOW_FOR_TASK", "ALLOW_PERSISTENT", "AUTONOMOUS"}:
             engine_decision = "AUTONOMOUS"
         elif decision_value in {"ASK", "APPROVAL_REQUIRED"}:
             engine_decision = "APPROVAL_REQUIRED"
@@ -137,15 +261,22 @@ class PermissionManager:
             "default": default,
             "decision": stored_decision,
             "scope": scope,
-            "requires_confirmation": bool(requires_confirmation),
+            "requires_confirmation": bool(requires_confirmation or normalized in _APPROVAL_GATED_CAPABILITIES),
             "description": description,
             "reason": reason or description,
             "created_at": created_at or self._now_iso(),
             "expires_at": expires_at,
             "last_used_at": None,
         }
-        self.policy_engine.register_rule(normalized, decision=engine_decision, risk=self._policies[normalized]["risk"], scope=scope, reason=reason or description)
-        self._save_policy_store()
+        self.policy_engine.register_rule(
+            normalized,
+            decision=engine_decision,
+            risk=self._policies[normalized]["risk"],
+            scope=scope,
+            reason=reason or description,
+        )
+        if persist:
+            self._save_policy_store()
         return self._policies[normalized]
 
     def get_policy(self, capability: str) -> dict[str, Any] | None:
@@ -178,18 +309,21 @@ class PermissionManager:
         if self.is_emergency_stopped():
             return "deny"
         policy_name = self._canonical_capability(action_name)
-        if policy_name in self._policies:
-            decision = str(self._policies[policy_name].get("decision", self._policies[policy_name].get("default", "allow"))).lower()
-            if decision in {"allow", "allow_once", "allow_for_task", "allow_persistent"}:
-                return "allow"
-            if decision in {"deny", "blocked"}:
-                return "deny"
-            if decision in {"ask", "approval_required"}:
-                return "ask"
-        evaluation = self.policy_engine.evaluate(policy_name, target=(args or {}).get("path") or (args or {}).get("target") or (args or {}).get("url") or (args or {}).get("cwd"), arguments=args or {})
+        target = self._resolve_target(args)
+        evaluation = self.policy_engine.evaluate(policy_name, target=target, arguments=args or {})
         if evaluation.decision == AuthorityDecision.BLOCKED:
             return "deny"
-        if evaluation.decision == AuthorityDecision.APPROVAL_REQUIRED:
+        stored = self._policies.get(policy_name, {})
+        stored_decision = str(stored.get("decision", stored.get("default", "ask"))).lower()
+        if stored_decision in {"deny", "blocked"}:
+            return "deny"
+        if evaluation.decision == AuthorityDecision.APPROVAL_REQUIRED or policy_name in _APPROVAL_GATED_CAPABILITIES:
+            # ALLOW_ONCE is intentionally not an evaluated authorization: only
+            # ask_for_confirmation() may consume it for a real execution.
+            if self._has_task_execution_grant(policy_name, task_id=(args or {}).get("_task_id")):
+                return "allow"
+            return "ask"
+        if stored_decision in {"ask", "approval_required"}:
             return "ask"
         return "allow"
 
@@ -208,62 +342,79 @@ class PermissionManager:
             return RiskLevel.MEDIUM
         return RiskLevel.LOW
 
-    def evaluate(self, action_name: str, args: dict | None = None) -> PermissionDecision:
-        target = (args or {}).get("path") or (args or {}).get("target") or (args or {}).get("url")
-        evaluation = self.policy_engine.evaluate(self._canonical_capability(action_name), target=target, arguments=args or {})
+    def evaluate(self, action_name: str, args: dict | None = None, *, task_id: str | None = None) -> PermissionDecision:
+        target = self._resolve_target(args)
+        policy_name = self._canonical_capability(action_name)
+        evaluation = self.policy_engine.evaluate(policy_name, target=target, arguments=args or {}, task_id=task_id)
         if evaluation.decision == AuthorityDecision.BLOCKED:
             return PermissionDecision(False, True, evaluation.risk, evaluation.reason)
-        if evaluation.decision == AuthorityDecision.APPROVAL_REQUIRED:
+        if evaluation.decision == AuthorityDecision.APPROVAL_REQUIRED or policy_name in _APPROVAL_GATED_CAPABILITIES:
+            # A one-shot grant must remain pending until confirmation consumes it.
+            # Task grants are reusable, but only for their matching task id.
+            if self._has_task_execution_grant(policy_name, task_id=task_id):
+                return PermissionDecision(True, False, evaluation.risk, "Explicit task grant present.")
             return PermissionDecision(False, True, evaluation.risk, evaluation.reason)
         return PermissionDecision(True, False, evaluation.risk, evaluation.reason)
 
     def request_permission(self, action_name: str, args: dict | None = None, *, task_id: str | None = None, reason: str | None = None, target: str | None = None, agent: str | None = None, tool: str | None = None) -> str:
         request_id = uuid.uuid4().hex
+        canonical = self.resolve_tool_capability(tool_name=tool or action_name, args=args)
         request = self.policy_engine.permission_request(
             task_id=task_id,
             agent=agent,
             tool=tool or action_name,
-            capability=action_name,
-            risk=self.classify_action(action_name, args),
-            target=target or (args or {}).get("path") or (args or {}).get("target") or (args or {}).get("url") or "-",
+            capability=canonical,
+            risk=self.classify_action(canonical, args),
+            target=target or self._resolve_target(args) or "-",
             scope=(args or {}).get("scope"),
             reason=reason or "Requested by current task.",
         )
         request["id"] = request_id
-        request["action"] = action_name
+        request["action"] = canonical
         request["args"] = args or {}
         request["status"] = "pending"
         self._pending_requests[request_id] = request
-        self.log_decision(action_name, "PermissionRequested", risk=request.get("risk"), target=request.get("target"), task_id=task_id, reason=request.get("reason"), event_name="PermissionRequested")
+        self.log_decision(canonical, "PermissionRequested", risk=request.get("risk"), target=request.get("target"), task_id=task_id, reason=request.get("reason"), event_name="PermissionRequested")
         return request_id
 
     def resolve_permission(self, request_id: str, decision: str, *, allow_permanent: bool = False) -> dict:
         request = self._pending_requests.get(request_id)
         if not request:
             return {"ok": False, "error": "request_not_found"}
+        if request.get("status") != "pending":
+            return {"ok": False, "error": "request_not_pending"}
+
         normalized = str(decision).lower()
         if normalized not in {"allow_once", "allow_for_task", "allow_persistent", "allow", "deny"}:
             return {"ok": False, "error": "invalid_decision"}
 
-        decision_name = normalized.upper()
-        if decision_name == "ALLOW_PERSISTENT" and self.classify_action(request["action"], request.get("args")) in {RiskLevel.CRITICAL, RiskLevel.HIGH}:
+        capability = self._canonical_capability(request["action"])
+        request_args = request.get("args") or {}
+        request_task_id = request.get("task_id")
+        risk = self.classify_action(capability, request_args)
+
+        if normalized in {"allow_persistent", "allow"}:
+            return {"ok": False, "error": "persistent_allow_disabled"}
+        if capability in _CRITICAL_CAPABILITIES and normalized == "allow_for_task":
             return {"ok": False, "error": "critical_requires_explicit_confirmation"}
 
         request["status"] = "resolved"
         request["decision"] = normalized
-        request["allow_permanent"] = bool(allow_permanent and normalized in {"allow", "allow_persistent"})
+        request["allow_permanent"] = False
 
-        if normalized in {"allow", "allow_persistent"}:
-            self.register_policy(request["action"], decision="allow", scope="global", reason=request.get("reason") or "User approved permanently.")
+        if normalized == "allow_once":
+            self._once_grants.add(self._grant_key(capability, request_args))
         elif normalized == "allow_for_task":
-            self.register_policy(request["action"], decision="allow", scope=f"task:{request.get('task_id') or 'unknown'}", reason=request.get("reason") or "User approved for this task.")
+            if not request_task_id:
+                return {"ok": False, "error": "task_id_required"}
+            self._task_grants.setdefault(str(request_task_id), set()).add(capability)
 
         self.log_decision(
-            request["action"],
+            capability,
             normalized,
-            risk=request.get("risk"),
+            risk=risk,
             target=request.get("target"),
-            task_id=request.get("task_id"),
+            task_id=request_task_id,
             reason=request.get("reason"),
             event_name="PermissionGranted" if normalized != "deny" else "PermissionDenied",
         )
@@ -273,16 +424,31 @@ class PermissionManager:
     def get_pending_permissions(self) -> list[dict[str, Any]]:
         return list(self._pending_requests.values())
 
-    def ask_for_confirmation(self, action_name: str, args: dict | None = None) -> bool:
+    def ask_for_confirmation(self, action_name: str, args: dict | None = None, *, task_id: str | None = None) -> bool:
         if self.is_emergency_stopped():
             return False
+
+        args = dict(args or {})
+        if task_id:
+            args["_task_id"] = task_id
+
+        decision = self.evaluate(action_name, args, task_id=task_id)
+        if decision.allowed and not decision.requires_confirmation:
+            return True
+        if not decision.requires_confirmation:
+            return decision.allowed
+
+        if self._consume_execution_grant(action_name, args, task_id=task_id):
+            return True
+
         if self.confirmation_callback is None:
             return False
-        decision = self.evaluate(action_name, args)
-        if not decision.requires_confirmation:
-            return True
-        return bool(self.confirmation_callback(action_name, args or {}))
+        return bool(self.confirmation_callback(action_name, args))
 
-    def is_blocked(self, action_name: str, args: dict | None = None) -> bool:
-        decision = self.evaluate(action_name, args)
-        return decision.allowed is False or decision.requires_confirmation and not self.ask_for_confirmation(action_name, args)
+    def is_blocked(self, action_name: str, args: dict | None = None, *, task_id: str | None = None) -> bool:
+        if self.is_emergency_stopped():
+            return True
+        decision = self.evaluate(action_name, args, task_id=task_id)
+        if decision.requires_confirmation:
+            return not self.ask_for_confirmation(action_name, args, task_id=task_id)
+        return not decision.allowed

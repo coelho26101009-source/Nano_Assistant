@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import AsyncIterator
+from typing import AsyncIterator, Any
 import httpx
 from groq import AsyncGroq
 from core.config import load_config
@@ -49,12 +49,13 @@ async def _stream_text_chunks(text: str, chunk_size: int = 4, delay: float = 0.0
             await asyncio.sleep(delay)
 
 class Brain:
-    def __init__(self, api_key: str, guardrails: GuardrailsEngine, memory: MemoryEngine, config: dict | None = None):
+    def __init__(self, api_key: str, guardrails: GuardrailsEngine, memory: MemoryEngine, config: dict | None = None, permission_manager: Any | None = None):
         cfg = config if config is not None else load_config()
         mem_cfg, local_cfg = cfg.get("memory") or {}, cfg.get("local") or {}
         self.groq_enabled = bool(api_key.strip())
         self.client = AsyncGroq(api_key=api_key) if self.groq_enabled else None
         self.guardrails, self.memory = guardrails, memory
+        self.permission_manager = permission_manager
         self.conversation: list[dict] = []
         self.groq_model = str(cfg.get("groq_model") or GROQ_MODEL)
         self.local_enabled = bool(local_cfg.get("enabled", cfg.get("ollama_enabled", True)))
@@ -240,6 +241,17 @@ class Brain:
 
         if not isinstance(args, dict):
             return {"ok": False, "error": "invalid_tool_arguments"}
+
+        capability = name
+        if self.permission_manager is not None:
+            capability = self.permission_manager.resolve_tool_capability(name, args)
+            if self.permission_manager.is_emergency_stopped():
+                return {"ok": False, "cancelled": True, "message": "Emergency stop active. Execution blocked."}
+            if self.permission_manager.get_decision_for_action(capability, args) == "deny":
+                return {"ok": False, "cancelled": True, "message": "Operação bloqueada pela política de segurança."}
+            decision = self.permission_manager.evaluate(capability, args)
+            if decision.requires_confirmation and not self.permission_manager.ask_for_confirmation(capability, args):
+                return {"ok": False, "cancelled": True, "message": "Operação cancelada pelo utilizador."}
 
         if self.guardrails.requires_confirmation(name, args) and not await self.guardrails.ask_confirmation(name, args):
             return {"ok": False, "cancelled": True, "message": "Operação cancelada pelo utilizador."}

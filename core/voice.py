@@ -2,15 +2,17 @@
 
 import asyncio
 import importlib.util
-import io
 import logging
 import os
+import tempfile
 import threading
 import time
 import wave
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Iterable
+
+from core.wake_word import WakeWordEngine
 
 logger = logging.getLogger("nano.voice")
 
@@ -65,163 +67,63 @@ class WakeWordProvider(BaseProvider):
         cfg = config or {}
         self.config = cfg
         self.enabled = bool(cfg.get("enabled", False))
-        self.phrase = str(cfg.get("phrase") or cfg.get("wake_word_phrase") or "Nano").strip().lower()
-        self.threshold = float(cfg.get("threshold", 0.7))
-        self.cooldown = float(cfg.get("cooldown", 2.0))
-        self._lock = threading.Lock()
-        self._last_detection = 0.0
-        self._active = False
-        self._thread: threading.Thread | None = None
-        self._stop_event = threading.Event()
         self._callback: Callable[[], None] | None = None
+        self._engine = WakeWordEngine(cfg, self._dispatch_wake)
+        self.online = importlib.util.find_spec("openwakeword") is not None or importlib.util.find_spec("pvporcupine") is not None
         self._error: str | None = None
+        self._active = False
+
+    def _dispatch_wake(self) -> None:
+        if self._callback is None:
+            return
+        self._callback()
 
     def start(self, callback: Callable[[], None] | None = None) -> bool:
         if callback is not None:
             self._callback = callback
-        self._active = True
-        return True
+        if not self.online:
+            self._error = "wake word runtime not installed"
+            raise ProviderError(self._error)
+        started = self._engine.start()
+        self._active = bool(started)
+        self.enabled = bool(self._engine.enabled)
+        self._error = self._engine.last_error
+        return started
 
     def stop(self) -> None:
+        self._engine.stop()
         self._active = False
-        self._stop_event.set()
 
-    def detect(self, audio_chunk: Any | None = None) -> bool:
-        if not self.enabled:
-            raise ProviderError("wake word disabled")
-        if not self._active:
-            raise ProviderError("wake word not started")
-        if time.time() - self._last_detection < self.cooldown:
-            return False
-        if audio_chunk is None:
-            self._last_detection = time.time()
-            return False
-        self._last_detection = time.time()
-        return bool(audio_chunk)
+    def pause(self) -> None:
+        self._engine.pause()
+
+    def resume(self) -> None:
+        self._engine.resume()
 
     def status(self) -> dict:
-        data = super().status()
+        data = self._engine.status()
+        model_status = str(data.get("model_status") or "")
+        if not self.enabled:
+            health = "DISABLED"
+        elif not self.online:
+            health = "OFFLINE"
+        elif model_status == "READY":
+            health = "READY"
+        else:
+            health = "SETUP REQUIRED"
         data.update({
-            "enabled": self.enabled,
-            "phrase": self.phrase,
-            "threshold": self.threshold,
-            "cooldown": self.cooldown,
+            "name": self.name,
+            "local": True,
+            "online": self.online,
+            "health": health,
             "active": self._active,
-            "error": self._error,
+            "error": self._error or data.get("error"),
         })
         return data
 
 
 class LocalWakeWordProvider(WakeWordProvider):
     name = "local_wake_word"
-
-    def __init__(self, config: dict | None = None):
-        super().__init__(config)
-        self.online = importlib.util.find_spec("pvporcupine") is not None or importlib.util.find_spec("openwakeword") is not None
-        self.model_path = str(self.config.get("model_path") or self.config.get("keyword_path") or self.config.get("wake_word_keyword_path") or "").strip()
-        self.provider = str(self.config.get("provider") or "openwakeword").lower()
-        self._model = None
-        self._is_ready = self.online
-        self._error = None
-        if not self.online:
-            self.enabled = False
-            self._error = "wake word runtime not installed"
-
-    def _supports_phrase(self) -> bool:
-        phrase = self.phrase.replace(" ", "_").lower()
-        if self.model_path:
-            return True
-        try:
-            import openwakeword
-            models = getattr(openwakeword, "MODELS", {})
-            return phrase in {str(name).strip().lower() for name in models.keys()}
-        except Exception:
-            return False
-
-    def start(self, callback: Callable[[], None] | None = None) -> bool:
-        if callback is not None:
-            self._callback = callback
-        if not self.online:
-            self._error = "local wake word provider unavailable"
-            raise ProviderError(self._error)
-        if not self._supports_phrase():
-            self.enabled = False
-            self._error = "wake word model unavailable for the configured phrase"
-            raise ProviderError(self._error)
-        if self._thread and self._thread.is_alive():
-            self._active = True
-            return True
-        self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run_listener, daemon=True, name="nano-wake-word")
-        self._thread.start()
-        self._active = True
-        return True
-
-    def stop(self) -> None:
-        self._stop_event.set()
-        self._active = False
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=1.0)
-
-    def _run_listener(self) -> None:
-        try:
-            import numpy as np
-            import pyaudio
-            from openwakeword.model import Model
-        except Exception as exc:  # pragma: no cover - environment specific
-            self._error = str(exc)
-            raise ProviderError(str(exc)) from exc
-
-        model_names = []
-        keyword_path = self.model_path or self.config.get("keyword_path") or self.config.get("wake_word_keyword_path")
-        if keyword_path:
-            model_names = [keyword_path]
-        else:
-            model_names = [self.phrase.replace(" ", "_")]
-        try:
-            model = Model(wakeword_models=model_names, inference_framework="onnx")
-        except Exception as exc:  # pragma: no cover - environment specific
-            self._error = str(exc)
-            raise ProviderError(str(exc)) from exc
-        self._model = model
-        frame_size = 1280
-        pa = pyaudio.PyAudio()
-        stream = pa.open(format=pyaudio.paInt16, channels=1, rate=16000, input=True, frames_per_buffer=frame_size)
-        try:
-            while not self._stop_event.is_set():
-                if time.time() - self._last_detection < self.cooldown:
-                    time.sleep(0.05)
-                    continue
-                chunk = stream.read(frame_size, exception_on_overflow=False)
-                if not chunk:
-                    continue
-                audio = np.frombuffer(chunk, dtype=np.int16)
-                scores = model.predict(audio)
-                score_hits = []
-                for name, score in scores.items():
-                    if score >= self.threshold:
-                        score_hits.append(str(name))
-                if score_hits:
-                    self._last_detection = time.time()
-                    if self._callback is not None:
-                        try:
-                            self._callback()
-                        except Exception:
-                            logger.exception("wake-word callback failed")
-                    self._active = False
-                    break
-        finally:
-            try:
-                stream.stop_stream(); stream.close(); pa.terminate()
-            except Exception:
-                pass
-
-    def detect(self, audio_chunk: Any | None = None) -> bool:
-        if not self.online:
-            raise ProviderError("local wake word provider unavailable")
-        if not self._supports_phrase():
-            raise ProviderError("wake word model unavailable for the configured phrase")
-        return super().detect(audio_chunk)
 
 
 class SpeechToTextProvider(BaseProvider):
@@ -263,7 +165,7 @@ class LocalSTTProvider(SpeechToTextProvider):
                     compute_type=self.config.get("compute_type", "int8"),
                 )
 
-            with io.NamedTemporaryFile(suffix=".wav", delete=False) as fp:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fp:
                 fp.write(audio_bytes)
                 tmp_path = fp.name
             try:
@@ -533,12 +435,12 @@ class VoiceEngine:
             return False
         self.session.start()
         try:
-            self.wake_word_provider.enabled = True
             if callback is not None:
                 self._wake_callback = callback
-                self.wake_word_provider._callback = callback
-            self.wake_word_provider.start(callback)
-            return True
+            started = self.wake_word_provider.start(callback)
+            if not started:
+                self.session.error(self.wake_word_provider.status().get("error") or "wake word start failed")
+            return bool(started)
         except Exception as exc:  # pragma: no cover - graceful fail path
             logger.warning("could not start wake word: %s", exc)
             self.session.error(str(exc))

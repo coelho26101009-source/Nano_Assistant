@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 import httpx
 
+from core.browser_agent import validate_public_http_url
 from core.permission_manager import PermissionManager
 
 
@@ -214,7 +215,7 @@ class ToolExecutor:
         return result
 
     def execute_tool(self, name: str, args: dict | None = None, *, task_id: str | None = None) -> dict:
-        args = args or {}
+        args = dict(args or {})
         tool = self.registry.get(name)
         if not tool:
             return self._tool_result(False, "unknown_tool", error=f"Tool desconhecida: {name}", metadata={"tool": name})
@@ -224,12 +225,13 @@ class ToolExecutor:
             self.permission_manager.log_decision(tool_capability, "deny", risk=tool.get("risk"), task_id=task_id, reason="Emergency stop engaged; execution blocked.", event_name="PermissionDenied")
             return self._tool_result(False, "permission_denied", error="Emergency stop active: execution blocked by the Nano Policy Engine.", metadata={"tool": name, "task_id": task_id})
 
-        decision_value = self.permission_manager.get_decision_for_action(tool_capability, args)
+        decision_value = self.permission_manager.get_decision_for_action(tool_capability, {**args, "_task_id": task_id} if task_id else args)
         if decision_value == "deny":
             self.permission_manager.log_decision(tool_capability, "deny", risk=tool.get("risk"), task_id=task_id, reason="Permission policy denied execution", event_name="PermissionDenied")
             return self._tool_result(False, "permission_denied", error="Permissão negada pela política do sistema.", metadata={"tool": name})
-        decision = self.permission_manager.evaluate(tool_capability, args)
-        if decision.requires_confirmation and not self.permission_manager.ask_for_confirmation(tool_capability, args):
+
+        decision = self.permission_manager.evaluate(tool_capability, args, task_id=task_id)
+        if decision.requires_confirmation and not self.permission_manager.ask_for_confirmation(tool_capability, args, task_id=task_id):
             self.permission_manager.log_decision(tool_capability, "deny", risk=decision.risk, task_id=task_id, reason="User declined risk confirmation", event_name="PermissionDenied")
             return self._tool_result(False, "permission_denied", error="Autorização recusada pelo utilizador.", metadata={"tool": name, "risk": decision.risk.value})
 
@@ -335,11 +337,9 @@ class ToolExecutor:
         stderr_limit = min(int(args.get("stderr_limit") or 12000), 12000)
         command_risk = self._classify_shell_command(command)
         if command_risk in {"high", "critical"}:
-            decision = self.permission_manager.get_decision_for_action("shell.execute", {"command": command, "cwd": cwd})
-            if decision == "deny":
-                raise ToolExecutionError("shell.execute blocked by permission policy")
-            if self.permission_manager.confirmation_callback is None and command_risk == "critical":
-                raise ToolExecutionError("critical command requires explicit permission confirmation")
+            shell_decision = self.permission_manager.evaluate("shell.execute", {"command": command, "cwd": cwd})
+            if shell_decision.requires_confirmation and not self.permission_manager.ask_for_confirmation("shell.execute", {"command": command, "cwd": cwd}):
+                raise ToolExecutionError("critical shell command requires explicit permission confirmation")
         if subprocess.mswindows:
             completed = subprocess.run(["cmd", "/c", command], cwd=str(cwd) if cwd else None, capture_output=True, text=True, timeout=timeout)
         else:
@@ -379,6 +379,9 @@ class ToolExecutor:
             "google": f"https://www.google.com/search?q={encoded}",
         }
         url = urls.get(engine, urls["duckduckgo"])
+        ok, error = validate_public_http_url(url)
+        if not ok:
+            raise ToolExecutionError(error)
         response = httpx.get(url, timeout=20)
         response.raise_for_status()
         text = response.text[:8000]
@@ -388,6 +391,9 @@ class ToolExecutor:
         url = str(args.get("url") or "").strip()
         if not url:
             raise ToolExecutionError("url obrigatório")
+        ok, error = validate_public_http_url(url)
+        if not ok:
+            raise ToolExecutionError(error)
         response = httpx.get(url, timeout=20)
         response.raise_for_status()
         return {"url": url, "status_code": response.status_code, "text": response.text[:12000], "success": True}
