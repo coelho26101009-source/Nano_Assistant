@@ -15,6 +15,21 @@ from core.memory import MemoryEngine
 from core.permission_manager import PermissionManager
 
 
+# Hard ceiling on automatic retries. Exceeding it parks the task for a human
+# rather than looping: an unbounded retry hammered external services and
+# re-ran approved actions without ever asking again.
+MAX_AUTO_RETRIES = 2
+
+# Per-policy retry budget. Actions that are not safe to repeat blindly get none.
+RETRY_BUDGET = {
+    "SAFE_TO_RETRY": MAX_AUTO_RETRIES,
+    "CONDITIONALLY_RETRYABLE": 1,
+    "NOT_SAFE_TO_RETRY": 0,
+}
+
+TERMINAL_STATUSES = frozenset({"COMPLETED", "FAILED", "CANCELLED", "NEEDS_ATTENTION"})
+
+
 class BackgroundTaskWorker:
     """Long-running worker that executes queued task requests and verifies outputs."""
 
@@ -81,8 +96,16 @@ class BackgroundTaskWorker:
 
     def _next_ready_task(self) -> dict | None:
         for task in self.task_engine.list_tasks():
-            if task.get("status") in {"QUEUED", "RETRYING", "RECOVERABLE"}:
-                return task
+            if task.get("status") not in {"QUEUED", "RETRYING", "RECOVERABLE"}:
+                continue
+            if int(task.get("retries") or 0) > MAX_AUTO_RETRIES:
+                # Past the ceiling the task is parked rather than re-queued, so
+                # a permanently failing task cannot spin the worker forever.
+                self.task_engine.mark_needs_attention(task["id"], f"Excedido o limite de {MAX_AUTO_RETRIES} retries automáticos.")
+                self.event_bus.publish("task.needs_attention", {"task_id": task["id"], "error": "retry_ceiling_exceeded", "retries": task.get("retries")})
+                self._release_grants(task["id"])
+                continue
+            return task
         return None
 
     def _resolve_execution_plan(self, task: dict) -> list[dict]:
@@ -221,6 +244,14 @@ class BackgroundTaskWorker:
 
     def process_task(self, task: dict) -> dict:
         task_id = task["id"]
+
+        # Cancellation is checked before the first status write. Setting
+        # PLANNING first would overwrite CANCELLED and resurrect the task.
+        if self.is_cancelled(task_id):
+            self.event_bus.publish("task.cancelled", {"task_id": task_id, "stage": "before_planning"})
+            self._release_grants(task_id)
+            return self.task_engine.get_task(task_id)
+
         self.task_engine.update_task(task_id, status="PLANNING", progress=10, last_event="planning")
         self.event_bus.publish("task.planning", {"task_id": task_id, "title": task["title"]})
 
@@ -232,32 +263,88 @@ class BackgroundTaskWorker:
         results: list[dict] = []
         for index, step in enumerate(plan, start=1):
             step_name = step.get("tool")
+
+            # Cancellation is checked before every step against the persisted
+            # state, so a cancelled task actually stops instead of having its
+            # status overwritten by the next update.
+            if self.is_cancelled(task_id):
+                self.event_bus.publish("task.cancelled", {"task_id": task_id, "tool": step_name})
+                self._release_grants(task_id)
+                return self.task_engine.get_task(task_id)
+
             self.task_engine.update_task(task_id, status="RUNNING", progress=min(90, int(index / max(len(plan), 1) * 100)), last_event=f"executing:{step_name}")
             self.event_bus.publish("task.step", {"task_id": task_id, "tool": step_name, "index": index, "total": len(plan)})
+
+            # Every attempt, including retries, goes back through the executor,
+            # so a retry can never reuse or outlive a permission decision.
             result = self.tool_executor.execute_tool(step_name, step.get("args") or {}, task_id=task_id)
             results.append({"step": step_name, "result": result})
-            if not self._verify_execution(step, result):
-                retry_policy = self.tool_executor.get_retry_policy(step_name)
-                if retry_policy == "NOT_SAFE_TO_RETRY":
-                    self.task_engine.mark_needs_attention(task_id, f"Verificação falhou para {step_name}; ação não segura para retry automático.")
-                    self.event_bus.publish("task.needs_attention", {"task_id": task_id, "tool": step_name, "error": f"Verificação falhou para {step_name}"})
-                    return self.task_engine.get_task(task_id)
-                if retry_policy == "CONDITIONALLY_RETRYABLE" and int(task.get("retries") or 0) >= 1:
-                    self.task_engine.mark_needs_attention(task_id, f"Retry esgotado para {step_name}.")
-                    self.event_bus.publish("task.needs_attention", {"task_id": task_id, "tool": step_name, "error": f"Retry esgotado para {step_name}"})
-                    return self.task_engine.get_task(task_id)
-                self.task_engine.retry_task(task_id)
-                self.event_bus.publish("task.retrying", {"task_id": task_id, "tool": step_name, "reason": "verification_failed"})
+
+            if result.get("status") == "permission_denied":
+                self.task_engine.mark_needs_attention(task_id, f"Permissão recusada para {step_name}.")
+                self.event_bus.publish("task.needs_attention", {"task_id": task_id, "tool": step_name, "error": "permission_denied"})
+                self._release_grants(task_id)
                 return self.task_engine.get_task(task_id)
+
+            if not self._verify_execution(step, result):
+                return self._handle_verification_failure(task_id, task, step_name)
 
         completed = {"task_id": task_id, "steps": results, "status": "completed"}
         self.task_engine.mark_complete(task_id, completed)
         self.event_bus.publish("task.completed", {"task_id": task_id, "title": task.get("title"), "result": completed})
+        self._release_grants(task_id)
+        return self.task_engine.get_task(task_id)
+
+    def is_cancelled(self, task_id: str) -> bool:
+        """Read the persisted status so cancellation survives in-flight state."""
+        current = self.task_engine.get_task(task_id)
+        return bool(current and current.get("status") == "CANCELLED")
+
+    def cancel_task(self, task_id: str) -> dict | None:
+        """Cancel a task and release anything it was authorised to do."""
+        cancelled = self.task_engine.cancel_task(task_id)
+        self._release_grants(task_id)
+        self.event_bus.publish("task.cancelled", {"task_id": task_id, "source": "user"})
+        return cancelled
+
+    def _release_grants(self, task_id: str) -> None:
+        """Drop task-scoped permissions the moment the task stops running."""
+        manager = getattr(self.tool_executor, "permission_manager", None)
+        release = getattr(manager, "release_task_grants", None)
+        if callable(release):
+            try:
+                release(task_id)
+            except Exception:
+                self.event_bus.publish("worker.error", {"error": "grant_release_failed", "task_id": task_id})
+
+    def _handle_verification_failure(self, task_id: str, task: dict, step_name: str) -> dict | None:
+        """Apply this tool's retry budget, then park the task once it is spent."""
+        retry_policy = self.tool_executor.get_retry_policy(step_name)
+        budget = RETRY_BUDGET.get(retry_policy, 0)
+        attempts = int((self.task_engine.get_task(task_id) or task).get("retries") or 0)
+
+        if attempts >= budget:
+            reason = (
+                f"Verificação falhou para {step_name}; ação não segura para retry automático."
+                if budget == 0
+                else f"Retry esgotado para {step_name} ({attempts}/{budget})."
+            )
+            self.task_engine.mark_needs_attention(task_id, reason)
+            self.event_bus.publish("task.needs_attention", {"task_id": task_id, "tool": step_name, "error": reason, "retries": attempts})
+            self._release_grants(task_id)
+            return self.task_engine.get_task(task_id)
+
+        self.task_engine.retry_task(task_id)
+        self.event_bus.publish("task.retrying", {
+            "task_id": task_id, "tool": step_name, "reason": "verification_failed",
+            "attempt": attempts + 1, "budget": budget,
+        })
         return self.task_engine.get_task(task_id)
 
     def _loop(self) -> None:
         self.event_bus.publish("worker.loop.start", {"running": True})
         while not self._stop_event.is_set():
+            task = None
             try:
                 task = self._next_ready_task()
                 if task is None:
@@ -267,7 +354,15 @@ class BackgroundTaskWorker:
                 self.event_bus.publish("task.started", {"task_id": task["id"], "title": task.get("title"), "status": "RUNNING"})
                 self.process_task(task)
             except Exception as exc:  # pragma: no cover - safety net for worker loop
-                self.event_bus.publish("worker.error", {"error": str(exc)})
+                # A crash used to leave the task RUNNING forever. RUNNING is not
+                # a ready status, so nothing ever picked the task up again.
+                if task is not None:
+                    try:
+                        self.task_engine.mark_needs_attention(task["id"], f"Worker exception: {exc}")
+                        self._release_grants(task["id"])
+                    except Exception:
+                        pass
+                self.event_bus.publish("worker.error", {"error": str(exc), "task_id": (task or {}).get("id")})
                 time.sleep(self.poll_interval)
 
     def claim_task(self, task_id: str) -> dict | None:

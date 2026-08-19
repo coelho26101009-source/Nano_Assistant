@@ -2,6 +2,7 @@
 
 import asyncio
 import importlib.util
+import io
 import logging
 import os
 import tempfile
@@ -19,6 +20,22 @@ logger = logging.getLogger("nano.voice")
 
 class ProviderError(RuntimeError):
     pass
+
+
+class VoiceReadiness(str, Enum):
+    """Distinguishes architecture-ready from live-ready.
+
+    Reporting READY because a provider object exists told the user the voice
+    stack worked when the runtime packages, models or microphone were absent.
+    Each state below corresponds to something actually checked.
+    """
+
+    DISABLED = "DISABLED"
+    SETUP_REQUIRED = "SETUP_REQUIRED"
+    MODEL_MISSING = "MODEL_MISSING"
+    PROVIDER_READY = "PROVIDER_READY"
+    READY = "READY"
+    ERROR = "ERROR"
 
 
 class VoiceSessionState(str, Enum):
@@ -417,7 +434,36 @@ class VoiceEngine:
             "sample_rate": self.input_provider.sample_rate,
         }
 
+    def readiness(self) -> tuple[VoiceReadiness, list[str]]:
+        """Report what is actually installed and reachable, never what exists as an object."""
+        blockers: list[str] = []
+        if not self.enabled:
+            return VoiceReadiness.DISABLED, ["voice disabled in configuration"]
+
+        if self.session.state == VoiceSessionState.ERROR:
+            return VoiceReadiness.ERROR, [str(self.session.status().get("error") or "voice session error")]
+
+        if not getattr(self.input_provider, "_available", False):
+            blockers.append("microphone runtime (pyaudio) not installed")
+        if not self.stt_provider.online:
+            blockers.append("speech-to-text runtime (faster-whisper) not installed")
+        if not self.tts_provider.online:
+            blockers.append("text-to-speech runtime (edge-tts) not installed")
+        if blockers:
+            return VoiceReadiness.SETUP_REQUIRED, blockers
+
+        wake_status = self.wake_word_provider.status()
+        if str(wake_status.get("model_status") or "").upper() not in {"READY", ""}:
+            return VoiceReadiness.MODEL_MISSING, [
+                str(wake_status.get("error") or "wake-word model not usable")
+            ]
+
+        if not self.input_provider.list_devices():
+            return VoiceReadiness.PROVIDER_READY, ["no input device detected"]
+        return VoiceReadiness.READY, []
+
     def status(self) -> dict:
+        readiness, blockers = self.readiness()
         return {
             "voice": self.enabled,
             "cloud_audio": self.cloud_audio,
@@ -427,6 +473,8 @@ class VoiceEngine:
             "wake_word": self.wake_word_provider.status(),
             "stt": self.stt_provider.status(),
             "tts": self.tts_provider.status(),
+            "readiness": readiness.value,
+            "blockers": blockers,
         }
 
     def start_wake_word(self, callback: Callable[[], None] | None = None) -> bool:
@@ -521,11 +569,16 @@ class VoiceRuntime:
         self._last_session_id = self.session.session_id
 
     def status(self) -> dict:
+        readiness, blockers = self.voice.readiness()
         return {
             "enabled": self.voice.enabled,
             "session": self.session.status(),
             "provider": self.voice.status(),
-            "ready": bool(self.voice.enabled and self.voice.stt_provider and self.voice.tts_provider),
+            "readiness": readiness.value,
+            "blockers": blockers,
+            # 'ready' used to be `enabled and provider_object and provider_object`,
+            # which is true whenever voice is enabled. It now means live-ready.
+            "ready": readiness == VoiceReadiness.READY,
         }
 
     def _publish(self, event: str, payload: dict | None = None) -> None:
@@ -684,6 +737,7 @@ def _clean_for_tts(text: str) -> str:
 
 __all__ = [
     "AudioInputProvider",
+    "VoiceReadiness",
     "AudioOutputProvider",
     "LocalSTTProvider",
     "LocalTTSProvider",

@@ -291,7 +291,9 @@ def test_tool_executor_enforces_retry_policies_and_path_validation(tmp_path):
 
     danger = executor.execute_tool("shell.execute", {"command": "rm -rf /", "timeout": 1})
     assert danger["success"] is False
-    assert danger["status"] in {"permission_denied", "invalid_input", "failed"}
+    # verification_failed is reachable now that shell.execute actually runs:
+    # a non-zero return code is reported as a failure, never as success.
+    assert danger["status"] in {"permission_denied", "invalid_input", "failed", "verification_failed"}
 
 
 def test_permission_manager_keeps_audit_log_for_user_decisions(tmp_path):
@@ -306,8 +308,22 @@ def test_policy_engine_enforces_safe_autonomy_and_approval_boundaries():
     from core.policy_engine import AuthorityDecision, PolicyEngine, AutonomyMode
 
     engine = PolicyEngine(AutonomyMode.SAFE)
-    safe_read = engine.evaluate("filesystem.read", target="workspace/test.txt", arguments={"path": "workspace/test.txt"})
+    # A workspace-scoped read is the only autonomous filesystem operation.
+    safe_read = engine.evaluate(
+        "filesystem.read",
+        target="workspace/test.txt",
+        scope="current_workspace",
+        arguments={"path": "workspace/test.txt"},
+    )
     assert safe_read.decision == AuthorityDecision.AUTONOMOUS
+
+    # Without a classified scope the same read is not autonomous: the policy
+    # fails closed rather than assuming the target is inside the workspace.
+    unscoped_read = engine.evaluate("filesystem.read", target="workspace/test.txt", arguments={"path": "workspace/test.txt"})
+    assert unscoped_read.decision == AuthorityDecision.APPROVAL_REQUIRED
+
+    outside_read = engine.evaluate("filesystem.read", target="C:/Users/someone/.ssh/id_rsa", scope="system", arguments={"path": "C:/Users/someone/.ssh/id_rsa"})
+    assert outside_read.decision == AuthorityDecision.APPROVAL_REQUIRED
 
     destructive = engine.evaluate("filesystem.delete", target="workspace/obsolete.txt", arguments={"path": "workspace/obsolete.txt"})
     assert destructive.decision == AuthorityDecision.APPROVAL_REQUIRED

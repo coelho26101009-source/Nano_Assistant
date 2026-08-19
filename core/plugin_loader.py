@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import logging
+import weakref
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,24 @@ logger = logging.getLogger("nano.plugin_loader")
 _loaded_plugins: dict[str, Any] = {}
 _all_tools: list[dict] = []
 _all_handlers: dict[str, Any] = {}
+
+# Only a bound execution authority (core.tool_execution.ToolExecutor) may run a
+# plugin handler. This is what makes the central pipeline unavoidable rather
+# than merely conventional: a direct call raises instead of executing.
+_execution_authorities: "weakref.WeakSet[Any]" = weakref.WeakSet()
+
+
+class UnauthorizedExecution(PermissionError):
+    """Raised when a plugin handler is invoked outside the execution authority."""
+
+
+def bind_execution_authority(authority: Any) -> None:
+    """Register an object allowed to dispatch plugin handlers."""
+    _execution_authorities.add(authority)
+
+
+def is_execution_authority(candidate: Any) -> bool:
+    return any(candidate is bound for bound in _execution_authorities)
 
 
 def _validate_tool(tool: Any) -> tuple[bool, str]:
@@ -93,18 +112,57 @@ def load_all_plugins(plugins_dir: Path | None = None) -> tuple[list[dict], dict]
     return get_all_tools(), dict(_all_handlers)
 
 
-async def execute_tool(tool_name: str, arguments: dict) -> dict:
+def execute_tool(tool_name: str, arguments: dict, *, authority: Any = None):
+    """Dispatch a plugin handler on behalf of the central execution authority.
+
+    ``authority`` must be a bound ToolExecutor. Calling this directly — as the
+    chat loop used to — raises ``UnauthorizedExecution`` instead of running the
+    handler, so no execution path can skip policy, permission and scope checks.
+
+    Returns the handler's result, or an awaitable when the handler is async; the
+    executor awaits it on the async path.
+    """
+    if not is_execution_authority(authority):
+        logger.error("Tentativa de execução directa de '%s' fora da autoridade central", tool_name)
+        raise UnauthorizedExecution(
+            f"Plugin tool '{tool_name}' must be executed through core.tool_execution.ToolExecutor."
+        )
     handler = _all_handlers.get(tool_name)
     if handler is None:
         return {"ok": False, "error": "tool_not_registered", "tool": tool_name}
-    try:
-        result = handler(arguments)
-        if asyncio.iscoroutine(result):
-            result = await result
-        return result if isinstance(result, dict) else {"ok": True, "result": result}
-    except Exception:
-        logger.exception("Erro ao executar '%s'", tool_name)
-        return {"ok": False, "error": "tool_execution_failed", "tool": tool_name}
+    return handler(arguments)
+
+
+def start_plugin_services() -> list[str]:
+    """Start background services of loaded plugins, explicitly.
+
+    Plugins used to start daemon threads at import time, so merely importing a
+    plugin left a scheduler running with no way to stop it. Services are now
+    started only when the application bootstrap asks for them.
+    """
+    started: list[str] = []
+    for name, module in _loaded_plugins.items():
+        starter = getattr(module, "start_background_services", None)
+        if not callable(starter):
+            continue
+        try:
+            if starter():
+                started.append(name)
+        except Exception:
+            logger.exception("Falha ao arrancar serviços do plugin '%s'", name)
+    return started
+
+
+def stop_plugin_services() -> None:
+    """Stop every plugin background service. Used on shutdown."""
+    for name, module in _loaded_plugins.items():
+        stopper = getattr(module, "stop_background_services", None)
+        if not callable(stopper):
+            continue
+        try:
+            stopper()
+        except Exception:
+            logger.exception("Falha ao parar serviços do plugin '%s'", name)
 
 
 def get_all_tools() -> list[dict]:

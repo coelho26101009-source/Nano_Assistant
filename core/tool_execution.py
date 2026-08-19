@@ -1,19 +1,39 @@
-"""Central tool registry and execution layer for Nano agents."""
+"""Central tool registry and execution authority for Nano agents.
+
+Every tool the model can call is registered here, and every execution — from the
+chat loop or from the background worker — goes through the same path:
+
+    capability resolution -> argument validation -> scope classification
+    -> PolicyEngine -> PermissionManager -> execution -> verification -> audit
+
+Plugin handlers are never invoked directly. ``core.plugin_loader`` refuses to run
+a handler unless the caller presents this executor as its execution authority,
+so bypassing the pipeline fails closed rather than silently succeeding.
+"""
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import inspect
-import json
+import os
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 from typing import Any, Callable
 
 import httpx
 
+from core import plugin_loader
 from core.browser_agent import validate_public_http_url
+from core.execution_scope import (
+    PathValidationError,
+    ResolvedTarget,
+    Scope,
+    resolve_target,
+    workspace_root,
+)
 from core.permission_manager import PermissionManager
+from core.trust import TrustLevel, classify_external, is_untrusted_capability
 
 
 class ToolExecutionError(RuntimeError):
@@ -26,6 +46,20 @@ class RetryPolicy(str):
     NOT_SAFE_TO_RETRY = "NOT_SAFE_TO_RETRY"
 
 
+# Argument keys that always carry a filesystem target and must be resolved and
+# classified centrally before the handler ever sees them.
+_PATH_ARGUMENT_KEYS = ("path", "destination", "dest", "src", "source", "cwd", "target_path")
+# Argument keys that always carry a network target.
+_URL_ARGUMENT_KEYS = ("url", "webhook_url", "endpoint")
+
+# Test runners the project may execute. Anything else is refused: the model has
+# no legitimate reason to choose the command line for a test run.
+_ALLOWED_TEST_RUNNERS: dict[str, list[str]] = {
+    "pytest": ["-m", "pytest", "-q"],
+    "unittest": ["-m", "unittest", "discover", "-q"],
+}
+
+
 class ToolExecutor:
     """Registry and runner for real Nano tools with permission enforcement."""
 
@@ -34,6 +68,11 @@ class ToolExecutor:
         self.event_bus = event_bus
         self.registry: dict[str, dict] = {}
         self._register_default_tools()
+        # Claim the right to run plugin handlers. plugin_loader.execute_tool
+        # rejects any caller that is not a bound authority.
+        plugin_loader.bind_execution_authority(self)
+
+    # ------------------------------------------------------------------ utils
 
     def _publish(self, event_name: str, payload: dict | None = None) -> None:
         if self.event_bus is not None:
@@ -48,37 +87,37 @@ class ToolExecutor:
             return RetryPolicy.NOT_SAFE_TO_RETRY
         return str(tool.get("retry_policy", RetryPolicy.SAFE_TO_RETRY)).upper()
 
-    def _validate_path(self, value: str | None, *, allow_absolute: bool = False, must_exist: bool = False, workspace_root: str | Path | None = None) -> Path:
-        if value is None:
-            raise ToolExecutionError("path_required")
-        raw = str(value).strip()
-        if not raw:
-            raise ToolExecutionError("path_required")
-        if ".." in raw.split("/") or ".." in raw.split("\\"):
-            raise ToolExecutionError("path_traversal_blocked")
-        candidate = Path(raw)
-        if candidate.is_absolute():
-            safe_roots = [Path.cwd(), Path.home(), Path(tempfile.gettempdir())]
-            if allow_absolute:
-                resolved = candidate
-            else:
-                resolved = candidate
-                allowed = False
-                for root in safe_roots:
-                    try:
-                        candidate.relative_to(root)
-                        allowed = True
-                        break
-                    except ValueError:
-                        continue
-                if not allowed:
-                    raise ToolExecutionError("absolute_path_blocked")
-        else:
-            root = Path(workspace_root) if workspace_root is not None else Path.cwd()
-            resolved = (root / candidate).resolve()
-        if must_exist and not resolved.exists():
-            raise ToolExecutionError(f"path_not_found:{resolved}")
-        return resolved
+    def _validate_path(
+        self,
+        value: str | None,
+        *,
+        allow_absolute: bool = False,
+        must_exist: bool = False,
+        workspace_root: str | Path | None = None,
+    ) -> Path:
+        """Backwards-compatible path validation returning a resolved Path.
+
+        Kept for existing callers; new code should use ``resolve_tool_target``
+        which also reports the scope the path landed in.
+        """
+        target = self.resolve_tool_target(value, base=workspace_root, must_exist=must_exist)
+        if not allow_absolute and target.scope == Scope.SYSTEM:
+            raise ToolExecutionError("absolute_path_blocked")
+        return target.path
+
+    def resolve_tool_target(
+        self,
+        value: str | None,
+        *,
+        base: str | Path | None = None,
+        must_exist: bool = False,
+    ) -> ResolvedTarget:
+        try:
+            return resolve_target(value, base=base, must_exist=must_exist)
+        except PathValidationError as exc:
+            raise ToolExecutionError(exc.code if not exc.detail else f"{exc.code}") from exc
+
+    # -------------------------------------------------------------- registry
 
     def _register_default_tools(self) -> None:
         self.register_tool(
@@ -145,11 +184,19 @@ class ToolExecutor:
         )
         self.register_tool(
             "project.run_tests",
-            "Executa a suíte de testes do projeto atual.",
-            {"type": "object", "properties": {"path": {"type": "string"}, "command": {"type": "string"}}, "required": ["path"]},
+            "Executa a suíte de testes do projeto atual com um runner suportado.",
+            {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "runner": {"type": "string", "enum": sorted(_ALLOWED_TEST_RUNNERS)},
+                    "test_path": {"type": "string"},
+                },
+                "required": ["path"],
+            },
             handler=self._run_project_tests,
             risk="medium",
-            timeout=60,
+            timeout=120,
             retry_policy=RetryPolicy.SAFE_TO_RETRY,
             capabilities=["project.test"],
         )
@@ -201,58 +248,326 @@ class ToolExecutor:
             "retry_policy": retry_policy,
         }
 
-    def _run_handler(self, handler: Callable[[dict], Any], args: dict) -> Any:
+    def register_plugin_tools(self, tools: list[dict] | None = None) -> int:
+        """Absorb every loaded plugin tool into this registry.
+
+        Plugin tools become ordinary registry entries whose handler is dispatched
+        through ``plugin_loader`` with this executor as the execution authority.
+        After this call there is exactly one execution path for every tool the
+        model can see.
+        """
+        registered = 0
+        for tool in tools if tools is not None else plugin_loader.get_all_tools():
+            function = (tool or {}).get("function") or {}
+            name = function.get("name")
+            if not name or name in self.registry:
+                continue
+            capability = self.permission_manager.resolve_tool_capability(name, {})
+            risk = self.permission_manager.classify_action(capability, {})
+            self.register_tool(
+                name,
+                str(function.get("description") or name),
+                function.get("parameters") or {"type": "object"},
+                handler=self._make_plugin_handler(name),
+                risk=risk.value,
+                timeout=60,
+                requires_confirmation=self.permission_manager.is_approval_gated(capability),
+                provider="plugin",
+                capabilities=[capability],
+                retry_policy=RetryPolicy.CONDITIONALLY_RETRYABLE,
+            )
+            registered += 1
+        return registered
+
+    def _make_plugin_handler(self, tool_name: str) -> Callable[[dict], Any]:
+        def _handler(args: dict) -> Any:
+            return plugin_loader.execute_tool(tool_name, args, authority=self)
+
+        _handler.__name__ = f"plugin::{tool_name}"
+        return _handler
+
+    # -------------------------------------------------- argument validation
+
+    def _validate_arguments(self, name: str, tool: dict, args: dict) -> tuple[dict, dict]:
+        """Validate and rewrite tool arguments centrally.
+
+        Path arguments are resolved to absolute, symlink-resolved paths and
+        written back into the argument dict, so handlers — including plugin
+        handlers that were never written defensively — only ever receive a path
+        that this authority already approved. Returns the prepared arguments and
+        the execution context handed to the policy engine.
+        """
+        prepared = dict(args)
+        context: dict[str, Any] = {"tool": name}
+        scopes: list[Scope] = []
+        protected = False
+
+        for key in _PATH_ARGUMENT_KEYS:
+            value = prepared.get(key)
+            if not isinstance(value, str) or not value.strip():
+                continue
+            target = self.resolve_tool_target(value)
+            prepared[key] = str(target.path)
+            scopes.append(target.scope)
+            protected = protected or target.protected
+            context.setdefault("targets", []).append(target.as_dict())
+
+        for key in _URL_ARGUMENT_KEYS:
+            value = prepared.get(key)
+            if not isinstance(value, str) or not value.strip():
+                continue
+            ok, error = validate_public_http_url(value)
+            if not ok:
+                raise ToolExecutionError(error or "invalid_url")
+            context.setdefault("urls", []).append(value)
+
+        if scopes:
+            # The least trusted scope touched by the call decides the scope of
+            # the whole call. Writing inside the workspace but reading from the
+            # system is a system-scoped operation.
+            order = [Scope.CURRENT_WORKSPACE, Scope.CURRENT_PROJECT, Scope.EXPLICIT_TARGET, Scope.SYSTEM]
+            context["scope"] = max(scopes, key=order.index).value
+        context["protected_target"] = protected
+        return prepared, context
+
+    # --------------------------------------------------------- authorization
+
+    def _authorize(self, name: str, args: dict, task_id: str | None) -> dict:
+        """Run the full policy pipeline for one call.
+
+        Returns a dict with ``ok`` plus, when refused, a ready-made tool result.
+        When it returns ``ok=True`` and ``needs_confirmation=True`` the caller
+        must obtain confirmation through the sync or async path before running.
+        """
+        tool = self.registry.get(name)
+        if not tool:
+            return {"ok": False, "result": self._tool_result(False, "unknown_tool", error=f"Tool desconhecida: {name}", metadata={"tool": name})}
+
+        capability = (tool.get("capabilities") or [name])[0]
+
+        if self.permission_manager.is_emergency_stopped():
+            self.permission_manager.log_decision(capability, "deny", risk=tool.get("risk"), task_id=task_id, reason="Emergency stop engaged; execution blocked.", event_name="PermissionDenied")
+            return {"ok": False, "result": self._tool_result(False, "permission_denied", error="Emergency stop active: execution blocked by the Nano Policy Engine.", metadata={"tool": name, "task_id": task_id})}
+
+        try:
+            prepared, context = self._validate_arguments(name, tool, args)
+        except ToolExecutionError as exc:
+            self.permission_manager.log_decision(capability, "deny", risk=tool.get("risk"), task_id=task_id, reason=f"Argument validation failed: {exc}", event_name="PermissionDenied")
+            return {"ok": False, "result": self._tool_result(False, "invalid_input", error=str(exc), metadata={"tool": name, "task_id": task_id})}
+
+        # Re-resolve the capability now that arguments are normalised, so that
+        # system_files(operation="delete") is gated as a delete, not a write.
+        capability = self.permission_manager.resolve_tool_capability(name, prepared)
+
+        evaluation = self.permission_manager.policy_engine.evaluate(
+            capability,
+            target=self.permission_manager._resolve_target(prepared),
+            scope=context.get("scope"),
+            arguments=prepared,
+            context=context,
+            task_id=task_id,
+        )
+        if evaluation.decision.value == "BLOCKED":
+            self.permission_manager.log_decision(capability, "deny", risk=evaluation.risk, target=evaluation.target, task_id=task_id, reason=evaluation.reason, event_name="PermissionDenied")
+            return {"ok": False, "result": self._tool_result(False, "permission_denied", error=f"Bloqueado pela política de segurança: {evaluation.reason}", metadata={"tool": name, "task_id": task_id, "capability": capability, "scope": evaluation.scope})}
+
+        stored = self.permission_manager.get_policy(capability) or {}
+        if str(stored.get("decision", "")).lower() in {"deny", "blocked"}:
+            self.permission_manager.log_decision(capability, "deny", risk=evaluation.risk, target=evaluation.target, task_id=task_id, reason="Policy denies this capability.", event_name="PermissionDenied")
+            return {"ok": False, "result": self._tool_result(False, "permission_denied", error="Permissão negada pela política do sistema.", metadata={"tool": name, "capability": capability})}
+
+        decision = self.permission_manager.evaluate(capability, prepared, task_id=task_id, scope=context.get("scope"), context=context)
+        stored_decision = self.permission_manager.get_decision_for_action(
+            capability,
+            {**prepared, "_task_id": task_id} if task_id else prepared,
+            scope=context.get("scope"),
+            context=context,
+        )
+        # An "ask" decision is honoured here. Both executors used to compute it
+        # and then fall through, which is what let project.run_tests reach a
+        # shell with no prompt.
+        needs_confirmation = bool(
+            decision.requires_confirmation
+            or evaluation.requires_confirmation
+            or tool.get("requires_confirmation")
+            or stored_decision == "ask"
+        )
+        return {
+            "ok": True,
+            "tool": tool,
+            "capability": capability,
+            "args": prepared,
+            "context": context,
+            "evaluation": evaluation,
+            "decision": decision,
+            "needs_confirmation": needs_confirmation,
+        }
+
+    def _denied_result(self, name: str, capability: str, risk: Any, task_id: str | None) -> dict:
+        self.permission_manager.log_decision(capability, "deny", risk=risk, task_id=task_id, reason="User declined risk confirmation", event_name="PermissionDenied")
+        return self._tool_result(False, "permission_denied", error="Autorização recusada pelo utilizador.", metadata={"tool": name, "capability": capability, "task_id": task_id})
+
+    # -------------------------------------------------------------- execution
+
+    def execute_tool(self, name: str, args: dict | None = None, *, task_id: str | None = None) -> dict:
+        """Synchronous execution. Must not be called from the shared event loop."""
+        args = dict(args or {})
+        auth = self._authorize(name, args, task_id)
+        if not auth["ok"]:
+            return auth["result"]
+
+        if auth["needs_confirmation"] and not self.permission_manager.ask_for_confirmation(auth["capability"], auth["args"], task_id=task_id, context=auth["context"]):
+            return self._denied_result(name, auth["capability"], auth["decision"].risk, task_id)
+
+        return self._run_and_verify(name, auth, task_id, self._run_handler_sync)
+
+    async def execute_tool_async(self, name: str, args: dict | None = None, *, task_id: str | None = None) -> dict:
+        """Async execution used by the chat loop. Never blocks the event loop."""
+        args = dict(args or {})
+        auth = await asyncio.to_thread(self._authorize, name, args, task_id)
+        if not auth["ok"]:
+            return auth["result"]
+
+        if auth["needs_confirmation"]:
+            approved = await self.permission_manager.ask_for_confirmation_async(auth["capability"], auth["args"], task_id=task_id, context=auth["context"])
+            if not approved:
+                return self._denied_result(name, auth["capability"], auth["decision"].risk, task_id)
+
+        tool = auth["tool"]
+        start = time.monotonic()
+        try:
+            output = await asyncio.wait_for(
+                self._run_handler_async(tool["handler"], auth["args"]),
+                timeout=float(tool.get("timeout") or 30),
+            )
+        except asyncio.TimeoutError:
+            return self._failure(name, auth, task_id, start, "tool_timeout")
+        except Exception as exc:
+            return self._failure(name, auth, task_id, start, str(exc))
+        return self._complete(name, auth, task_id, start, output)
+
+    def _run_handler_sync(self, handler: Callable[[dict], Any], args: dict, timeout: float) -> Any:
         result = handler(args)
         if inspect.isawaitable(result):
             try:
-                return asyncio.run(result)
+                asyncio.get_running_loop()
             except RuntimeError:
-                loop = asyncio.new_event_loop()
-                try:
-                    return loop.run_until_complete(result)
-                finally:
-                    loop.close()
+                return asyncio.run(result)
+            raise ToolExecutionError("async_handler_requires_execute_tool_async")
         return result
 
-    def execute_tool(self, name: str, args: dict | None = None, *, task_id: str | None = None) -> dict:
-        args = dict(args or {})
-        tool = self.registry.get(name)
-        if not tool:
-            return self._tool_result(False, "unknown_tool", error=f"Tool desconhecida: {name}", metadata={"tool": name})
+    async def _run_handler_async(self, handler: Callable[[dict], Any], args: dict) -> Any:
+        result = handler(args)
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
-        tool_capability = (tool.get("capabilities") or [name])[0]
-        if self.permission_manager.is_emergency_stopped():
-            self.permission_manager.log_decision(tool_capability, "deny", risk=tool.get("risk"), task_id=task_id, reason="Emergency stop engaged; execution blocked.", event_name="PermissionDenied")
-            return self._tool_result(False, "permission_denied", error="Emergency stop active: execution blocked by the Nano Policy Engine.", metadata={"tool": name, "task_id": task_id})
-
-        decision_value = self.permission_manager.get_decision_for_action(tool_capability, {**args, "_task_id": task_id} if task_id else args)
-        if decision_value == "deny":
-            self.permission_manager.log_decision(tool_capability, "deny", risk=tool.get("risk"), task_id=task_id, reason="Permission policy denied execution", event_name="PermissionDenied")
-            return self._tool_result(False, "permission_denied", error="Permissão negada pela política do sistema.", metadata={"tool": name})
-
-        decision = self.permission_manager.evaluate(tool_capability, args, task_id=task_id)
-        if decision.requires_confirmation and not self.permission_manager.ask_for_confirmation(tool_capability, args, task_id=task_id):
-            self.permission_manager.log_decision(tool_capability, "deny", risk=decision.risk, task_id=task_id, reason="User declined risk confirmation", event_name="PermissionDenied")
-            return self._tool_result(False, "permission_denied", error="Autorização recusada pelo utilizador.", metadata={"tool": name, "risk": decision.risk.value})
-
-        if "path" in args and isinstance(args["path"], str):
-            try:
-                self._validate_path(args["path"], allow_absolute=False)
-            except ToolExecutionError as exc:
-                return self._tool_result(False, "invalid_input", error=str(exc), metadata={"tool": name, "task_id": task_id})
-
+    def _run_and_verify(self, name: str, auth: dict, task_id: str | None, runner) -> dict:
+        tool = auth["tool"]
         start = time.monotonic()
+        timeout = float(tool.get("timeout") or 30)
         try:
-            output = self._run_handler(tool["handler"], args)
-            duration_ms = int((time.monotonic() - start) * 1000)
-            wrapped = self._tool_result(True, "completed", output=output, metadata={"tool": name, "task_id": task_id, "duration_ms": duration_ms, "retry_policy": self.get_retry_policy(name), "permission_checked": True})
-            self._publish("tool.executed", {"tool": name, "task_id": task_id, "ok": True, "duration_ms": duration_ms, "retry_policy": self.get_retry_policy(name)})
-            return wrapped
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(runner, tool["handler"], auth["args"], timeout)
+                output = future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            return self._failure(name, auth, task_id, start, "tool_timeout")
         except Exception as exc:
-            duration_ms = int((time.monotonic() - start) * 1000)
-            payload = self._tool_result(False, "failed", error=str(exc), metadata={"tool": name, "task_id": task_id, "duration_ms": duration_ms, "retry_policy": self.get_retry_policy(name), "permission_checked": True})
-            self._publish("tool.failed", {"tool": name, "task_id": task_id, "error": str(exc), "duration_ms": duration_ms, "retry_policy": self.get_retry_policy(name)})
+            return self._failure(name, auth, task_id, start, str(exc))
+        return self._complete(name, auth, task_id, start, output)
+
+    def _trust_for(self, capability: str, context: dict) -> str:
+        """Classify where a tool's output came from.
+
+        Anything fetched from the network, or read from outside the workspace,
+        is external content: data the model may read but never obey.
+        """
+        if is_untrusted_capability(capability) or context.get("urls"):
+            return TrustLevel.UNTRUSTED_EXTERNAL.value
+        if capability.startswith("filesystem") and context.get("scope") not in {None, "current_workspace"}:
+            return TrustLevel.UNTRUSTED_EXTERNAL.value
+        return TrustLevel.USER.value
+
+    @staticmethod
+    def _output_text(output) -> str:
+        if isinstance(output, dict):
+            parts = [str(output.get(key) or "") for key in ("content", "text", "stdout", "snippet", "results")]
+            return "\n".join(part for part in parts if part)
+        return str(output or "")
+
+    def _complete(self, name: str, auth: dict, task_id: str | None, start: float, output: Any) -> dict:
+        duration_ms = int((time.monotonic() - start) * 1000)
+        verified, verification = self._verify_execution(name, auth["args"], output)
+        metadata = {
+            "tool": name,
+            "task_id": task_id,
+            "capability": auth["capability"],
+            "scope": auth["context"].get("scope"),
+            "duration_ms": duration_ms,
+            "retry_policy": self.get_retry_policy(name),
+            "permission_checked": True,
+            "verified": verified,
+            "verification": verification,
+        }
+        if not verified:
+            # A handler that reports success but leaves no verifiable effect is
+            # reported as a failure. Failure never becomes success.
+            payload = self._tool_result(False, "verification_failed", output=output, error=f"Verificação falhou: {verification}", metadata=metadata)
+            self.permission_manager.log_decision(auth["capability"], "verification_failed", risk=auth["decision"].risk, target=str(auth["args"].get("path") or ""), task_id=task_id, reason=verification, event_name="ToolVerificationFailed")
+            self._publish("tool.failed", {"tool": name, "task_id": task_id, "error": "verification_failed", "duration_ms": duration_ms})
             return payload
+
+        metadata["trust"] = self._trust_for(auth["capability"], auth["context"])
+        if metadata["trust"] == TrustLevel.UNTRUSTED_EXTERNAL.value:
+            inspection = classify_external(self._output_text(output), source=name)
+            metadata["untrusted_source"] = name
+            metadata["injection_findings"] = [f.as_dict() for f in inspection.findings]
+            if inspection.suspicious:
+                self.permission_manager.log_decision(
+                    auth["capability"], "untrusted_content_flagged",
+                    risk=auth["decision"].risk, target=str(auth["args"].get("url") or ""), task_id=task_id,
+                    reason=f"External content attempted to claim authority: {sorted({f.category for f in inspection.findings})}",
+                    event_name="UntrustedContentFlagged",
+                )
+                self._publish("security.untrusted_content", {
+                    "tool": name, "task_id": task_id,
+                    "categories": sorted({f.category for f in inspection.findings}),
+                })
+
+        wrapped = self._tool_result(True, "completed", output=output, metadata=metadata)
+        self.permission_manager.log_decision(auth["capability"], "executed", risk=auth["decision"].risk, target=str(auth["args"].get("path") or auth["args"].get("url") or ""), task_id=task_id, reason="Tool executed and verified.", event_name="ToolExecuted")
+        self._publish("tool.executed", {"tool": name, "task_id": task_id, "ok": True, "duration_ms": duration_ms, "retry_policy": self.get_retry_policy(name)})
+        return wrapped
+
+    def _failure(self, name: str, auth: dict, task_id: str | None, start: float, error: str) -> dict:
+        duration_ms = int((time.monotonic() - start) * 1000)
+        payload = self._tool_result(False, "failed", error=error, metadata={
+            "tool": name,
+            "task_id": task_id,
+            "capability": auth["capability"],
+            "duration_ms": duration_ms,
+            "retry_policy": self.get_retry_policy(name),
+            "permission_checked": True,
+            "verified": False,
+        })
+        self.permission_manager.log_decision(auth["capability"], "failed", risk=auth["decision"].risk, task_id=task_id, reason=error, event_name="ToolFailed")
+        self._publish("tool.failed", {"tool": name, "task_id": task_id, "error": error, "duration_ms": duration_ms, "retry_policy": self.get_retry_policy(name)})
+        return payload
+
+    def _verify_execution(self, name: str, args: dict, output: Any) -> tuple[bool, str]:
+        """Post-execution verification against observable state, not self-report."""
+        path = args.get("path")
+        if name in {"filesystem.write_file", "filesystem.create_directory"} and isinstance(path, str):
+            return (Path(path).exists(), "path_exists" if Path(path).exists() else "path_missing_after_write")
+        if name == "filesystem.delete_path" and isinstance(path, str):
+            gone = not Path(path).exists()
+            return (gone, "path_removed" if gone else "path_still_present_after_delete")
+        if isinstance(output, dict):
+            if output.get("error"):
+                return (False, str(output.get("error"))[:200])
+            if output.get("success") is False:
+                return (False, "handler_reported_failure")
+        return (True, "no_verification_required")
 
     def _tool_result(self, success: bool, status: str, *, output: Any = None, error: str | None = None, metadata: dict | None = None) -> dict:
         result = {
@@ -267,45 +582,32 @@ class ToolExecutor:
             result["output"] = {"ok": True}
         return result
 
+    # ---------------------------------------------------------- core handlers
+
     def _create_directory(self, args: dict) -> dict:
-        path = str(args.get("path") or "").strip()
-        if not path:
-            raise ToolExecutionError("path obrigatório")
-        p = self._validate_path(path)
+        p = self.resolve_tool_target(args.get("path")).path
         p.mkdir(parents=True, exist_ok=True)
         return {"path": str(p), "created": True}
 
     def _write_file(self, args: dict) -> dict:
-        path = str(args.get("path") or "").strip()
         content = args.get("content", "")
-        if not path:
-            raise ToolExecutionError("path obrigatório")
-        p = self._validate_path(path)
+        p = self.resolve_tool_target(args.get("path")).path
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(str(content), encoding="utf-8")
         return {"path": str(p), "written": True, "bytes": len(str(content).encode("utf-8"))}
 
     def _read_file(self, args: dict) -> dict:
-        path = str(args.get("path") or "").strip()
-        if not path:
-            raise ToolExecutionError("path obrigatório")
-        p = self._validate_path(path, must_exist=True)
+        p = self.resolve_tool_target(args.get("path"), must_exist=True).path
         content = p.read_text(encoding="utf-8", errors="replace")
         return {"path": str(p), "content": content[:12000], "bytes": len(content.encode("utf-8"))}
 
     def _list_directory(self, args: dict) -> dict:
-        path = str(args.get("path") or ".").strip() or "."
-        p = self._validate_path(path, must_exist=True)
+        p = self.resolve_tool_target(args.get("path") or ".", must_exist=True).path
         items = [{"name": child.name, "type": "directory" if child.is_dir() else "file"} for child in sorted(p.iterdir())]
         return {"path": str(p), "items": items, "count": len(items)}
 
     def _delete_path(self, args: dict) -> dict:
-        path = str(args.get("path") or "").strip()
-        if not path:
-            raise ToolExecutionError("path obrigatório")
-        p = self._validate_path(path, must_exist=True)
-        if not p.exists():
-            raise ToolExecutionError(f"Caminho não existe: {path}")
+        p = self.resolve_tool_target(args.get("path"), must_exist=True).path
         if p.is_dir():
             for child in sorted(p.iterdir(), reverse=True):
                 if child.is_dir():
@@ -331,19 +633,19 @@ class ToolExecutor:
             raise ToolExecutionError("command obrigatório")
         cwd = args.get("cwd")
         if cwd is not None:
-            cwd = str(self._validate_path(cwd, allow_absolute=True))
+            cwd = str(self.resolve_tool_target(cwd, must_exist=True).path)
         timeout = max(1, min(int(args.get("timeout") or 30), 180))
         stdout_limit = min(int(args.get("stdout_limit") or 12000), 12000)
         stderr_limit = min(int(args.get("stderr_limit") or 12000), 12000)
         command_risk = self._classify_shell_command(command)
-        if command_risk in {"high", "critical"}:
-            shell_decision = self.permission_manager.evaluate("shell.execute", {"command": command, "cwd": cwd})
-            if shell_decision.requires_confirmation and not self.permission_manager.ask_for_confirmation("shell.execute", {"command": command, "cwd": cwd}):
-                raise ToolExecutionError("critical shell command requires explicit permission confirmation")
-        if subprocess.mswindows:
-            completed = subprocess.run(["cmd", "/c", command], cwd=str(cwd) if cwd else None, capture_output=True, text=True, timeout=timeout)
+
+        # subprocess.mswindows was a Python 2 attribute and does not exist in
+        # Python 3; every shell execution used to raise AttributeError here.
+        if os.name == "nt":
+            argv = ["cmd", "/c", command]
         else:
-            completed = subprocess.run(["bash", "-lc", command], cwd=str(cwd) if cwd else None, capture_output=True, text=True, timeout=timeout)
+            argv = ["bash", "-lc", command]
+        completed = subprocess.run(argv, cwd=str(cwd) if cwd else None, capture_output=True, text=True, timeout=timeout)
         return {
             "command": command,
             "risk": command_risk,
@@ -354,13 +656,35 @@ class ToolExecutor:
         }
 
     def _run_project_tests(self, args: dict) -> dict:
-        path = str(args.get("path") or ".").strip() or "."
-        safe_path = self._validate_path(path)
-        cmd = str(args.get("command") or "python -m pytest -q").strip()
-        result = subprocess.run(cmd, cwd=str(safe_path), shell=True, capture_output=True, text=True, timeout=60)
+        """Run a supported test runner inside the project. No shell, ever.
+
+        The model may pick which supported runner to use and which test path to
+        target, but never the command line: there is no argument that reaches a
+        shell from here.
+        """
+        target = self.resolve_tool_target(args.get("path") or ".", must_exist=True)
+        if target.scope != Scope.CURRENT_WORKSPACE:
+            raise ToolExecutionError("project_tests_outside_workspace_blocked")
+        if not target.path.is_dir():
+            raise ToolExecutionError("project_path_not_a_directory")
+
+        runner = str(args.get("runner") or "pytest").strip().lower()
+        if runner not in _ALLOWED_TEST_RUNNERS:
+            raise ToolExecutionError(f"unsupported_test_runner:{runner}")
+
+        argv = [_python_executable(), *_ALLOWED_TEST_RUNNERS[runner]]
+        test_path = args.get("test_path")
+        if isinstance(test_path, str) and test_path.strip():
+            scoped = self.resolve_tool_target(test_path, base=target.path, must_exist=True)
+            if scoped.scope != Scope.CURRENT_WORKSPACE:
+                raise ToolExecutionError("test_path_outside_workspace_blocked")
+            argv.append(str(scoped.path))
+
+        result = subprocess.run(argv, cwd=str(target.path), shell=False, capture_output=True, text=True, timeout=110)
         return {
-            "path": str(safe_path),
-            "command": cmd,
+            "path": str(target.path),
+            "runner": runner,
+            "argv": argv,
             "returncode": result.returncode,
             "stdout": result.stdout[:12000],
             "stderr": result.stderr[:12000],
@@ -411,3 +735,9 @@ class ToolExecutor:
             }
             for meta in self.registry.values()
         ]
+
+
+def _python_executable() -> str:
+    import sys
+
+    return sys.executable or "python"

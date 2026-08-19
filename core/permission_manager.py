@@ -9,7 +9,47 @@ from pathlib import Path
 from typing import Any, Callable
 
 from core.app_paths import DATA_DIR
-from core.policy_engine import AuthorityDecision, AutonomyMode, PolicyEngine, RiskLevel
+from core.policy_engine import (
+    AuthorityDecision,
+    AutonomyMode,
+    PolicyEngine,
+    RiskLevel,
+    capability_tokens,
+)
+
+# Whole-token risk tiers, aligned with core.policy_engine so the risk shown to
+# the user and the risk used by the policy never disagree for a capability.
+_RISK_CRITICAL_TOKENS = frozenset({
+    "delete", "format", "kill", "registry", "credential", "credentials",
+    "secret", "secrets", "password", "payment", "purchase", "financial",
+    "transaction", "destroy", "wipe",
+})
+_RISK_HIGH_TOKENS = frozenset({
+    "write", "move", "copy", "install", "network", "wifi", "bluetooth",
+    "volume", "brightness", "submit", "push", "reset", "shell", "powershell",
+    "execute", "start", "system",
+})
+_RISK_MEDIUM_TOKENS = frozenset({
+    "git", "browser", "web", "file", "filesystem", "calendar", "reminder",
+    "monitor", "process", "interact",
+})
+
+
+@dataclass(frozen=True)
+class TaskGrant:
+    """A task-scoped authorization.
+
+    Identity is capability + target + scope. Approving one target never
+    authorises another, and a grant approved for one scope never applies to a
+    wider one.
+    """
+
+    capability: str
+    target: str
+    scope: str
+
+    def as_dict(self) -> dict:
+        return {"capability": self.capability, "target": self.target, "scope": self.scope}
 
 
 @dataclass
@@ -55,14 +95,18 @@ class PermissionManager:
         confirmation_callback: Callable[[str, dict], bool] | None = None,
         policy_store_path: str | Path | None = None,
         autonomy_mode: str | AutonomyMode = AutonomyMode.SAFE,
+        async_confirmation_callback: Callable[[str, dict], Any] | None = None,
     ):
         self.confirmation_callback = confirmation_callback
+        # Preferred by ask_for_confirmation_async so the chat path never blocks
+        # the event loop it is running on.
+        self.async_confirmation_callback = async_confirmation_callback
         self.policy_engine = PolicyEngine(autonomy_mode=autonomy_mode)
         self._policies: dict[str, dict[str, Any]] = {}
         self._pending_requests: dict[str, dict[str, Any]] = {}
         self._audit_log: list[dict[str, Any]] = []
         self._once_grants: set[tuple[str, str]] = set()
-        self._task_grants: dict[str, set[str]] = {}
+        self._task_grants: dict[str, set[TaskGrant]] = {}
         self._policy_store_path = Path(policy_store_path) if policy_store_path else DATA_DIR / "permission_policies.json"
         self._policy_store_path.parent.mkdir(parents=True, exist_ok=True)
         self._register_default_policies()
@@ -105,19 +149,36 @@ class PermissionManager:
         target = self._resolve_target(args) or "*"
         return (self._canonical_capability(capability), target)
 
-    def _has_execution_grant(self, capability: str, args: dict | None = None, *, task_id: str | None = None) -> bool:
+    def _task_grant_key(self, capability: str, args: dict | None, scope: str | None = None) -> TaskGrant:
+        """Full identity of a task grant: capability + target + scope.
+
+        A task grant used to store the capability alone, so approving a write to
+        one file authorised writing every file for the rest of the task. The
+        target and the approved scope are now part of the key.
+        """
+        target = self._resolve_target(args)
+        # Derive the scope the same way on both sides of the grant (storing and
+        # checking), so an unspecified scope cannot silently produce two
+        # different keys for the same authorization.
+        resolved_scope = self.policy_engine._resolve_scope(scope or (args or {}).get("scope"), target)
+        return TaskGrant(
+            capability=self._canonical_capability(capability),
+            target=target or "*",
+            scope=str(resolved_scope),
+        )
+
+    def _has_execution_grant(self, capability: str, args: dict | None = None, *, task_id: str | None = None, scope: str | None = None) -> bool:
         key = self._grant_key(capability, args)
         if key in self._once_grants:
             return True
-        return self._has_task_execution_grant(capability, task_id=task_id)
+        return self._has_task_execution_grant(capability, task_id=task_id, args=args, scope=scope)
 
-    def _has_task_execution_grant(self, capability: str, *, task_id: str | None = None) -> bool:
-        canonical = self._canonical_capability(capability)
-        if task_id and canonical in self._task_grants.get(task_id, set()):
-            return True
-        return False
+    def _has_task_execution_grant(self, capability: str, *, task_id: str | None = None, args: dict | None = None, scope: str | None = None) -> bool:
+        if not task_id:
+            return False
+        return self._task_grant_key(capability, args, scope) in self._task_grants.get(str(task_id), set())
 
-    def _consume_execution_grant(self, capability: str, args: dict | None = None, *, task_id: str | None = None) -> bool:
+    def _consume_execution_grant(self, capability: str, args: dict | None = None, *, task_id: str | None = None, scope: str | None = None) -> bool:
         key = self._grant_key(capability, args)
         if key in self._once_grants:
             self._once_grants.discard(key)
@@ -131,9 +192,30 @@ class PermissionManager:
                 event_name="PermissionConsumed",
             )
             return True
-        if self._has_task_execution_grant(capability, task_id=task_id):
+        if self._has_task_execution_grant(capability, task_id=task_id, args=args, scope=scope):
             return True
         return False
+
+    def release_task_grants(self, task_id: str) -> int:
+        """Drop every grant belonging to a task. Called when a task ends."""
+        released = self._task_grants.pop(str(task_id), set())
+        if released:
+            self.log_decision(
+                "task.grants",
+                "released",
+                task_id=str(task_id),
+                reason=f"{len(released)} task grant(s) released at task end.",
+                event_name="TaskGrantsReleased",
+            )
+        return len(released)
+
+    def list_task_grants(self, task_id: str | None = None) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for stored_task, grants in self._task_grants.items():
+            if task_id is not None and stored_task != str(task_id):
+                continue
+            items.extend({"task_id": stored_task, **grant.as_dict()} for grant in grants)
+        return items
 
     def _sanitize_stored_decision(self, capability: str, decision: str) -> str:
         normalized = self._canonical_capability(capability)
@@ -297,20 +379,32 @@ class PermissionManager:
         return items
 
     def revoke_policy(self, capability: str) -> bool:
+        """Remove a policy from both the manager and the live policy engine.
+
+        ``policy_engine.get_rules()`` returns a copy, so popping from it left the
+        engine still evaluating the revoked rule. ``remove_rule`` mutates the
+        real rule set.
+        """
         key = self._canonical_capability(capability)
         if key in self._policies:
             del self._policies[key]
-            self.policy_engine.get_rules().pop(key, None)
+            self.policy_engine.remove_rule(key)
             self._save_policy_store()
             return True
         return False
 
-    def get_decision_for_action(self, action_name: str, args: dict | None = None) -> str:
+    def get_decision_for_action(self, action_name: str, args: dict | None = None, *, scope: str | None = None, context: dict | None = None) -> str:
+        """Resolve the policy decision for an action.
+
+        ``scope`` is supplied by the execution authority once a filesystem
+        target has been resolved and classified. Without it the policy engine
+        cannot know whether a path is inside the workspace and fails closed.
+        """
         if self.is_emergency_stopped():
             return "deny"
         policy_name = self._canonical_capability(action_name)
         target = self._resolve_target(args)
-        evaluation = self.policy_engine.evaluate(policy_name, target=target, arguments=args or {})
+        evaluation = self.policy_engine.evaluate(policy_name, target=target, scope=scope, arguments=args or {}, context=context)
         if evaluation.decision == AuthorityDecision.BLOCKED:
             return "deny"
         stored = self._policies.get(policy_name, {})
@@ -320,7 +414,7 @@ class PermissionManager:
         if evaluation.decision == AuthorityDecision.APPROVAL_REQUIRED or policy_name in _APPROVAL_GATED_CAPABILITIES:
             # ALLOW_ONCE is intentionally not an evaluated authorization: only
             # ask_for_confirmation() may consume it for a real execution.
-            if self._has_task_execution_grant(policy_name, task_id=(args or {}).get("_task_id")):
+            if self._has_task_execution_grant(policy_name, task_id=(args or {}).get("_task_id"), args=args, scope=(context or {}).get("scope") or scope):
                 return "allow"
             return "ask"
         if stored_decision in {"ask", "approval_required"}:
@@ -328,30 +422,39 @@ class PermissionManager:
         return "allow"
 
     def classify_action(self, action_name: str, args: dict | None = None) -> RiskLevel:
-        name = (action_name or "").lower()
+        """Classify risk from whole capability tokens, never substrings.
+
+        Substring matching previously classified every ``filesystem.*``
+        capability as critical because "system" appears inside "filesystem".
+        Risk is now derived from the same tokenizer the policy engine uses, so
+        both layers agree on what a capability actually is.
+        """
+        tokens = capability_tokens(action_name or "")
         args = args or {}
-        if any(token in name for token in ("delete", "format", "kill", "registry", "credential", "secret", "token", "password", "payment", "purchase")):
+        if tokens & _RISK_CRITICAL_TOKENS:
             return RiskLevel.CRITICAL
-        if any(token in name for token in ("write", "move", "copy", "install", "network", "wifi", "bluetooth", "volume", "brightness", "submit", "push", "reset")):
+        if tokens & _RISK_HIGH_TOKENS:
             return RiskLevel.HIGH
-        if any(token in name for token in ("git", "browser", "web", "file", "calendar", "reminder", "monitor", "process", "shell")):
+        if tokens & _RISK_MEDIUM_TOKENS:
             return RiskLevel.MEDIUM
-        if action_name and action_name.lower().startswith("read"):
+        if "read" in tokens or "list" in tokens:
             return RiskLevel.LOW
-        if isinstance(args.get("path"), str) and any(marker in str(args.get("path", "")).lower() for marker in ("documents", "desktop", "downloads", "appdata", "program files")):
+        if isinstance(args.get("path"), str) and capability_tokens(args.get("path", "")) & {
+            "documents", "desktop", "downloads", "appdata", "system32",
+        }:
             return RiskLevel.MEDIUM
         return RiskLevel.LOW
 
-    def evaluate(self, action_name: str, args: dict | None = None, *, task_id: str | None = None) -> PermissionDecision:
+    def evaluate(self, action_name: str, args: dict | None = None, *, task_id: str | None = None, scope: str | None = None, context: dict | None = None) -> PermissionDecision:
         target = self._resolve_target(args)
         policy_name = self._canonical_capability(action_name)
-        evaluation = self.policy_engine.evaluate(policy_name, target=target, arguments=args or {}, task_id=task_id)
+        evaluation = self.policy_engine.evaluate(policy_name, target=target, scope=scope, arguments=args or {}, context=context, task_id=task_id)
         if evaluation.decision == AuthorityDecision.BLOCKED:
             return PermissionDecision(False, True, evaluation.risk, evaluation.reason)
         if evaluation.decision == AuthorityDecision.APPROVAL_REQUIRED or policy_name in _APPROVAL_GATED_CAPABILITIES:
             # A one-shot grant must remain pending until confirmation consumes it.
             # Task grants are reusable, but only for their matching task id.
-            if self._has_task_execution_grant(policy_name, task_id=task_id):
+            if self._has_task_execution_grant(policy_name, task_id=task_id, args=args, scope=(context or {}).get("scope") or scope):
                 return PermissionDecision(True, False, evaluation.risk, "Explicit task grant present.")
             return PermissionDecision(False, True, evaluation.risk, evaluation.reason)
         return PermissionDecision(True, False, evaluation.risk, evaluation.reason)
@@ -407,7 +510,12 @@ class PermissionManager:
         elif normalized == "allow_for_task":
             if not request_task_id:
                 return {"ok": False, "error": "task_id_required"}
-            self._task_grants.setdefault(str(request_task_id), set()).add(capability)
+            grant = self._task_grant_key(capability, request_args, request.get("scope"))
+            if grant.target == "*":
+                # A grant with no concrete target would authorise every target
+                # for that capability. ALLOW_ONCE covers the targetless case.
+                return {"ok": False, "error": "task_grant_requires_explicit_target"}
+            self._task_grants.setdefault(str(request_task_id), set()).add(grant)
 
         self.log_decision(
             capability,
@@ -424,26 +532,62 @@ class PermissionManager:
     def get_pending_permissions(self) -> list[dict[str, Any]]:
         return list(self._pending_requests.values())
 
-    def ask_for_confirmation(self, action_name: str, args: dict | None = None, *, task_id: str | None = None) -> bool:
+    def _confirmation_precheck(self, action_name: str, args: dict | None, task_id: str | None, context: dict | None = None) -> tuple[bool | None, dict]:
+        """Resolve everything that does not require asking a human.
+
+        Returns ``(result, args)`` where ``result`` is ``None`` when the caller
+        must actually prompt. Shared by the sync and async confirmation paths so
+        both apply exactly the same authorization rules.
+        """
         if self.is_emergency_stopped():
-            return False
+            return False, dict(args or {})
 
-        args = dict(args or {})
+        prepared = dict(args or {})
         if task_id:
-            args["_task_id"] = task_id
+            prepared["_task_id"] = task_id
 
-        decision = self.evaluate(action_name, args, task_id=task_id)
+        decision = self.evaluate(action_name, prepared, task_id=task_id, scope=(context or {}).get("scope"), context=context)
         if decision.allowed and not decision.requires_confirmation:
-            return True
+            return True, prepared
         if not decision.requires_confirmation:
-            return decision.allowed
+            return decision.allowed, prepared
 
-        if self._consume_execution_grant(action_name, args, task_id=task_id):
-            return True
+        if self._consume_execution_grant(action_name, prepared, task_id=task_id, scope=(context or {}).get("scope")):
+            return True, prepared
 
+        if self.confirmation_callback is None and self.async_confirmation_callback is None:
+            return False, prepared
+        return None, prepared
+
+    def ask_for_confirmation(self, action_name: str, args: dict | None = None, *, task_id: str | None = None, context: dict | None = None) -> bool:
+        """Synchronous confirmation. Safe only off the shared event loop thread."""
+        result, prepared = self._confirmation_precheck(action_name, args, task_id, context)
+        if result is not None:
+            return result
         if self.confirmation_callback is None:
             return False
-        return bool(self.confirmation_callback(action_name, args))
+        return bool(self.confirmation_callback(action_name, prepared))
+
+    async def ask_for_confirmation_async(self, action_name: str, args: dict | None = None, *, task_id: str | None = None, context: dict | None = None) -> bool:
+        """Await a confirmation without ever blocking the calling event loop.
+
+        The chat path runs on the shared loop, so it must never call the
+        synchronous variant: doing so schedules work onto the very loop it is
+        blocking. A native async callback is awaited directly; a legacy sync
+        callback is off-loaded to a worker thread.
+        """
+        import asyncio
+
+        result, prepared = self._confirmation_precheck(action_name, args, task_id)
+        if result is not None:
+            return result
+
+        if self.async_confirmation_callback is not None:
+            return bool(await self.async_confirmation_callback(action_name, prepared))
+        if self.confirmation_callback is None:
+            return False
+        callback = self.confirmation_callback
+        return bool(await asyncio.to_thread(callback, action_name, prepared))
 
     def is_blocked(self, action_name: str, args: dict | None = None, *, task_id: str | None = None) -> bool:
         if self.is_emergency_stopped():

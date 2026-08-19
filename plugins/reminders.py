@@ -227,5 +227,17 @@ TOOL_HANDLERS: dict = {
 }
 
 # Arranca com o H.E.L.I.O.S. para que lembretes criados noutras sessões disparem
-if get_setting("reminders.enabled", True):
-    start_scheduler()
+def start_background_services() -> bool:
+    """Arranca o scheduler. Chamado pelo bootstrap, nunca no import.
+
+    Arrancar threads no import fazia com que qualquer `import` do plugin — um
+    teste, uma verificação de sintaxe — deixasse um scheduler a correr sem
+    forma de o parar.
+    """
+    if not get_setting("reminders.enabled", True):
+        return False
+    return start_scheduler()
+
+
+def stop_background_services() -> None:
+    stop_scheduler()

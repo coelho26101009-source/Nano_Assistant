@@ -8,6 +8,7 @@ import argparse
 import asyncio
 import logging
 import os
+import re
 import socket
 import sys
 import threading
@@ -30,7 +31,7 @@ from core.app_paths import DATA_DIR, FRONTEND_DIR, PLUGINS_DIR, ROOT
 from core.brain import Brain
 from core.config import load_config
 from core.guardrails import GuardrailsEngine
-from core.plugin_loader import load_all_plugins, list_plugins
+from core.plugin_loader import load_all_plugins, list_plugins, start_plugin_services, stop_plugin_services
 from core.memory import get_memory
 from core.logger import setup_logger
 from core.local_runtime import choose_model, ollama_available, model_available
@@ -65,10 +66,17 @@ context_engine = ContextEngine(memory, task_engine)
 agent_registry = AgentRegistry()
 agent_orchestrator = AgentOrchestrator(memory, task_engine=task_engine, event_bus=event_bus, context_engine=context_engine, permission_manager=permission_manager, agent_registry=agent_registry)
 tool_executor = ToolExecutor(permission_manager=permission_manager, event_bus=event_bus)
-background_worker = BackgroundTaskWorker(task_engine=task_engine, event_bus=event_bus, context_engine=context_engine, memory=memory, tool_executor=tool_executor, permission_manager=permission_manager)
-brain = Brain(api_key=API_KEY, guardrails=guardrails, memory=memory, config=CONFIG, permission_manager=permission_manager)
-brain.load_history()
+
+# Plugins must be loaded before the executor absorbs them, and the executor must
+# own every plugin tool before the Brain can call one: plugin_loader refuses to
+# dispatch a handler to anyone but a bound execution authority.
 load_all_plugins(PLUGINS_DIR)
+_PLUGIN_TOOLS_REGISTERED = tool_executor.register_plugin_tools()
+logger.info("Ferramentas de plugin sob a autoridade central: %d", _PLUGIN_TOOLS_REGISTERED)
+
+background_worker = BackgroundTaskWorker(task_engine=task_engine, event_bus=event_bus, context_engine=context_engine, memory=memory, tool_executor=tool_executor, permission_manager=permission_manager)
+brain = Brain(api_key=API_KEY, guardrails=guardrails, memory=memory, config=CONFIG, permission_manager=permission_manager, tool_executor=tool_executor)
+brain.load_history()
 voice_runtime = VoiceRuntime(
     voice,
     brain=brain,
@@ -84,25 +92,48 @@ eel.init(str(FRONTEND_DIR) if FRONTEND_DIR.exists() else str(ROOT / "web"))
 
 _EVENT_LOOP: asyncio.AbstractEventLoop | None = None
 _EVENT_LOOP_THREAD: threading.Thread | None = None
+_EVENT_LOOP_LOCK = threading.Lock()
+DEFAULT_COROUTINE_TIMEOUT = 120.0
+
+
+class LoopReentrancyError(RuntimeError):
+    """Raised when run_coro is called from the loop thread it would block."""
+
 
 def _get_or_create_loop() -> asyncio.AbstractEventLoop:
     """Obtém ou inicializa a event-loop partilhada assíncrona numa thread dedicada."""
     global _EVENT_LOOP, _EVENT_LOOP_THREAD
-    if _EVENT_LOOP is None or not _EVENT_LOOP.is_running():
-        _EVENT_LOOP = asyncio.new_event_loop()
-        _EVENT_LOOP_THREAD = threading.Thread(
-            target=_EVENT_LOOP.run_forever,
-            name="NanoAsyncLoop",
-            daemon=True
-        )
-        _EVENT_LOOP_THREAD.start()
-    return _EVENT_LOOP
+    with _EVENT_LOOP_LOCK:
+        if _EVENT_LOOP is None or not _EVENT_LOOP.is_running():
+            _EVENT_LOOP = asyncio.new_event_loop()
+            _EVENT_LOOP_THREAD = threading.Thread(
+                target=_EVENT_LOOP.run_forever,
+                name="NanoAsyncLoop",
+                daemon=True
+            )
+            _EVENT_LOOP_THREAD.start()
+        return _EVENT_LOOP
 
-def run_coro(coro):
-    """Executa de forma segura uma corrotina na thread assíncrona principal."""
+
+def run_coro(coro, *, timeout: float | None = DEFAULT_COROUTINE_TIMEOUT):
+    """Executa uma corrotina na loop partilhada a partir de outra thread.
+
+    Chamar isto de dentro da própria loop agendaria trabalho na loop que
+    estamos a bloquear — o deadlock que travava todas as confirmações vindas
+    do chat. Passou a ser um erro explícito em vez de uma espera infinita.
+    """
     loop = _get_or_create_loop()
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if running is loop:
+        coro.close()
+        raise LoopReentrancyError(
+            "run_coro() foi chamado a partir da loop partilhada. Use await directamente."
+        )
     future = asyncio.run_coroutine_threadsafe(coro, loop)
-    return future.result()
+    return future.result(timeout=timeout)
 
 def _permission_confirmation_message(action_name: str, args: dict) -> str:
     target = args.get("path") or args.get("target") or args.get("url") or args.get("command")
@@ -110,17 +141,45 @@ def _permission_confirmation_message(action_name: str, args: dict) -> str:
         return f"O Nano pretende executar '{action_name}' sobre '{target}'. Confirmas?"
     return f"O Nano pretende executar '{action_name}'. Confirmas?"
 
-def _permission_confirmation_callback(action_name: str, args: dict) -> bool:
-    """Bridge síncrono entre PermissionManager e confirmação humana na UI."""
+
+def _confirmation_meta(action_name: str, args: dict) -> dict:
+    """Argumentos mostrados ao humano, sem segredos.
+
+    O diálogo tem de mostrar o que está realmente a ser aprovado: aprovar
+    'alterar Wi-Fi' sem ver os argumentos não é consentimento informado.
+    """
+    safe_args = {
+        key: str(value)[:200]
+        for key, value in (args or {}).items()
+        if not key.startswith("_") and not re.search(r"secret|token|password|key|credential", key, re.I)
+    }
+    return {"tool": action_name, "args": safe_args, "source": "permission_manager"}
+
+
+async def _permission_confirmation_async(action_name: str, args: dict) -> bool:
+    """Confirmação humana sem bloquear a loop que a pediu."""
     message = _permission_confirmation_message(action_name, args or {})
-    meta = {"tool": action_name, "args": args or {}, "source": "permission_manager"}
     try:
-        return bool(run_coro(guardrails.request_from_ui(message, meta)))
+        return bool(await guardrails.request_from_ui(message, _confirmation_meta(action_name, args)))
+    except Exception:
+        logger.exception("Falha na confirmação de permissão para '%s'", action_name)
+        return False
+
+
+def _permission_confirmation_callback(action_name: str, args: dict) -> bool:
+    """Bridge síncrono usado pelo worker em background (nunca pela loop)."""
+    message = _permission_confirmation_message(action_name, args or {})
+    try:
+        return bool(run_coro(guardrails.request_from_ui(message, _confirmation_meta(action_name, args)), timeout=90))
+    except LoopReentrancyError:
+        logger.error("Confirmação síncrona pedida dentro da loop para '%s'; use o caminho assíncrono.", action_name)
+        return False
     except Exception:
         logger.exception("Falha na confirmação de permissão para '%s'", action_name)
         return False
 
 permission_manager.confirmation_callback = _permission_confirmation_callback
+permission_manager.async_confirmation_callback = _permission_confirmation_async
 guardrails.set_confirm_callback(guardrails.request_from_ui)
 
 @eel.expose
@@ -136,8 +195,17 @@ def send_message(user_text: str, msg_id: str | None = None) -> dict:
 
 @eel.expose
 def stop_voice():
-    """Interrompe qualquer reprodução ou captura ativa de áudio."""
-    voice.stop()
+    """Interrompe qualquer reprodução ou captura ativa de áudio.
+
+    Esta é a única exposição Eel de 'stop_voice'. Uma segunda definição com o
+    mesmo nome fazia com que eel._expose falhasse no import e a aplicação nunca
+    arrancasse.
+    """
+    try:
+        voice.stop()
+    except Exception as exc:
+        logger.error("Falha ao parar a voz: %s", exc)
+        return {"ok": False, "error": "stop_failed"}
     return {"ok": True}
 
 @eel.expose
@@ -327,9 +395,140 @@ def get_command_center_state() -> dict:
         "health": {
             "worker": background_worker.status(),
             "memory": memory.get_facts(),
-            "providers": {"ollama": "online", "desktop": "online", "browser": "online"},
+            "providers": get_provider_health(),
         },
+        "emergency_stop": permission_manager.is_emergency_stopped(),
+        "autonomy_mode": permission_manager.policy_engine.autonomy_mode.value,
     }
+
+
+@eel.expose
+def get_system_readiness() -> dict:
+    """Consolidated, honest readiness for every subsystem the UI displays.
+
+    Every value here is derived from a real check. Where a subsystem cannot be
+    verified the state is UNKNOWN or SETUP_REQUIRED — never READY by default.
+    """
+    voice_status = voice_runtime.status()
+    wake = wake_word.status() if wake_word else {}
+    wake_model = str(wake.get("model_status") or "").upper()
+    wake_enabled = bool(CONFIG.get("voice", {}).get("wake_word", {}).get("enabled", False))
+
+    if not wake_enabled:
+        wake_state = "DISABLED"
+    elif wake.get("running"):
+        wake_state = "READY"
+    elif wake_model == "READY":
+        wake_state = "MODEL_LOADING"
+    elif wake_model in {"MISSING", "INVALID", "LOAD_ERROR"}:
+        wake_state = "MODEL_MISSING"
+    else:
+        wake_state = "SETUP_REQUIRED"
+
+    base_url = brain.ollama_url.removesuffix("/api/chat")
+    try:
+        ollama_up = bool(run_coro(ollama_available(base_url), timeout=5))
+        model_ready = bool(run_coro(model_available(brain.ollama_model, base_url), timeout=5)) if ollama_up else False
+    except Exception:
+        ollama_up = model_ready = False
+
+    if not brain.local_enabled:
+        model_state = "DISABLED"
+    elif ollama_up and model_ready:
+        model_state = "READY"
+    elif ollama_up:
+        model_state = "MODEL_MISSING"
+    elif API_KEY:
+        model_state = "PROVIDER_READY"
+    else:
+        model_state = "OFFLINE"
+
+    worker = background_worker.status()
+    summary = task_engine.get_status_summary()
+    pending = permission_manager.get_pending_permissions()
+
+    if permission_manager.is_emergency_stopped():
+        agent_state = "OFFLINE"
+    elif pending:
+        agent_state = "APPROVAL_REQUIRED"
+    elif summary.get("RUNNING") or summary.get("PLANNING"):
+        agent_state = "WORKING"
+    elif summary.get("NEEDS_ATTENTION"):
+        agent_state = "ERROR"
+    elif not worker.get("running"):
+        agent_state = "SETUP_REQUIRED"
+    elif summary.get("QUEUED") or summary.get("RETRYING"):
+        agent_state = "WAITING"
+    else:
+        agent_state = "READY"
+
+    return {
+        "agent": {"state": agent_state, "pending_permissions": len(pending)},
+        "voice": {
+            "state": voice_status.get("readiness", "UNKNOWN"),
+            "blockers": voice_status.get("blockers", []),
+            "enabled": voice_status.get("enabled", False),
+        },
+        "wakeWord": {
+            "state": wake_state,
+            "phrase": wake.get("phrase"),
+            "modelStatus": wake_model or "UNKNOWN",
+            "error": wake.get("error"),
+        },
+        "model": {
+            "state": model_state,
+            "local": {"model": brain.ollama_model, "online": ollama_up, "modelReady": model_ready, "enabled": brain.local_enabled},
+            "cloud": {"model": brain.groq_model, "configured": bool(API_KEY)},
+            "provider": "ollama" if ollama_up else ("cloud" if API_KEY else "none"),
+        },
+        "worker": {"state": "READY" if worker.get("running") else "OFFLINE", **worker},
+        "providers": get_provider_health(),
+        "emergencyStop": permission_manager.is_emergency_stopped(),
+        "autonomyMode": permission_manager.policy_engine.autonomy_mode.value,
+        "browser": {"state": "EXPERIMENTAL"},
+        "vision": {"state": "NOT_AVAILABLE"},
+    }
+
+
+@eel.expose
+def get_provider_health() -> dict:
+    """Estado real de cada provider. Nunca reporta 'online' sem verificar."""
+    base_url = brain.ollama_url.removesuffix("/api/chat")
+    try:
+        ollama = "online" if run_coro(ollama_available(base_url), timeout=5) else "offline"
+    except Exception:
+        ollama = "unknown"
+
+    try:
+        import importlib.util
+
+        browser = "online" if importlib.util.find_spec("playwright") is not None else "setup_required"
+    except Exception:
+        browser = "unknown"
+
+    try:
+        desktop = "online" if psutil.cpu_percent(interval=None) is not None else "unknown"
+    except Exception:
+        desktop = "offline"
+
+    return {
+        "ollama": ollama,
+        "cloud": "configured" if API_KEY else "not_configured",
+        "browser": browser,
+        "desktop": desktop,
+        "voice": voice_runtime.status().get("readiness", "UNKNOWN"),
+    }
+
+@eel.expose
+def cancel_agent_task(task_id: str) -> dict:
+    """Cancel a task and release everything it was authorised to do."""
+    if not task_id:
+        return {"ok": False, "error": "missing_task_id"}
+    task = background_worker.cancel_task(task_id)
+    if not task:
+        return {"ok": False, "error": "task_not_found"}
+    return {"ok": True, "task": task}
+
 
 @eel.expose
 def get_task_detail(task_id: str) -> dict:
@@ -502,16 +701,6 @@ def set_output_device(device_id: int):
     logger.info(f"Output audio device set to {device_id}")
     return True
 
-@eel.expose
-def stop_voice():
-    """Stop any ongoing TTS playback immediately."""
-    try:
-        voice.stop()
-    except Exception as e:
-        logger.error(f"Failed to stop voice: {e}")
-    return True
-
-
 
 async def _process_message(user_text: str, msg_id: str | None = None, blocking_tts: bool = False) -> dict:
     if not msg_id:
@@ -564,12 +753,39 @@ def _open_browser_tab(port: int):
     except Exception as exc:
         logger.debug("Falha ao abrir navegador automaticamente: %s", exc)
 
+def shutdown() -> None:
+    """Stop every background service started by main()."""
+    try:
+        background_worker.stop()
+    except Exception:
+        logger.exception("Falha ao parar o worker")
+    try:
+        stop_plugin_services()
+    except Exception:
+        logger.exception("Falha ao parar serviços de plugins")
+    if wake_word is not None:
+        try:
+            wake_word.stop()
+        except Exception:
+            logger.exception("Falha ao parar a wake-word")
+    try:
+        voice.stop()
+    except Exception:
+        logger.exception("Falha ao parar a voz")
+    loop = _EVENT_LOOP
+    if loop is not None and loop.is_running():
+        loop.call_soon_threadsafe(loop.stop)
+
+
 def main():
     args = _parse_args()
     logger.info("Nano Assistant a iniciar...")
     logger.info("Frontend: %s", FRONTEND_DIR)
     logger.info("Cloud: %s", "configurado" if API_KEY else "não configurado")
     background_worker.start()
+    started_services = start_plugin_services()
+    if started_services:
+        logger.info("Serviços de plugin activos: %s", ", ".join(started_services))
     _start_wake_word()
     ui_cfg = CONFIG.get("ui", {}) or {}
     port = args.port or int(ui_cfg.get("port", 0) or 0) or _free_port()
@@ -580,15 +796,18 @@ def main():
     threading.Timer(0.8, _open_browser_tab, args=(port,)).start()
 
     modes = [False] if args.mode == "electron" else [args.mode, "default", False]
-    for mode in modes:
-        try:
-            eel.start("index.html", mode=mode, size=size, port=port, block=True)
-            return
-        except (SystemExit, KeyboardInterrupt):
-            return
-        except Exception:
-            logger.warning("Falha a iniciar UI em modo %s", mode, exc_info=True)
-    raise RuntimeError("Impossível iniciar a UI do Nano Assistant")
+    try:
+        for mode in modes:
+            try:
+                eel.start("index.html", mode=mode, size=size, port=port, block=True)
+                return
+            except (SystemExit, KeyboardInterrupt):
+                return
+            except Exception:
+                logger.warning("Falha a iniciar UI em modo %s", mode, exc_info=True)
+        raise RuntimeError("Impossível iniciar a UI do Nano Assistant")
+    finally:
+        shutdown()
 
 if __name__ == "__main__":
     main()

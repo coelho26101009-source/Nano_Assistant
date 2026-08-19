@@ -7,10 +7,46 @@ scopes, and contexts before allowing execution.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+_TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
+
+# Scopes that may ever be reached without an explicit user decision.
+AUTONOMOUS_SCOPES = frozenset({"current_workspace"})
+
+
+def capability_tokens(text: Any) -> set[str]:
+    """Split a capability or argument blob into exact, comparable tokens.
+
+    Token matching exists so that a capability like ``filesystem.read`` is never
+    matched by the ``system`` rule simply because "system" is a substring of
+    "filesystem". Matching is always on whole tokens.
+    """
+    return {token for token in _TOKEN_SPLIT.split(str(text).lower()) if token}
+
+
+# Whole-token matches. Multi-word danger signatures live in _CRITICAL_PHRASES
+# and are matched against argument text only, never against capability names.
+_CRITICAL_TOKENS = frozenset({
+    "delete", "destroy", "wipe", "format", "credential", "credentials",
+    "password", "passwd", "secret", "secrets", "payment", "purchase",
+    "checkout", "financial", "transaction", "system32", "sam", "shadow",
+})
+_CRITICAL_PHRASES = ("rm -rf", "drop database", "net user", "del /s", "format c:", "reg delete")
+_HIGH_TOKENS = frozenset({
+    "write", "install", "shell", "powershell", "submit", "push", "move",
+    "rename", "patch", "git", "process", "browser", "mail", "send", "exec",
+    "execute", "kill", "registry", "system", "start", "reset",
+})
+_MEDIUM_TOKENS = frozenset({"read", "inspect", "search", "test", "status", "list", "get"})
+_MUTATING_TOKENS = frozenset({
+    "write", "delete", "submit", "send", "install", "kill", "start", "push",
+    "credential", "financial", "transaction", "move", "rename",
+})
 
 
 class AutonomyMode(str, Enum):
@@ -198,12 +234,13 @@ class PolicyEngine:
         return str(target)
 
     def _risk_from_target(self, capability: str, target: str | None, arguments: dict[str, Any] | None = None) -> RiskLevel:
-        text = (capability + " " + (target or "") + " " + str(arguments or "")).lower()
-        if any(token in text for token in ("delete", "credential", "token", "password", "secret", "payment", "purchase", "checkout", "financial", "system", "reset", "format", "rm -rf", "drop database", "net user")):
+        argument_text = f"{target or ''} {arguments or ''}".lower()
+        tokens = capability_tokens(capability) | capability_tokens(argument_text)
+        if tokens & _CRITICAL_TOKENS or any(phrase in argument_text for phrase in _CRITICAL_PHRASES):
             return RiskLevel.CRITICAL
-        if any(token in text for token in ("write", "install", "shell", "submit", "push", "move", "rename", "patch", "git", "process", "browser", "mail", "send")):
+        if tokens & _HIGH_TOKENS:
             return RiskLevel.HIGH
-        if any(token in text for token in ("read", "inspect", "search", "test", "status", "list")):
+        if tokens & _MEDIUM_TOKENS:
             return RiskLevel.MEDIUM
         return RiskLevel.LOW
 
@@ -236,18 +273,18 @@ class PolicyEngine:
         resolved_scope = self._resolve_scope(scope, resolved_target)
 
         if normalized in self._blocked_capabilities:
-            return PolicyEvaluation(normalized, AuthorityDecision.BLOCKED, RiskLevel.CRITICAL, resolved_scope, resolved_target, self._rules.get(normalized, {}).get("reason", "Blocked by policy."), True, False)
+            return self._record(PolicyEvaluation(normalized, AuthorityDecision.BLOCKED, RiskLevel.CRITICAL, resolved_scope, resolved_target, self._rules.get(normalized, {}).get("reason", "Blocked by policy."), True, False), agent=agent, task_id=task_id)
 
         rule = self._rules.get(normalized)
         effective_risk = RiskLevel(risk.lower() if isinstance(risk, str) else risk.value) if risk is not None else self._risk_from_target(normalized, resolved_target, arguments)
 
         if normalized == "unknown":
-            return PolicyEvaluation("unknown", AuthorityDecision.APPROVAL_REQUIRED, RiskLevel.HIGH, resolved_scope, resolved_target, "Unknown capability requires review before execution.", True, False)
+            return self._record(PolicyEvaluation("unknown", AuthorityDecision.APPROVAL_REQUIRED, RiskLevel.HIGH, resolved_scope, resolved_target, "Unknown capability requires review before execution.", True, False), agent=agent, task_id=task_id)
 
         if rule is None:
             if effective_risk in {RiskLevel.HIGH, RiskLevel.CRITICAL}:
-                return PolicyEvaluation(normalized, AuthorityDecision.BLOCKED, effective_risk, resolved_scope, resolved_target, "Unknown high-risk capability is blocked by default.", True, False)
-            return PolicyEvaluation(normalized, AuthorityDecision.APPROVAL_REQUIRED, effective_risk, resolved_scope, resolved_target, "Unknown capability requires confirmation and explicit validation.", True, False)
+                return self._record(PolicyEvaluation(normalized, AuthorityDecision.BLOCKED, effective_risk, resolved_scope, resolved_target, "Unknown high-risk capability is blocked by default.", True, False), agent=agent, task_id=task_id)
+            return self._record(PolicyEvaluation(normalized, AuthorityDecision.APPROVAL_REQUIRED, effective_risk, resolved_scope, resolved_target, "Unknown capability requires confirmation and explicit validation.", True, False), agent=agent, task_id=task_id)
 
         decision = AuthorityDecision(rule["decision"].upper() if isinstance(rule["decision"], str) else rule["decision"])
         policy_scope = str(rule.get("scope") or resolved_scope)
@@ -255,7 +292,7 @@ class PolicyEngine:
 
         if normalized in {"filesystem.delete", "process.kill", "git.destructive", "credential.write", "financial.transaction"}:
             if resolved_target is None or str(resolved_target).strip() == "":
-                return PolicyEvaluation(normalized, AuthorityDecision.BLOCKED, RiskLevel.CRITICAL, policy_scope, resolved_target, "Target is missing or ambiguous for a destructive or critical action.", True, False)
+                return self._record(PolicyEvaluation(normalized, AuthorityDecision.BLOCKED, RiskLevel.CRITICAL, policy_scope, resolved_target, "Target is missing or ambiguous for a destructive or critical action.", True, False), agent=agent, task_id=task_id)
 
         if self.autonomy_mode == AutonomyMode.SAFE:
             if decision == AuthorityDecision.AUTONOMOUS and policy_risk in {RiskLevel.HIGH, RiskLevel.CRITICAL}:
@@ -269,11 +306,22 @@ class PolicyEngine:
         if decision == AuthorityDecision.AUTONOMOUS and resolved_scope in {"external_service", "system"} and normalized not in {"browser.read", "git.read", "project.inspect"}:
             decision = AuthorityDecision.APPROVAL_REQUIRED
 
-        if decision == AuthorityDecision.AUTONOMOUS and normalized.startswith("filesystem") and resolved_target and any(marker in str(resolved_target).lower() for marker in ("../", "..\\", "/windows", "/program files", "/system32", "appdata\\roaming", "appdata\\local")):
-            decision = AuthorityDecision.APPROVAL_REQUIRED
+        # Filesystem scope enforcement. Only the current workspace is eligible
+        # for autonomous access; anything else is an explicit target that needs
+        # a human decision, and OS-level mutation is refused outright.
+        if normalized.startswith("filesystem"):
+            if resolved_scope == "system" and normalized != "filesystem.read":
+                return self._record(PolicyEvaluation(
+                    normalized, AuthorityDecision.BLOCKED, RiskLevel.CRITICAL, resolved_scope, resolved_target,
+                    "Filesystem mutation outside the workspace and data directory is blocked.", True, True,
+                ), agent=agent, task_id=task_id)
+            if context and context.get("protected_target"):
+                decision = AuthorityDecision.APPROVAL_REQUIRED
+            if resolved_scope not in AUTONOMOUS_SCOPES:
+                decision = AuthorityDecision.APPROVAL_REQUIRED
 
         requires_confirmation = decision == AuthorityDecision.APPROVAL_REQUIRED or (policy_risk in {RiskLevel.HIGH, RiskLevel.CRITICAL})
-        return PolicyEvaluation(
+        return self._record(PolicyEvaluation(
             capability=normalized,
             decision=decision,
             risk=max_risk(policy_risk, effective_risk),
@@ -282,7 +330,36 @@ class PolicyEngine:
             reason=rule.get("reason", "Policy decision applied."),
             requires_confirmation=requires_confirmation,
             is_known=True,
-        )
+        ), agent=agent, task_id=task_id)
+
+    def _record(self, evaluation: PolicyEvaluation, *, agent: str | None = None, task_id: str | None = None) -> PolicyEvaluation:
+        """Append a policy evaluation to the audit trail and return it unchanged."""
+        import datetime
+
+        self._audit_events.append({
+            "event": "PolicyEvaluated",
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "capability": evaluation.capability,
+            "decision": evaluation.decision.value,
+            "risk": evaluation.risk.value,
+            "scope": evaluation.scope,
+            "target": evaluation.target,
+            "reason": evaluation.reason,
+            "agent": agent,
+            "task_id": task_id,
+        })
+        del self._audit_events[:-500]
+        return evaluation
+
+    def remove_rule(self, capability: str) -> bool:
+        """Remove a capability rule from the live rule set.
+
+        ``get_rules`` returns a copy, so callers must use this to actually
+        revoke a rule rather than mutating the returned dictionary.
+        """
+        normalized = self.canonical_capability(capability)
+        self._blocked_capabilities.discard(normalized)
+        return self._rules.pop(normalized, None) is not None
 
     def permission_request(self, *, task_id: str | None, agent: str | None, tool: str | None, capability: str | None, risk: RiskLevel | str | None, target: Any, scope: str | None, reason: str | None) -> dict[str, Any]:
         return {
@@ -306,8 +383,7 @@ class PolicyEngine:
 
 
 def execution_is_mutating(capability: str | None) -> bool:
-    key = (capability or "").lower()
-    return any(token in key for token in ("write", "delete", "submit", "send", "install", "kill", "start", "push", "credential", "financial", "transaction", "move", "rename"))
+    return bool(capability_tokens(capability or "") & _MUTATING_TOKENS)
 
 
 def max_risk(left: RiskLevel, right: RiskLevel) -> RiskLevel:

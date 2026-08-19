@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 from core import plugin_loader
 
 
@@ -24,4 +26,14 @@ def test_valid_plugin_is_registered(tmp_path):
     )
     plugin_loader.load_all_plugins(tmp_path)
     assert 'hello' in [x['function']['name'] for x in plugin_loader.get_all_tools()]
-    assert asyncio.run(plugin_loader.execute_tool('hello', {})) == {'ok': True}
+    # Direct execution is refused: only a bound execution authority may run a
+    # plugin handler, so no code path can skip policy and permission checks.
+    with pytest.raises(plugin_loader.UnauthorizedExecution):
+        plugin_loader.execute_tool('hello', {})
+
+    class _Authority:
+        pass
+
+    authority = _Authority()
+    plugin_loader.bind_execution_authority(authority)
+    assert plugin_loader.execute_tool('hello', {}, authority=authority) == {'ok': True}

@@ -1,17 +1,136 @@
+/**
+ * Permission Center.
+ *
+ * The rule this component exists to enforce: a person is never asked to approve
+ * "an operation". They see the capability, the concrete target, the scope, the
+ * risk, the reason and the tool that will run — then choose.
+ */
 import React from "react";
+import { Badge, Button, EmptyState, Modal, RiskBadge, sanitizeArgs, StatusIndicator } from "./ui";
 
 export type PermissionRequest = {
   id?: string;
   request_id?: string;
   action?: string;
   capability?: string;
+  tool?: string;
   task_id?: string;
   target?: string;
+  scope?: string;
   reason?: string;
   risk?: string;
   status?: string;
+  agent?: string;
+  requested_at?: string;
   args?: Record<string, any>;
 };
+
+export type PermissionDecision = "deny" | "allow_once" | "allow_for_task";
+
+/** Plain-language description of what is about to happen. Never vague. */
+function describeIntent(request: PermissionRequest): string {
+  const capability = String(request.capability || request.action || "").toLowerCase();
+  const target = request.target && request.target !== "-" ? request.target : null;
+  const verbs: Record<string, string> = {
+    "filesystem.read": "Ler o ficheiro",
+    "filesystem.write": "Escrever no ficheiro",
+    "filesystem.delete": "Apagar",
+    "shell.execute": "Executar o comando",
+    "process.start": "Iniciar o processo",
+    "process.kill": "Terminar o processo",
+    "browser.read": "Abrir e ler",
+    "browser.interact": "Interagir com a página",
+    "browser.submit": "Submeter na página",
+    "external.send": "Enviar para o exterior",
+    "git.write": "Escrever no repositório",
+    "git.destructive": "Alterar o repositório de forma destrutiva",
+    "credential.write": "Escrever credenciais em",
+    "financial.transaction": "Executar uma transação financeira em",
+    "system": "Alterar uma definição do sistema",
+  };
+  const verb = verbs[capability] ?? `Executar '${capability || "ação desconhecida"}'`;
+  return target ? `${verb}: ${target}` : verb;
+}
+
+const SCOPE_LABEL: Record<string, string> = {
+  current_workspace: "Dentro do workspace",
+  current_project: "Dados da aplicação",
+  explicit_target: "Fora do workspace",
+  specific_path: "Caminho específico",
+  external_service: "Serviço externo",
+  system: "Sistema operativo",
+};
+
+export function PermissionCard({
+  request,
+  onResolve,
+  busy,
+}: {
+  request: PermissionRequest;
+  onResolve: (id: string, decision: PermissionDecision) => void;
+  busy?: boolean;
+}) {
+  const id = request.id || request.request_id || "";
+  const risk = String(request.risk || "medium").toLowerCase();
+  const details = sanitizeArgs(request.args);
+  const capability = request.capability || request.action || "unknown";
+  const hasTask = Boolean(request.task_id);
+
+  return (
+    <article className={`perm-card perm-card--${risk}`} aria-label={`Pedido de permissão: ${capability}`}>
+      <header className="perm-head">
+        <RiskBadge risk={risk} />
+        <Badge tone="neutral">{capability}</Badge>
+        {request.scope && <Badge tone="info">{SCOPE_LABEL[request.scope] ?? request.scope}</Badge>}
+      </header>
+
+      <h3 className="perm-intent">{describeIntent(request)}</h3>
+
+      <div className="perm-body">
+        <dl className="kv">
+          <dt>Capability</dt><dd className="mono">{capability}</dd>
+          <dt>Alvo</dt><dd className="mono">{request.target || "—"}</dd>
+          <dt>Scope</dt><dd>{SCOPE_LABEL[request.scope ?? ""] ?? request.scope ?? "—"}</dd>
+          <dt>Ferramenta</dt><dd className="mono">{request.tool || capability}</dd>
+          <dt>Motivo</dt><dd>{request.reason || "Pedido pela tarefa atual."}</dd>
+          <dt>Tarefa</dt><dd className="mono">{request.task_id || "—"}</dd>
+        </dl>
+
+        {details.length > 0 && (
+          <div>
+            <div className="cc-tile-label">Argumentos</div>
+            <div className="perm-args">
+              {details.map(({ key, value }) => (
+                <div key={key}><strong>{key}</strong>: {value}</div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <footer className="perm-actions">
+        <Button variant="danger" onClick={() => onResolve(id, "deny")} disabled={busy}>
+          Recusar
+        </Button>
+        <Button variant="allow-once" onClick={() => onResolve(id, "allow_once")} disabled={busy}>
+          Permitir uma vez
+        </Button>
+        <Button
+          variant="allow-task"
+          onClick={() => onResolve(id, "allow_for_task")}
+          disabled={busy || !hasTask || !request.target || request.target === "-"}
+          title={
+            !hasTask
+              ? "Só disponível para pedidos associados a uma tarefa"
+              : "Válido apenas para esta capability, este alvo e este scope, dentro desta tarefa"
+          }
+        >
+          Permitir nesta tarefa
+        </Button>
+      </footer>
+    </article>
+  );
+}
 
 export default function PermissionCenterModal({
   visible,
@@ -19,101 +138,63 @@ export default function PermissionCenterModal({
   policies,
   onClose,
   onResolve,
+  busy,
 }: {
   visible: boolean;
   requests: PermissionRequest[];
   policies: any[];
   onClose: () => void;
-  onResolve: (requestId: string, decision: "deny" | "allow_once" | "allow_for_task") => void;
+  onResolve: (id: string, decision: PermissionDecision) => void;
+  busy?: boolean;
 }) {
-  if (!visible) return null;
-
-  const sanitizeArgs = (args: Record<string, any> | undefined) => {
-    if (!args) return [];
-    return Object.entries(args)
-      .filter(([key]) => !/secret|token|password|key|credential/i.test(key))
-      .slice(0, 6)
-      .map(([key, value]) => ({ key, value }));
-  };
-
   return (
-    <div className="modal-backdrop" style={{ zIndex: 1200 }}>
-      <div className="modal-content" style={{ maxWidth: 980, width: "min(980px, 92vw)", maxHeight: "86vh", overflowY: "auto" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 16 }}>
-          <div>
-            <div style={{ color: "var(--text-muted)", fontSize: 12, letterSpacing: 1, textTransform: "uppercase" }}>Permission center</div>
-            <h2 style={{ margin: "8px 0 0" }}>Nano permission requests</h2>
-          </div>
-          <button type="button" onClick={onClose} style={{ background: "transparent", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 8, padding: "8px 10px", cursor: "pointer" }}>Close</button>
+    <Modal
+      open={visible}
+      onClose={onClose}
+      eyebrow="Permission center"
+      title="Pedidos de autorização"
+      width="wide"
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 20 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div className="cc-tile-label">Pendentes ({requests.length})</div>
+          {requests.length === 0 ? (
+            <EmptyState
+              title="Nenhum pedido pendente"
+              hint="O Nano só pede autorização quando uma ação sai do que pode fazer sozinho."
+            />
+          ) : (
+            requests.map((request) => (
+              <PermissionCard
+                key={request.id || request.request_id}
+                request={request}
+                onResolve={onResolve}
+                busy={busy}
+              />
+            ))
+          )}
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1.4fr 0.9fr", gap: 18 }}>
-          <div>
-            <div style={{ color: "var(--text-muted)", fontSize: 12, letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>Pending permissions</div>
-            {requests.length === 0 ? (
-              <div style={{ background: "var(--bg-sidebar)", border: "1px solid var(--border)", borderRadius: 12, padding: 16, color: "var(--text-muted)" }}>
-                No pending permissions.
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                {requests.map((request) => {
-                  const requestId = request.id || request.request_id || "unknown";
-                  const risk = (request.risk || "medium").toUpperCase();
-                  const details = sanitizeArgs(request.args);
-                  return (
-                    <div key={requestId} style={{ background: "var(--bg-sidebar)", border: "1px solid var(--border)", borderRadius: 12, padding: 16 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                        <div style={{ fontSize: 12, letterSpacing: 1, textTransform: "uppercase", color: "var(--text-muted)" }}>Task {request.task_id || "-"}</div>
-                        <div style={{ fontSize: 12, color: risk === "CRITICAL" ? "#ff7a7a" : risk === "HIGH" ? "#ffcd70" : "var(--text-muted)", fontWeight: 700 }}>{risk}</div>
-                      </div>
-
-                      <div style={{ marginTop: 12, fontSize: 20, fontWeight: 700 }}>{request.action || request.capability || "Permission request"}</div>
-
-                      <div style={{ marginTop: 12, display: "grid", gap: 8, fontSize: 13 }}>
-                        <div><strong>Action:</strong> {request.action || request.capability || "-"}</div>
-                        <div><strong>Target:</strong> {request.target || "-"}</div>
-                        <div><strong>Reason:</strong> {request.reason || "Requested by current task."}</div>
-                        <div><strong>Task:</strong> {request.task_id || "-"}</div>
-                      </div>
-
-                      {details.length > 0 && (
-                        <div style={{ marginTop: 12 }}>
-                          <div style={{ fontSize: 12, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 1 }}>Arguments</div>
-                          <div style={{ marginTop: 6, display: "grid", gap: 4, fontSize: 12, color: "var(--text-muted)" }}>
-                            {details.map(({ key, value }) => (
-                              <div key={key}><strong style={{ color: "var(--text)" }}>{key}</strong>: {String(value).slice(0, 120)}</div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 16 }}>
-                        <button type="button" onClick={() => onResolve(requestId, "deny")} style={{ background: "#3a1d1d", border: "1px solid #7a2d2d", color: "#ffd7d7", borderRadius: 8, padding: "10px 14px", cursor: "pointer", fontWeight: 700 }}>DENY</button>
-                        <button type="button" onClick={() => onResolve(requestId, "allow_once")} style={{ background: "#183327", border: "1px solid #2b7d5d", color: "#d9fbe8", borderRadius: 8, padding: "10px 14px", cursor: "pointer", fontWeight: 700 }}>ALLOW ONCE</button>
-                        <button type="button" onClick={() => onResolve(requestId, "allow_for_task")} style={{ background: "#24345a", border: "1px solid #4567b8", color: "#dfe9ff", borderRadius: 8, padding: "10px 14px", cursor: "pointer", fontWeight: 700 }}>ALLOW FOR TASK</button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          <div>
-            <div style={{ color: "var(--text-muted)", fontSize: 12, letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>Policies</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {(policies || []).slice(0, 8).map((policy: any) => (
-                <div key={policy.capability || policy.action} style={{ background: "var(--bg-sidebar)", border: "1px solid var(--border)", borderRadius: 10, padding: 10 }}>
-                  <div style={{ fontWeight: 700 }}>{policy.capability || policy.action || "Capability"}</div>
-                  <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>Risk: {policy.risk || "low"}</div>
-                  <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Decision: {policy.decision || "allow"}</div>
-                  <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Scope: {policy.scope || "workspace"}</div>
+        <div>
+          <div className="cc-tile-label">Policies ativas</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {(policies || []).map((policy: any) => (
+              <div className="card" key={policy.capability} style={{ padding: 12 }}>
+                <div className="mono" style={{ fontWeight: 600, fontSize: 12 }}>{policy.capability}</div>
+                <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                  <RiskBadge risk={policy.risk} />
+                  <StatusIndicator
+                    state={policy.decision === "approval_required" ? "APPROVAL_REQUIRED" : policy.decision === "deny" ? "OFFLINE" : "READY"}
+                    label={policy.decision}
+                  />
                 </div>
-              ))}
-            </div>
+                <div className="tl-meta" style={{ marginTop: 6 }}>scope: {policy.scope}</div>
+              </div>
+            ))}
+            {!policies?.length && <EmptyState title="Sem policies carregadas" />}
           </div>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

@@ -172,5 +172,12 @@ TOOL_HANDLERS: dict = {
 }
 
 
-if get_setting("monitor.enabled", True):
-    start_monitor()
+def start_background_services() -> bool:
+    """Arranca a monitorização. Chamado pelo bootstrap, nunca no import."""
+    if not get_setting("monitor.enabled", True):
+        return False
+    return bool(start_monitor().get("running"))
+
+
+def stop_background_services() -> None:
+    stop_monitor()

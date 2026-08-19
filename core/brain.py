@@ -14,11 +14,12 @@ import httpx
 from groq import AsyncGroq
 from core.config import load_config
 from core.local_runtime import choose_model
-from core.plugin_loader import get_all_tools, execute_tool
+from core.plugin_loader import get_all_tools
 from core.guardrails import GuardrailsEngine
 from core.memory import MemoryEngine
 from core.errors import ToolExecutionError, GuardrailError
 from core.model_router import ModelRequest, ModelRouter, PrivacyLevel, TaskType
+from core.trust import TRUST_BOUNDARY_SYSTEM_RULES, TrustLevel, wrap_untrusted
 
 logger = logging.getLogger("nano.brain")
 GROQ_MODEL = "llama-3.3-70b-versatile"
@@ -33,7 +34,8 @@ Regras fundamentais:
 - Ações destrutivas, alterações no sistema ou operações externas sensíveis exigem confirmação através dos guardrails.
 - Nunca inventes resultados de ferramentas nem fales de segredos de sistema.
 - Responde em Português de Portugal com clareza, formatação rica e estilo direto.
-- Quando aprenderes preferências ou factos duradouros sobre o utilizador, usa 'remember_fact'."""
+- Quando aprenderes preferências ou factos duradouros sobre o utilizador, usa 'remember_fact'.
+""" + TRUST_BOUNDARY_SYSTEM_RULES
 
 def _ollama_chat_url(url: str) -> str:
     url = url.rstrip("/")
@@ -49,13 +51,17 @@ async def _stream_text_chunks(text: str, chunk_size: int = 4, delay: float = 0.0
             await asyncio.sleep(delay)
 
 class Brain:
-    def __init__(self, api_key: str, guardrails: GuardrailsEngine, memory: MemoryEngine, config: dict | None = None, permission_manager: Any | None = None):
+    def __init__(self, api_key: str, guardrails: GuardrailsEngine, memory: MemoryEngine, config: dict | None = None, permission_manager: Any | None = None, tool_executor: Any | None = None):
         cfg = config if config is not None else load_config()
         mem_cfg, local_cfg = cfg.get("memory") or {}, cfg.get("local") or {}
         self.groq_enabled = bool(api_key.strip())
         self.client = AsyncGroq(api_key=api_key) if self.groq_enabled else None
         self.guardrails, self.memory = guardrails, memory
         self.permission_manager = permission_manager
+        # The Brain never runs a tool itself. Every call is delegated to the
+        # central execution authority, which owns policy, permission, scope
+        # validation, execution, verification and audit.
+        self.tool_executor = tool_executor or self._build_default_executor(permission_manager)
         self.conversation: list[dict] = []
         self.groq_model = str(cfg.get("groq_model") or GROQ_MODEL)
         self.local_enabled = bool(local_cfg.get("enabled", cfg.get("ollama_enabled", True)))
@@ -215,10 +221,33 @@ class Brain:
                 self.conversation.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
-                    "content": json.dumps(result, ensure_ascii=False)
+                    "content": self._tool_result_for_model(tc.function.name, result)
                 })
 
         yield "Atingi o limite de operações encadeadas. Podes reformular o pedido?"
+
+    def _build_default_executor(self, permission_manager: Any | None):
+        """Create an execution authority when the caller did not supply one."""
+        if permission_manager is None:
+            return None
+        try:
+            from core.tool_execution import ToolExecutor
+
+            executor = ToolExecutor(permission_manager=permission_manager)
+            executor.register_plugin_tools()
+            return executor
+        except Exception:
+            logger.exception("Não foi possível construir a autoridade de execução")
+            return None
+
+    def _sync_plugin_tools(self, name: str) -> None:
+        """Keep the executor registry aligned with plugins loaded after start."""
+        if self.tool_executor is None or name in self.tool_executor.registry:
+            return
+        try:
+            self.tool_executor.register_plugin_tools()
+        except Exception:
+            logger.exception("Falha ao sincronizar ferramentas de plugin")
 
     async def _run_tool(self, tool_call) -> dict:
         if isinstance(tool_call, dict):
@@ -242,25 +271,63 @@ class Brain:
         if not isinstance(args, dict):
             return {"ok": False, "error": "invalid_tool_arguments"}
 
-        capability = name
-        if self.permission_manager is not None:
-            capability = self.permission_manager.resolve_tool_capability(name, args)
-            if self.permission_manager.is_emergency_stopped():
-                return {"ok": False, "cancelled": True, "message": "Emergency stop active. Execution blocked."}
-            if self.permission_manager.get_decision_for_action(capability, args) == "deny":
-                return {"ok": False, "cancelled": True, "message": "Operação bloqueada pela política de segurança."}
-            decision = self.permission_manager.evaluate(capability, args)
-            if decision.requires_confirmation and not self.permission_manager.ask_for_confirmation(capability, args):
-                return {"ok": False, "cancelled": True, "message": "Operação cancelada pelo utilizador."}
+        if self.tool_executor is None:
+            logger.error("Sem autoridade de execução; '%s' recusada", name)
+            return {"ok": False, "cancelled": True, "message": "Execução indisponível: falta a autoridade central."}
 
+        self._sync_plugin_tools(name)
+
+        # Guardrails stay as the human-readable layer in front of the policy
+        # pipeline; the executor below re-checks everything independently.
         if self.guardrails.requires_confirmation(name, args) and not await self.guardrails.ask_confirmation(name, args):
             return {"ok": False, "cancelled": True, "message": "Operação cancelada pelo utilizador."}
 
         try:
-            return await execute_tool(name, args)
+            result = await self.tool_executor.execute_tool_async(name, args)
         except Exception:
             logger.exception("Tool %s lançou uma exceção", name)
             return {"ok": False, "error": "tool_exception"}
+
+        if not result.get("success") and result.get("status") == "permission_denied":
+            return {
+                "ok": False,
+                "cancelled": True,
+                "status": "permission_denied",
+                "message": result.get("error") or "Operação bloqueada pela política de segurança.",
+            }
+        return result
+
+    @staticmethod
+    def _tool_result_for_model(name: str, result: dict) -> str:
+        """Serialise a tool result, fencing anything that came from outside.
+
+        External content is data. Fencing it keeps a fetched page from reading
+        as an instruction once it lands in the conversation.
+        """
+        metadata = result.get("metadata") or {}
+        if metadata.get("trust") != TrustLevel.UNTRUSTED_EXTERNAL.value:
+            return json.dumps(result, ensure_ascii=False)
+
+        payload = {
+            "success": result.get("success"),
+            "status": result.get("status"),
+            "error": result.get("error"),
+            "trust": TrustLevel.UNTRUSTED_EXTERNAL.value,
+            "injection_findings": metadata.get("injection_findings") or [],
+        }
+        body = wrap_untrusted(Brain._extract_external_text(result), source=name)
+        return json.dumps(payload, ensure_ascii=False) + "\n" + body
+
+    @staticmethod
+    def _extract_external_text(result: dict) -> str:
+        output = result.get("output")
+        if isinstance(output, dict):
+            for key in ("content", "text", "snippet", "stdout"):
+                value = output.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value
+            return json.dumps(output, ensure_ascii=False)
+        return str(output or "")
 
     async def _ollama_fallback(self, message: str, reason: str = "", system_prompt: str | None = None) -> AsyncIterator[str]:
         if not self.local_enabled:
@@ -327,7 +394,8 @@ class Brain:
                         if isinstance(result, Exception):
                             logger.error("Tool local falhou", exc_info=result)
                             result = {"ok": False, "error": "tool_failed"}
-                        tool_msg = {"role": "tool", "content": json.dumps(result, ensure_ascii=False)}
+                        tool_name = (tc.get("function") or {}).get("name", "tool") if isinstance(tc, dict) else "tool"
+                        tool_msg = {"role": "tool", "content": self._tool_result_for_model(tool_name, result)}
                         local_messages.append(tool_msg)
                         self.conversation.append(tool_msg)
 
