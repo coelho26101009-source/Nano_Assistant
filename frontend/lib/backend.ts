@@ -11,8 +11,18 @@ export type ReadinessPayload = {
   agent: { state: string; pending_permissions: number };
   voice: { state: string; blockers: string[]; enabled: boolean };
   wakeWord: { state: string; phrase?: string; modelStatus: string; error?: string };
+  wakePhrase: {
+    state: string;
+    turnState?: string;
+    phrase?: string;
+    allowNanoOnly?: boolean;
+    cooldownSeconds?: number;
+    error?: string;
+  };
   model: {
     state: string;
+    detail?: string;
+    installed?: string[];
     local: { model: string; online: boolean; modelReady: boolean; enabled: boolean };
     cloud: { model: string; configured: boolean };
     provider: string;
@@ -62,10 +72,34 @@ export function call<T = any>(name: string, ...args: any[]): Promise<T | null> {
   });
 }
 
+/**
+ * Register a handler for a Python -> UI callback.
+ *
+ * The actual `eel.expose(...)` registration lives in /public/nano_bridge.js and
+ * must stay there: eel text-scans served JS for the literal `eel.expose(`
+ * token, which the production minifier destroys if the call sits inside this
+ * bundle. Here we only attach the handler the static stub forwards to, and
+ * drain anything that arrived before React mounted.
+ */
 export function expose(fn: (...args: any[]) => void, name: string) {
-  const eel = bridge();
-  if (!eel) return;
-  try { eel.expose(fn, name); } catch { /* already exposed */ }
+  if (typeof window === "undefined") return;
+  const w = window as any;
+  w.__nanoHandlers = w.__nanoHandlers || {};
+  w.__nanoHandlers[name] = fn;
+
+  const pending: any[][] | undefined = w.__nanoPending?.[name];
+  if (pending?.length) {
+    w.__nanoPending[name] = [];
+    for (const args of pending) {
+      try { fn(...args); } catch (err) { console.error("[nano] replay failed:", name, err); }
+    }
+  }
+}
+
+/** True when the static bridge loaded, i.e. Python can actually reach the UI. */
+export function bridgeCallbacksReady(): boolean {
+  if (typeof window === "undefined") return false;
+  return Boolean((window as any).__nanoHandlers);
 }
 
 /** Resolves once the Eel runtime has attached, or gives up and reports offline. */

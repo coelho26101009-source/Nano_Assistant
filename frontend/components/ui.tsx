@@ -14,17 +14,28 @@ import React, { useEffect, useRef, useCallback } from "react";
 export type ReadinessState =
   | "READY" | "WORKING" | "WAITING" | "APPROVAL_REQUIRED"
   | "SETUP_REQUIRED" | "MODEL_MISSING" | "MODEL_LOADING" | "PROVIDER_READY"
-  | "DISABLED" | "OFFLINE" | "ERROR" | "EXPERIMENTAL" | "NOT_AVAILABLE" | "UNKNOWN";
+  | "DISABLED" | "OFFLINE" | "ERROR" | "EXPERIMENTAL" | "NOT_AVAILABLE" | "UNKNOWN"
+  | "LISTENING" | "STT_UNAVAILABLE" | "MIC_UNAVAILABLE"
+  | "OLLAMA_UNAVAILABLE" | "OLLAMA_NOT_INSTALLED" | "MODEL_UNAVAILABLE"
+  | "BACKEND_OFFLINE" | "PROCESSING";
 
 const STATE_TONE: Record<string, string> = {
   READY: "ready",
   WORKING: "working",
   MODEL_LOADING: "working",
+  LISTENING: "working",
   WAITING: "waiting",
   APPROVAL_REQUIRED: "approval",
   SETUP_REQUIRED: "setup",
   MODEL_MISSING: "setup",
   PROVIDER_READY: "setup",
+  STT_UNAVAILABLE: "setup",
+  MIC_UNAVAILABLE: "setup",
+  OLLAMA_UNAVAILABLE: "setup",
+  OLLAMA_NOT_INSTALLED: "setup",
+  MODEL_UNAVAILABLE: "setup",
+  PROCESSING: "working",
+  BACKEND_OFFLINE: "error",
   DISABLED: "offline",
   OFFLINE: "offline",
   NOT_AVAILABLE: "offline",
@@ -36,12 +47,20 @@ const STATE_TONE: Record<string, string> = {
 const STATE_LABEL: Record<string, string> = {
   READY: "Ready",
   WORKING: "Working",
+  LISTENING: "Listening",
   WAITING: "Waiting",
   APPROVAL_REQUIRED: "Approval required",
   SETUP_REQUIRED: "Setup required",
   MODEL_MISSING: "Model missing",
   MODEL_LOADING: "Model loading",
   PROVIDER_READY: "Provider ready",
+  STT_UNAVAILABLE: "Speech-to-text unavailable",
+  MIC_UNAVAILABLE: "Microphone unavailable",
+  OLLAMA_UNAVAILABLE: "Ollama unavailable",
+  OLLAMA_NOT_INSTALLED: "Ollama not installed",
+  MODEL_UNAVAILABLE: "Model not installed",
+  PROCESSING: "Processing",
+  BACKEND_OFFLINE: "Backend offline",
   DISABLED: "Disabled",
   OFFLINE: "Offline",
   NOT_AVAILABLE: "Not available",

@@ -22,6 +22,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "model": "auto",
         "url": "http://127.0.0.1:11434",
         "max_context": 4096,
+        # Nano starts the Ollama SERVER if it is not already running. It never
+        # preloads or pulls a model: the server idles at tens of MB, a model
+        # costs gigabytes, so loading waits for a real request.
+        "autostart": True,
+        # How long Ollama keeps a model resident after its last use. Matters on
+        # 16 GB: without it an idle 8B model holds RAM indefinitely.
+        "keep_alive": "5m",
     },
     "model_router": {
         "enabled": True,
@@ -61,6 +68,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "keyword_path": "",
             "custom_verifier_model_path": "",
         },
+        # Simple local wake-phrase detector ("Hey Nano"): local STT phrase
+        # spotting, no trained model required. Independent of "wake_word" above.
+        "wake_phrase": "hey nano",
+        "wake_phrase_enabled": True,
+        "wake_phrase_allow_nano_only": True,
+        "wake_phrase_cooldown_seconds": 3.0,
+        "wake_phrase_chunk_seconds": 2.5,
         "microphone": {
             "enabled": True,
             "sample_rate": 16000,

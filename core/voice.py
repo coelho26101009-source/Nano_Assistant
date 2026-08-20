@@ -14,8 +14,22 @@ from enum import Enum
 from typing import Any, Callable, Iterable
 
 from core.wake_word import WakeWordEngine
+from core.wake_phrase import WakePhraseEngine, WakePhraseState
 
 logger = logging.getLogger("nano.voice")
+
+# PortAudio (behind PyAudio) is NOT safe to initialise and terminate
+# concurrently from multiple threads. Two call sites do exactly that: the wake
+# phrase thread captures audio every few seconds, while the UI readiness poll
+# enumerates devices every few seconds from the web-server thread. Overlapping
+# them crashed the whole process with an access violation (0xC0000005) about
+# 20 seconds after the UI connected. Every PyAudio construction/teardown in
+# this process must be serialised through this lock.
+_PORTAUDIO_LOCK = threading.RLock()
+
+# Device enumeration is stable in practice, so it is cached: the readiness poll
+# then costs nothing and does not have to touch PortAudio at all.
+_DEVICE_CACHE_TTL_SECONDS = 30.0
 
 
 class ProviderError(RuntimeError):
@@ -143,6 +157,62 @@ class LocalWakeWordProvider(WakeWordProvider):
     name = "local_wake_word"
 
 
+class WakePhraseProvider(BaseProvider):
+    """Wraps WakePhraseEngine ("Hey Nano") the same way WakeWordProvider wraps
+    the ONNX/Porcupine engine: this is a second, independent local wake path
+    that needs no trained model, built on the project's existing local STT.
+    """
+
+    name = "wake_phrase"
+    capabilities = ("wake_phrase",)
+
+    def __init__(self, config: dict | None, *, audio_provider: "AudioInputProvider", stt_provider: "LocalSTTProvider"):
+        cfg = config or {}
+        self.config = cfg
+        self._callback: Callable[[str], None] | None = None
+        self._engine = WakePhraseEngine(cfg, self._dispatch_wake, audio_provider=audio_provider, stt_provider=stt_provider)
+        self.enabled = self._engine.enabled
+        self.online = True
+
+    def _dispatch_wake(self, transcript: str) -> None:
+        if self._callback is None:
+            return
+        self._callback(transcript)
+
+    def start(self, callback: Callable[[str], None] | None = None) -> bool:
+        if callback is not None:
+            self._callback = callback
+        started = self._engine.start()
+        self.enabled = self._engine.enabled
+        return started
+
+    def stop(self) -> None:
+        self._engine.stop()
+
+    def pause(self) -> None:
+        self._engine.pause()
+
+    def resume(self) -> None:
+        self._engine.resume()
+
+    def set_state(self, state: WakePhraseState) -> None:
+        self._engine.set_state(state)
+
+    def mark_command_listening(self) -> None:
+        self._engine.mark_command_listening()
+
+    def mark_processing(self) -> None:
+        self._engine.mark_processing()
+
+    def mark_idle(self) -> None:
+        self._engine.mark_idle()
+
+    def status(self) -> dict:
+        data = self._engine.status()
+        data.update({"name": self.name, "local": True, "online": True})
+        return data
+
+
 class SpeechToTextProvider(BaseProvider):
     name = "stt"
     capabilities = ("speech_to_text",)
@@ -267,6 +337,11 @@ class AudioInputProvider(BaseProvider):
     name = "audio_input"
     capabilities = ("microphone",)
 
+    # Shared across instances: the device list is a property of the machine,
+    # and caching it class-wide keeps the readiness poll off PortAudio.
+    _device_cache: list[dict[str, Any]] | None = None
+    _device_cache_at: float = 0.0
+
     def __init__(self, config: dict | None = None):
         self.config = config or {}
         self.sample_rate = int(self.config.get("sample_rate", 16000))
@@ -275,51 +350,100 @@ class AudioInputProvider(BaseProvider):
         self._available = importlib.util.find_spec("pyaudio") is not None
 
     def list_devices(self) -> list[dict[str, Any]]:
+        """Enumerate input devices, cached and serialised against capture().
+
+        Called by the UI readiness poll every few seconds. It must never open
+        PortAudio while the wake-phrase thread is capturing, and it must never
+        block that thread, so it serves a cache and skips the refresh entirely
+        if the lock is busy.
+        """
         if not self._available:
             return []
+
+        now = time.monotonic()
+        cached = type(self)._device_cache
+        if cached is not None and (now - type(self)._device_cache_at) < _DEVICE_CACHE_TTL_SECONDS:
+            return cached
+
+        # Non-blocking: if a capture holds PortAudio, serve the previous list
+        # rather than waiting (or worse, racing it).
+        if not _PORTAUDIO_LOCK.acquire(blocking=False):
+            return cached if cached is not None else []
         try:
             import pyaudio
 
             pa = pyaudio.PyAudio()
-            devices: list[dict[str, Any]] = []
-            for idx in range(pa.get_device_count()):
-                info = pa.get_device_info_by_index(idx)
-                devices.append({"index": idx, "name": info.get("name", f"device-{idx}"), "maxInputChannels": info.get("maxInputChannels", 0)})
-            pa.terminate()
+            try:
+                devices: list[dict[str, Any]] = []
+                for idx in range(pa.get_device_count()):
+                    info = pa.get_device_info_by_index(idx)
+                    devices.append({
+                        "index": idx,
+                        "name": info.get("name", f"device-{idx}"),
+                        "maxInputChannels": info.get("maxInputChannels", 0),
+                    })
+            finally:
+                pa.terminate()
+            type(self)._device_cache = devices
+            type(self)._device_cache_at = now
             return devices
-        except Exception:
-            return []
+        except Exception as exc:
+            logger.debug("device enumeration failed: %s", exc)
+            return cached if cached is not None else []
+        finally:
+            _PORTAUDIO_LOCK.release()
 
     def capture(self, duration_seconds: int = 5, sample_rate: int | None = None) -> bytes | None:
+        """Record one bounded chunk. Serialised against every other PortAudio user."""
         if not self._available:
             raise ProviderError("microphone unavailable")
-        try:
-            import pyaudio
 
-            rate = sample_rate or self.sample_rate
-            audio = pyaudio.PyAudio()
-            stream = audio.open(
-                format=pyaudio.paInt16,
-                channels=self.channels,
-                rate=rate,
-                input=True,
-                input_device_index=self.device_index,
-                frames_per_buffer=1024,
-            )
-            frames = []
-            for _ in range(int(rate / 1024 * duration_seconds)):
-                frames.append(stream.read(1024, exception_on_overflow=False))
-            stream.stop_stream(); stream.close(); audio.terminate()
-            buffer = io.BytesIO()
-            with wave.open(buffer, "wb") as wav:
-                wav.setnchannels(self.channels)
-                wav.setsampwidth(2)
-                wav.setframerate(rate)
-                wav.writeframes(b"".join(frames))
-            return buffer.getvalue()
-        except Exception as exc:  # pragma: no cover - depends on host environment
-            logger.warning("microphone capture failed: %s", exc)
-            raise ProviderError(str(exc)) from exc
+        # Held for the whole open/read/close cycle: PortAudio cannot tolerate
+        # another thread initialising or terminating it while a stream is live.
+        with _PORTAUDIO_LOCK:
+            audio = None
+            stream = None
+            try:
+                import pyaudio
+
+                rate = sample_rate or self.sample_rate
+                audio = pyaudio.PyAudio()
+                stream = audio.open(
+                    format=pyaudio.paInt16,
+                    channels=self.channels,
+                    rate=rate,
+                    input=True,
+                    input_device_index=self.device_index,
+                    frames_per_buffer=1024,
+                )
+                frames = []
+                for _ in range(int(rate / 1024 * duration_seconds)):
+                    frames.append(stream.read(1024, exception_on_overflow=False))
+            except Exception as exc:  # pragma: no cover - depends on host environment
+                logger.warning("microphone capture failed: %s", exc)
+                raise ProviderError(str(exc)) from exc
+            finally:
+                # Always tear down, even on a partial failure, or the next
+                # capture inherits a half-open PortAudio and crashes.
+                if stream is not None:
+                    try:
+                        stream.stop_stream()
+                        stream.close()
+                    except Exception:
+                        pass
+                if audio is not None:
+                    try:
+                        audio.terminate()
+                    except Exception:
+                        pass
+
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as wav:
+            wav.setnchannels(self.channels)
+            wav.setsampwidth(2)
+            wav.setframerate(rate)
+            wav.writeframes(b"".join(frames))
+        return buffer.getvalue()
 
 
 class AudioOutputProvider(BaseProvider):
@@ -420,6 +544,11 @@ class VoiceEngine:
         self.stt_provider = LocalSTTProvider(self.config.get("stt", {}))
         self.tts_provider = LocalTTSProvider(self.config.get("tts", {}))
         self.wake_word_provider = LocalWakeWordProvider(self.config.get("wake_word", {}))
+        # "Hey Nano" wake-phrase detection reuses the same audio/STT providers
+        # rather than opening a second microphone/model of its own.
+        self.wake_phrase_provider = WakePhraseProvider(
+            self.config, audio_provider=self.input_provider, stt_provider=self.stt_provider
+        )
         self.output_provider = AudioOutputProvider(self.config.get("audio_output", {}))
         self.session = VoiceSession(self.config)
         self._lock = threading.Lock()
@@ -452,14 +581,23 @@ class VoiceEngine:
         if blockers:
             return VoiceReadiness.SETUP_REQUIRED, blockers
 
+        if not self.input_provider.list_devices():
+            return VoiceReadiness.PROVIDER_READY, ["no input device detected"]
+
+        # The ONNX/Porcupine wake-word engine is an OPTIONAL second wake path
+        # that needs a trained keyword model. Its absence used to force the
+        # whole voice stack to MODEL_MISSING, which hid the fact that speech
+        # in, speech out and the "Hey Nano" phrase detector were all working.
+        # It is reported as a blocker only when it is the ONLY wake path
+        # configured; otherwise voice is genuinely ready.
         wake_status = self.wake_word_provider.status()
-        if str(wake_status.get("model_status") or "").upper() not in {"READY", ""}:
+        wake_model_ok = str(wake_status.get("model_status") or "").upper() in {"READY", ""}
+        phrase_ok = self.wake_phrase_provider.status().get("readiness") in {"READY", "LISTENING"}
+        if not wake_model_ok and not phrase_ok:
             return VoiceReadiness.MODEL_MISSING, [
                 str(wake_status.get("error") or "wake-word model not usable")
             ]
 
-        if not self.input_provider.list_devices():
-            return VoiceReadiness.PROVIDER_READY, ["no input device detected"]
         return VoiceReadiness.READY, []
 
     def status(self) -> dict:
@@ -471,6 +609,7 @@ class VoiceEngine:
             "microphone": self.microphone_status,
             "session": self.session.status(),
             "wake_word": self.wake_word_provider.status(),
+            "wake_phrase": self.wake_phrase_provider.status(),
             "stt": self.stt_provider.status(),
             "tts": self.tts_provider.status(),
             "readiness": readiness.value,
@@ -494,6 +633,17 @@ class VoiceEngine:
             self.session.error(str(exc))
             return False
 
+    def start_wake_phrase(self, callback: Callable[[str], None] | None = None) -> bool:
+        """Start the STT-based "Hey Nano" detector. Independent of start_wake_word."""
+        if not self.enabled:
+            logger.info("voice disabled; wake phrase not started")
+            return False
+        try:
+            return bool(self.wake_phrase_provider.start(callback))
+        except Exception as exc:  # pragma: no cover - graceful fail path
+            logger.warning("could not start wake phrase: %s", exc)
+            return False
+
     def stop(self) -> None:
         self.session.cancel()
         try:
@@ -502,6 +652,10 @@ class VoiceEngine:
             pass
         try:
             self.wake_word_provider.stop()
+        except Exception:
+            pass
+        try:
+            self.wake_phrase_provider.stop()
         except Exception:
             pass
 
@@ -750,6 +904,7 @@ __all__ = [
     "VoiceSession",
     "VoiceSessionState",
     "WakeWordProvider",
+    "WakePhraseProvider",
     "ProviderError",
     "_clean_for_tts",
 ]

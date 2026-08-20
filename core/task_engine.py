@@ -12,6 +12,31 @@ from typing import Any
 from core.app_paths import DATA_DIR
 
 
+# Hard ceiling on a task's metadata blob. A recursive context bug once grew
+# metadata exponentially and produced a 1.5 GB task database; this cap makes
+# that class of bug loud and bounded instead of silent and unbounded.
+MAX_METADATA_BYTES = 64 * 1024
+
+
+def _encode_metadata(metadata: dict | None) -> str:
+    """Serialise task metadata, refusing to persist an unbounded blob."""
+    encoded = json.dumps(metadata or {}, ensure_ascii=False)
+    if len(encoded.encode("utf-8")) <= MAX_METADATA_BYTES:
+        return encoded
+
+    # Keep the small, useful keys and record why the rest was dropped, rather
+    # than truncating into invalid JSON.
+    trimmed: dict[str, Any] = {}
+    for key, value in (metadata or {}).items():
+        candidate = json.dumps(value, ensure_ascii=False)
+        if len(candidate.encode("utf-8")) <= 4096:
+            trimmed[key] = value
+        else:
+            trimmed[key] = f"<omitido: {len(candidate)} bytes excedem o limite de metadata>"
+    trimmed["_metadata_truncated"] = True
+    return json.dumps(trimmed, ensure_ascii=False)
+
+
 class TaskEngine:
     """SQLite-backed task queue supporting status, retries, dependencies and recovery."""
 
@@ -77,7 +102,7 @@ class TaskEngine:
             "status": "QUEUED",
             "progress": 0,
             "depends_on": depends_on,
-            "metadata": json.dumps(metadata or {}, ensure_ascii=False),
+            "metadata": _encode_metadata(metadata),
             "result": None,
             "error": None,
             "created_at": now,

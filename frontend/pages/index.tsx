@@ -216,11 +216,38 @@ export default function Home() {
     call<any>("send_message", text, msgId).then((result) => {
       setThinking(false);
       setStatus("");
-      const answer = result?.text ?? result?.error ?? "Sem resposta do motor do Nano.";
+
+      // A failed message must never look like silence. If the bridge returned
+      // nothing, or the backend reported an error, say so in the transcript
+      // with the real reason instead of leaving an empty bubble.
+      let answer: string;
+      if (result === null) {
+        answer =
+          "**Sem resposta do motor do Nano.** A ligação ao backend caiu ou expirou. " +
+          "Confirma que a janela do Nano continua aberta e recarrega a página.";
+        notify("Backend offline");
+      } else if (result?.text) {
+        answer = result.text;
+      } else if (result?.error) {
+        const modelState = readiness?.model.state;
+        const hint =
+          modelState === "OLLAMA_UNAVAILABLE" || modelState === "OLLAMA_NOT_INSTALLED"
+            ? " O Ollama não está disponível — vê o separador Estado."
+            : modelState === "MODEL_UNAVAILABLE"
+            ? ` O modelo ${readiness?.model.local.model} não está instalado — vê o separador Estado.`
+            : "";
+        answer = `**Erro:** ${result.error}.${hint}`;
+        notify(`Erro: ${result.error}`);
+      } else {
+        answer = "**Sem resposta.** O pedido terminou sem texto nem erro.";
+        notify("Resposta vazia");
+      }
+
       setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, content: answer, streaming: false } : m)));
       refreshCommandCenter();
+      refreshReadiness();
     });
-  }, [input, thinking, ready, refreshCommandCenter]);
+  }, [input, thinking, ready, refreshCommandCenter, refreshReadiness, readiness, notify]);
 
   const stopWork = useCallback(() => {
     call("stop_voice");
@@ -427,6 +454,7 @@ export default function Home() {
           {toast && <span className="statusbar-item" role="status">{toast}</span>}
           <span className="statusbar-item">voz: {stateLabel(readiness?.voice.state)}</span>
           <span className="statusbar-item">wake: {stateLabel(readiness?.wakeWord.state)}</span>
+          <span className="statusbar-item">"hey nano": {stateLabel(readiness?.wakePhrase.state)}</span>
           <button type="button" className="statusbar-item" onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}>
             {theme === "dark" ? "escuro" : "claro"}
           </button>

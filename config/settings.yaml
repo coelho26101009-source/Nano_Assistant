@@ -3,15 +3,27 @@
 # ou configure-as no onboarding da aplicação.
 
 # ── LLM cloud ──────────────────────────────────────────────────────────────────
-groq_model: "llama-3.3-70b-versatile"
+# O modelo cloud tem de existir na tua conta Groq. "llama-3.3-70b-versatile"
+# foi descontinuado e devolvia 404 em TODAS as mensagens, obrigando sempre ao
+# fallback local (e sem resposta nenhuma quando o Ollama tambem estava parado).
+groq_model: "openai/gpt-oss-20b"
 
 # ── LLM local ─────────────────────────────────────────────────────────────────
 local:
   enabled: true
-  model: "auto"                 # auto | qwen2.5:0.5b | qwen2.5:1.5b | qwen2.5:3b
+  # Modelo local usado pelo Nano. "auto" escolhe pela RAM disponivel; define um
+  # nome explicito (ex.: qwen3:8b) para garantir qual e usado. O Nano NUNCA faz
+  # fallback silencioso para outro modelo: se este nao estiver instalado, o
+  # estado passa a MODEL_UNAVAILABLE e o erro e visivel na UI.
+  model: "qwen3:8b"
   url: "http://127.0.0.1:11434"
-  auto_download: false          # ativado pelo onboarding quando o utilizador pedir modo local
+  auto_download: false          # o Nano nunca faz pull de modelos
   max_context: 4096
+  # O Nano arranca o SERVIDOR Ollama se ainda nao estiver a correr (reutiliza a
+  # instancia existente se estiver). Nenhum modelo e pre-carregado no arranque.
+  autostart: true
+  # Tempo que o Ollama mantem um modelo em RAM depois da ultima utilizacao.
+  keep_alive: "5m"
 
 # ── Memória persistente ────────────────────────────────────────────────────────
 memory:
@@ -53,6 +65,14 @@ voice:
     backend: "auto"
     framework: "onnx"
     custom_verifier_model_path: ""
+  # Simple local wake phrase ("Hey Nano") — spots the phrase in local STT
+  # transcripts. No trained model needed; works offline. Independent of the
+  # wake_word block above.
+  wake_phrase: "hey nano"
+  wake_phrase_enabled: true
+  wake_phrase_allow_nano_only: true
+  wake_phrase_cooldown_seconds: 3.0
+  wake_phrase_chunk_seconds: 2.5
 
 # ── Funcionalidades opcionais ──────────────────────────────────────────────────
 iot:

@@ -67,13 +67,24 @@ class Brain:
         self.local_enabled = bool(local_cfg.get("enabled", cfg.get("ollama_enabled", True)))
         self.local_profile = choose_model(cfg)
         self.model_router = ModelRouter(cfg, cloud_api_key=api_key)
-        self.ollama_model = self.model_router.select({
-            "task_type": TaskType.CHAT,
-            "privacy_level": PrivacyLevel.NORMAL,
-            "requires_tools": False,
-            "requires_reasoning": False,
-            "local_only": True,
-        }).get("model") or self.local_profile.model
+
+        # An explicit local.model in the config is an instruction, not a hint.
+        # The router used to score every discovered Ollama model and could pick
+        # a different one (e.g. qwen2.5-coder:3b instead of the configured
+        # qwen3:8b) — a silent substitution that made the UI report READY for a
+        # model the user never asked for. The router now only chooses when the
+        # config says "auto".
+        configured_local = str(local_cfg.get("model") or cfg.get("ollama_model") or "").strip()
+        if configured_local and configured_local.lower() not in {"auto", "automatic", "automatico", "automático"}:
+            self.ollama_model = configured_local
+        else:
+            self.ollama_model = self.model_router.select({
+                "task_type": TaskType.CHAT,
+                "privacy_level": PrivacyLevel.NORMAL,
+                "requires_tools": False,
+                "requires_reasoning": False,
+                "local_only": True,
+            }).get("model") or self.local_profile.model
         self.ollama_url = _ollama_chat_url(str(local_cfg.get("url") or cfg.get("ollama_url") or OLLAMA_BASE_URL))
         self.local_context = max(1024, int(local_cfg.get("max_context", 4096)))
         self.history_messages = max(2, int(mem_cfg.get("history_messages", 20)))

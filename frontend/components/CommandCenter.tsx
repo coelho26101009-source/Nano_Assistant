@@ -127,6 +127,9 @@ export function AgentsView({
           <div className="cc-tile-label">Estado</div>
           <StatusIndicator state={readiness?.model.state} />
           <MetricRow label="Provider" value={readiness?.model.provider ?? "—"} />
+          {readiness?.model.detail && (
+            <p className="dim" style={{ fontSize: 11, marginTop: 6 }}>{readiness.model.detail}</p>
+          )}
         </div>
         <div className="cc-tile">
           <div className="cc-tile-label">Local</div>
@@ -182,6 +185,13 @@ export function HealthView({
           <StatusIndicator state={readiness?.wakeWord.state} />
           <p className="dim" style={{ fontSize: 11, marginTop: 6 }}>
             {readiness?.wakeWord.error ?? `modelo: ${readiness?.wakeWord.modelStatus ?? "—"}`}
+          </p>
+        </div>
+        <div className="cc-tile">
+          <div className="cc-tile-label">"{readiness?.wakePhrase.phrase ?? "hey nano"}"</div>
+          <StatusIndicator state={readiness?.wakePhrase.state} />
+          <p className="dim" style={{ fontSize: 11, marginTop: 6 }}>
+            {readiness?.wakePhrase.error ?? `estado: ${readiness?.wakePhrase.turnState ?? "—"}`}
           </p>
         </div>
         <div className="cc-tile">

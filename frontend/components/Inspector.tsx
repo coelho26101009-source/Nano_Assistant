@@ -160,6 +160,9 @@ export default function Inspector({
 
             <Panel title="Modelo">
               <MetricRow label="Estado" value={<StatusIndicator state={readiness?.model.state} />} />
+              {readiness?.model.detail && readiness.model.state !== "READY" ? (
+                <div className="tl-meta" style={{ whiteSpace: "normal" }}>{readiness.model.detail}</div>
+              ) : null}
               <MetricRow label="Provider" value={readiness?.model.provider ?? "—"} />
               <MetricRow label="Local" value={readiness?.model.local.model ?? "—"} />
               <MetricRow
@@ -182,6 +185,13 @@ export default function Inspector({
               <MetricRow label="Wake word" value={<StatusIndicator state={readiness?.wakeWord.state} />} />
               {readiness?.wakeWord.error ? (
                 <div className="tl-meta" style={{ whiteSpace: "normal" }}>{readiness.wakeWord.error}</div>
+              ) : null}
+              <MetricRow
+                label={`"${readiness?.wakePhrase.phrase ?? "hey nano"}"`}
+                value={<StatusIndicator state={readiness?.wakePhrase.state} />}
+              />
+              {readiness?.wakePhrase.error ? (
+                <div className="tl-meta" style={{ whiteSpace: "normal" }}>{readiness.wakePhrase.error}</div>
               ) : null}
             </Panel>
 
