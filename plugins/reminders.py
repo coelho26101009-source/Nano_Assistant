@@ -179,7 +179,7 @@ def start_scheduler() -> bool:
     if _scheduler and _scheduler.is_alive():
         return True
     _stop.clear()
-    _scheduler = threading.Thread(target=_loop, name="helios-reminders", daemon=True)
+    _scheduler = threading.Thread(target=_loop, name="nano-reminders", daemon=True)
     _scheduler.start()
     logger.info("Scheduler de lembretes activo.")
     return True

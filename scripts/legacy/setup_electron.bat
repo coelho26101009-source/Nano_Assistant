@@ -1,11 +1,11 @@
 @echo off
 cd /d "%~dp0"
 chcp 65001 >nul
-title HELIOS — Instalar Electron
+title HELIOS  Instalar Electron
 
 echo.
 echo  ==========================================
-echo   HELIOS V7 — CONFIGURAR APP ELECTRON
+echo   HELIOS V7  CONFIGURAR APP ELECTRON
 echo  ==========================================
 echo.
 

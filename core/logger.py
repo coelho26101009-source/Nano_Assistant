@@ -1,10 +1,16 @@
-"""Nano Assistant Logger — estruturado, colorido no terminal, ficheiro nano.log."""
+"""Nano Assistant Logger — estruturado, colorido no terminal, ficheiro rotativo.
+
+O log fica em logs/nano.log (pasta ignorada pelo Git) em vez da raiz do
+repositório, para que ficheiros gerados em runtime não poluam a árvore do
+projecto nem apareçam como alterações por commitar.
+"""
 
 import logging
 import logging.handlers
 from pathlib import Path
 
-LOG_PATH = Path(__file__).parent.parent / "nano.log"
+LOG_DIR = Path(__file__).parent.parent / "logs"
+LOG_PATH = LOG_DIR / "nano.log"
 
 COLORS = {
     "DEBUG":    "\033[36m",   # cyan
@@ -27,6 +33,10 @@ class ColorFormatter(logging.Formatter):
 
 
 def setup_logger(level: int = logging.INFO):
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    # "helios" is a legacy logger namespace still used by core.config,
+    # core.memory, core.wake_word and the plugins. It is configured here so
+    # those modules keep logging to the same file while the rename proceeds.
     for log_name in ("nano", "helios"):
         root = logging.getLogger(log_name)
         root.setLevel(level)

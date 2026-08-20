@@ -1,11 +1,11 @@
 @echo off
 cd /d "%~dp0"
 chcp 65001 >nul
-title HELIOS V7 — Setup Portátil
+title HELIOS V7  Setup Portatil
 
 echo.
 echo  ==========================================
-echo   HELIOS V7 — CRIAR VERSAO PORTATIL
+echo   HELIOS V7  CRIAR VERSAO PORTATIL
 echo  ==========================================
 echo.
 echo  Isto vai descarregar Python embutido (~30MB)
@@ -114,7 +114,7 @@ echo    STT local:  python_embedded\python.exe -m pip install faster-whisper
 echo.
 echo  [4/4] A criar launcher HELIOS.bat...
 
-REM Cria o launcher portátil
+REM Cria o launcher portatil
 (
 echo @echo off
 echo cd /d "%%~dp0"

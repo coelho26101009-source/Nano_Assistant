@@ -119,7 +119,7 @@ def start_monitor() -> dict:
     if _monitor and _monitor.is_alive():
         return {"running": True, "message": "A monitorização já estava activa."}
     _stop.clear()
-    _monitor = threading.Thread(target=_loop, name="helios-system-monitor", daemon=True)
+    _monitor = threading.Thread(target=_loop, name="nano-system-monitor", daemon=True)
     _monitor.start()
     logger.info("Monitorização proactiva do sistema activa.")
     return {"running": True, "message": "Monitorização proactiva activada."}

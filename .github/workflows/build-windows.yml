@@ -1,4 +1,4 @@
-name: Build HELIOS Windows
+name: Build Nano Windows
 
 on:
   workflow_dispatch:
@@ -82,8 +82,8 @@ jobs:
           python -m pip install --index-url https://pypi.org/simple --target $sitePackages -r requirements.txt
 
           $embeddedPython = Join-Path $runtime 'python.exe'
-          & $embeddedPython -c "import sys; assert sys.version_info[:2] == (3, 12); import eel, httpx, groq, psutil, yaml, dotenv; print('HELIOS embedded dependencies OK')"
-          & $embeddedPython -c "import core.main; print('HELIOS embedded core import OK')"
+          & $embeddedPython -c "import sys; assert sys.version_info[:2] == (3, 12); import eel, httpx, groq, psutil, yaml, dotenv; print('Nano embedded dependencies OK')"
+          & $embeddedPython -c "import core.main; print('Nano embedded core import OK')"
 
       - name: Validate plugin source
         shell: pwsh
@@ -95,7 +95,7 @@ jobs:
             python -m py_compile $plugin.FullName
             if ($LASTEXITCODE -ne 0) { throw "Plugin syntax check failed: $($plugin.FullName)" }
           }
-          Write-Host "HELIOS plugin syntax validation OK ($($pluginFiles.Count) files)"
+          Write-Host "Nano plugin syntax validation OK ($($pluginFiles.Count) files)"
 
       - name: Build installers
         working-directory: electron
@@ -126,7 +126,7 @@ jobs:
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
-          name: HELIOS-Windows
+          name: Nano-Windows
           path: |
             electron/dist-electron/*.exe
             electron/dist-electron/*.msi

@@ -52,7 +52,7 @@ async def phone_notification(message: str, webhook_url: str | None = None) -> di
         return {"error": "webhook_url não configurado para notificações mobile."}
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(webhook_url, json={"message": message, "title": "H.E.L.I.O.S."})
+            resp = await client.post(webhook_url, json={"message": message, "title": "Nano"})
             return {"success": resp.status_code < 400, "message": message}
     except Exception as exc:
         return {"error": f"Falha ao enviar notificação: {exc}"}
@@ -132,6 +132,9 @@ def list_indexed_documents() -> dict:
         client = mem._get_chroma()
         if client is None:
             return {"docs": [], "message": "ChromaDB não disponível."}
+        # Legacy name kept deliberately: this is a persisted Chroma
+        # collection, not branding. Renaming it would orphan every
+        # document a user has already indexed.
         col    = client.get_or_create_collection("helios_docs")
         data   = col.get()
         ids    = data.get("ids", [])

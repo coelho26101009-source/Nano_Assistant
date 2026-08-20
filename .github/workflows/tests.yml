@@ -1,4 +1,4 @@
-name: HELIOS tests
+name: Nano tests
 
 on:
   pull_request:

@@ -1,5 +1,18 @@
 # Nano
 
+## Como iniciar
+
+**Faz duplo-clique em `NANO.bat`.**
+
+É a única forma suportada de arrancar o Nano. O launcher valida o Python,
+constrói o frontend na primeira execução, arranca o servidor Ollama se ainda
+não estiver a correr, arranca o backend e a escuta por voz, e abre a interface
+uma única vez. Se alguma coisa falhar, a janela fica aberta com o motivo.
+
+Documentação completa em [docs/](docs/README.md).
+
+---
+
 Nano é um agente pessoal local-first, multimodal, extensível e seguro, concebido para funcionar como assistente executivo no computador do utilizador.
 
 A identidade oficial do projeto passa a ser Nano. O nome "Nano Assistant" pode aparecer apenas como descrição complementar quando fizer sentido. A arquitetura prioriza:
@@ -83,6 +96,8 @@ As ferramentas sensíveis devem sempre passar por gestão centralizada de risco.
 ## Configuração
 
 O ficheiro principal de configuração continua em [config/settings.yaml](config/settings.yaml).
+
+Documentação técnica: [docs/](docs/README.md).
 
 As variáveis de ambiente relevantes incluem:
 

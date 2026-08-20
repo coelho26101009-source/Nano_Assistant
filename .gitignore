@@ -18,13 +18,26 @@ env/
 runtime/python/
 runtime/wheels/
 
-# User data / databases / logs
+# User data / databases / logs (runtime-generated, never source)
 *.db
 *.sqlite3
 chroma_db/
 data/
 memoria/
 *.log
+logs/
+
+# Test / tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime scratch produced by the voice stack
+nano_tts_tmp.mp3
+nano_audio_output.wav
+
+# Scratch folder created by background-worker demo tasks
+test-nano/
 
 # Node / frontend build output
 node_modules/

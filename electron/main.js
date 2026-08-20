@@ -21,7 +21,7 @@ function findPython() {
   ];
   for (const candidate of candidates) if (fs.existsSync(candidate)) return candidate;
   if (IS_DEV) return 'py';
-  throw new Error('Runtime Python do HELIOS não encontrado. Reinstala a aplicação.');
+  throw new Error('Runtime Python do Nano não encontrado. Reinstala a aplicação.');
 }
 
 function loadEnv() {
@@ -54,7 +54,7 @@ function waitForServer(port, maxMs = 45000) {
   return new Promise((resolve, reject) => {
     const deadline = Date.now() + maxMs;
     const tryConnect = () => {
-      if (Date.now() > deadline) return reject(new Error('Servidor HELIOS não ficou pronto a tempo.'));
+      if (Date.now() > deadline) return reject(new Error('Servidor do Nano não ficou pronto a tempo.'));
       const socket = new net.Socket();
       socket.setTimeout(500);
       socket.once('connect', () => { socket.destroy(); setTimeout(resolve, 300); });
@@ -70,9 +70,14 @@ function launchPython(port) {
   return new Promise((resolve, reject) => {
     let pythonCmd;
     try { pythonCmd = findPython(); } catch (err) { reject(err); return; }
-    if (!fs.existsSync(MAIN_PY)) { reject(new Error('Core do HELIOS não encontrado.')); return; }
+    if (!fs.existsSync(MAIN_PY)) { reject(new Error('Core do Nano não encontrado.')); return; }
     const env = {
       ...loadEnv(),
+      // Current names. The HELIOS_* duplicates are kept as a compatibility
+      // fallback (core/app_paths.py reads NANO_* first, HELIOS_* second).
+      NANO_MODE: 'electron',
+      NANO_APP_ROOT: APP_ROOT,
+      NANO_DATA_DIR: path.join(app.getPath('userData'), 'data'),
       HELIOS_MODE: 'electron',
       HELIOS_APP_ROOT: APP_ROOT,
       HELIOS_DATA_DIR: path.join(app.getPath('userData'), 'data'),
@@ -85,15 +90,15 @@ function launchPython(port) {
     let resolved = false;
     const onData = data => {
       for (const line of data.toString().split('\n').filter(Boolean)) {
-        console.log('[HELIOS]', line.trim());
-        if (line.includes('HELIOS_PORT=') && !resolved) { resolved = true; resolve(); }
+        console.log('[NANO]', line.trim());
+        if ((line.includes('NANO_PORT=') || line.includes('HELIOS_PORT=')) && !resolved) { resolved = true; resolve(); }
       }
     };
     pythonProcess.stdout.on('data', onData);
     pythonProcess.stderr.on('data', onData);
     pythonProcess.on('error', err => { if (!resolved) { resolved = true; reject(err); } });
     pythonProcess.on('exit', code => {
-      if (!resolved) { resolved = true; reject(new Error(`Motor HELIOS terminou (${code})`)); }
+      if (!resolved) { resolved = true; reject(new Error(`Motor do Nano terminou (${code})`)); }
       else if (!isQuitting) showOffline(code);
     });
     setTimeout(() => { if (!resolved) { resolved = true; resolve(); } }, 20000);
@@ -102,7 +107,7 @@ function launchPython(port) {
 
 function showOffline(code) {
   try {
-    mainWindow?.webContents.executeJavaScript(`document.body.innerHTML='<h1>HELIOS OFFLINE</h1><p>O motor terminou (código ${code}). Reinicia a aplicação.</p>';`);
+    mainWindow?.webContents.executeJavaScript(`document.body.innerHTML='<h1>NANO OFFLINE</h1><p>O motor terminou (código ${code}). Reinicia a aplicação.</p>';`);
   } catch (_) {}
 }
 function isAutoLaunchEnabled() { try { return app.getLoginItemSettings().openAtLogin; } catch (_) { return false; } }
@@ -140,12 +145,12 @@ function createTray() {
     const icon = fs.existsSync(ICON_PATH) ? nativeImage.createFromPath(ICON_PATH).resize({ width: 16, height: 16 }) : nativeImage.createEmpty();
     tray = new Tray(icon); tray.setToolTip('H.E.L.I.O.S.'); refreshTrayMenu();
     tray.on('click', () => { mainWindow?.show(); mainWindow?.focus(); });
-  } catch (e) { console.warn('[HELIOS] Tray:', e.message); }
+  } catch (e) { console.warn('[NANO] Tray:', e.message); }
 }
 function refreshTrayMenu() {
   if (!tray) return;
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '⚡ Abrir HELIOS', click: () => { mainWindow?.show(); mainWindow?.focus(); } },
+    { label: '⚡ Abrir Nano', click: () => { mainWindow?.show(); mainWindow?.focus(); } },
     { type: 'separator' },
     { label: '🪟 Iniciar com o Windows', type: 'checkbox', checked: isAutoLaunchEnabled(), click: item => { setAutoLaunch(item.checked); refreshTrayMenu(); } },
     { type: 'separator' },
@@ -172,8 +177,8 @@ if (GOT_LOCK) app.whenReady().then(async () => {
     createWindow(port);
     createTray();
   } catch (err) {
-    console.error('[HELIOS] Erro fatal:', err.message);
-    dialog.showErrorBox('HELIOS — Erro ao iniciar', `Não foi possível iniciar.\n\n${err.message}`);
+    console.error('[NANO] Erro fatal:', err.message);
+    dialog.showErrorBox('Nano — Erro ao iniciar', `Não foi possível iniciar.\n\n${err.message}`);
     app.quit();
   }
 });
