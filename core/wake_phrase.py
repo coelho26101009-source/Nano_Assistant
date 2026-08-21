@@ -26,6 +26,8 @@ import time
 from enum import Enum
 from typing import Any, Callable
 
+from core import speech_filter
+
 logger = logging.getLogger("nano.wake_phrase")
 
 DEFAULT_WAKE_PHRASE = "hey nano"
@@ -192,6 +194,7 @@ class WakePhraseEngine:
         # transcribed but never matches the phrase".
         self.chunks_captured = 0
         self.transcripts_seen = 0
+        self.silent_chunks = 0
 
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -287,6 +290,7 @@ class WakePhraseEngine:
             # Counters make a silent failure diagnosable at a glance.
             "chunks_captured": self.chunks_captured,
             "transcripts_seen": self.transcripts_seen,
+            "silent_chunks": self.silent_chunks,
         }
 
     # ------------------------------------------------------------------ loop
@@ -302,6 +306,7 @@ class WakePhraseEngine:
         )
         self.chunks_captured = 0
         self.transcripts_seen = 0
+        self.silent_chunks = 0
 
         while not self._stop.is_set():
             if self._paused.is_set():
@@ -328,6 +333,16 @@ class WakePhraseEngine:
             self.chunks_captured += 1
             logger.debug("[WakePhrase] captured chunk #%d (%d bytes)", self.chunks_captured, len(audio))
 
+            # Silence never reaches the transcriber. Whisper does not return an
+            # empty string for silence -- it invents filler, and a hallucinated
+            # fragment containing "nano" was tripping the wake with nobody
+            # speaking. Gating on energy removes that at the source.
+            if not speech_filter.has_speech_energy(audio):
+                self.silent_chunks += 1
+                logger.debug("[WakePhrase] chunk #%d is silence, skipped", self.chunks_captured)
+                time.sleep(0.02)
+                continue
+
             try:
                 result = self._stt.transcribe(audio)
             except Exception as exc:
@@ -345,6 +360,11 @@ class WakePhraseEngine:
                 # Small pacing floor: negligible next to a real multi-second
                 # capture() call, but stops a misbehaving/instant audio source
                 # from spinning this thread at full CPU.
+                time.sleep(0.02)
+                continue
+
+            if speech_filter.is_hallucination(text):
+                logger.debug("[WakePhrase] discarded hallucinated transcript %r", text)
                 time.sleep(0.02)
                 continue
 

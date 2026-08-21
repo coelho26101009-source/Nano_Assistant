@@ -161,18 +161,53 @@ class _FakeResult:
     text: str
 
 
+def _wav(amplitude: int, seconds: float = 0.4, sample_rate: int = 16000) -> bytes:
+    """A real 16-bit mono WAV, so the energy gate sees genuine audio.
+
+    The engine now measures energy before transcribing (silence used to reach
+    Whisper and come back as invented filler). Fakes therefore have to be real
+    WAV data: `b"chunk"` is not audio and is correctly rejected as silence.
+    """
+    import math
+    import struct
+    import wave
+    from io import BytesIO
+
+    frames = bytearray()
+    for index in range(int(sample_rate * seconds)):
+        sample = int(amplitude * math.sin(2.0 * math.pi * 220.0 * (index / sample_rate)))
+        frames += struct.pack("<h", sample)
+    buffer = BytesIO()
+    with wave.open(buffer, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(sample_rate)
+        handle.writeframes(bytes(frames))
+    return buffer.getvalue()
+
+
+def speech_wav() -> bytes:
+    """Loud enough to pass the speech-energy gate."""
+    return _wav(6000)
+
+
+def silence_wav() -> bytes:
+    """Near-silence: must be rejected before it reaches the transcriber."""
+    return _wav(2)
+
+
 class _FakeAudioProvider:
     """Duck-typed stand-in for core.voice.AudioInputProvider."""
 
     def __init__(self, *, available: bool = True, chunks: list[bytes] | None = None):
         self._available = available
-        self._chunks = list(chunks or [b"chunk"])
+        self._chunks = list(chunks) if chunks else [speech_wav()]
         self.captured_durations: list[float] = []
 
     def capture(self, duration_seconds: float) -> bytes | None:
         self.captured_durations.append(duration_seconds)
         if not self._chunks:
-            return b"silence"
+            return silence_wav()
         return self._chunks.pop(0) if len(self._chunks) > 1 else self._chunks[0]
 
 
@@ -258,7 +293,7 @@ def test_stt_unavailable_outranks_microphone_in_reporting():
 
 
 def test_listening_while_the_loop_is_actively_running():
-    audio = _FakeAudioProvider(chunks=[b"chunk"])
+    audio = _FakeAudioProvider(chunks=[speech_wav()])
     stt = _FakeSTTProvider(transcripts=[])  # never matches; loop just spins
     engine = _make_engine(enabled=True, audio=audio, stt=stt)
     try:
@@ -309,7 +344,7 @@ def test_on_wake_fires_exactly_once_on_a_match_and_engine_does_nothing_else():
     """The detector's only side effect on a match is calling on_wake. It must
     never reach into policy, permissions, or tool execution."""
     calls: list[str] = []
-    audio = _FakeAudioProvider(chunks=[b"chunk"])
+    audio = _FakeAudioProvider(chunks=[speech_wav()])
     stt = _FakeSTTProvider(transcripts=["hey nano what time is it"])
     engine = _make_engine(enabled=True, audio=audio, stt=stt, on_wake=calls.append)
 
@@ -338,7 +373,7 @@ def test_engine_constructor_has_no_policy_or_execution_dependency():
 
 
 def test_a_callback_exception_does_not_crash_the_loop_or_block_future_wakes():
-    audio = _FakeAudioProvider(chunks=[b"chunk"])
+    audio = _FakeAudioProvider(chunks=[speech_wav()])
     stt = _FakeSTTProvider(transcripts=["hey nano", "hey nano"])
 
     def flaky_on_wake(_text: str) -> None:
@@ -359,3 +394,57 @@ def test_a_callback_exception_does_not_crash_the_loop_or_block_future_wakes():
         assert stt.calls >= 1
     finally:
         engine.stop()
+
+
+# ============================================== silence gate (false-positive fix)
+
+def test_silence_never_reaches_the_transcriber():
+    """The fix for the phantom wake: silence must not be transcribed at all.
+
+    Whisper invents filler for silent audio, and a hallucinated fragment
+    containing "nano" was waking Nano with nobody speaking.
+    """
+    audio = _FakeAudioProvider(chunks=[silence_wav()])
+    stt = _FakeSTTProvider(transcripts=["hey nano"])  # would match, if ever called
+    calls: list[str] = []
+    engine = _make_engine(enabled=True, audio=audio, stt=stt, on_wake=calls.append)
+
+    try:
+        assert engine.start() is True
+        deadline = time.monotonic() + 1.5
+        while time.monotonic() < deadline and engine.chunks_captured < 2:
+            time.sleep(0.01)
+    finally:
+        engine.stop()
+
+    assert stt.calls == 0, "silence was sent to the transcriber"
+    assert calls == [], "a wake fired on silence"
+    assert engine.silent_chunks > 0
+
+
+def test_hallucinated_transcript_does_not_wake_nano():
+    """Whisper filler that slips through the energy gate is still rejected."""
+    audio = _FakeAudioProvider(chunks=[speech_wav()])
+    stt = _FakeSTTProvider(transcripts=["Obrigado.", "Obrigado.", "Obrigado."])
+    calls: list[str] = []
+    engine = _make_engine(enabled=True, audio=audio, stt=stt, on_wake=calls.append)
+
+    try:
+        assert engine.start() is True
+        deadline = time.monotonic() + 1.5
+        while time.monotonic() < deadline and stt.calls < 2:
+            time.sleep(0.01)
+    finally:
+        engine.stop()
+
+    assert calls == [], "a hallucinated transcript woke Nano"
+
+
+def test_bare_nano_is_disabled_by_default_in_shipped_config():
+    """The shipped default must require the full phrase."""
+    from core.config import load_config
+
+    voice = load_config().get("voice", {})
+    assert voice.get("wake_phrase_allow_nano_only") is False, (
+        'bare "nano" must stay off by default: it caused real false activations'
+    )

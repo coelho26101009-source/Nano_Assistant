@@ -46,7 +46,7 @@ from core.agent_orchestrator import AgentOrchestrator
 from core.agent_registry import AgentRegistry
 from core.tool_execution import ToolExecutor
 from core.background_worker import BackgroundTaskWorker
-from core import audio_feedback, ollama_service
+from core import audio_feedback, ollama_service, providers, secret_store, speech_filter, user_settings
 
 if not getattr(sys, "frozen", False):
     load_dotenv(ROOT / ".env")
@@ -479,6 +479,387 @@ def get_local_model_status() -> dict:
     return status
 
 
+# ===========================================================================
+#  PROVIDERS  (Groq primary / Ollama fallback)
+# ===========================================================================
+
+def current_provider_mode() -> providers.ProviderMode:
+    return providers.ProviderMode.parse(
+        user_settings.get("provider_mode") or CONFIG.get("provider_mode") or "AUTO"
+    )
+
+
+def describe_providers() -> dict:
+    """Live status of both providers plus the route a request would take."""
+    groq = providers.describe_groq(brain.groq_model)
+    ollama = providers.describe_ollama(
+        brain.ollama_model,
+        brain.ollama_url.removesuffix("/api/chat"),
+        local_enabled=brain.local_enabled,
+    )
+    mode = current_provider_mode()
+    return {
+        "mode": mode.value,
+        "modes": [m.value for m in providers.ProviderMode],
+        "groq": groq,
+        "ollama": ollama,
+        "route": providers.resolve_route(mode, groq, ollama),
+    }
+
+
+@eel.expose
+def get_providers() -> dict:
+    return describe_providers()
+
+
+@eel.expose
+def set_provider_mode(mode: str) -> dict:
+    parsed = providers.ProviderMode.parse(mode)
+    result = user_settings.set_value("provider_mode", parsed.value)
+    if not result.get("ok"):
+        return {"ok": False, "error": result.get("error", "write_failed")}
+    CONFIG["provider_mode"] = parsed.value
+    brain.provider_mode = parsed.value
+    logger.info("Modo de provedor: %s", parsed.value)
+    return {"ok": True, "mode": parsed.value, "providers": describe_providers()}
+
+
+@eel.expose
+def set_groq_api_key(api_key: str) -> dict:
+    """Validate a key, then store it OS-encrypted. The key never returns."""
+    candidate = (api_key or "").strip()
+    if not candidate:
+        return {"ok": False, "error": "empty_key", "detail": "Introduz uma chave de API."}
+
+    verdict = providers.test_groq(candidate)
+    if not verdict["ok"]:
+        # Never persist a key we could not validate.
+        return {"ok": False, "error": verdict["error"], "detail": verdict["detail"]}
+
+    if not secret_store.set_secret(providers.GROQ_SECRET_NAME, candidate):
+        return {"ok": False, "error": "store_failed", "detail": "Não foi possível guardar a chave em segurança."}
+
+    # Adopt a working model if the configured one is not on this account.
+    if brain.groq_model not in verdict["models"]:
+        suggested = verdict["suggested_model"]
+        user_settings.set_value("groq_model", suggested)
+        CONFIG["groq_model"] = suggested
+        brain.groq_model = suggested
+        logger.info("Modelo Groq ajustado para '%s'.", suggested)
+
+    brain.reload_cloud_credentials()
+    logger.info("Chave de API do Groq guardada (encriptada=%s).", secret_store.is_encrypted())
+    return {"ok": True, "detail": verdict["detail"], "providers": describe_providers()}
+
+
+@eel.expose
+def test_groq_connection(api_key: str = "") -> dict:
+    """Test the stored key, or a candidate the user is typing (never stored)."""
+    verdict = providers.test_groq(api_key or None)
+    return {
+        "ok": verdict["ok"],
+        "detail": verdict["detail"],
+        "models": verdict.get("models", []),
+        "suggested_model": verdict.get("suggested_model"),
+        "latency_ms": verdict.get("latency_ms"),
+    }
+
+
+@eel.expose
+def remove_groq_api_key() -> dict:
+    secret_store.delete_secret(providers.GROQ_SECRET_NAME)
+    brain.reload_cloud_credentials()
+    logger.info("Chave de API do Groq removida.")
+    return {"ok": True, "providers": describe_providers()}
+
+
+@eel.expose
+def set_groq_model(model: str) -> dict:
+    chosen = (model or "").strip()
+    if not chosen:
+        return {"ok": False, "error": "empty_model"}
+    available, error = providers.list_groq_models()
+    if error:
+        return {"ok": False, "error": error, "detail": "Não foi possível validar o modelo com o Groq."}
+    if chosen not in available:
+        return {"ok": False, "error": "model_unavailable",
+                "detail": f"'{chosen}' não existe nesta conta Groq."}
+    user_settings.set_value("groq_model", chosen)
+    CONFIG["groq_model"] = chosen
+    brain.groq_model = chosen
+    return {"ok": True, "model": chosen, "providers": describe_providers()}
+
+
+# ===========================================================================
+#  SETTINGS
+# ===========================================================================
+
+@eel.expose
+def get_settings() -> dict:
+    """Everything the Settings UI renders. Secrets are described, never sent."""
+    voice_cfg = CONFIG.get("voice", {}) or {}
+    wake_status = voice.wake_phrase_provider.status()
+    return {
+        "providers": describe_providers(),
+        "voice": {
+            "enabled": bool(voice_cfg.get("enabled")),
+            "ttsEnabled": bool(voice_cfg.get("tts_enabled")),
+            "wakePhrase": wake_status.get("phrase"),
+            "wakePhraseEnabled": bool(voice_cfg.get("wake_phrase_enabled")),
+            "allowNanoOnly": bool(voice_cfg.get("wake_phrase_allow_nano_only")),
+            "cooldownSeconds": float(voice_cfg.get("wake_phrase_cooldown_seconds", 3.0)),
+            "commandTimeoutSeconds": int(voice_cfg.get("wake_command_timeout_seconds", 7)),
+            "state": wake_status.get("readiness"),
+        },
+        "devices": get_audio_devices(),
+        "security": {
+            "autonomyMode": permission_manager.policy_engine.autonomy_mode.value,
+            "emergencyStop": permission_manager.is_emergency_stopped(),
+            "persistentAllowDisabled": True,
+            "secretsEncrypted": secret_store.is_encrypted(),
+        },
+        "stored": user_settings.all_settings(),
+        "runtime": get_runtime_info(),
+    }
+
+
+@eel.expose
+def update_setting(key: str, value) -> dict:
+    """Persist one allow-listed setting and apply it live where possible."""
+    result = user_settings.set_value(key, value)
+    if not result.get("ok"):
+        return result
+
+    voice_cfg = CONFIG.setdefault("voice", {})
+    engine = voice.wake_phrase_provider._engine
+
+    if key == "wake_phrase_enabled":
+        voice_cfg["wake_phrase_enabled"] = bool(value)
+        engine.enabled = bool(value)
+        if value and not engine.running:
+            _start_wake_phrase()
+        elif not value:
+            voice.wake_phrase_provider.stop()
+    elif key == "wake_phrase_allow_nano_only":
+        voice_cfg["wake_phrase_allow_nano_only"] = bool(value)
+        engine.allow_nano_only = bool(value)
+        engine.detector.allow_nano_only = bool(value)
+    elif key == "wake_phrase_cooldown_seconds":
+        voice_cfg["wake_phrase_cooldown_seconds"] = float(value)
+        engine.detector.cooldown_seconds = float(value)
+    elif key == "wake_command_timeout_seconds":
+        voice_cfg["wake_command_timeout_seconds"] = int(value)
+        voice_runtime.command_timeout_seconds = max(3, min(15, int(value)))
+    elif key == "tts_enabled":
+        voice_cfg["tts_enabled"] = bool(value)
+    elif key == "voice_enabled":
+        voice_cfg["enabled"] = bool(value)
+        voice.enabled = bool(value)
+    elif key == "input_device_index":
+        index = None if value in (None, "", -1) else int(value)
+        voice_cfg.setdefault("microphone", {})["device_index"] = index
+        voice.input_provider.device_index = index
+
+    return {"ok": True, "key": key, "value": value, "settings": get_settings()}
+
+
+@eel.expose
+def test_speaker() -> dict:
+    """Play the wake chime so the user can confirm they will hear it."""
+    played = audio_feedback.acknowledge_wake(blocking=True)
+    return {
+        "ok": played,
+        "detail": "Som reproduzido." if played else "Nenhum dispositivo de saída aceitou o som.",
+        "output": audio_feedback.output_device_report().get("default_output"),
+    }
+
+
+@eel.expose
+def test_microphone(seconds: int = 3) -> dict:
+    """Record a short sample and report measured energy. No audio is kept."""
+    try:
+        audio = voice.input_provider.capture(max(1, min(5, int(seconds))))
+    except Exception as exc:
+        return {"ok": False, "error": "capture_failed", "detail": str(exc)}
+    if not audio:
+        return {"ok": False, "error": "no_audio", "detail": "O microfone não devolveu áudio."}
+
+    measurement = speech_filter.describe(audio)
+    return {
+        "ok": True,
+        "speechDetected": measurement["has_speech"],
+        "rms": measurement["rms"],
+        "voicedRatio": measurement["voiced_ratio"],
+        "detail": (
+            "Voz detetada com bom nível." if measurement["has_speech"]
+            else "Não foi detetada voz. Fala mais perto ou verifica o microfone."
+        ),
+    }
+
+
+# ===========================================================================
+#  TASKS / ACTIVITY / MEMORY
+# ===========================================================================
+
+# Statuses that mean a task still needs the worker or the user.
+ACTIVE_TASK_STATUSES = frozenset({"QUEUED", "PLANNING", "RUNNING", "RETRYING", "WAITING", "WAITING_FOR_PERMISSION", "RECOVERABLE"})
+ATTENTION_TASK_STATUSES = frozenset({"NEEDS_ATTENTION"})
+TERMINAL_TASK_STATUSES = frozenset({"COMPLETED", "CANCELLED", "FAILED"})
+
+
+@eel.expose
+def get_task_counts() -> dict:
+    """Counts for the sidebar badge.
+
+    The badge must mean "needs you or is running", not "every task ever
+    created" -- it was showing 68 because it counted all history.
+    """
+    summary = task_engine.get_status_summary()
+    active = sum(count for status, count in summary.items() if status in ACTIVE_TASK_STATUSES)
+    attention = sum(count for status, count in summary.items() if status in ATTENTION_TASK_STATUSES)
+    return {
+        "active": active,
+        "attention": attention,
+        "badge": active + attention,
+        "total": sum(summary.values()),
+        "byStatus": summary,
+    }
+
+
+@eel.expose
+def list_tasks_filtered(scope: str = "active", limit: int = 60) -> list:
+    """Task rows for the Tasks page, without heavy metadata/result blobs."""
+    wanted = str(scope or "active").lower()
+    rows = []
+    for task in task_engine.list_tasks(limit=max(1, min(300, int(limit)))):
+        status = task.get("status")
+        if wanted == "active" and status not in ACTIVE_TASK_STATUSES:
+            continue
+        if wanted == "attention" and status not in ATTENTION_TASK_STATUSES:
+            continue
+        if wanted == "completed" and status != "COMPLETED":
+            continue
+        if wanted == "cancelled" and status != "CANCELLED":
+            continue
+        if wanted == "failed" and status != "FAILED":
+            continue
+        rows.append(_summarize_task_row(task))
+    return rows
+
+
+@eel.expose
+def get_current_task() -> dict | None:
+    """The genuinely active task, or None.
+
+    A finished or cancelled task is never "current" -- showing one was making
+    the inspector claim work was in progress when nothing was running.
+    """
+    for task in task_engine.list_tasks(limit=40):
+        if task.get("status") in ACTIVE_TASK_STATUSES or task.get("status") in ATTENTION_TASK_STATUSES:
+            return _summarize_task_row(task)
+    return None
+
+
+@eel.expose
+def archive_finished_tasks() -> dict:
+    """Remove finished tasks from the queue view.
+
+    This clears the task QUEUE only. The permission audit log and the event
+    stream are untouched: those are the security record and are not the user's
+    to tidy away from here.
+    """
+    removed = 0
+    for task in task_engine.list_tasks(limit=1000):
+        if task.get("status") in TERMINAL_TASK_STATUSES:
+            if task_engine.delete_task(task["id"]):
+                removed += 1
+    event_bus.publish("tasks.archived", {"count": removed})
+    return {
+        "ok": True,
+        "removed": removed,
+        "note": "Apenas a fila de tarefas foi limpa. O registo de auditoria de permissões mantém-se intacto.",
+        "counts": get_task_counts(),
+    }
+
+
+@eel.expose
+def get_activity(kind: str = "all", limit: int = 80) -> list:
+    """Filtered event stream for the Activity page."""
+    groups = {
+        "tasks": ("task.",),
+        "tools": ("tool.",),
+        "permissions": ("Permission", "permission", "security."),
+        "voice": ("Voice", "WakeWord", "Transcription"),
+        "system": ("worker.", "tasks."),
+        "errors": ("tool.failed", "worker.error", "task.needs_attention", "VoiceError"),
+    }
+    prefixes = groups.get(str(kind or "all").lower())
+    events = event_bus.get_recent_events(max(1, min(300, int(limit))))
+    if not prefixes:
+        return events
+    return [e for e in events if any(str(e.get("event", "")).startswith(p) or p in str(e.get("event", "")) for p in prefixes)]
+
+
+@eel.expose
+def get_memory_overview() -> dict:
+    """Real memory contents for the Memory page."""
+    try:
+        facts = memory.get_facts()
+    except Exception as exc:
+        facts = {}
+        logger.warning("Falha ao ler factos: %s", exc)
+    try:
+        profile = memory.get_user_profile()
+    except Exception:
+        profile = {}
+    try:
+        message_count = memory.count_messages()
+    except Exception:
+        message_count = 0
+
+    return {
+        "profile": profile,
+        "facts": [{"key": k, "value": str(v)[:400]} for k, v in facts.items()],
+        "messageCount": message_count,
+        "ragEnabled": bool(CONFIG.get("memory", {}).get("rag_enabled")),
+        "documents": [],
+        "documentsSupported": False,
+        "documentsNote": "A indexação de documentos requer o chromadb, que não está instalado.",
+    }
+
+
+@eel.expose
+def forget_memory_fact(key: str) -> dict:
+    """Delete one remembered fact. Confirmed in the UI before it gets here."""
+    if not key:
+        return {"ok": False, "error": "missing_key"}
+    try:
+        removed = memory.forget_fact(key)
+        return {"ok": bool(removed), "key": key, "memory": get_memory_overview()}
+    except Exception as exc:
+        return {"ok": False, "error": "delete_failed", "detail": str(exc)}
+
+
+@eel.expose
+def get_agents_detail() -> list:
+    """Registered agents with their real capabilities. Nothing invented."""
+    registry = agent_registry.as_dict().get("agents", [])
+    return [
+        {
+            "name": agent.get("name"),
+            "description": agent.get("description"),
+            "capabilities": agent.get("capabilities", []),
+            "tools": agent.get("tools", []),
+            "taskTypes": agent.get("supported_task_types", []),
+            # Agents are descriptors today: they are selected and recorded, but
+            # every tool still runs through the central executor. Saying READY
+            # would overstate what they do.
+            "state": "EXPERIMENTAL",
+        }
+        for agent in registry
+    ]
+
+
 @eel.expose
 def get_system_readiness() -> dict:
     """Consolidated, honest readiness for every subsystem the UI displays.
@@ -524,7 +905,11 @@ def get_system_readiness() -> dict:
     elif summary.get("RUNNING") or summary.get("PLANNING"):
         agent_state = "WORKING"
     elif summary.get("NEEDS_ATTENTION"):
-        agent_state = "ERROR"
+        # Not ERROR. A task waiting for the user is not the agent malfunctioning,
+        # and this was the only branch that ever produced ERROR -- so a handful
+        # of stalled tasks left the agent permanently reading "Erro" while it was
+        # working perfectly. A badge that is always red is a badge nobody reads.
+        agent_state = "NEEDS_ATTENTION"
     elif not worker.get("running"):
         agent_state = "SETUP_REQUIRED"
     elif summary.get("QUEUED") or summary.get("RETRYING"):

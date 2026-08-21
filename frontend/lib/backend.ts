@@ -2,28 +2,66 @@
  * The single typed surface between the Nano UI and the Python backend.
  *
  * Everything the UI renders comes through here. There is no mock data and no
- * default-optimistic value: when the bridge is not up, callers get null and the
+ * default-optimistic value: when the bridge is down, callers get null and the
  * UI shows an explicit state rather than inventing one.
+ *
+ * POLLING BUDGET (this matters — aggressive polling caused real bugs)
+ * Readiness used to be polled every 3 s, and each poll enumerated audio devices
+ * and probed Ollama. That raced the wake-phrase thread over PortAudio and
+ * crashed the process. Intervals here are deliberately conservative, the page
+ * pauses polling when hidden, and expensive calls are shared through one
+ * subscription rather than duplicated per component.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+
+/* ── Payload types ────────────────────────────────────────────────────── */
+
+export type SecretInfo = {
+  configured: boolean;
+  masked: string;
+  source: "none" | "environment" | "encrypted_store";
+  encrypted: boolean;
+};
+
+export type ProviderInfo = {
+  id: "groq" | "ollama";
+  name: string;
+  kind: "cloud" | "local";
+  role: "primary" | "fallback";
+  state: string;
+  model: string;
+  models: string[];
+  secret: SecretInfo;
+  detail: string;
+  url?: string;
+};
+
+export type ProviderPayload = {
+  mode: "AUTO" | "CLOUD" | "LOCAL";
+  modes: string[];
+  groq: ProviderInfo;
+  ollama: ProviderInfo;
+  route: {
+    provider: "groq" | "ollama" | "none";
+    model: string;
+    usable: boolean;
+    fallback: boolean;
+    mode: string;
+    reason: string;
+  };
+};
 
 export type ReadinessPayload = {
   agent: { state: string; pending_permissions: number };
   voice: { state: string; blockers: string[]; enabled: boolean };
   wakeWord: { state: string; phrase?: string; modelStatus: string; error?: string };
   wakePhrase: {
-    state: string;
-    turnState?: string;
-    phrase?: string;
-    allowNanoOnly?: boolean;
-    cooldownSeconds?: number;
-    error?: string;
+    state: string; turnState?: string; phrase?: string;
+    allowNanoOnly?: boolean; cooldownSeconds?: number; error?: string;
   };
   model: {
-    state: string;
-    detail?: string;
-    installed?: string[];
-    local: { model: string; online: boolean; modelReady: boolean; enabled: boolean };
+    state: string; detail?: string; installed?: string[];
+    local: { model: string; online: boolean; modelReady: boolean; enabled: boolean; url?: string };
     cloud: { model: string; configured: boolean };
     provider: string;
   };
@@ -35,13 +73,32 @@ export type ReadinessPayload = {
   vision: { state: string };
 };
 
+export type TaskRow = {
+  id: string; title: string; status: string; progress: number;
+  task_type: string; priority: number; retries: number;
+  created_at: string; started_at?: string; finished_at?: string;
+  updated_at: string; last_event?: string; error?: string;
+  has_result?: boolean; task_kind?: string;
+};
+
+export type TaskCounts = {
+  active: number; attention: number; badge: number; total: number;
+  byStatus: Record<string, number>;
+};
+
+export type ActivityEvent = {
+  event: string;
+  payload: Record<string, any>;
+  timestamp: string;
+};
+
 export type CommandCenterPayload = {
   worker: { running: boolean; queue_size: number; poll_interval: number };
   system: Record<string, number>;
   task_summary: Record<string, number>;
-  current_task: any;
-  tasks: any[];
-  activities: { event: string; payload: Record<string, any>; timestamp: string }[];
+  current_task: TaskRow | null;
+  tasks: TaskRow[];
+  activities: ActivityEvent[];
   permissions: any[];
   agents: { agents: any[]; selected: any[] };
   health: Record<string, any>;
@@ -49,12 +106,30 @@ export type CommandCenterPayload = {
   autonomy_mode: string;
 };
 
+export type SettingsPayload = {
+  providers: ProviderPayload;
+  voice: {
+    enabled: boolean; ttsEnabled: boolean; wakePhrase: string;
+    wakePhraseEnabled: boolean; allowNanoOnly: boolean;
+    cooldownSeconds: number; commandTimeoutSeconds: number; state: string;
+  };
+  devices: { inputs: { id: number; name: string }[]; outputs: { id: number; name: string }[]; error?: string };
+  security: {
+    autonomyMode: string; emergencyStop: boolean;
+    persistentAllowDisabled: boolean; secretsEncrypted: boolean;
+  };
+  stored: Record<string, any>;
+  runtime: Record<string, any>;
+};
+
+/* ── Bridge ───────────────────────────────────────────────────────────── */
+
 function bridge(): any | null {
   if (typeof window === "undefined") return null;
   return (window as any).eel ?? null;
 }
 
-/** Promise wrapper over eel's callback style. */
+/** Promise wrapper over eel's callback style, with a settle guarantee. */
 export function call<T = any>(name: string, ...args: any[]): Promise<T | null> {
   const eel = bridge();
   if (!eel || typeof eel[name] !== "function") return Promise.resolve(null);
@@ -66,20 +141,18 @@ export function call<T = any>(name: string, ...args: any[]): Promise<T | null> {
     } catch {
       done(null as unknown as T);
     }
-    // The bridge can drop a call if the socket closes mid-flight; never leave
-    // the UI waiting forever on a promise that will not settle.
-    window.setTimeout(() => { if (!settled) { settled = true; resolve(null); } }, 20000);
+    // The socket can drop a call mid-flight; never leave the UI awaiting a
+    // promise that will not settle.
+    window.setTimeout(() => { if (!settled) { settled = true; resolve(null); } }, 25000);
   });
 }
 
 /**
  * Register a handler for a Python -> UI callback.
  *
- * The actual `eel.expose(...)` registration lives in /public/nano_bridge.js and
- * must stay there: eel text-scans served JS for the literal `eel.expose(`
- * token, which the production minifier destroys if the call sits inside this
- * bundle. Here we only attach the handler the static stub forwards to, and
- * drain anything that arrived before React mounted.
+ * The actual registration lives in /public/nano_bridge.js and must stay there:
+ * eel text-scans served JS for its registration token, which the production
+ * minifier destroys if the call sits inside this bundle.
  */
 export function expose(fn: (...args: any[]) => void, name: string) {
   if (typeof window === "undefined") return;
@@ -96,13 +169,11 @@ export function expose(fn: (...args: any[]) => void, name: string) {
   }
 }
 
-/** True when the static bridge loaded, i.e. Python can actually reach the UI. */
 export function bridgeCallbacksReady(): boolean {
   if (typeof window === "undefined") return false;
   return Boolean((window as any).__nanoHandlers);
 }
 
-/** Resolves once the Eel runtime has attached, or gives up and reports offline. */
 export function useBridgeReady() {
   const [ready, setReady] = useState(false);
   const [gaveUp, setGaveUp] = useState(false);
@@ -113,7 +184,7 @@ export function useBridgeReady() {
     const timer = window.setInterval(() => {
       attempts += 1;
       if (bridge()) { window.clearInterval(timer); setReady(true); }
-      else if (attempts > 100) { window.clearInterval(timer); setGaveUp(true); }
+      else if (attempts > 120) { window.clearInterval(timer); setGaveUp(true); }
     }, 100);
     return () => window.clearInterval(timer);
   }, []);
@@ -121,28 +192,78 @@ export function useBridgeReady() {
   return { ready, gaveUp };
 }
 
-/** Poll a backend function on an interval, pausing when the tab is hidden. */
-export function usePolled<T>(name: string, intervalMs: number, enabled: boolean) {
+/* ── Polling ──────────────────────────────────────────────────────────── */
+
+/** Deliberate intervals. Readiness probes Ollama, so it stays slow. */
+export const POLL = {
+  commandCenter: 4000,
+  readiness: 10000,
+  taskCounts: 8000,
+  page: 6000,
+} as const;
+
+/**
+ * Poll one backend function. Skips ticks while the tab is hidden and never
+ * overlaps requests, so a slow backend cannot queue up work.
+ */
+export function usePolled<T>(name: string, intervalMs: number, enabled: boolean, ...args: any[]) {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const mounted = useRef(true);
+  const inFlight = useRef(false);
+  const argsKey = JSON.stringify(args);
 
   const refresh = useCallback(async () => {
-    const value = await call<T>(name);
-    if (!mounted.current) return;
-    setData(value);
-    setLoading(false);
-  }, [name]);
+    if (inFlight.current) return;
+    inFlight.current = true;
+    try {
+      const value = await call<T>(name, ...JSON.parse(argsKey));
+      if (!mounted.current) return;
+      setData(value);
+      setError(value === null ? "Sem resposta do motor do Nano." : null);
+    } finally {
+      inFlight.current = false;
+      if (mounted.current) setLoading(false);
+    }
+  }, [name, argsKey]);
 
   useEffect(() => {
     mounted.current = true;
-    if (!enabled) return;
+    if (!enabled) return () => { mounted.current = false; };
     refresh();
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible") refresh();
     }, intervalMs);
     return () => { mounted.current = false; window.clearInterval(timer); };
   }, [enabled, intervalMs, refresh]);
+
+  return { data, loading, error, refresh };
+}
+
+/** One-shot fetch that reloads when `deps` change. For page-scoped data. */
+export function useFetch<T>(name: string, enabled: boolean, deps: any[] = [], ...args: any[]) {
+  const [data, setData] = useState<T | null>(null);
+  const [loading, setLoading] = useState(true);
+  const mounted = useRef(true);
+  const argsKey = JSON.stringify(args);
+  const depsKey = JSON.stringify(deps);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    const value = await call<T>(name, ...JSON.parse(argsKey));
+    if (!mounted.current) return;
+    setData(value);
+    setLoading(false);
+  }, [name, argsKey]);
+
+  useEffect(() => {
+    mounted.current = true;
+    if (!enabled) return () => { mounted.current = false; };
+    refresh();
+    return () => { mounted.current = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, depsKey, refresh]);
 
   return { data, loading, refresh };
 }

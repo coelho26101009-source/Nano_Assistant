@@ -70,9 +70,12 @@ voice:
   # wake_word block above.
   wake_phrase: "hey nano"
   wake_phrase_enabled: true
-  wake_phrase_allow_nano_only: true
+  # Bare "nano" desligado por omissao: causava activacoes falsas.
+  wake_phrase_allow_nano_only: false
   wake_phrase_cooldown_seconds: 3.0
   wake_phrase_chunk_seconds: 2.5
+  # Tempo de espera por um comando depois do chime antes de cancelar.
+  wake_command_timeout_seconds: 7
 
 # ── Funcionalidades opcionais ──────────────────────────────────────────────────
 iot:

@@ -1,7 +1,7 @@
 /**
  * Nano application shell.
  *
- * Layout: sidebar · workspace · inspector · status bar.
+ * Layout: sidebar · workspace · inspector.
  * All state shown here is read from the Python backend through lib/backend.
  * Nothing is mocked and nothing defaults to "ready".
  */
@@ -11,22 +11,24 @@ import Head from "next/head";
 import CommandPalette, { Command } from "../components/CommandPalette";
 import ConfirmModal from "../components/Confirm";
 import Inspector from "../components/Inspector";
-import PermissionCenterModal, { PermissionDecision } from "../components/PermissionCenterModal";
+import NanoLogo from "../components/NanoLogo";
 import PluginCodeModal from "../components/PluginCodeModal";
-import SettingsModal from "../components/SettingsModal";
-import MiniPillBar from "../components/MiniPillBar";
 import Sidebar, { ViewId } from "../components/Sidebar";
+import SettingsPage from "../components/SettingsPage";
 import TaskDetailModal from "../components/TaskDetailModal";
-import { Composer, Conversation, Message } from "../components/Conversation";
+import { Composer, Conversation, Message, ToolEvent } from "../components/Conversation";
 import {
-  ActivityView, AgentsView, HealthView, MemoryView,
-  PermissionsView, PluginsView, TasksView,
-} from "../components/CommandCenter";
-import { Button, ErrorState, StatusIndicator, stateLabel } from "../components/ui";
+  ActivityFilter, ActivityPage, AgentsPage, IntegrationsPage, MemoryPage,
+  PermissionsPage, StatusPage, TaskScope, TasksPage,
+} from "../components/Pages";
+import { Button, ErrorState, StatusIndicator, ToastStack, stateLabel, useToasts } from "../components/ui";
 import {
-  CommandCenterPayload, ReadinessPayload,
-  call, expose, useBridgeReady, usePolled,
+  ActivityEvent, CommandCenterPayload, POLL, ProviderPayload, ReadinessPayload,
+  SettingsPayload, TaskCounts, TaskRow,
+  call, expose, useBridgeReady, useFetch, usePolled,
 } from "../lib/backend";
+
+const APP_VERSION = "v0.8.0-β";
 
 export interface ConfirmRequest {
   requestId: string;
@@ -34,62 +36,79 @@ export interface ConfirmRequest {
   meta: Record<string, any>;
 }
 
-const VIEW_TITLES: Record<ViewId, string> = {
-  chat: "Conversa",
-  tasks: "Tarefas",
-  activity: "Atividade",
-  permissions: "Permissões",
-  agents: "Agentes e modelo",
-  memory: "Memória",
-  plugins: "Integrações",
-  health: "Estado do sistema",
+const VIEW_META: Record<ViewId, { title: string; subtitle: string; icon: React.ReactNode }> = {
+  chat:         { title: "Conversa",   subtitle: "Fale com o Nano", icon: <span aria-hidden="true">◈</span> },
+  tasks:        { title: "Tarefas",    subtitle: "Trabalho em segundo plano", icon: <span aria-hidden="true">▤</span> },
+  activity:     { title: "Atividade",  subtitle: "O que o Nano tem feito", icon: <span aria-hidden="true">≋</span> },
+  permissions:  { title: "Permissões", subtitle: "Autorizações e policies", icon: <span aria-hidden="true">⛨</span> },
+  agents:       { title: "Agentes",    subtitle: "Agentes registados", icon: <span aria-hidden="true">◇</span> },
+  memory:       { title: "Memória",    subtitle: "O que o Nano sabe sobre ti", icon: <span aria-hidden="true">▦</span> },
+  integrations: { title: "Integrações", subtitle: "Provedores e componentes", icon: <span aria-hidden="true">⬡</span> },
+  status:       { title: "Estado",     subtitle: "Saúde do sistema", icon: <span aria-hidden="true">◉</span> },
+  settings:     { title: "Definições", subtitle: "Configurar o Nano", icon: <span aria-hidden="true">⚙</span> },
 };
 
 export default function Home() {
   const { ready, gaveUp } = useBridgeReady();
+  const { toasts, notify } = useToasts();
 
+  /* ── Shell state ────────────────────────────────────────────────────── */
   const [view, setView] = useState<ViewId>("chat");
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
-  const [thinking, setThinking] = useState(false);
-  const [status, setStatus] = useState("");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
-  const [toast, setToast] = useState<string | null>(null);
-  // Compact overlay used when the wake word fires; kept as a real feature.
-  const [miniMode, setMiniMode] = useState(false);
+  const [reduceMotion, setReduceMotion] = useState(false);
 
+  /* ── Conversation ───────────────────────────────────────────────────── */
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
+  const [thinking, setThinking] = useState(false);
+  const [status, setStatus] = useState("");
+  const [listening, setListening] = useState(false);
+
+  /* ── Dialogs ────────────────────────────────────────────────────────── */
   const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
-  const [permissionsOpen, setPermissionsOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [taskDetail, setTaskDetail] = useState<any>(null);
   const [taskDetailEvents, setTaskDetailEvents] = useState<any[]>([]);
   const [taskDetailOpen, setTaskDetailOpen] = useState(false);
   const [pluginCode, setPluginCode] = useState<any>(null);
+  const [resolving, setResolving] = useState(false);
+  const [busy, setBusy] = useState(false);
 
+  /* ── Page-scoped state ──────────────────────────────────────────────── */
+  const [taskScope, setTaskScope] = useState<TaskScope>("active");
+  const [taskQuery, setTaskQuery] = useState("");
+  const [activityFilter, setActivityFilter] = useState<ActivityFilter>("all");
   const [plugins, setPlugins] = useState<Record<string, string[]>>({});
   const [policies, setPolicies] = useState<any[]>([]);
-  const [facts, setFacts] = useState<Record<string, any> | null>(null);
-  const [audioDevices, setAudioDevices] = useState<any>(null);
-  const [resolving, setResolving] = useState(false);
 
+  /* ── Backend data ───────────────────────────────────────────────────── */
+  const { data: commandCenter, loading: ccLoading, refresh: refreshCC } =
+    usePolled<CommandCenterPayload>("get_command_center_state", POLL.commandCenter, ready);
   const { data: readiness, refresh: refreshReadiness } =
-    usePolled<ReadinessPayload>("get_system_readiness", 6000, ready);
-  const { data: commandCenter, loading: ccLoading, refresh: refreshCommandCenter } =
-    usePolled<CommandCenterPayload>("get_command_center_state", 3000, ready);
+    usePolled<ReadinessPayload>("get_system_readiness", POLL.readiness, ready);
+  const { data: providers, refresh: refreshProviders } =
+    usePolled<ProviderPayload>("get_providers", POLL.readiness, ready);
+  const { data: counts, refresh: refreshCounts } =
+    usePolled<TaskCounts>("get_task_counts", POLL.taskCounts, ready);
 
-  const toastTimer = useRef<number>();
-  const notify = useCallback((text: string) => {
-    setToast(text);
-    window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(null), 2600);
-  }, []);
+  const { data: tasks, loading: tasksLoading, refresh: refreshTasks } =
+    useFetch<TaskRow[]>("list_tasks_filtered", ready && view === "tasks", [taskScope], taskScope, 100);
+  const { data: activity, loading: activityLoading, refresh: refreshActivity } =
+    useFetch<ActivityEvent[]>("get_activity", ready && view === "activity", [activityFilter], activityFilter, 120);
+  const { data: memoryData, loading: memoryLoading, refresh: refreshMemory } =
+    useFetch<any>("get_memory_overview", ready && view === "memory", []);
+  const { data: agents } = useFetch<any[]>("get_agents_detail", ready && view === "agents", []);
+  const { data: settings, loading: settingsLoading, refresh: refreshSettings } =
+    useFetch<SettingsPayload>("get_settings", ready && view === "settings", []);
 
   useEffect(() => { document.documentElement.setAttribute("data-theme", theme); }, [theme]);
+  useEffect(() => {
+    document.documentElement.style.setProperty("--transition", reduceMotion ? "0ms" : "140ms cubic-bezier(0.4, 0, 0.2, 1)");
+  }, [reduceMotion]);
 
-  /* ── Streaming events from the backend ──────────────────────────────── */
+  /* ── Streaming events ───────────────────────────────────────────────── */
   useEffect(() => {
     if (!ready) return;
 
@@ -98,14 +117,15 @@ export default function Home() {
     }, "on_confirm_request");
 
     expose(() => {
-      setMiniMode(true);
       setThinking(true);
-      setStatus("A ouvir o Nano…");
+      setListening(true);
+      setStatus("Ouvi-te — diz o comando");
+      notify("Wake detetada");
     }, "on_wake_detected");
 
     expose((msgId: string, userText?: string) => {
       setThinking(true);
-      setStatus("A processar…");
+      setStatus("A pensar…");
       setMessages((prev) => {
         const next = [...prev];
         const last = next[next.length - 1];
@@ -120,22 +140,31 @@ export default function Home() {
     }, "on_stream_start");
 
     expose((_msgId: string, text: string) => {
-      setStatus(text);
-      // Tool activity arrives as "_thinking_" status lines; surface the tool
-      // names on the message so the person can see what actually ran.
+      // Tool activity arrives as a status line. Turn it into readable tool
+      // cards rather than showing the raw backend string.
       const match = /⚙️\s*(.+?)\.\.\./.exec(text);
       if (match) {
-        const tools = match[1].split(",").map((tool) => tool.trim()).filter(Boolean);
+        const names = match[1].split(",").map((t) => t.trim()).filter(Boolean);
+        setStatus(names.length === 1 ? `A usar ${names[0]}…` : `A usar ${names.length} ferramentas…`);
         setMessages((prev) => {
           const next = [...prev];
           for (let i = next.length - 1; i >= 0; i -= 1) {
             if (next[i].role === "assistant") {
-              next[i] = { ...next[i], tools: Array.from(new Set([...(next[i].tools ?? []), ...tools])) };
+              const existing = next[i].tools ?? [];
+              const merged: ToolEvent[] = [...existing];
+              for (const name of names) {
+                if (!merged.some((t) => t.name === name)) {
+                  merged.push({ name, state: "running", summary: `A executar ${name}…` });
+                }
+              }
+              next[i] = { ...next[i], tools: merged };
               break;
             }
           }
           return next;
         });
+      } else {
+        setStatus(text.replace(/^_thinking_:?\s*/, "").replace(/^[🧠⚙️]\s*/u, "") || "A pensar…");
       }
     }, "on_stream_status");
 
@@ -150,14 +179,16 @@ export default function Home() {
 
     expose((msgId: string, final: any) => {
       setThinking(false);
+      setListening(false);
       setStatus("");
       const text = final?.text ?? final?.error;
-      setMessages((prev) => {
-        if (!prev.some((m) => m.id === msgId)) {
-          return text ? [...prev, { id: msgId, role: "assistant", content: text, timestamp: new Date() }] : prev;
-        }
-        return prev.map((m) => (m.id === msgId ? { ...m, content: text ?? m.content, streaming: false } : m));
-      });
+      setMessages((prev) => prev.map((m) => {
+        if (m.id !== msgId) return m;
+        const tools = (m.tools ?? []).map((t) => t.state === "running" ? { ...t, state: "ok" as const, summary: `${t.name} concluída` } : t);
+        return { ...m, content: text ?? m.content, streaming: false, tools };
+      }));
+      refreshCC();
+      refreshCounts();
     }, "on_stream_end");
 
     expose((userText: string, assistantText: string) => {
@@ -178,25 +209,9 @@ export default function Home() {
       })));
     });
 
-    call<Record<string, string[]>>("get_loaded_plugins").then((value) => value && setPlugins(value));
-    call<any[]>("list_permission_policies").then((value) => value && setPolicies(value));
-    call<Record<string, any>>("get_memory_facts").then(setFacts);
-    call<any>("get_audio_devices").then(setAudioDevices);
-  }, [ready]);
-
-  /* ── Keyboard shortcuts ─────────────────────────────────────────────── */
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      const mod = event.ctrlKey || event.metaKey;
-      if (mod && event.key.toLowerCase() === "k") { event.preventDefault(); setPaletteOpen((open) => !open); }
-      else if (mod && event.key.toLowerCase() === "b") { event.preventDefault(); setSidebarCollapsed((v) => !v); }
-      else if (mod && event.key.toLowerCase() === "i") { event.preventDefault(); setInspectorCollapsed((v) => !v); }
-      else if (mod && event.key.toLowerCase() === "n") { event.preventDefault(); newConversation(); }
-      else if (mod && event.key.toLowerCase() === "m") { event.preventDefault(); startVoice(); }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  });
+    call<Record<string, string[]>>("get_loaded_plugins").then((v) => v && setPlugins(v));
+    call<any[]>("list_permission_policies").then((v) => v && setPolicies(v));
+  }, [ready, notify, refreshCC, refreshCounts]);
 
   /* ── Actions ────────────────────────────────────────────────────────── */
   const sendMessage = useCallback((override?: string) => {
@@ -210,77 +225,82 @@ export default function Home() {
     ]);
     if (override === undefined) setInput("");
     setThinking(true);
-    setStatus("A processar…");
+    setStatus("A pensar…");
     setView("chat");
 
     call<any>("send_message", text, msgId).then((result) => {
       setThinking(false);
       setStatus("");
 
-      // A failed message must never look like silence. If the bridge returned
-      // nothing, or the backend reported an error, say so in the transcript
-      // with the real reason instead of leaving an empty bubble.
+      // A failed message must never look like silence.
       let answer: string;
+      let isError = false;
       if (result === null) {
-        answer =
-          "**Sem resposta do motor do Nano.** A ligação ao backend caiu ou expirou. " +
-          "Confirma que a janela do Nano continua aberta e recarrega a página.";
-        notify("Backend offline");
+        answer = "**Sem resposta do motor do Nano.** A ligação ao backend caiu ou expirou. Confirma que a janela do Nano continua aberta e recarrega a página.";
+        isError = true;
+        notify("Motor offline", "error");
       } else if (result?.text) {
         answer = result.text;
       } else if (result?.error) {
-        const modelState = readiness?.model.state;
-        const hint =
-          modelState === "OLLAMA_UNAVAILABLE" || modelState === "OLLAMA_NOT_INSTALLED"
-            ? " O Ollama não está disponível — vê o separador Estado."
-            : modelState === "MODEL_UNAVAILABLE"
-            ? ` O modelo ${readiness?.model.local.model} não está instalado — vê o separador Estado.`
-            : "";
-        answer = `**Erro:** ${result.error}.${hint}`;
-        notify(`Erro: ${result.error}`);
+        const route = providers?.route;
+        const hint = route && !route.usable ? ` ${route.reason}` : "";
+        answer = `**Não foi possível responder.** ${result.error}.${hint}`;
+        isError = true;
+        notify("Erro ao responder", "error");
       } else {
         answer = "**Sem resposta.** O pedido terminou sem texto nem erro.";
-        notify("Resposta vazia");
+        isError = true;
       }
 
-      setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, content: answer, streaming: false } : m)));
-      refreshCommandCenter();
-      refreshReadiness();
+      setMessages((prev) => prev.map((m) => m.id === msgId
+        ? { ...m, content: answer, streaming: false, error: isError,
+            tools: (m.tools ?? []).map((t) => t.state === "running" ? { ...t, state: "ok" as const } : t) }
+        : m));
+      refreshCC();
+      refreshCounts();
     });
-  }, [input, thinking, ready, refreshCommandCenter, refreshReadiness, readiness, notify]);
+  }, [input, thinking, ready, providers, notify, refreshCC, refreshCounts]);
 
   const stopWork = useCallback(() => {
     call("stop_voice");
     const current = commandCenter?.current_task;
     if (current && !["COMPLETED", "FAILED", "CANCELLED"].includes(current.status)) {
-      call("cancel_agent_task", current.id).then(() => { notify("Tarefa cancelada"); refreshCommandCenter(); });
+      call("cancel_agent_task", current.id).then(() => { notify("Tarefa cancelada"); refreshCC(); refreshCounts(); });
     }
     setThinking(false);
+    setListening(false);
     setStatus("");
-  }, [commandCenter, notify, refreshCommandCenter]);
+  }, [commandCenter, notify, refreshCC, refreshCounts]);
 
   const startVoice = useCallback(() => {
     if (!ready || thinking) return;
     if (readiness && readiness.voice.state !== "READY") {
-      notify(`Voz: ${stateLabel(readiness.voice.state)}`);
+      notify(`Voz: ${stateLabel(readiness.voice.state)}`, "error");
       return;
     }
+    setListening(true);
     setThinking(true);
     setStatus("A ouvir…");
     call<any>("start_voice_listen").then((result) => {
+      setListening(false);
       setThinking(false);
       setStatus("");
       if (result?.text) setInput(result.text);
-      else if (result?.error) notify(`Voz falhou: ${result.error}`);
+      else if (result?.error) notify(`Voz: ${result.error}`, "error");
     });
   }, [ready, thinking, readiness, notify]);
 
+  const cancelVoice = useCallback(() => {
+    call("stop_voice");
+    setListening(false);
+    setThinking(false);
+    setStatus("");
+    notify("Escuta cancelada");
+  }, [notify]);
+
   const newConversation = useCallback(() => {
     call("clear_conversation").then(() => {
-      setMessages([]);
-      setInput("");
-      setView("chat");
-      notify("Nova conversa");
+      setMessages([]); setInput(""); setView("chat"); notify("Nova conversa");
     });
   }, [notify]);
 
@@ -290,110 +310,230 @@ export default function Home() {
         setTaskDetail(result.task);
         setTaskDetailEvents(result.events ?? []);
         setTaskDetailOpen(true);
-      } else {
-        notify("Tarefa não encontrada");
-      }
+      } else notify("Tarefa não encontrada", "error");
     });
   }, [notify]);
 
   const cancelTask = useCallback((taskId: string) => {
     call<any>("cancel_agent_task", taskId).then((result) => {
-      notify(result?.ok ? "Tarefa cancelada" : "Não foi possível cancelar");
-      refreshCommandCenter();
+      notify(result?.ok ? "Tarefa cancelada" : "Não foi possível cancelar", result?.ok ? "default" : "error");
+      refreshCC(); refreshCounts(); refreshTasks();
       setTaskDetailOpen(false);
     });
-  }, [notify, refreshCommandCenter]);
+  }, [notify, refreshCC, refreshCounts, refreshTasks]);
 
-  const resolvePermission = useCallback((requestId: string, decision: PermissionDecision) => {
+  const archiveTasks = useCallback(() => {
+    call<any>("archive_finished_tasks").then((result) => {
+      notify(result?.ok ? `${result.removed} tarefa(s) arquivadas` : "Falha ao arquivar", result?.ok ? "success" : "error");
+      refreshTasks(); refreshCounts(); refreshCC();
+    });
+  }, [notify, refreshTasks, refreshCounts, refreshCC]);
+
+  const resolvePermission = useCallback((requestId: string, decision: "deny" | "allow_once" | "allow_for_task") => {
     setResolving(true);
     call<any>("resolve_permission", requestId, decision).then((result) => {
       setResolving(false);
       if (result?.ok) {
-        notify(decision === "deny" ? "Pedido recusado" : "Autorização concedida");
-        refreshCommandCenter();
-        refreshReadiness();
-      } else {
-        notify(`Recusado pela policy: ${result?.error ?? "erro"}`);
-      }
+        notify(decision === "deny" ? "Pedido recusado" : "Autorização concedida", "success");
+        refreshCC(); refreshReadiness();
+      } else notify(`Recusado pela policy: ${result?.error ?? "erro"}`, "error");
     });
-  }, [notify, refreshCommandCenter, refreshReadiness]);
+  }, [notify, refreshCC, refreshReadiness]);
 
   const toggleEmergencyStop = useCallback((enabled: boolean) => {
     call<any>("set_emergency_stop", enabled).then(() => {
-      notify(enabled ? "Execução bloqueada" : "Execução retomada");
-      refreshReadiness();
-      refreshCommandCenter();
+      notify(enabled ? "Execução bloqueada" : "Execução retomada", enabled ? "error" : "success");
+      refreshReadiness(); refreshCC(); refreshSettings();
     });
-  }, [notify, refreshReadiness, refreshCommandCenter]);
+  }, [notify, refreshReadiness, refreshCC, refreshSettings]);
 
   const openPluginCode = useCallback((name: string) => {
     call<any>("get_plugin_code", name).then((result) => {
-      if (result?.ok) setPluginCode(result);
-      else notify("Não foi possível ler o plugin");
+      if (result?.ok) setPluginCode(result); else notify("Não foi possível ler o componente", "error");
     });
   }, [notify]);
 
-  /* ── Command palette ────────────────────────────────────────────────── */
+  const forgetFact = useCallback((key: string) => {
+    call<any>("forget_memory_fact", key).then((result) => {
+      notify(result?.ok ? "Facto esquecido" : "Não foi possível esquecer", result?.ok ? "success" : "error");
+      refreshMemory();
+    });
+  }, [notify, refreshMemory]);
+
+  /* ── Provider actions ───────────────────────────────────────────────── */
+  const setMode = useCallback((mode: "AUTO" | "CLOUD" | "LOCAL") => {
+    setBusy(true);
+    call<any>("set_provider_mode", mode).then((result) => {
+      setBusy(false);
+      if (result?.ok) { notify(`Modo: ${mode}`, "success"); refreshProviders(); refreshSettings(); refreshReadiness(); }
+      else notify("Não foi possível mudar de modo", "error");
+    });
+  }, [notify, refreshProviders, refreshSettings, refreshReadiness]);
+
+  const saveGroqKey = useCallback(async (key: string) => {
+    setBusy(true);
+    const result = await call<any>("set_groq_api_key", key);
+    setBusy(false);
+    if (result?.ok) { notify("Chave validada e guardada", "success"); refreshProviders(); refreshSettings(); refreshReadiness(); }
+    else notify(result?.detail ?? "Chave recusada", "error");
+  }, [notify, refreshProviders, refreshSettings, refreshReadiness]);
+
+  const removeGroqKey = useCallback(() => {
+    call<any>("remove_groq_api_key").then(() => {
+      notify("Chave removida"); refreshProviders(); refreshSettings(); refreshReadiness();
+    });
+  }, [notify, refreshProviders, refreshSettings, refreshReadiness]);
+
+  const testGroq = useCallback(() => {
+    setBusy(true);
+    call<any>("test_groq_connection").then((result) => {
+      setBusy(false);
+      notify(result?.detail ?? "Sem resposta", result?.ok ? "success" : "error");
+    });
+  }, [notify]);
+
+  const setGroqModel = useCallback((model: string) => {
+    setBusy(true);
+    call<any>("set_groq_model", model).then((result) => {
+      setBusy(false);
+      if (result?.ok) { notify(`Modelo: ${model}`, "success"); refreshProviders(); refreshSettings(); }
+      else notify(result?.detail ?? "Modelo indisponível", "error");
+    });
+  }, [notify, refreshProviders, refreshSettings]);
+
+  const updateSetting = useCallback((key: string, value: any) => {
+    call<any>("update_setting", key, value).then((result) => {
+      if (result?.ok) { refreshSettings(); refreshReadiness(); }
+      else notify(`Não foi possível guardar: ${result?.error ?? "erro"}`, "error");
+    });
+  }, [notify, refreshSettings, refreshReadiness]);
+
+  const testSpeaker = useCallback(() => {
+    call<any>("test_speaker").then((r) => notify(r?.detail ?? "Sem resposta", r?.ok ? "success" : "error"));
+  }, [notify]);
+
+  const testMicrophone = useCallback(() => {
+    notify("A gravar 3 segundos…");
+    call<any>("test_microphone", 3).then((r) => notify(r?.detail ?? "Sem resposta", r?.ok && r?.speechDetected ? "success" : "error"));
+  }, [notify]);
+
+  /* ── Keyboard ───────────────────────────────────────────────────────── */
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const mod = event.ctrlKey || event.metaKey;
+      if (!mod) return;
+      const key = event.key.toLowerCase();
+      if (key === "k") { event.preventDefault(); setPaletteOpen((v) => !v); }
+      else if (key === "b") { event.preventDefault(); setSidebarCollapsed((v) => !v); }
+      else if (key === "i") { event.preventDefault(); setInspectorCollapsed((v) => !v); }
+      else if (key === "n") { event.preventDefault(); newConversation(); }
+      else if (key === "m") { event.preventDefault(); startVoice(); }
+      else if (key === ",") { event.preventDefault(); setView("settings"); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [newConversation, startVoice]);
+
+  /* ── Derived ────────────────────────────────────────────────────────── */
+  const pendingCount = commandCenter?.permissions?.length ?? 0;
+  const agentState = readiness?.agent.state ?? (gaveUp ? "BACKEND_OFFLINE" : "UNKNOWN");
+  const meta = VIEW_META[view];
+
+  const navCounts = useMemo(() => ({
+    tasks: counts?.badge ?? 0,
+    permissions: pendingCount,
+  }), [counts, pendingCount]);
+
+  const healthLabel = useMemo(() => {
+    if (gaveUp) return "Motor offline";
+    if (readiness?.emergencyStop) return "Execução bloqueada";
+    if (pendingCount > 0) return `${pendingCount} por autorizar`;
+    if (providers?.route?.usable === false) return "Sem provedor de IA";
+    return "Todos os serviços operacionais";
+  }, [gaveUp, readiness, pendingCount, providers]);
+
+  const suggestions = useMemo(() => {
+    if (messages.length > 0) return [];
+    const base = ["Ver uso de RAM", "Listar processos pesados", "Ajuda"];
+    if (providers?.route?.usable === false) return ["Ajuda"];
+    return base;
+  }, [messages.length, providers]);
+
+  const permissionAuditEvents = useMemo(
+    () => (commandCenter?.activities ?? []).filter((e) => e.event.toLowerCase().includes("permission")),
+    [commandCenter]
+  );
+
   const commands: Command[] = useMemo(() => [
     { id: "new", label: "Nova conversa", hint: "Ctrl+N", run: newConversation },
-    { id: "chat", label: "Ir para Conversa", run: () => setView("chat") },
-    { id: "tasks", label: "Ir para Tarefas", run: () => setView("tasks") },
-    { id: "activity", label: "Ir para Atividade", run: () => setView("activity") },
-    { id: "perms", label: "Ir para Permissões", run: () => setView("permissions") },
-    { id: "agents", label: "Ir para Agentes e modelo", run: () => setView("agents") },
-    { id: "memory", label: "Ir para Memória", run: () => setView("memory") },
-    { id: "plugins", label: "Ir para Integrações", run: () => setView("plugins") },
-    { id: "health", label: "Ir para Estado do sistema", run: () => setView("health") },
+    ...(Object.keys(VIEW_META) as ViewId[]).map((id) => ({
+      id: `go-${id}`, label: `Ir para ${VIEW_META[id].title}`, run: () => setView(id),
+    })),
     { id: "inspector", label: "Alternar inspector", hint: "Ctrl+I", run: () => setInspectorCollapsed((v) => !v) },
     { id: "sidebar", label: "Alternar barra lateral", hint: "Ctrl+B", run: () => setSidebarCollapsed((v) => !v) },
     { id: "theme", label: "Alternar tema", run: () => setTheme((t) => (t === "dark" ? "light" : "dark")) },
-    { id: "settings", label: "Abrir definições", run: () => setSettingsOpen(true) },
+    { id: "voice", label: "Falar com o Nano", hint: "Ctrl+M", run: startVoice },
     {
       id: "estop",
       label: readiness?.emergencyStop ? "Retomar execução" : "Paragem de emergência",
       run: () => toggleEmergencyStop(!readiness?.emergencyStop),
     },
-  ], [newConversation, readiness, toggleEmergencyStop]);
+  ], [newConversation, startVoice, readiness, toggleEmergencyStop]);
 
-  const pendingCount = commandCenter?.permissions?.length ?? 0;
-  const agentState = readiness?.agent.state ?? (gaveUp ? "OFFLINE" : "UNKNOWN");
+  const inspectorVisible = view === "chat" && !inspectorCollapsed;
 
   return (
     <>
       <Head>
         <title>Nano</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="theme-color" content="#05070A" />
+        <link
+          rel="icon"
+          href={"data:image/svg+xml," + encodeURIComponent(
+            `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><path d="M24 8.5 38.5 16.75v14.5L24 39.5 9.5 31.25v-14.5L24 8.5Z" fill="none" stroke="#2DD4BF" stroke-width="2"/><path d="M18.5 31V17l11 14V17" fill="none" stroke="#2DD4BF" stroke-width="3" stroke-linecap="round"/></svg>`
+          )}
+        />
       </Head>
 
       <div className="app">
         <Sidebar
-          view={view}
-          onView={setView}
+          view={view} onView={setView}
           collapsed={sidebarCollapsed}
           onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
-          counts={{ permissions: pendingCount, tasks: commandCenter?.worker?.queue_size ?? 0 }}
+          counts={navCounts}
           agentState={agentState}
+          healthLabel={healthLabel}
           onNewChat={newConversation}
-          onSettings={() => setSettingsOpen(true)}
+          onSettings={() => setView("settings")}
+          version={APP_VERSION}
         />
 
         <main className="workspace">
           <header className="topbar">
-            <span className="topbar-title">{VIEW_TITLES[view]}</span>
-            <StatusIndicator state={agentState} />
-            {readiness?.emergencyStop && <StatusIndicator state="OFFLINE" label="Paragem de emergência" />}
-            <span className="topbar-spacer" />
-            <Button variant="ghost" size="sm" onClick={() => setPaletteOpen(true)}>
-              Comandos <kbd>Ctrl</kbd><kbd>K</kbd>
-            </Button>
-            {inspectorCollapsed && (
-              <Button variant="ghost" size="sm" icon onClick={() => setInspectorCollapsed(false)} aria-label="Abrir inspector">◧</Button>
-            )}
+            <span className="topbar__icon">{meta.icon}</span>
+            <span className="topbar__text">
+              <div className="topbar__title">{meta.title}</div>
+              <div className="topbar__subtitle">{meta.subtitle}</div>
+            </span>
+            <span className="topbar__actions">
+              {view === "chat" && inspectorCollapsed && (
+                <Button variant="ghost" icon size="sm" onClick={() => setInspectorCollapsed(false)}
+                        aria-label="Abrir inspector" title="Inspector (Ctrl+I)">◧</Button>
+              )}
+            </span>
           </header>
 
           {gaveUp && (
             <div style={{ padding: 16 }}>
-              <ErrorState message="O motor do Nano não respondeu. Verifica se o processo Python está a correr e recarrega." />
+              <ErrorState
+                error={{
+                  message: "O motor do Nano não respondeu.",
+                  component: "ponte eel",
+                  detail: "Verifica se a janela do NANO.bat continua aberta e recarrega esta página.",
+                }}
+                onRetry={() => window.location.reload()}
+              />
             </div>
           )}
 
@@ -401,131 +541,101 @@ export default function Home() {
             <>
               <Conversation messages={messages} status={status} thinking={thinking} />
               <Composer
-                value={input}
-                onChange={setInput}
-                onSend={() => sendMessage()}
-                onStop={stopWork}
-                onVoice={startVoice}
-                thinking={thinking}
-                disabled={!ready}
+                value={input} onChange={setInput}
+                onSend={() => sendMessage()} onStop={stopWork}
+                onVoice={startVoice} onCancelVoice={cancelVoice}
+                thinking={thinking} disabled={!ready}
                 voiceState={readiness?.voice.state ?? "UNKNOWN"}
-                showSuggestions={messages.length === 0}
+                listening={listening}
+                suggestions={suggestions}
+                onSuggestion={(text) => sendMessage(text)}
               />
             </>
           )}
-          {view === "tasks" && <TasksView data={commandCenter} onOpenTask={openTask} onCancelTask={cancelTask} />}
-          {view === "activity" && <ActivityView data={commandCenter} />}
-          {view === "permissions" && (
-            <PermissionsView data={commandCenter} policies={policies} onResolve={resolvePermission} />
-          )}
-          {view === "agents" && <AgentsView data={commandCenter} readiness={readiness} />}
-          {view === "memory" && <MemoryView facts={facts} />}
-          {view === "plugins" && <PluginsView plugins={plugins} onOpenCode={openPluginCode} />}
-          {view === "health" && (
-            <HealthView readiness={readiness} data={commandCenter} onToggleEmergencyStop={toggleEmergencyStop} />
+
+          {view !== "chat" && (
+            <div className="page">
+              {view === "tasks" && (
+                <TasksPage
+                  tasks={tasks} counts={counts} scope={taskScope} onScope={setTaskScope}
+                  loading={tasksLoading} onOpenTask={openTask} onCancelTask={cancelTask}
+                  onArchive={archiveTasks} query={taskQuery} onQuery={setTaskQuery}
+                />
+              )}
+              {view === "activity" && (
+                <ActivityPage events={activity} filter={activityFilter}
+                              onFilter={setActivityFilter} loading={activityLoading} />
+              )}
+              {view === "permissions" && (
+                <PermissionsPage
+                  pending={commandCenter?.permissions ?? []} policies={policies}
+                  auditEvents={permissionAuditEvents} onResolve={resolvePermission} busy={resolving}
+                />
+              )}
+              {view === "agents" && <AgentsPage agents={agents} />}
+              {view === "memory" && (
+                <MemoryPage memory={memoryData} onForget={forgetFact} loading={memoryLoading} />
+              )}
+              {view === "integrations" && (
+                <IntegrationsPage
+                  providers={providers} plugins={plugins} readiness={readiness}
+                  onOpenSettings={() => setView("settings")} onOpenPlugin={openPluginCode}
+                />
+              )}
+              {view === "status" && (
+                <StatusPage readiness={readiness} providers={providers}
+                            commandCenter={commandCenter} onToggleEmergencyStop={toggleEmergencyStop} />
+              )}
+              {view === "settings" && (
+                <SettingsPage
+                  settings={settings} providers={providers}
+                  loading={settingsLoading} busy={busy}
+                  onSetMode={setMode} onSaveGroqKey={saveGroqKey} onRemoveGroqKey={removeGroqKey}
+                  onTestGroq={testGroq} onSetGroqModel={setGroqModel} onUpdate={updateSetting}
+                  onTestSpeaker={testSpeaker} onTestMicrophone={testMicrophone}
+                  onToggleEmergencyStop={toggleEmergencyStop}
+                  onClearConversation={newConversation}
+                  theme={theme} onTheme={setTheme}
+                  reduceMotion={reduceMotion} onReduceMotion={setReduceMotion}
+                />
+              )}
+            </div>
           )}
         </main>
 
-        <Inspector
-          collapsed={inspectorCollapsed}
-          onToggle={() => setInspectorCollapsed(true)}
-          readiness={readiness}
-          commandCenter={commandCenter}
-          loading={ccLoading}
-          onOpenTask={openTask}
-          onOpenPermissions={() => setPermissionsOpen(true)}
-          onCancelTask={cancelTask}
-        />
-
-        <footer className="statusbar">
-          <span className="statusbar-item"><StatusIndicator state={agentState} /></span>
-          <button type="button" className="statusbar-item" onClick={() => setView("agents")}>
-            modelo: {readiness?.model.local.model ?? "—"} · {readiness?.model.provider ?? "—"}
-          </button>
-          <button type="button" className="statusbar-item" onClick={() => setView("tasks")}>
-            fila: {readiness?.worker.queue_size ?? 0}
-          </button>
-          {pendingCount > 0 && (
-            <button type="button" className="statusbar-item" onClick={() => setView("permissions")}>
-              <StatusIndicator state="APPROVAL_REQUIRED" label={`${pendingCount} por autorizar`} />
-            </button>
-          )}
-          <span className="statusbar-spacer" />
-          {toast && <span className="statusbar-item" role="status">{toast}</span>}
-          <span className="statusbar-item">voz: {stateLabel(readiness?.voice.state)}</span>
-          <span className="statusbar-item">wake: {stateLabel(readiness?.wakeWord.state)}</span>
-          <span className="statusbar-item">"hey nano": {stateLabel(readiness?.wakePhrase.state)}</span>
-          <button type="button" className="statusbar-item" onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}>
-            {theme === "dark" ? "escuro" : "claro"}
-          </button>
-        </footer>
+        {view === "chat" && (
+          <Inspector
+            collapsed={inspectorCollapsed}
+            onToggle={() => setInspectorCollapsed(true)}
+            readiness={readiness} providers={providers}
+            commandCenter={commandCenter} loading={ccLoading}
+            onOpenTask={openTask} onCancelTask={cancelTask}
+            onNavigate={setView}
+          />
+        )}
       </div>
 
-      {miniMode && (
-        <MiniPillBar
-          isThinking={thinking}
-          statusText={status}
-          eelReady={ready}
-          theme={theme}
-          onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-          onSend={(text: string) => { sendMessage(text); setMiniMode(false); }}
-          onVoice={startVoice}
-          onStop={() => { stopWork(); setMiniMode(false); }}
-        />
-      )}
-
       <CommandPalette open={paletteOpen} commands={commands} onClose={() => setPaletteOpen(false)} />
+      <ToastStack toasts={toasts} />
 
       {confirmReq && (
         <ConfirmModal
-          message={confirmReq.message}
-          meta={confirmReq.meta}
+          message={confirmReq.message} meta={confirmReq.meta}
           onConfirm={() => { call("confirm_action", confirmReq.requestId, true); setConfirmReq(null); }}
           onCancel={() => { call("confirm_action", confirmReq.requestId, false); setConfirmReq(null); }}
         />
       )}
 
-      <PermissionCenterModal
-        visible={permissionsOpen}
-        requests={commandCenter?.permissions ?? []}
-        policies={policies}
-        busy={resolving}
-        onClose={() => setPermissionsOpen(false)}
-        onResolve={resolvePermission}
-      />
-
       <TaskDetailModal
-        visible={taskDetailOpen}
-        task={taskDetail}
-        events={taskDetailEvents}
+        visible={taskDetailOpen} task={taskDetail} events={taskDetailEvents}
         permissions={commandCenter?.permissions ?? []}
-        onClose={() => setTaskDetailOpen(false)}
-        onCancel={cancelTask}
+        onClose={() => setTaskDetailOpen(false)} onCancel={cancelTask}
       />
-
-      {settingsOpen && (
-        <SettingsModal
-          visible={settingsOpen}
-          audioDevices={audioDevices}
-          devices={audioDevices}
-          selectedInput={null}
-          selectedOutput={null}
-          onSave={(inputId: number, outputId: number) => {
-            call("set_input_device", inputId);
-            call("set_output_device", outputId);
-            setSettingsOpen(false);
-            notify("Dispositivos guardados");
-          }}
-          onClose={() => setSettingsOpen(false)}
-        />
-      )}
 
       {pluginCode && (
         <PluginCodeModal
-          pluginName={pluginCode.name}
-          code={pluginCode.code}
-          tools={pluginCode.tools ?? []}
-          filename={pluginCode.filename}
+          pluginName={pluginCode.name} code={pluginCode.code}
+          tools={pluginCode.tools ?? []} filename={pluginCode.filename}
           onClose={() => setPluginCode(null)}
         />
       )}

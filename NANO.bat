@@ -40,9 +40,13 @@ if errorlevel 1 (
     goto :fail
 )
 
-for /f "delims=" %%V in ('"%NANO_PY%" -c "import sys;print(sys.version.split()[0])" 2^>nul') do set "PYVER=%%V"
-for /f "delims=" %%P in ('"%NANO_PY%" -c "import sys;print(sys.executable)" 2^>nul') do set "PYEXE=%%P"
-echo  [NANO] Python ........ OK (%PYVER%)
+REM The `call` here is load-bearing. `for /f ('"%NANO_PY%" -c ...')` looks
+REM right but returns nothing: cmd strips the outer quote pair of the whole
+REM in-clause, which breaks the command. `call "..."` keeps the quotes, so an
+REM interpreter path containing spaces still works.
+for /f "delims=" %%V in ('call "%NANO_PY%" -c "import sys;print(sys.version.split()[0])" 2^>nul') do set "PYVER=%%V"
+for /f "delims=" %%P in ('call "%NANO_PY%" -c "import sys;print(sys.executable)" 2^>nul') do set "PYEXE=%%P"
+echo  [NANO] Python ........ OK ^(%PYVER%^)
 echo         %PYEXE%
 
 REM --- 2. Core dependencies -----------------------------------------------
@@ -60,8 +64,13 @@ if errorlevel 1 (
 echo  [NANO] Dependencies .. OK
 
 REM --- 3. Frontend (build only when missing) ------------------------------
+REM PARENTHESIS RULE (do not break this):
+REM Inside an IF block, an unescaped ( or ) in an echo argument ends the block
+REM early. That happened here: everything after the "BUILDING (...)" line fell
+REM outside the IF and npm ran on EVERY launch, adding about a minute to each
+REM startup even when frontend\out was already built. Escape them as ^( and ^).
 if not exist "frontend\out\index.html" (
-    echo  [NANO] Frontend ...... BUILDING (first run, this takes a minute)
+    echo  [NANO] Frontend ...... BUILDING ^(first run, this takes a minute^)
     pushd frontend
     call npm run build
     popd

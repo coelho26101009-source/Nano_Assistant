@@ -72,9 +72,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # spotting, no trained model required. Independent of "wake_word" above.
         "wake_phrase": "hey nano",
         "wake_phrase_enabled": True,
-        "wake_phrase_allow_nano_only": True,
+        # Bare "nano" is OFF by default. It caused real false activations: a
+        # single hallucinated or overheard "nano" was enough to wake Nano.
+        # Requiring the full "hey nano" is dramatically more selective.
+        "wake_phrase_allow_nano_only": False,
         "wake_phrase_cooldown_seconds": 3.0,
         "wake_phrase_chunk_seconds": 2.5,
+        # How long to wait for a command after the wake chime before cancelling
+        # and going back to listening. Silence is never sent to the Brain.
+        "wake_command_timeout_seconds": 7,
         "microphone": {
             "enabled": True,
             "sample_rate": 16000,
@@ -197,6 +203,15 @@ def load_config(reload: bool = False) -> dict:
         logger.error("settings.yaml inválido: %s; a usar defaults", exc)
     _cache = _deep_merge(DEFAULT_CONFIG, loaded)
     _normalize_voice_config(_cache)
+    # Choices the user made in the Settings UI live outside the repository and
+    # win over the shipped YAML, so a git pull never overwrites them and their
+    # preferences never show up as uncommitted changes.
+    try:
+        from core import user_settings
+
+        user_settings.apply_overlay(_cache)
+    except Exception:  # pragma: no cover - config must load even if the overlay fails
+        logger.exception("Could not apply user settings overlay; using file config.")
     return _cache
 
 

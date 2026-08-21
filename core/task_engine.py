@@ -323,6 +323,22 @@ class TaskEngine:
             conn.close()
         return self.get_task(task_id)
 
+    def delete_task(self, task_id: str) -> bool:
+        """Remove one task row from the queue.
+
+        This is queue housekeeping only. The permission audit log and the event
+        stream live elsewhere and are deliberately untouched: they are the
+        security record, not the user's task list.
+        """
+        with self._lock:
+            conn = sqlite3.connect(str(self.db_path), timeout=10)
+            try:
+                cursor = conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+                conn.commit()
+                return cursor.rowcount > 0
+            finally:
+                conn.close()
+
     def queue_size(self) -> int:
         with self._lock:
             conn = sqlite3.connect(str(self.db_path), timeout=10)

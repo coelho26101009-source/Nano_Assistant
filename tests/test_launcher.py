@@ -121,3 +121,81 @@ def test_logs_are_written_outside_the_repository_root():
     assert LOG_PATH.parent.name == "logs", "logs belong in the gitignored logs/ directory"
     gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
     assert "logs/" in gitignore
+
+
+# ------------------------------------------------- cmd.exe block parsing
+
+def _uncommented_lines() -> list[tuple[int, str]]:
+    """Numbered launcher lines with REM/:: comments removed."""
+    out = []
+    for number, line in enumerate(LAUNCHER.read_text(encoding="ascii").splitlines(), 1):
+        stripped = line.strip()
+        if stripped.upper().startswith("REM") or stripped.startswith("::"):
+            continue
+        out.append((number, stripped))
+    return out
+
+
+def test_no_echo_inside_a_block_has_unescaped_parentheses():
+    """An unescaped ( or ) in an echo ends the enclosing IF block early.
+
+    This was real: `echo BUILDING (first run, this takes a minute)` closed the
+    `if not exist frontend\out\index.html` block on its own line, so the npm
+    build that followed ran on EVERY launch instead of only the first, adding
+    about a minute to every startup. Escaped as ^( and ^) it behaves.
+    """
+    depth = 0
+    offenders = []
+    for number, line in _uncommented_lines():
+        if depth > 0 and line.lower().startswith("echo"):
+            argument = line[4:]
+            if re.search(r"(?<!\^)[()]", argument):
+                offenders.append(f"line {number}: {line}")
+        if re.search(r"\(\s*$", line) and not line.lower().startswith("echo"):
+            depth += 1
+        if line == ")" or line.startswith(") else"):
+            depth = max(0, depth - 1)
+
+    assert not offenders, (
+        "these echo lines sit inside a block with unescaped parentheses, "
+        "which ends the block early: " + "; ".join(offenders)
+    )
+
+
+def test_parentheses_are_balanced():
+    """A stray paren is a syntax error that closes the window instantly."""
+    code = "\n".join(line for _, line in _uncommented_lines())
+    code = re.sub(r"\^[()]", "", code)          # escaped parens are literals
+    code = re.sub(r'"[^"\n]*"', '""', code)     # quoted strings are literals
+    assert code.count("(") == code.count(")"), "unbalanced parentheses in NANO.bat"
+
+
+def test_captured_command_output_uses_call_so_quoting_survives():
+    """`for /f ('"%VAR%" -c ...')` silently captures nothing.
+
+    cmd strips the outer quote pair of the whole in-clause, so the command
+    never runs and the launcher printed `Python ........ OK ()` followed by a
+    bare `ECHO is off.`. Prefixing with `call` keeps the quotes intact, which
+    also lets an interpreter path containing spaces work.
+    """
+    for number, line in _uncommented_lines():
+        match = re.search(r"for\s+/f[^(]*\(\s*'(.*)'\s*\)", line, re.I)
+        if not match:
+            continue
+        command = match.group(1).strip()
+        if command.startswith('"'):
+            pytest.fail(
+                f"line {number} captures a quoted command without `call`, which "
+                f"returns nothing: {line}"
+            )
+
+
+def test_the_launcher_only_builds_the_frontend_when_it_is_missing():
+    """A rebuild on every launch is a minute of dead time per start."""
+    code = LAUNCHER.read_text(encoding="ascii")
+    build = re.search(r"npm run build", code)
+    assert build, "the launcher can no longer build the frontend at all"
+    guard = code[:build.start()]
+    assert "if not exist" in guard and "index.html" in guard, (
+        "npm run build is not guarded by a check for an existing build"
+    )

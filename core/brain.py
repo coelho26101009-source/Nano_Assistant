@@ -62,6 +62,12 @@ class Brain:
         # central execution authority, which owns policy, permission, scope
         # validation, execution, verification and audit.
         self.tool_executor = tool_executor or self._build_default_executor(permission_manager)
+        # AUTO | CLOUD | LOCAL. Read at each turn so a change in Settings takes
+        # effect immediately rather than at the next restart.
+        self.provider_mode = str(cfg.get("provider_mode") or "AUTO").upper()
+        # Which provider actually answered the last turn, so the UI can show a
+        # fallback rather than implying the primary responded.
+        self.last_provider_used: str | None = None
         self.conversation: list[dict] = []
         self.groq_model = str(cfg.get("groq_model") or GROQ_MODEL)
         self.local_enabled = bool(local_cfg.get("enabled", cfg.get("ollama_enabled", True)))
@@ -98,6 +104,26 @@ class Brain:
             self.groq_enabled, self.groq_model, self.local_enabled, self.ollama_model,
             self.local_profile.reason, self.local_profile.ram_gb
         )
+
+    def reload_cloud_credentials(self) -> bool:
+        """Re-read the Groq key after the user changes it in Settings.
+
+        Without this the user would have to restart Nano for a newly saved key
+        to take effect, which is exactly the friction the Settings flow exists
+        to remove.
+        """
+        try:
+            from core import secret_store
+
+            key = secret_store.get_secret("groq_api_key")
+        except Exception:
+            logger.exception("Could not read the stored Groq credentials")
+            return False
+
+        self.groq_enabled = bool(key.strip())
+        self.client = AsyncGroq(api_key=key) if self.groq_enabled else None
+        logger.info("Credenciais cloud recarregadas (configurado=%s)", self.groq_enabled)
+        return self.groq_enabled
 
     def load_history(self) -> int:
         try:
@@ -179,8 +205,27 @@ class Brain:
         route = self._route_model(task_type=TaskType.CHAT, requires_tools=bool(tools), privacy_level=PrivacyLevel.NORMAL, latency_preference="balanced")
         selected_model = route.get("model") or self.groq_model
 
+        # Provider mode decides who may answer. LOCAL never touches the cloud;
+        # CLOUD never silently downgrades to local.
+        mode = str(getattr(self, "provider_mode", "AUTO")).upper()
+
+        if mode == "LOCAL":
+            self.last_provider_used = "ollama"
+            async for token in self._ollama_fallback(user_message, "Modo Local", system_prompt):
+                yield token
+            return
+
         if not self.groq_enabled:
-            async for token in self._ollama_fallback(user_message, f"Groq não configurado — route {route.get('provider')}:{selected_model}", system_prompt):
+            if mode == "CLOUD":
+                # Asked for cloud-only with no key: say so instead of quietly
+                # answering from somewhere the user did not choose.
+                self.last_provider_used = None
+                yield ("**Modo Cloud activo mas o Groq não está configurado.** "
+                       "Adiciona uma chave de API em Definições → Inteligência Artificial, "
+                       "ou muda para o modo Automático para usar o modelo local.")
+                return
+            self.last_provider_used = "ollama"
+            async for token in self._ollama_fallback(user_message, "Groq não configurado", system_prompt):
                 yield token
             return
 
@@ -196,10 +241,18 @@ class Brain:
                 )
             except Exception as exc:
                 logger.warning("Groq indisponível (round %d): %s", round_num, exc)
-                async for token in self._ollama_fallback(user_message, f"Groq indisponível — route {route.get('provider')}:{selected_model}", system_prompt):
+                if mode == "CLOUD":
+                    self.last_provider_used = None
+                    yield (f"**O Groq não respondeu.** {type(exc).__name__}. "
+                           "Estás em modo Cloud, por isso o Nano não recorre ao modelo local. "
+                           "Muda para Automático em Definições se quiseres o fallback local.")
+                    return
+                self.last_provider_used = "ollama"
+                async for token in self._ollama_fallback(user_message, "Groq indisponível", system_prompt):
                     yield token
                 return
 
+            self.last_provider_used = "groq"
             message = response.choices[0].message
             if not message.tool_calls:
                 text = message.content or ""

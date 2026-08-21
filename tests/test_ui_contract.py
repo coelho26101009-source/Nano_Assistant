@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -17,9 +18,16 @@ FRONTEND = REPO_ROOT / "frontend"
 
 # The only states the UI is allowed to display.
 ALLOWED_STATES = {
-    "READY", "WORKING", "WAITING", "APPROVAL_REQUIRED", "SETUP_REQUIRED",
-    "MODEL_MISSING", "MODEL_LOADING", "PROVIDER_READY", "DISABLED",
-    "OFFLINE", "ERROR", "EXPERIMENTAL", "NOT_AVAILABLE", "UNKNOWN",
+    "READY", "WORKING", "WAITING", "APPROVAL_REQUIRED", "PROCESSING",
+    "SETUP_REQUIRED", "MODEL_MISSING", "MODEL_LOADING", "MODEL_UNAVAILABLE",
+    "PROVIDER_READY", "LISTENING", "STT_UNAVAILABLE", "MIC_UNAVAILABLE",
+    "OLLAMA_UNAVAILABLE", "OLLAMA_NOT_INSTALLED", "UNAVAILABLE", "NOT_INSTALLED",
+    "BACKEND_OFFLINE", "DISABLED", "OFFLINE", "ERROR", "EXPERIMENTAL",
+    "NOT_AVAILABLE", "UNKNOWN",
+    # Task statuses render through the same indicator.
+    "QUEUED", "PLANNING", "RUNNING", "RETRYING", "RECOVERABLE",
+    "WAITING_FOR_PERMISSION", "NEEDS_ATTENTION",
+    "COMPLETED", "CANCELLED", "FAILED",
 }
 
 
@@ -128,10 +136,15 @@ def test_pending_permission_carries_everything_the_ui_must_show(main_module):
 
 
 def test_permission_decisions_offered_by_the_ui_are_the_ones_the_backend_accepts():
-    source = (FRONTEND / "components" / "PermissionCenterModal.tsx").read_text(encoding="utf-8")
-    assert '"deny" | "allow_once" | "allow_for_task"' in source
-    # ALLOW_PERSISTENT stays disabled: it must not be offered anywhere.
-    assert "allow_persistent" not in source
+    """The UI must offer exactly the three decisions the policy accepts."""
+    source = (FRONTEND / "components" / "Pages.tsx").read_text(encoding="utf-8")
+    for decision in ("deny", "allow_once", "allow_for_task"):
+        assert f'"{decision}"' in source, f"the permission UI never offers {decision}"
+    # ALLOW_PERSISTENT stays disabled by design and must not be offered anywhere.
+    for path in list((FRONTEND / "components").glob("*.tsx")) + list((FRONTEND / "pages").glob("*.tsx")):
+        assert "allow_persistent" not in path.read_text(encoding="utf-8"), (
+            f"{path.name} offers persistent permission, which the core disabled"
+        )
 
 
 def test_backend_still_refuses_persistent_allow(main_module):
@@ -201,7 +214,13 @@ def test_status_indicators_never_assert_readiness_as_a_constant():
     """
     import re
 
-    honest_downgrades = {"EXPERIMENTAL", "NOT_AVAILABLE", "SETUP_REQUIRED", "UNKNOWN", "OFFLINE"}
+    # DISABLED belongs here for the same reason as the rest: it claims *less*
+    # capability, never more. The one literal use is "autorizacao permanente:
+    # desativada por desenho", which the backend enforces unconditionally --
+    # see test_backend_still_refuses_persistent_allow.
+    honest_downgrades = {
+        "EXPERIMENTAL", "NOT_AVAILABLE", "SETUP_REQUIRED", "UNKNOWN", "OFFLINE", "DISABLED",
+    }
     literal_state = re.compile(r'<StatusIndicator[^>]*?\sstate="([A-Z_]+)"', re.S)
 
     for path in (FRONTEND / "components").glob("*.tsx"):
@@ -220,3 +239,38 @@ def test_no_component_reintroduces_the_hardcoded_provider_block():
     for path in list((FRONTEND / "components").glob("*.tsx")) + list((FRONTEND / "pages").glob("*.tsx")):
         code = _strip_comments(path.read_text(encoding="utf-8"))
         assert not block.search(code), f"{path.name} hardcodes provider health"
+
+
+# ------------------------------------------------- status vocabulary parity
+
+def test_every_task_status_has_a_label_in_the_ui():
+    """An unmapped status normalises to UNKNOWN and renders "Desconhecido".
+
+    Task rows pass `task.status` straight to StatusIndicator, so a status the
+    label map does not know makes the whole Tasks page read "Desconhecido".
+    """
+    import core.main as main
+
+    source = (FRONTEND / "components" / "ui.tsx").read_text(encoding="utf-8")
+    labelled = set(re.findall(r"^\s*([A-Z_]+):\s*\"", source, re.M))
+
+    statuses = (
+        main.ACTIVE_TASK_STATUSES | main.ATTENTION_TASK_STATUSES | main.TERMINAL_TASK_STATUSES
+    )
+    missing = sorted(statuses - labelled)
+    assert not missing, f"these task statuses render as 'Desconhecido': {missing}"
+
+
+def test_the_agent_does_not_report_error_for_tasks_awaiting_the_user(main_module):
+    """NEEDS_ATTENTION means the user has something to do, not that Nano broke."""
+    source = (REPO_ROOT / "core" / "main.py").read_text(encoding="utf-8")
+    block = re.search(r'summary\.get\("NEEDS_ATTENTION"\):\s*\n(?:\s*#.*\n)*\s*agent_state = "([A-Z_]+)"', source)
+    assert block, "the NEEDS_ATTENTION branch of the agent state disappeared"
+    assert block.group(1) != "ERROR", (
+        "a task waiting for the user makes the agent report ERROR, which pins the "
+        "indicator red permanently"
+    )
+
+
+def test_agent_state_stays_inside_the_allowed_vocabulary(main_module):
+    assert main_module.get_system_readiness()["agent"]["state"] in ALLOWED_STATES

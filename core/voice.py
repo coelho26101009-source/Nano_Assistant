@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Iterable
 
+from core import speech_filter
 from core.wake_word import WakeWordEngine
 from core.wake_phrase import WakePhraseEngine, WakePhraseState
 
@@ -721,6 +722,13 @@ class VoiceRuntime:
         self.config = config or {}
         self.session = self.voice.session
         self._last_session_id = self.session.session_id
+        # How long Nano waits for a command after the wake chime before giving
+        # up and returning to listening. Bounded so a stuck turn cannot hold
+        # the microphone indefinitely.
+        voice_cfg = (self.config.get("voice") or {}) if "voice" in self.config else self.config
+        self.command_timeout_seconds = max(3, min(15, int(
+            voice_cfg.get("wake_command_timeout_seconds", 7)
+        )))
 
     def status(self) -> dict:
         readiness, blockers = self.voice.readiness()
@@ -859,15 +867,53 @@ class VoiceRuntime:
             self.session.cancel()
 
     async def process_wake_word_turn(self, *, duration_seconds: int | None = None) -> dict:
+        """One wake turn: listen for a command, or cancel cleanly if none comes.
+
+        The critical rule here is that silence must never become a request.
+        Previously a wake with no follow-up captured several seconds of silence,
+        the transcriber invented filler, and Nano answered a question nobody
+        asked. Now the audio is energy-gated and the transcript is checked for
+        hallucinations; if either says "no real speech", the turn is cancelled
+        and Nano goes back to listening without involving the Brain at all.
+        """
         self._publish("WakeWordDetected", {"session_id": self.session.session_id})
         self.session.waiting_for_wake_word()
         if not self.voice.enabled:
             self._publish("VoiceError", {"session_id": self.session.session_id, "error": "voice_disabled"})
             return {"ok": False, "error": "voice_disabled"}
+
+        window = duration_seconds or self.command_timeout_seconds
         self.session.start_listening()
-        transcript = await self.listen_once(duration_seconds=duration_seconds)
-        if not transcript:
-            return {"ok": False, "error": "transcription_failed"}
+        self._publish("VoiceCommandListening", {"session_id": self.session.session_id, "timeout": window})
+
+        try:
+            audio = await asyncio.get_running_loop().run_in_executor(
+                None, lambda: self.voice.input_provider.capture(window)
+            )
+        except ProviderError as exc:
+            self.session.error(str(exc))
+            self._publish("VoiceError", {"session_id": self.session.session_id, "error": "microphone_failed"})
+            return {"ok": False, "error": "microphone_failed", "detail": str(exc)}
+
+        if not audio or not speech_filter.has_speech_energy(audio):
+            self.session.cancel()
+            self._publish("VoiceWakeCancelled", {"session_id": self.session.session_id, "reason": "no_speech"})
+            logger.info("Wake turn cancelled: no speech within %ss.", window)
+            return {"ok": False, "error": "no_speech", "cancelled": True,
+                    "detail": "Nenhum comando detetado; a voltar a escutar."}
+
+        self.session.transcribing()
+        result = self.voice.stt_provider.transcribe(audio)
+        transcript = (result.text or "").strip() if result.ok else ""
+
+        if not transcript or not speech_filter.is_usable_command(transcript):
+            self.session.cancel()
+            self._publish("VoiceWakeCancelled", {"session_id": self.session.session_id, "reason": "no_usable_command"})
+            logger.info("Wake turn cancelled: transcript %r is not a usable command.", transcript)
+            return {"ok": False, "error": "no_usable_command", "cancelled": True,
+                    "detail": "Não percebi nenhum comando; a voltar a escutar."}
+
+        self._publish("TranscriptionCompleted", {"session_id": self.session.session_id, "text_length": len(transcript)})
         return await self.process_request(transcript)
 
     async def handle_wake_word(self, *, duration_seconds: int | None = None) -> dict:
