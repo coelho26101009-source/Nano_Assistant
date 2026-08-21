@@ -1,13 +1,64 @@
 # Nano
 
-## Como iniciar
+## Instalação
 
-**Faz duplo-clique em `NANO.bat`.**
+### Requisitos
 
-É a única forma suportada de arrancar o Nano. O launcher valida o Python,
-constrói o frontend na primeira execução, arranca o servidor Ollama se ainda
-não estiver a correr, arranca o backend e a escuta por voz, e abre a interface
-uma única vez. Se alguma coisa falhar, a janela fica aberta com o motivo.
+- Python 3.12 ou superior
+- Node.js + npm (apenas para o build do frontend, feito automaticamente no primeiro arranque)
+- Git
+
+### Linux
+
+```bash
+git clone https://github.com/coelho26101009-source/Nano_Assistant.git
+cd Nano_Assistant
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+chmod +x NANO.sh
+./NANO.sh
+```
+
+`NANO.sh` é o launcher suportado no Linux (equivalente ao `NANO.bat` do
+Windows): confirma que existe um `.venv` com as dependências instaladas,
+constrói o frontend na primeira execução e arranca o backend. Mantém o
+terminal aberto enquanto o Nano estiver a correr; fecha-o ou faz `Ctrl+C`
+para parar.
+
+O PyAudio precisa da biblioteca de sistema `portaudio`. Instala-a antes do
+`pip install` se ainda não a tiveres:
+
+```bash
+# Arch
+sudo pacman -S portaudio
+
+# Debian/Ubuntu
+sudo apt install portaudio19-dev
+```
+
+### Windows
+
+1. Instala o [Python 3.12+](https://www.python.org/downloads/) e garante que
+   a opção "Add Python to PATH" fica marcada no instalador.
+2. Clona o repositório (ou faz download do ZIP e extrai).
+3. Abre um terminal na pasta do projeto e cria o ambiente virtual:
+
+   ```cmd
+   python -m venv .venv
+   .venv\Scripts\activate
+   pip install -r requirements.txt
+   ```
+
+4. Faz duplo-clique em `NANO.bat` (ou corre `NANO.bat` a partir do terminal).
+
+`NANO.bat` é a única forma suportada de arrancar o Nano no Windows. O
+launcher valida o Python, constrói o frontend na primeira execução, arranca
+o servidor Ollama se ainda não estiver a correr, arranca o backend e a
+escuta por voz, e abre a interface uma única vez. Se alguma coisa falhar, a
+janela fica aberta com o motivo.
 
 Documentação completa em [docs/](docs/README.md).
 
