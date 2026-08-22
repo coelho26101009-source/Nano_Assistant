@@ -309,6 +309,73 @@ class TextToSpeechProvider(BaseProvider):
         pass
 
 
+def _new_scratch_audio_path(suffix: str) -> str:
+    """A UNIQUE file, in the OS temp directory, for exactly one utterance.
+
+    Both audio paths used to write to one fixed name in os.getcwd() --
+    "nano_tts_tmp.mp3" and "nano_audio_output.wav", in the project root. That
+    is half of why Nano spoke exactly once per launch; see _play_audio_file for
+    the other half. A per-utterance name means that even if a handle is somehow
+    still held, the next utterance is not blocked by it, and scratch audio
+    stops appearing as stray files in the repository.
+    """
+    handle, path = tempfile.mkstemp(prefix="nano-audio-", suffix=suffix)
+    os.close(handle)
+    return path
+
+
+async def _play_audio_file(path: str, **init_kwargs: Any) -> None:
+    """Play a file through the pygame mixer and RELEASE IT afterwards.
+
+    THE BUG THIS FIXES, precisely:
+
+    pygame.mixer.music.load() keeps the file open for as long as it is the
+    loaded track. Nothing ever called unload(), so on Windows the file stayed
+    locked after playback. The cleanup `os.unlink` then raised PermissionError
+    into an `except OSError: pass`, which discarded it silently, and the NEXT
+    synthesis tried to write the same locked path and died with
+    "[Errno 13] Permission denied: nano_tts_tmp.mp3".
+
+    The visible result was that Nano spoke on the first voice turn of a process
+    and was mute on every one after it -- while still emitting SPEAKING and
+    still showing the answer in the chat, because the failure happened inside
+    TTS, milliseconds after the phase event, far too fast to see.
+    """
+    import pygame
+
+    if not pygame.mixer.get_init():
+        pygame.mixer.init(**init_kwargs)
+    pygame.mixer.music.load(path)
+    try:
+        pygame.mixer.music.play()
+        while pygame.mixer.music.get_busy():
+            await asyncio.sleep(0.1)
+    finally:
+        # Non-negotiable, and it must run even if playback raised: this is the
+        # call whose absence made Nano a one-utterance application.
+        try:
+            pygame.mixer.music.unload()
+        except Exception:
+            # Very old pygame has no unload(); stopping at least frees the
+            # device, and the unique filename keeps the next turn working.
+            try:
+                pygame.mixer.music.stop()
+            except Exception:
+                logger.debug("could not release the mixer", exc_info=True)
+
+
+def _discard_scratch_audio(path: str) -> None:
+    """Delete one utterance's scratch file, and SAY SO if it cannot be."""
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        # Never silent again. A file that cannot be removed means something
+        # still holds it, which is exactly the condition that broke TTS.
+        logger.warning("Ficheiro de audio temporario nao removido (%s): %s", path, exc)
+
+
 class LocalTTSProvider(TextToSpeechProvider):
     name = "local_tts"
 
@@ -325,21 +392,12 @@ class LocalTTSProvider(TextToSpeechProvider):
             import edge_tts
 
             communicate = edge_tts.Communicate(text, self.voice_name, rate=self.speed, volume=self.config.get("volume", "+0%"))
-            temp_fp = os.path.join(os.getcwd(), "nano_tts_tmp.mp3")
-            await communicate.save(temp_fp)
+            temp_fp = _new_scratch_audio_path(".mp3")
             try:
-                import pygame
-
-                pygame.mixer.init()
-                pygame.mixer.music.load(temp_fp)
-                pygame.mixer.music.play()
-                while pygame.mixer.music.get_busy():
-                    await asyncio.sleep(0.1)
+                await communicate.save(temp_fp)
+                await _play_audio_file(temp_fp)
             finally:
-                try:
-                    os.unlink(temp_fp)
-                except OSError:
-                    pass
+                _discard_scratch_audio(temp_fp)
             return True
         except Exception as exc:  # pragma: no cover - required for graceful fallback
             logger.warning("local TTS failed: %s", exc)
@@ -372,6 +430,24 @@ class AudioInputProvider(BaseProvider):
         self.channels = int(self.config.get("channels", 1))
         self.device_index = self.config.get("device_index")
         self._available = importlib.util.find_spec("pyaudio") is not None
+
+        # THE ONE SPEECH GATE FOR THIS MICROPHONE.
+        #
+        # It lives here, on the single audio-input authority, because every
+        # trigger records through this provider and so every trigger must judge
+        # speech by the same number. It used to belong to WakePhraseEngine, and
+        # that ownership was the bug: with the wake detector switched off
+        # nothing calibrated a gate, so the hotkey and UI turns fell back to
+        # speech_filter's fixed 220 RMS floor while Settings -> Test Microphone
+        # measured against this gate's 12. A real voice at RMS 124 therefore
+        # passed the test button and was rejected by the hotkey, on the same
+        # microphone, seconds apart.
+        #
+        # Uncalibrated it already yields a sane floor (min_threshold), and it
+        # keeps learning from every quiet chunk any path feeds it, so the more
+        # Nano listens the better calibrated it gets -- regardless of which
+        # trigger did the listening.
+        self.gate = speech_filter.AdaptiveGate()
         # The single long-lived stream, when one is open.
         self._pyaudio: Any = None
         self._stream: Any = None
@@ -597,17 +673,16 @@ class AudioOutputProvider(BaseProvider):
         if not audio_bytes:
             return False
         try:
-            import pygame
-
-            temp_path = os.path.join(os.getcwd(), "nano_audio_output.wav")
-            with open(temp_path, "wb") as handle:
-                handle.write(audio_bytes)
-            pygame.mixer.init(frequency=16000, size=-16, channels=1)
-            pygame.mixer.music.load(temp_path)
-            pygame.mixer.music.play()
-            while pygame.mixer.music.get_busy():
-                await asyncio.sleep(0.1)
-            os.unlink(temp_path)
+            temp_path = _new_scratch_audio_path(".wav")
+            try:
+                with open(temp_path, "wb") as handle:
+                    handle.write(audio_bytes)
+                # Same lifecycle as the TTS path, for the same reason: this one
+                # also deleted its file OUTSIDE a finally, so any playback error
+                # leaked it and locked the next call out.
+                await _play_audio_file(temp_path, frequency=16000, size=-16, channels=1)
+            finally:
+                _discard_scratch_audio(temp_path)
             return True
         except Exception as exc:
             logger.warning("audio output failed: %s", exc)
@@ -732,20 +807,25 @@ class VoiceEngine:
         if not self.input_provider.list_devices():
             return VoiceReadiness.PROVIDER_READY, ["no input device detected"]
 
-        # The ONNX/Porcupine wake-word engine is an OPTIONAL second wake path
-        # that needs a trained keyword model. Its absence used to force the
-        # whole voice stack to MODEL_MISSING, which hid the fact that speech
-        # in, speech out and the "Hey Nano" phrase detector were all working.
-        # It is reported as a blocker only when it is the ONLY wake path
-        # configured; otherwise voice is genuinely ready.
-        wake_status = self.wake_word_provider.status()
-        wake_model_ok = str(wake_status.get("model_status") or "").upper() in {"READY", ""}
-        phrase_ok = self.wake_phrase_provider.status().get("readiness") in {"READY", "LISTENING"}
-        if not wake_model_ok and not phrase_ok:
-            return VoiceReadiness.MODEL_MISSING, [
-                str(wake_status.get("error") or "wake-word model not usable")
-            ]
-
+        # A WAKE PATH IS NOT REQUIRED FOR VOICE TO BE READY.
+        #
+        # This used to end with: if the ONNX wake-word model is unusable AND
+        # the "Ei Nano" phrase detector is not listening, report MODEL_MISSING.
+        # That was defensible while a wake phrase was the only way to talk to
+        # Nano. It stopped being true the moment Ctrl+Shift+Space became the
+        # primary activation, and it did real damage: with the wake phrase off
+        # by default, readiness became MODEL_MISSING, and the UI treats
+        # anything other than READY as "voice unavailable" -- so the microphone
+        # button in the composer was rendered DISABLED and start_voice_turn
+        # refused before it ever reached the backend. Manual activation was
+        # switched off by the absence of an automatic one.
+        #
+        # Readiness here answers one question: can Nano hear the user and
+        # answer, when the user asks it to? That needs a microphone, a
+        # transcriber and a voice -- all checked above. The two wake paths are
+        # optional, opt-in extras and report their own state separately in
+        # status() under "wake_word" and "wake_phrase", so nothing is hidden by
+        # not conflating them with this.
         return VoiceReadiness.READY, []
 
     def status(self) -> dict:
@@ -982,19 +1062,21 @@ class VoiceRuntime:
     def _command_has_speech(self, audio: bytes) -> bool:
         """Energy gate for a spoken command, calibrated to this microphone.
 
-        Reuses the wake detector's gate so both halves of a turn agree on what
-        counts as speech; falls back to the static filter only when the wake
-        engine is not running (e.g. a manual listen with no wake path).
+        ONE GATE, OWNED BY THE MICROPHONE. There is no longer a "calibrated?"
+        branch and no static fallback, because that branch is what broke the
+        hotkey: it reached for the WAKE DETECTOR's gate, and with the wake
+        phrase off by default nothing had ever calibrated one, so every command
+        turn fell through to speech_filter's fixed 220 RMS floor.
+
+        Measured on this machine: Settings -> Test Microphone judged the user's
+        voice against 12 and reported "Voz detetada (nivel 124)", while the
+        hotkey judged the same voice against 220 and answered "nao ouvi nada".
+        Same microphone, same person, eighteen times the bar.
+
+        No threshold was changed to fix it. The command path simply asks the
+        same gate the test button asks.
         """
-        try:
-            gate = self.voice.wake_phrase_provider._engine.gate
-        except Exception:
-            gate = None
-        if gate is not None and gate.calibrated:
-            rms = speech_filter.rms_of_wav(audio)
-            return rms >= gate.threshold and speech_filter.voiced_ratio(
-                audio, silence_rms=gate.threshold) >= gate.min_voiced_ratio
-        return speech_filter.has_speech_energy(audio)
+        return self.voice.input_provider.gate.has_speech(audio)
 
     def _publish(self, event: str, payload: dict | None = None) -> None:
         if self.event_bus is not None:
@@ -1152,15 +1234,38 @@ class VoiceRuntime:
             self._publish("VoiceError", {"session_id": self.session.session_id, "error": "microphone_failed"})
             return {"ok": False, "error": "microphone_failed", "detail": str(exc)}
 
-        # The same calibrated gate the wake detector uses. A fixed RMS floor
-        # here would reject a real command on a quiet microphone exactly as it
-        # rejected the wake phrase.
-        if not audio or not self._command_has_speech(audio):
+        # NO AUDIO and TOO QUIET are different failures and must not share one
+        # message. They did, and it cost a human test to find out why: the
+        # hotkey reported "nao ouvi nada" whether the microphone had returned
+        # nothing at all or had returned a perfectly good voice that the gate
+        # then rejected. The log said the same sentence either way, so the one
+        # number that would have identified the bug -- the measured energy next
+        # to the threshold it was compared against -- was never written down.
+        if not audio:
             self.session.cancel()
-            self._publish("VoiceWakeCancelled", {"session_id": self.session.session_id, "reason": "no_speech"})
-            logger.info("Wake turn cancelled: no speech within %ss.", window)
+            self._publish("VoiceWakeCancelled", {"session_id": self.session.session_id,
+                                                 "reason": "no_audio"})
+            logger.warning("Voice turn cancelled: the microphone returned no audio at all "
+                           "in %ss (device=%s).", window, self.voice.input_provider.device_index)
+            return {"ok": False, "error": "no_audio", "cancelled": True,
+                    "detail": "O microfone nao devolveu audio nenhum."}
+
+        gate = self.voice.input_provider.gate
+        if not self._command_has_speech(audio):
+            self.session.cancel()
+            self._publish("VoiceWakeCancelled", {"session_id": self.session.session_id,
+                                                 "reason": "no_speech"})
+            logger.info(
+                "Voice turn cancelled: nothing loud enough in %ss "
+                "(rms=%.1f, threshold=%.1f, calibrated=%s, bytes=%d).",
+                window, gate.last_rms, gate.threshold, gate.calibrated, len(audio),
+            )
             return {"ok": False, "error": "no_speech", "cancelled": True,
-                    "detail": "Nenhum comando detetado; a voltar a escutar."}
+                    "detail": "Nenhum comando detetado; a voltar a escutar.",
+                    # Measured, so the UI and the log can say WHY rather than
+                    # only that it happened.
+                    "rms": round(gate.last_rms, 1),
+                    "threshold": round(gate.threshold, 1)}
 
         self.session.transcribing()
         self._phase("TRANSCRIBING", "A transcrever…")
@@ -1253,6 +1358,45 @@ class VoiceRuntime:
         if running:
             return "WAKE_LISTENING", f"\"{phrase}\" — A ouvir"
         return "IDLE", ""
+
+    def _tts_settings(self) -> tuple[bool, bool]:
+        """The live (tts_enabled, voice_reply_tts) pair.
+
+        Read on every turn, never cached at construction: core.main's
+        update_setting mutates CONFIG["voice"] in place and this runtime holds
+        a reference to that same dict, so a change made in Settings applies to
+        the very next turn. Caching these in __init__ would make the first
+        turn's settings permanent.
+        """
+        config = self.config or {}
+        voice_cfg = (config.get("voice") or {}) if "voice" in config else config
+        return (bool(voice_cfg.get("tts_enabled", True)),
+                bool(voice_cfg.get("voice_reply_tts", True)))
+
+    def speaking_decision(self, source: str, response: str, *, speak: bool = True) -> tuple[bool, str]:
+        """Whether this turn speaks, and -- always -- why not.
+
+        THE CONTRACT: a voice-originated turn with a real answer speaks, unless
+        the user turned speech off, the caller asked for silence, or there is
+        nothing to say. Every other outcome is a bug, and the reason string
+        exists so a silent turn can never again be diagnosed by guessing.
+
+        typed_chat_tts is deliberately NOT consulted here. Typing and talking
+        are separate conversations: core.main._should_speak governs the typed
+        path, this governs the spoken one, and neither may switch the other.
+        """
+        if not speak:
+            return False, "caller_requested_silence"
+        if not response or not str(response).strip():
+            return False, "empty_response"
+        tts_enabled, voice_reply_tts = self._tts_settings()
+        if not tts_enabled:
+            return False, "tts_enabled=false"
+        if not voice_reply_tts:
+            return False, "voice_reply_tts=false"
+        if not self.voice.enabled:
+            return False, "voice_disabled"
+        return True, "ok"
 
     async def run_voice_turn(
         self,
@@ -1348,14 +1492,38 @@ class VoiceRuntime:
                 self._exchange(turn_id,
                                str(result.get("transcript") or transcript or ""),
                                str(response))
-                if speak:
+
+                should_speak, reason = self.speaking_decision(source, str(response), speak=speak)
+                tts_enabled, voice_reply_tts = self._tts_settings()
+                # One line per turn recording the whole decision. No transcript
+                # and no answer text -- only lengths and flags. Without this a
+                # turn that does not speak is indistinguishable from a turn that
+                # spoke silently, which is exactly how the last two voice bugs
+                # stayed hidden until a human noticed.
+                logger.info(
+                    "voice_turn_post_brain: source=%s response_chars=%d tts_enabled=%s "
+                    "voice_reply_tts=%s cancelled=%s should_speak=%s reason=%s",
+                    source, len(str(response)), tts_enabled, voice_reply_tts,
+                    bool(result.get("cancelled")), should_speak, reason,
+                )
+                result["should_speak"] = should_speak
+                result["speak_skip_reason"] = None if should_speak else reason
+
+                if should_speak:
                     self._phase("SPEAKING", "A falar…")
+                    logger.info("voice_tts: started (source=%s, %d chars)", source, len(str(response)))
                     spoken = await self.speak_response(str(response))
                     result["spoken"] = spoken
-                    if not spoken:
-                        logger.warning("Resposta gerada mas o TTS não a reproduziu: %r",
-                                       str(response)[:80])
+                    if spoken:
+                        logger.info("voice_tts: completed (source=%s)", source)
+                    else:
+                        logger.warning(
+                            "voice_tts: FAILED (source=%s) - a reply was generated but "
+                            "nothing was heard: %r", source, str(response)[:80])
                         self._signal_error()
+                else:
+                    result["spoken"] = False
+                    logger.info("voice_tts: skipped (source=%s, reason=%s)", source, reason)
             elif result.get("cancelled"):
                 # Silence after an activation is a normal, quiet outcome: no
                 # Brain request was made and nothing is spoken.

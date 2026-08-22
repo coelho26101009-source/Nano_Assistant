@@ -50,6 +50,15 @@ class _Input:
         self.audio = audio
         self.raises = raises
         self.windows: list[float] = []
+        # Part of the real provider's contract, and named in the log line that
+        # reports a dead microphone.
+        self.device_index = None
+        # The real AudioInputProvider owns the speech gate, because every
+        # trigger records through it and so every trigger must judge speech by
+        # the same number. A stand-in without one is not a stand-in for the
+        # provider, and using the real gate here means these tests exercise the
+        # real decision rather than a mock of it.
+        self.gate = speech_filter.AdaptiveGate()
 
     def capture(self, duration_seconds):
         self.windows.append(duration_seconds)
@@ -160,11 +169,32 @@ def test_a_cancelled_turn_never_reaches_the_brain():
     assert runtime.brain.calls == 0, "the Brain answered a request that was never made"
 
 
-def test_no_audio_at_all_is_treated_as_silence():
+def test_no_audio_at_all_is_reported_as_its_own_failure():
+    """A dead microphone and a quiet room are different problems.
+
+    They used to return the identical "no_speech", which is precisely why a
+    real defect survived until a human tested it: the log said "nao ouvi nada"
+    whether the device had returned nothing or had returned a perfectly good
+    voice that the gate then rejected. The turn is still cancelled and the
+    Brain is still never consulted -- only the reason is now specific.
+    """
     engine = _Engine(None)
     result = _turn(_runtime(engine))
-    assert result["error"] == "no_speech"
+    assert result["error"] == "no_audio"
+    assert result["cancelled"] is True
     assert engine.stt_provider.calls == 0
+
+
+def test_a_quiet_room_is_reported_with_the_numbers_that_decided_it():
+    """The measurement that would have identified the bug in one glance."""
+    engine = _Engine(SILENCE)
+    result = _turn(_runtime(engine))
+    assert result["error"] == "no_speech"
+    assert "rms" in result and "threshold" in result, (
+        "a rejected turn must record the energy it measured and the bar it "
+        "was compared against, or the next threshold bug is invisible again"
+    )
+    assert result["rms"] < result["threshold"]
 
 
 def test_a_hallucinated_transcript_is_rejected_after_transcription():

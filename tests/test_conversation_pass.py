@@ -834,6 +834,7 @@ def test_readiness_degrades_to_mic_silent_when_no_audio_arrives():
 
     class DeadMic:
         _available = True
+        gate = speech_filter.AdaptiveGate()   # the provider owns the gate
         def capture(self, seconds):
             return _wav(amplitude=5, seconds=0.2)
 
@@ -856,6 +857,7 @@ def test_the_wake_engine_exposes_diagnostic_counters():
 
     class Mic:
         _available = True
+        gate = speech_filter.AdaptiveGate()   # the provider owns the gate
         def capture(self, seconds): return b""
 
     class STT:

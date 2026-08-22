@@ -16,6 +16,7 @@ import PluginCodeModal from "../components/PluginCodeModal";
 import Sidebar, { ViewId } from "../components/Sidebar";
 import SettingsPage from "../components/SettingsPage";
 import TaskDetailModal from "../components/TaskDetailModal";
+import TitleBar from "../components/TitleBar";
 import { Composer, Conversation, Message, ToolEvent } from "../components/Conversation";
 import {
   ActivityFilter, ActivityPage, AgentsPage, IntegrationsPage, MemoryPage,
@@ -27,6 +28,7 @@ import {
   SettingsPayload, TaskCounts, TaskRow, VoiceDiagnostics,
   call, expose, useBridgeReady, useFetch, usePolled,
 } from "../lib/backend";
+import { useIsDesktop } from "../lib/desktop";
 
 const APP_VERSION = "v0.8.0-β";
 
@@ -58,6 +60,9 @@ const userMessageId = (requestId: string) => `user:${requestId}`;
 export default function Home() {
   const { ready, gaveUp } = useBridgeReady();
   const { toasts, notify } = useToasts();
+  // Capability detection, resolved after mount. In a browser this stays false
+  // and the native title bar is simply never rendered.
+  const isDesktop = useIsDesktop();
 
   /* ── Shell state ────────────────────────────────────────────────────── */
   const [view, setView] = useState<ViewId>("chat");
@@ -127,6 +132,12 @@ export default function Home() {
     "get_voice_diagnostics", POLL.voiceDiagnostics, ready && view === "settings");
 
   useEffect(() => { document.documentElement.setAttribute("data-theme", theme); }, [theme]);
+  // Stamped on the root so rules that cannot see the React tree -- the fixed
+  // sidebar/inspector drawers at narrow widths -- can leave room for the
+  // title bar instead of sliding underneath it.
+  useEffect(() => {
+    document.documentElement.setAttribute("data-desktop", isDesktop ? "true" : "false");
+  }, [isDesktop]);
   useEffect(() => {
     document.documentElement.style.setProperty("--transition", reduceMotion ? "0ms" : "140ms cubic-bezier(0.4, 0, 0.2, 1)");
   }, [reduceMotion]);
@@ -599,124 +610,128 @@ export default function Home() {
         />
       </Head>
 
-      <div className="app">
-        <Sidebar
-          view={view} onView={setView}
-          collapsed={sidebarCollapsed}
-          onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
-          counts={navCounts}
-          agentState={agentState}
-          healthLabel={healthLabel}
-          onNewChat={newConversation}
-          onSettings={() => setView("settings")}
-          version={APP_VERSION}
-        />
+      <div className="shell">
+        {isDesktop && <TitleBar version={APP_VERSION} />}
 
-        <main className="workspace">
-          <header className="topbar">
-            <span className="topbar__icon">{meta.icon}</span>
-            <span className="topbar__text">
-              <div className="topbar__title">{meta.title}</div>
-              <div className="topbar__subtitle">{meta.subtitle}</div>
-            </span>
-            <span className="topbar__actions">
-              {view === "chat" && inspectorCollapsed && (
-                <Button variant="ghost" icon size="sm" onClick={() => setInspectorCollapsed(false)}
-                        aria-label="Abrir inspector" title="Inspector (Ctrl+I)">◧</Button>
-              )}
-            </span>
-          </header>
+        <div className="app">
+          <Sidebar
+            view={view} onView={setView}
+            collapsed={sidebarCollapsed}
+            onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
+            counts={navCounts}
+            agentState={agentState}
+            healthLabel={healthLabel}
+            onNewChat={newConversation}
+            onSettings={() => setView("settings")}
+            version={APP_VERSION}
+          />
 
-          {gaveUp && (
-            <div style={{ padding: 16 }}>
-              <ErrorState
-                error={{
-                  message: "O motor do Nano não respondeu.",
-                  component: "ponte eel",
-                  detail: "Verifica se a janela do NANO.bat continua aberta e recarrega esta página.",
-                }}
-                onRetry={() => window.location.reload()}
-              />
-            </div>
-          )}
+          <main className="workspace">
+            <header className="topbar">
+              <span className="topbar__icon">{meta.icon}</span>
+              <span className="topbar__text">
+                <div className="topbar__title">{meta.title}</div>
+                <div className="topbar__subtitle">{meta.subtitle}</div>
+              </span>
+              <span className="topbar__actions">
+                {view === "chat" && inspectorCollapsed && (
+                  <Button variant="ghost" icon size="sm" onClick={() => setInspectorCollapsed(false)}
+                          aria-label="Abrir inspector" title="Inspector (Ctrl+I)">◧</Button>
+                )}
+              </span>
+            </header>
+
+            {gaveUp && (
+              <div style={{ padding: 16 }}>
+                <ErrorState
+                  error={{
+                    message: "O motor do Nano não respondeu.",
+                    component: "ponte eel",
+                    detail: "Verifica se a janela do NANO.bat continua aberta e recarrega esta página.",
+                  }}
+                  onRetry={() => window.location.reload()}
+                />
+              </div>
+            )}
+
+            {view === "chat" && (
+              <>
+                <Conversation messages={messages} status={activityLabel} thinking={thinking} />
+                <Composer
+                  value={input} onChange={setInput}
+                  onSend={() => sendMessage()} onStop={stopWork}
+                  onVoice={startVoice} onCancelVoice={cancelVoice}
+                  thinking={thinking} disabled={!ready}
+                  voiceState={readiness?.voice.state ?? "UNKNOWN"}
+                  listening={listening}
+                  suggestions={suggestions}
+                  onSuggestion={(text) => sendMessage(text)}
+                />
+              </>
+            )}
+
+            {view !== "chat" && (
+              <div className="page">
+                {view === "tasks" && (
+                  <TasksPage
+                    tasks={tasks} counts={counts} scope={taskScope} onScope={setTaskScope}
+                    loading={tasksLoading} onOpenTask={openTask} onCancelTask={cancelTask}
+                    onArchive={archiveTasks} query={taskQuery} onQuery={setTaskQuery}
+                  />
+                )}
+                {view === "activity" && (
+                  <ActivityPage events={activity} filter={activityFilter}
+                                onFilter={setActivityFilter} loading={activityLoading} />
+                )}
+                {view === "permissions" && (
+                  <PermissionsPage
+                    pending={commandCenter?.permissions ?? []} policies={policies}
+                    auditEvents={permissionAuditEvents} onResolve={resolvePermission} busy={resolving}
+                  />
+                )}
+                {view === "agents" && <AgentsPage agents={agents} />}
+                {view === "memory" && (
+                  <MemoryPage memory={memoryData} onForget={forgetFact} loading={memoryLoading} />
+                )}
+                {view === "integrations" && (
+                  <IntegrationsPage
+                    providers={providers} plugins={plugins} readiness={readiness}
+                    onOpenSettings={() => setView("settings")} onOpenPlugin={openPluginCode}
+                  />
+                )}
+                {view === "status" && (
+                  <StatusPage readiness={readiness} providers={providers}
+                              commandCenter={commandCenter} onToggleEmergencyStop={toggleEmergencyStop} />
+                )}
+                {view === "settings" && (
+                  <SettingsPage
+                    settings={settings} providers={providers}
+                    diagnostics={voiceDiag}
+                    loading={settingsLoading} busy={busy}
+                    onSetMode={setMode} onSaveGroqKey={saveGroqKey} onRemoveGroqKey={removeGroqKey}
+                    onTestGroq={testGroq} onSetGroqModel={setGroqModel} onUpdate={updateSetting}
+                    onTestSpeaker={testSpeaker} onTestMicrophone={testMicrophone}
+                    onToggleEmergencyStop={toggleEmergencyStop}
+                    onClearConversation={newConversation}
+                    theme={theme} onTheme={setTheme}
+                    reduceMotion={reduceMotion} onReduceMotion={setReduceMotion}
+                  />
+                )}
+              </div>
+            )}
+          </main>
 
           {view === "chat" && (
-            <>
-              <Conversation messages={messages} status={activityLabel} thinking={thinking} />
-              <Composer
-                value={input} onChange={setInput}
-                onSend={() => sendMessage()} onStop={stopWork}
-                onVoice={startVoice} onCancelVoice={cancelVoice}
-                thinking={thinking} disabled={!ready}
-                voiceState={readiness?.voice.state ?? "UNKNOWN"}
-                listening={listening}
-                suggestions={suggestions}
-                onSuggestion={(text) => sendMessage(text)}
-              />
-            </>
+            <Inspector
+              collapsed={inspectorCollapsed}
+              onToggle={() => setInspectorCollapsed(true)}
+              readiness={readiness} providers={providers}
+              commandCenter={commandCenter} loading={ccLoading}
+              onOpenTask={openTask} onCancelTask={cancelTask}
+              onNavigate={setView}
+            />
           )}
-
-          {view !== "chat" && (
-            <div className="page">
-              {view === "tasks" && (
-                <TasksPage
-                  tasks={tasks} counts={counts} scope={taskScope} onScope={setTaskScope}
-                  loading={tasksLoading} onOpenTask={openTask} onCancelTask={cancelTask}
-                  onArchive={archiveTasks} query={taskQuery} onQuery={setTaskQuery}
-                />
-              )}
-              {view === "activity" && (
-                <ActivityPage events={activity} filter={activityFilter}
-                              onFilter={setActivityFilter} loading={activityLoading} />
-              )}
-              {view === "permissions" && (
-                <PermissionsPage
-                  pending={commandCenter?.permissions ?? []} policies={policies}
-                  auditEvents={permissionAuditEvents} onResolve={resolvePermission} busy={resolving}
-                />
-              )}
-              {view === "agents" && <AgentsPage agents={agents} />}
-              {view === "memory" && (
-                <MemoryPage memory={memoryData} onForget={forgetFact} loading={memoryLoading} />
-              )}
-              {view === "integrations" && (
-                <IntegrationsPage
-                  providers={providers} plugins={plugins} readiness={readiness}
-                  onOpenSettings={() => setView("settings")} onOpenPlugin={openPluginCode}
-                />
-              )}
-              {view === "status" && (
-                <StatusPage readiness={readiness} providers={providers}
-                            commandCenter={commandCenter} onToggleEmergencyStop={toggleEmergencyStop} />
-              )}
-              {view === "settings" && (
-                <SettingsPage
-                  settings={settings} providers={providers}
-                  diagnostics={voiceDiag}
-                  loading={settingsLoading} busy={busy}
-                  onSetMode={setMode} onSaveGroqKey={saveGroqKey} onRemoveGroqKey={removeGroqKey}
-                  onTestGroq={testGroq} onSetGroqModel={setGroqModel} onUpdate={updateSetting}
-                  onTestSpeaker={testSpeaker} onTestMicrophone={testMicrophone}
-                  onToggleEmergencyStop={toggleEmergencyStop}
-                  onClearConversation={newConversation}
-                  theme={theme} onTheme={setTheme}
-                  reduceMotion={reduceMotion} onReduceMotion={setReduceMotion}
-                />
-              )}
-            </div>
-          )}
-        </main>
-
-        {view === "chat" && (
-          <Inspector
-            collapsed={inspectorCollapsed}
-            onToggle={() => setInspectorCollapsed(true)}
-            readiness={readiness} providers={providers}
-            commandCenter={commandCenter} loading={ccLoading}
-            onOpenTask={openTask} onCancelTask={cancelTask}
-            onNavigate={setView}
-          />
-        )}
+        </div>
       </div>
 
       <CommandPalette open={paletteOpen} commands={commands} onClose={() => setPaletteOpen(false)} />

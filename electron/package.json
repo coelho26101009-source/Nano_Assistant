@@ -9,27 +9,79 @@
     "start": "electron .",
     "build": "electron-builder --win --x64",
     "build:installer": "electron-builder --win msi --x64",
-    "build:all": "electron-builder --win nsis msi --x64"
+    "build:all": "electron-builder --win nsis msi --x64",
+    "dev": "electron . --dev",
+    "test": "node test/run.js",
+    "icon": "powershell -ExecutionPolicy Bypass -File ../scripts/build_app_icon.ps1"
   },
   "build": {
     "appId": "com.nano.assistant",
     "productName": "Nano Assistant",
     "copyright": "© 2026 Simão Coelho",
-    "directories": { "output": "../dist-electron" },
-    "files": ["main.js", "preload.js"],
+    "directories": {
+      "output": "../dist-electron"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "lib/**/*",
+      "overlay/**/*",
+      "assets/**/*"
+    ],
     "extraResources": [
-      { "from": "../core", "to": "app/core", "filter": ["**/*"] },
-      { "from": "../plugins", "to": "app/plugins", "filter": ["**/*"] },
-      { "from": "../config", "to": "app/config", "filter": ["**/*"] },
-      { "from": "../frontend/out", "to": "app/frontend/out", "filter": ["**/*"] },
-      { "from": "../runtime", "to": "app/runtime", "filter": ["**/*"] }
+      {
+        "from": "../core",
+        "to": "app/core",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../plugins",
+        "to": "app/plugins",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../config",
+        "to": "app/config",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../frontend/out",
+        "to": "app/frontend/out",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../runtime",
+        "to": "app/runtime",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64"] },
-        { "target": "msi", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "msi",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
-      "requestedExecutionLevel": "asInvoker"
+      "requestedExecutionLevel": "asInvoker",
+      "icon": "assets/icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -38,7 +90,9 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Nano Assistant",
-      "runAfterFinish": true
+      "runAfterFinish": true,
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico"
     },
     "msi": {
       "oneClick": false,

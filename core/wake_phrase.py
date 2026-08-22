@@ -257,9 +257,13 @@ class WakePhraseEngine:
         # phrase was misheard or never reached the transcriber at all.
         self.recent_transcripts: list[str] = []
 
-        # The energy gate calibrates itself against this microphone rather than
-        # using a fixed RMS floor, which rejected 100% of real input.
-        self.gate = speech_filter.AdaptiveGate()
+        # The energy gate is the MICROPHONE's, not this engine's. Owning it
+        # here meant the calibration only existed while the wake detector ran,
+        # so switching the wake phrase off left the hotkey and UI turns with a
+        # fixed 220 RMS floor that a normal speaking voice never reached. The
+        # provider owns it now and every trigger shares one number; this stays
+        # as an alias so the detector, its diagnostics and its status payload
+        # are unchanged.
 
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -282,6 +286,16 @@ class WakePhraseEngine:
     @property
     def running(self) -> bool:
         return bool(self._thread and self._thread.is_alive())
+
+    @property
+    def gate(self) -> "speech_filter.AdaptiveGate":
+        """The microphone's shared speech gate.
+
+        A property, not an attribute, so this engine and every other trigger
+        are guaranteed to be reading and calibrating the SAME object. See
+        AudioInputProvider.gate for why ownership moved.
+        """
+        return self._audio.gate
 
     def start(self) -> bool:
         if not self.enabled:

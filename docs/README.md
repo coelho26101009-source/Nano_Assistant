@@ -15,6 +15,7 @@ If startup fails, the window stays open and prints the reason.
 |---|---|
 | [architecture/ARCHITECTURE.md](architecture/ARCHITECTURE.md) | System layers and the intended agent flow |
 | [architecture/MODEL_ROUTING.md](architecture/MODEL_ROUTING.md) | Model router, providers, local-first policy |
+| [architecture/DESKTOP.md](architecture/DESKTOP.md) | The Electron desktop shell: lifecycle, tray, global hotkey, voice overlay, and the trust model of the Electron to Python control channel |
 | [SECURITY_POLICY.md](SECURITY_POLICY.md) | Capabilities, autonomy levels, approval gates |
 | [VOICE.md](VOICE.md) | Voice runtime: STT, TTS, wake detection |
 | [AJUDA.txt](AJUDA.txt) | Original Portuguese help notes (historical) |

@@ -122,8 +122,66 @@ def signal_error(blocking: bool = False) -> bool:
     return play_chime("error", blocking=blocking)
 
 
+def prewarm() -> dict:
+    """Load the audio backends NOW, on a thread that is allowed to block.
+
+    WHY THIS EXISTS — a real, reproducible freeze.
+
+    ``output_device_report`` below does ``import pygame`` lazily, and pygame
+    pulls in numpy, whose C extension is a large native library. eel serves its
+    whole bridge from ONE cooperative gevent hub, so a request handler that
+    performs a first heavy native import does not merely make that call slow --
+    it stops every other call in the process. Measured live: opening Settings
+    left the main thread parked inside ``create_module`` loading
+    ``numpy._core._multiarray_umath`` and the entire UI went dead. No chat, no
+    polling, no readiness, nothing, permanently.
+
+    It used to be hidden. The wake-phrase detector ran at startup, and
+    faster-whisper imported numpy long before any request arrived, so by the
+    time Settings asked for the device list everything was already in
+    sys.modules. Turning the wake phrase off by default -- correct on its own
+    terms -- removed the accident that was covering this up.
+
+    The fix is not to make the handler cleverer. It is that **a UI request must
+    never be the first thing to load a native extension**. This runs once,
+    during startup, before eel begins serving, so every later call finds the
+    modules already imported and does no heavy work on the hub.
+
+    Never raises: an audio backend that will not load is a degraded Nano, not a
+    Nano that fails to start.
+    """
+    loaded: dict[str, object] = {"pygame": False, "pyaudio": False, "mixer": False}
+
+    try:
+        import pygame
+
+        loaded["pygame"] = True
+        # Opening the output device is the other blocking call in that handler,
+        # for the same reason: SDL talks to the sound hardware. Do it here too.
+        if not pygame.mixer.get_init():
+            pygame.mixer.init(frequency=_SAMPLE_RATE, size=-16, channels=1)
+        loaded["mixer"] = bool(pygame.mixer.get_init())
+    except Exception as exc:
+        loaded["pygame_error"] = str(exc)
+        logger.warning("Backend de audio pygame indisponivel: %s", exc)
+
+    try:
+        import pyaudio  # noqa: F401
+
+        loaded["pyaudio"] = True
+    except Exception as exc:
+        loaded["pyaudio_error"] = str(exc)
+        logger.warning("PyAudio indisponivel: %s", exc)
+
+    return loaded
+
+
 def output_device_report() -> dict:
-    """What can actually play audio right now — measured, not assumed."""
+    """What can actually play audio right now — measured, not assumed.
+
+    Assumes ``prewarm()`` has already run: the imports below are then just
+    dictionary lookups. See prewarm's docstring for why that matters.
+    """
     report: dict[str, object] = {"winsound": os.name == "nt", "pygame": False, "devices": []}
     try:
         import pygame
@@ -168,4 +226,4 @@ def output_device_report() -> dict:
     return report
 
 
-__all__ = ["acknowledge_wake", "output_device_report", "play_chime", "signal_error"]
+__all__ = ["acknowledge_wake", "output_device_report", "play_chime", "prewarm", "signal_error"]

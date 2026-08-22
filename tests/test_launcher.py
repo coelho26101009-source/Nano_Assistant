@@ -97,12 +97,59 @@ def test_launcher_does_not_start_ollama_itself():
         )
 
 
+#: The only launchers allowed in the project root, and what each one is for.
+#: The rule this enforces has not changed -- ad-hoc .bat files must not
+#: accumulate where a user might double-click the wrong one -- it is only more
+#: precise now that the desktop shell has its own entry point. Adding a third
+#: name here has to be a deliberate decision, not a side effect.
+SANCTIONED_LAUNCHERS = {
+    "NANO.bat": "browser mode: the backend serves the UI and opens one tab",
+    "NANO_DESKTOP.bat": "desktop mode: Electron owns the window, tray and hotkey",
+}
+
+
 def test_no_competing_public_launchers_in_root():
-    """NANO.bat must be the single obvious entry point."""
+    """Only the two sanctioned entry points may sit in the project root."""
     root_bats = {path.name for path in REPO_ROOT.glob("*.bat")}
-    assert root_bats == {"NANO.bat"}, (
-        f"expected only NANO.bat in the project root, found: {sorted(root_bats)}"
+    unexpected = root_bats - set(SANCTIONED_LAUNCHERS)
+    assert not unexpected, (
+        f"unexpected launcher(s) in the project root: {sorted(unexpected)}. "
+        f"The root may contain only {sorted(SANCTIONED_LAUNCHERS)}."
     )
+    assert root_bats == set(SANCTIONED_LAUNCHERS), (
+        f"a sanctioned launcher is missing: {sorted(set(SANCTIONED_LAUNCHERS) - root_bats)}"
+    )
+
+
+def test_each_launcher_says_which_mode_it_starts():
+    """Two entry points are only safe if each one is unambiguous about its job.
+
+    Compared against the EXECUTABLE lines only. Both launchers carry comments
+    explaining what the other one does, and matching raw text would fail on
+    those explanations -- the same trap _executable_lines already exists for.
+    """
+    browser = _executable_lines(LAUNCHER)
+    desktop = _executable_lines(REPO_ROOT / "NANO_DESKTOP.bat")
+
+    assert "title nano assistant" in browser
+    assert "--mode default" in browser, "NANO.bat must start the browser mode explicitly"
+    assert "electron" not in browser, (
+        "NANO.bat must not also start Electron; that is NANO_DESKTOP.bat's job"
+    )
+
+    assert "title nano desktop" in desktop
+    assert "electron ." in desktop, "NANO_DESKTOP.bat must start the Electron shell"
+    assert "main.py" not in desktop, (
+        "NANO_DESKTOP.bat must not start Python itself -- Electron owns the "
+        "backend's lifecycle, and a second backend means two microphone owners"
+    )
+
+
+def test_the_desktop_launcher_never_opens_a_browser_either():
+    """The same rule as NANO.bat, for the launcher that must never do it at all."""
+    text = _executable_lines(REPO_ROOT / "NANO_DESKTOP.bat")
+    for token in ("start http", "explorer http", "chrome.exe", "msedge"):
+        assert token not in text, f"NANO_DESKTOP.bat must not open a browser (found {token!r})"
 
 
 @pytest.mark.parametrize("script", sorted((REPO_ROOT / "scripts").rglob("*.bat")))
@@ -125,10 +172,16 @@ def test_logs_are_written_outside_the_repository_root():
 
 # ------------------------------------------------- cmd.exe block parsing
 
-def _uncommented_lines() -> list[tuple[int, str]]:
+#: Both root launchers are parsed by the same cmd.exe, so every parsing rule
+#: below applies to both. NANO_DESKTOP.bat repeats the same IF blocks and the
+#: same for /f capture, so it can repeat the same bugs.
+BATCH_LAUNCHERS = [LAUNCHER, REPO_ROOT / "NANO_DESKTOP.bat"]
+
+
+def _uncommented_lines(path: Path = LAUNCHER) -> list[tuple[int, str]]:
     """Numbered launcher lines with REM/:: comments removed."""
     out = []
-    for number, line in enumerate(LAUNCHER.read_text(encoding="ascii").splitlines(), 1):
+    for number, line in enumerate(path.read_text(encoding="ascii").splitlines(), 1):
         stripped = line.strip()
         if stripped.upper().startswith("REM") or stripped.startswith("::"):
             continue
@@ -136,7 +189,8 @@ def _uncommented_lines() -> list[tuple[int, str]]:
     return out
 
 
-def test_no_echo_inside_a_block_has_unescaped_parentheses():
+@pytest.mark.parametrize("launcher", BATCH_LAUNCHERS, ids=lambda p: p.name)
+def test_no_echo_inside_a_block_has_unescaped_parentheses(launcher):
     """An unescaped ( or ) in an echo ends the enclosing IF block early.
 
     This was real: `echo BUILDING (first run, this takes a minute)` closed the
@@ -146,7 +200,7 @@ def test_no_echo_inside_a_block_has_unescaped_parentheses():
     """
     depth = 0
     offenders = []
-    for number, line in _uncommented_lines():
+    for number, line in _uncommented_lines(launcher):
         if depth > 0 and line.lower().startswith("echo"):
             argument = line[4:]
             if re.search(r"(?<!\^)[()]", argument):
@@ -162,15 +216,17 @@ def test_no_echo_inside_a_block_has_unescaped_parentheses():
     )
 
 
-def test_parentheses_are_balanced():
+@pytest.mark.parametrize("launcher", BATCH_LAUNCHERS, ids=lambda p: p.name)
+def test_parentheses_are_balanced(launcher):
     """A stray paren is a syntax error that closes the window instantly."""
-    code = "\n".join(line for _, line in _uncommented_lines())
+    code = "\n".join(line for _, line in _uncommented_lines(launcher))
     code = re.sub(r"\^[()]", "", code)          # escaped parens are literals
     code = re.sub(r'"[^"\n]*"', '""', code)     # quoted strings are literals
-    assert code.count("(") == code.count(")"), "unbalanced parentheses in NANO.bat"
+    assert code.count("(") == code.count(")"), f"unbalanced parentheses in {launcher.name}"
 
 
-def test_captured_command_output_uses_call_so_quoting_survives():
+@pytest.mark.parametrize("launcher", BATCH_LAUNCHERS, ids=lambda p: p.name)
+def test_captured_command_output_uses_call_so_quoting_survives(launcher):
     """`for /f ('"%VAR%" -c ...')` silently captures nothing.
 
     cmd strips the outer quote pair of the whole in-clause, so the command
@@ -178,7 +234,7 @@ def test_captured_command_output_uses_call_so_quoting_survives():
     bare `ECHO is off.`. Prefixing with `call` keeps the quotes intact, which
     also lets an interpreter path containing spaces work.
     """
-    for number, line in _uncommented_lines():
+    for number, line in _uncommented_lines(launcher):
         match = re.search(r"for\s+/f[^(]*\(\s*'(.*)'\s*\)", line, re.I)
         if not match:
             continue

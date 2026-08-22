@@ -50,7 +50,7 @@ from core.agent_orchestrator import AgentOrchestrator
 from core.agent_registry import AgentRegistry
 from core.tool_execution import ToolExecutor
 from core.background_worker import BackgroundTaskWorker
-from core import audio_feedback, ollama_service, provider_status, providers, secret_store, speech_filter, user_settings
+from core import audio_feedback, desktop_bridge, ollama_service, provider_status, providers, secret_store, speech_filter, user_settings
 
 if not getattr(sys, "frozen", False):
     load_dotenv(ROOT / ".env")
@@ -1428,8 +1428,17 @@ def _emit_rate_limited(msg_id: str, info: dict):
     _notify_ui(eel.on_rate_limited(msg_id, payload))
 
 def _emit_voice_phase(phase: str, detail: str = ""):
-    """Publish the current voice turn phase so the UI can narrate it."""
+    """Publish the current voice turn phase so the UI can narrate it.
+
+    TWO SINKS, ONE SOURCE. The browser UI hears it over eel; the Electron
+    desktop shell hears it over the control pipe and drives the voice overlay
+    from it. The overlay therefore shows the REAL phase of the real turn -- it
+    never runs a timeline of its own -- and it keeps working when the main
+    window (and with it the eel renderer) is hidden or has never been created.
+    """
+    logger.info("voice_phase -> %s (%s)", phase, detail or "-")
     _notify_ui(eel.on_voice_phase(phase, detail))
+    _desktop_emit("voice_phase", {"phase": phase, "detail": detail})
 
 def _emit_voice_exchange(turn_id: str, user_text: str, assistant_text: str):
     """Show a completed spoken turn in the conversation.
@@ -1551,11 +1560,37 @@ def start_voice_turn(source: str = "ui") -> dict:
                 "detail": "O Nano já está a ouvir."}
     try:
         loop = _get_or_create_loop()
-        asyncio.run_coroutine_threadsafe(voice_runtime.run_voice_turn(source), loop)
+        future = asyncio.run_coroutine_threadsafe(voice_runtime.run_voice_turn(source), loop)
+        # How the turn ENDED, not merely that it stopped. The voice overlay
+        # needs to distinguish "answered and spoke" from "heard no command"
+        # from "failed", and the phase events alone cannot say which -- they
+        # all finish on IDLE. Reported from the turn's real result, so the
+        # overlay can never invent an outcome.
+        future.add_done_callback(lambda f: _on_voice_turn_finished(source, f))
     except Exception as exc:
         logger.exception("Falha ao iniciar o turno de voz (%s)", source)
         return {"ok": False, "accepted": False, "error": "voice_turn_failed", "detail": str(exc)}
     return {"ok": True, "accepted": True, "source": source}
+
+
+def _on_voice_turn_finished(source: str, future) -> None:
+    """Publish the outcome of a dispatched voice turn to the desktop shell."""
+    try:
+        result = future.result()
+    except Exception as exc:  # noqa: BLE001 - reporting must not raise here
+        logger.debug("voice turn future failed", exc_info=True)
+        result = {"ok": False, "error": "voice_turn_failed", "detail": str(exc)}
+    if not isinstance(result, dict):
+        result = {"ok": False, "error": "voice_turn_failed"}
+    _desktop_emit("voice_turn_ended", {
+        "source": source,
+        "ok": bool(result.get("ok")),
+        "cancelled": bool(result.get("cancelled")),
+        "spoken": bool(result.get("spoken")),
+        # A short machine-readable reason. Never a traceback and never a
+        # provider message: the overlay must not show internals to the user.
+        "error": (str(result.get("error")) if result.get("error") else None),
+    })
 
 
 @eel.expose
@@ -1568,6 +1603,176 @@ def start_voice_turn_from_ui() -> dict:
 def get_voice_turn_status() -> dict:
     """Whether a voice turn is currently running, and which trigger began it."""
     return voice_runtime.turn_status()
+
+
+# ==========================================================================
+#  DESKTOP CONTROL CHANNEL  (Electron parent -> this backend)
+# ==========================================================================
+# The global Ctrl+Shift+Space shortcut is owned by the Electron main process,
+# because only it can see a keypress while Nano has no visible window. It has
+# to reach the voice turn that lives here, and it must be able to do so when
+# the renderer does not exist -- which is why this does not go through eel.
+#
+# The transport is core.desktop_bridge: one JSON line per message over the
+# stdin/stdout pipe Electron already owns as our parent. Read that module for
+# the full trust model. The short version: the OS decides who may write to this
+# process's stdin, and the answer is "our parent", so there is no port to
+# scan, no token to leak, and nothing here is reachable from the network.
+#
+# WHAT THIS CHANNEL CANNOT DO, and must never be extended to do:
+#   * run a command, a path, a script or any caller-supplied code
+#   * resolve a capability, bypass the policy engine, or pre-approve anything
+#   * read or return a secret
+# Every operation below is a name Nano already implements. start_voice_turn
+# only *starts a turn*; whatever the user says next is understood by the Brain
+# and travels the normal REQUEST -> POLICY -> PERMISSION -> EXECUTION path,
+# identically to a message typed into the chat box.
+
+_DESKTOP_BRIDGE: desktop_bridge.DesktopBridge | None = None
+
+#: What the desktop shell told us about itself. Reported to the UI verbatim;
+#: nothing here is inferred, so Settings can show an honest shortcut status
+#: instead of assuming the hotkey registered.
+DESKTOP_STATE: dict = {
+    "present": False,
+    "shortcut": None,
+    "shortcutRegistered": None,
+    "shortcutError": None,
+    "overlayEnabled": None,
+    "autoLaunch": None,
+    "version": None,
+}
+
+
+def _desktop_emit(event: str, payload: dict | None = None) -> None:
+    """Push an event to the desktop shell, if one is attached."""
+    bridge = _DESKTOP_BRIDGE
+    if bridge is None:
+        return
+    try:
+        bridge.emit(event, payload or {})
+    except Exception:
+        logger.debug("desktop event %s failed", event, exc_info=True)
+
+
+def _ctl_ping(_args: dict) -> dict:
+    """Liveness. The desktop shell waits for this before showing a window."""
+    return {"pong": True, "pid": os.getpid()}
+
+
+def _ctl_voice_status(_args: dict) -> dict:
+    status = voice_runtime.turn_status()
+    readiness = voice_runtime.status()
+    return {
+        "turn": status,
+        "ready": bool(readiness.get("ready")),
+        "readiness": readiness.get("readiness"),
+        "blockers": readiness.get("blockers", []),
+    }
+
+
+def _ctl_start_voice_turn(args: dict) -> dict:
+    """The global hotkey lands here. It starts a turn and nothing else."""
+    source = str(args.get("source") or "hotkey")
+    if source not in VoiceRuntime.TURN_SOURCES:
+        source = "hotkey"
+    return start_voice_turn(source)
+
+
+def _ctl_cancel_voice_turn(_args: dict) -> dict:
+    """Stop what is being said now. Voice stays available for the next turn.
+
+    Deliberately the same shallow stop the UI uses: cancelling one turn must
+    never tear the voice subsystem down, or the hotkey would stop working for
+    the rest of the session. Only application exit calls voice.shutdown().
+    """
+    result = stop_voice()
+    return {**result, "turn": voice_runtime.turn_status()}
+
+
+def _ctl_data_location(_args: dict) -> dict:
+    """Where this backend's data really is, so both halves can be compared."""
+    return data_migration.describe_data_location()
+
+
+def _ctl_report_shortcut(args: dict) -> dict:
+    """The shell tells us what actually happened when it registered the hotkey.
+
+    Recorded, not trusted-as-success: if registration failed because another
+    application owns the accelerator, Settings shows that failure rather than a
+    shortcut that silently does nothing.
+    """
+    DESKTOP_STATE.update({
+        "present": True,
+        "shortcut": str(args.get("shortcut") or "") or None,
+        "shortcutRegistered": bool(args.get("registered")),
+        "shortcutError": (str(args.get("error")) if args.get("error") else None),
+        "overlayEnabled": bool(args.get("overlay")) if "overlay" in args else DESKTOP_STATE["overlayEnabled"],
+        "autoLaunch": bool(args.get("autoLaunch")) if "autoLaunch" in args else DESKTOP_STATE["autoLaunch"],
+        "version": (str(args.get("version")) if args.get("version") else DESKTOP_STATE["version"]),
+    })
+    return dict(DESKTOP_STATE)
+
+
+def _ctl_shutdown(_args: dict) -> dict:
+    """Graceful exit, so the microphone and the databases close properly.
+
+    Electron calls this before falling back to killing the process tree: an
+    abrupt kill leaves PortAudio and SQLite to be cleaned up by the OS, which
+    works but is not what we want on a normal Quit.
+    """
+    logger.info("Desktop shell requested shutdown.")
+    threading.Timer(0.15, _exit_now).start()
+    return {"stopping": True}
+
+
+def _exit_now() -> None:
+    try:
+        shutdown()
+    except Exception:
+        logger.exception("Falha no encerramento pedido pelo desktop")
+    finally:
+        os._exit(0)
+
+
+#: THE COMPLETE SET. Anything not named here is refused by the dispatcher.
+DESKTOP_OPERATIONS = {
+    "ping": _ctl_ping,
+    "voice_status": _ctl_voice_status,
+    "start_voice_turn": _ctl_start_voice_turn,
+    "cancel_voice_turn": _ctl_cancel_voice_turn,
+    "data_location": _ctl_data_location,
+    "report_shortcut": _ctl_report_shortcut,
+    "shutdown": _ctl_shutdown,
+}
+
+
+def _start_desktop_bridge() -> bool:
+    """Attach the control channel. Nano runs fine without it."""
+    global _DESKTOP_BRIDGE
+    bridge = desktop_bridge.DesktopBridge(DESKTOP_OPERATIONS)
+    if not bridge.start():
+        return False
+    _DESKTOP_BRIDGE = bridge
+    DESKTOP_STATE["present"] = True
+    return True
+
+
+@eel.expose
+def get_desktop_status() -> dict:
+    """Honest desktop/activation state for the Settings page.
+
+    Everything here is measured or reported by the shell. Nothing is assumed:
+    with no desktop shell attached, `present` is false and the UI says the
+    global shortcut is unavailable rather than showing a key combination that
+    does nothing.
+    """
+    bridge = _DESKTOP_BRIDGE
+    return {
+        **DESKTOP_STATE,
+        "channel": bool(bridge is not None and bridge.running),
+        "operations": list(bridge.operations) if bridge else [],
+    }
 
 
 def _attach_voice_observer() -> None:
@@ -1717,7 +1922,12 @@ def _free_port() -> int:
 # Single-instance guard. Held open for the process lifetime; the OS releases it
 # automatically if Nano crashes, so a stale lock can never wedge the launcher.
 _INSTANCE_LOCK: socket.socket | None = None
-_INSTANCE_LOCK_PORT = 47615  # fixed, private-range port used only as a mutex
+# Fixed, private-range port used only as a mutex. The Electron shell probes
+# this same number before spawning a backend, so the two single-instance
+# systems agree on what "a Nano is already running" means; tests assert the
+# two constants have not drifted apart.
+_INSTANCE_LOCK_PORT = 47615
+INSTANCE_LOCK_PORT = _INSTANCE_LOCK_PORT
 
 
 def acquire_single_instance(port: int = _INSTANCE_LOCK_PORT) -> bool:
@@ -1752,7 +1962,24 @@ def _parse_args():
     parser = argparse.ArgumentParser(description="Nano Assistant")
     parser.add_argument("--mode", default=os.getenv("NANO_MODE", os.getenv("HELIOS_MODE", "electron")))
     parser.add_argument("--port", type=int, default=0)
+    # Opt-in, never inferred. Started unconditionally, a blocking reader on
+    # stdin would swallow the console input of a plain NANO.bat session; the
+    # desktop shell asks for the channel explicitly because only it owns the
+    # other end of the pipe.
+    parser.add_argument("--desktop-control", action="store_true",
+                        help="read control requests from the parent process (Electron)")
     return parser.parse_known_args()[0]
+
+def should_open_browser(mode: str) -> bool:
+    """Whether THIS process is responsible for putting a UI on screen.
+
+    Exactly one thing may open a window. In desktop mode the Electron shell
+    already has one, so Nano must open nothing: a browser tab appearing beside
+    the desktop window would be two UIs against one backend, and it is the
+    single most visible way to get the desktop migration wrong.
+    """
+    return str(mode).lower() != "electron"
+
 
 def _open_browser_tab(port: int):
     """Abre a UI no navegador. ÚNICO ponto do Nano que abre um navegador.
@@ -1797,6 +2024,13 @@ def shutdown() -> None:
     # user (or another tool) may be relying on, it idles at a few tens of MB,
     # and OLLAMA_KEEP_ALIVE unloads the model by itself. Nano only tears down
     # what it exclusively owns.
+    bridge = _DESKTOP_BRIDGE
+    if bridge is not None:
+        try:
+            bridge.stop()
+        except Exception:
+            logger.debug("Falha ao fechar o canal de controlo do desktop", exc_info=True)
+
     loop = _EVENT_LOOP
     if loop is not None and loop.is_running():
         loop.call_soon_threadsafe(loop.stop)
@@ -1855,6 +2089,18 @@ def main():
     _report("Cloud", "OK" if cloud_configured() else "NOT CONFIGURED",
             brain.groq_fast_model if cloud_configured() else "")
 
+    # Load the audio backends before eel starts serving. A UI request must
+    # never be the first thing to import a native extension: eel runs the whole
+    # bridge on one cooperative hub, and a first `import pygame` (which pulls in
+    # numpy) inside a request handler froze the entire interface permanently.
+    # See core.audio_feedback.prewarm.
+    audio_ready = audio_feedback.prewarm()
+    _report(
+        "Audio",
+        "READY" if audio_ready.get("mixer") or audio_ready.get("pyaudio") else "DEGRADED",
+        ", ".join(name for name in ("pygame", "pyaudio") if audio_ready.get(name)) or "no backend",
+    )
+
     voice_state = voice_runtime.status()
     _report(
         "Voice/STT",
@@ -1865,6 +2111,13 @@ def main():
     # The voice turn is trigger-independent; hook up its UI notifications
     # before any trigger can fire.
     _attach_voice_observer()
+
+    # The desktop control channel, before the shortcut can possibly fire. The
+    # shell waits for a ping on this channel before it registers the hotkey,
+    # so a keypress can never arrive at a backend that is not ready for it.
+    if args.desktop_control:
+        _report("Desktop", "READY" if _start_desktop_bridge() else "UNAVAILABLE",
+                "control channel")
     _start_wake_word()
     _start_wake_phrase()
     wake_status = voice.wake_phrase_provider.status()
@@ -1884,8 +2137,7 @@ def main():
     #   qualquer outro  -> abrimos o navegador uma só vez, aqui.
     # Em ambos os casos o eel arranca com mode=None, ou seja, apenas serve
     # HTTP/websocket e NUNCA lança um navegador por sua conta.
-    electron_mode = str(args.mode).lower() == "electron"
-    if not electron_mode:
+    if should_open_browser(args.mode):
         threading.Timer(1.0, _open_browser_tab, args=(port,)).start()
         _report("UI", "READY", f"http://localhost:{port}")
     else:
@@ -1895,6 +2147,12 @@ def main():
     print(flush=True)
     print("  Nano is running. Close this window to stop it.", flush=True)
     print(flush=True)
+
+    # Tell the desktop shell the HTTP port for real, on the authenticated
+    # channel rather than by scraping stdout. The shell still verifies the
+    # server itself before showing a window: this is an announcement, not a
+    # readiness claim.
+    _desktop_emit("backend_started", {"port": port, "mode": str(args.mode).lower()})
 
     try:
         eel.start("index.html", mode=None, size=size, port=port, block=True)

@@ -10,6 +10,9 @@ import React, { useState } from "react";
 import type { ProviderPayload, SettingsPayload, VoiceDiagnostics } from "../lib/backend";
 import { call } from "../lib/backend";
 import {
+  retryShortcut, setAutoLaunch, setOverlayEnabled, useDesktopStatus,
+} from "../lib/desktop";
+import {
   Badge, Button, ConfirmDialog, EmptyState, ErrorState, Field, MetricRow,
   Panel, SecretField, SegmentedControl, StatusIndicator, Tabs, Toggle,
 } from "./ui";
@@ -31,6 +34,108 @@ type WakeTest = {
 /** Candidate wake phrases, all Portuguese: the transcriber runs in Portuguese,
  *  which is precisely why the English "Hey Nano" was heard as "Ei, não.". */
 const WAKE_CANDIDATES = ["ei nano", "olá nano", "acorda nano"];
+
+/**
+ * Desktop mode and global activation.
+ *
+ * Every value here is MEASURED by the Electron main process -- the accelerator
+ * it actually holds, whether globalShortcut.isRegistered() agrees, whether the
+ * login item really exists. Nothing is assumed: if another application owns
+ * Ctrl+Shift+Space, this says so and offers to try again, rather than showing
+ * a key combination that quietly does nothing.
+ *
+ * Outside the desktop shell it renders an honest explanation instead of
+ * pretending the feature exists.
+ */
+function DesktopPanel() {
+  const { status, loading, refresh } = useDesktopStatus();
+  const [busy, setBusy] = useState(false);
+
+  if (loading) return null;
+
+  if (!status) {
+    return (
+      <Panel title="Modo desktop">
+        <p className="muted" style={{ fontSize: 13 }}>
+          Esta janela está a correr no <strong>navegador</strong>, não na aplicação
+          de ambiente de trabalho. O atalho global, o tabuleiro do sistema e o painel
+          de voz só existem no Nano Desktop.
+        </p>
+        <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>
+          Abre o Nano com <code>NANO_DESKTOP.bat</code> para os ativar.
+        </p>
+      </Panel>
+    );
+  }
+
+  const run = async (action: () => Promise<unknown>) => {
+    setBusy(true);
+    try { await action(); } finally { setBusy(false); refresh(); }
+  };
+
+  return (
+    <Panel
+      title="Modo desktop"
+      action={<Badge tone="accent">Ativo</Badge>}
+    >
+      <MetricRow label="Atalho global" value={<code>{status.shortcut}</code>} />
+      <MetricRow
+        label="Estado do atalho"
+        value={
+          <StatusIndicator
+            state={status.shortcutRegistered ? "READY" : "ERROR"}
+            label={status.shortcutRegistered ? "Registado" : "Em conflito"}
+            title={status.shortcutError ?? undefined}
+          />
+        }
+      />
+      {!status.shortcutRegistered && (
+        <>
+          <p className="field__error" style={{ marginTop: 8 }}>
+            {status.shortcutError ?? "Não foi possível registar o atalho."}
+          </p>
+          <p className="dim" style={{ fontSize: 11, marginTop: 6 }}>
+            Outra aplicação está a usar esta combinação. Fecha-a e tenta novamente —
+            o resto do Nano continua a funcionar, incluindo o botão de microfone.
+          </p>
+          <div className="inline" style={{ marginTop: 10 }}>
+            <Button size="sm" disabled={busy} onClick={() => run(retryShortcut)}>
+              Tentar registar outra vez
+            </Button>
+          </div>
+        </>
+      )}
+
+      <div style={{ height: 12 }} />
+
+      <Toggle
+        label="Mostrar o painel de voz"
+        hint="Uma pequena janela sobre as outras aplicações a dizer o que o Nano está a fazer durante um turno de voz."
+        checked={status.overlayEnabled}
+        onChange={(value) => run(() => setOverlayEnabled(value))}
+      />
+      <Toggle
+        label="Iniciar com o Windows"
+        hint={
+          status.autoLaunch.supported
+            ? "O Nano arranca minimizado no tabuleiro, pronto para o atalho global."
+            : "Disponível apenas na aplicação instalada — em desenvolvimento o atalho de arranque apontaria para o Electron, não para o Nano."
+        }
+        checked={status.autoLaunch.enabled}
+        disabled={!status.autoLaunch.supported || busy}
+        disabledReason={status.autoLaunch.reason ?? undefined}
+        onChange={(value) => run(() => setAutoLaunch(value))}
+      />
+
+      <div style={{ height: 12 }} />
+      <p className="dim" style={{ fontSize: 11, lineHeight: 1.6 }}>
+        Fechar a janela esconde o Nano no tabuleiro para que o atalho continue a
+        funcionar. Para o encerrar mesmo, usa <strong>Sair do Nano</strong> no menu do
+        tabuleiro.
+      </p>
+    </Panel>
+  );
+}
 
 /**
  * Try a wake phrase out loud without waking Nano.
@@ -178,7 +283,7 @@ export default function SettingsPage({
         ]}
       />
 
-      <div style={{ marginTop: 20, maxWidth: 680 }}>
+      <div className="settings-body">
         {/* ── AI ───────────────────────────────────────────────────────── */}
         {section === "ai" && (
           <div className="stack">
@@ -286,12 +391,23 @@ export default function SettingsPage({
         {/* ── VOICE ────────────────────────────────────────────────────── */}
         {section === "voice" && (
           <div className="stack">
-            <Panel title="Wake phrase">
+            <Panel title="Ativação por voz (experimental)"
+                   action={<Badge tone="neutral">Experimental</Badge>}>
+              <p className="muted" style={{ fontSize: 13, marginBottom: 10 }}>
+                A forma normal de falar com o Nano é o atalho global{" "}
+                <code>Ctrl + Shift + Space</code>, que é instantâneo e não gasta nada
+                enquanto não é usado.
+              </p>
+              <p className="dim" style={{ fontSize: 11, marginBottom: 12, lineHeight: 1.6 }}>
+                Esta alternativa mantém o microfone aberto e passa tudo o que ouve pelo
+                Whisper-tiny local. Funciona, mas é lenta a reconhecer a frase, falha com
+                alguma frequência e consome CPU continuamente — por isso vem desligada.
+              </p>
               <MetricRow label="Estado" value={<StatusIndicator state={voice.state} />} />
               <MetricRow label="Frase" value={`"${voice.wakePhrase}"`} />
               <div style={{ height: 8 }} />
               <Toggle
-                label="Ativar wake phrase"
+                label={`Ativar "${voice.wakePhrase}"`}
                 hint="O Nano ouve continuamente à espera da frase, localmente."
                 checked={voice.wakePhraseEnabled}
                 onChange={(v) => onUpdate("wake_phrase_enabled", v)}
@@ -414,11 +530,17 @@ export default function SettingsPage({
         {/* ── GENERAL ──────────────────────────────────────────────────── */}
         {section === "general" && (
           <div className="stack">
+            <DesktopPanel />
             <Panel title="Arranque">
               <p className="muted" style={{ fontSize: 13 }}>
-                O Nano arranca com o <code>NANO.bat</code>. O launcher valida o Python,
-                arranca o servidor Ollama se for preciso, liga a escuta por voz e abre
-                esta interface uma única vez.
+                O Nano Desktop arranca com o <code>NANO_DESKTOP.bat</code>: o Electron
+                valida o Python, arranca o motor, espera que fique realmente pronto e só
+                então abre a janela. Nenhum separador do navegador é aberto.
+              </p>
+              <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>
+                O <code>NANO.bat</code> continua a existir para desenvolvimento e como
+                alternativa: abre a mesma interface no navegador, sem atalho global,
+                tabuleiro nem painel de voz.
               </p>
             </Panel>
             <Panel title="Idioma">

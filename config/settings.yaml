@@ -113,7 +113,18 @@ voice:
   # por isso o matcher nunca disparava. "Ei" e uma interjeicao portuguesa que
   # o modelo reconhece.
   wake_phrase: "ei nano"
-  wake_phrase_enabled: true
+  # EXPERIMENTAL, and OFF by default since the desktop migration.
+  #
+  # The primary way to talk to Nano is now the global Ctrl+Shift+Space
+  # shortcut, which is instant, deterministic and costs nothing while idle.
+  # This detector is none of those things: it keeps a capture stream open and
+  # runs faster-whisper-tiny over every chunk forever, it owns the microphone
+  # architecture for the whole session, and tiny is not reliable enough at
+  # spotting the phrase to be the activation a user depends on.
+  #
+  # The implementation is intact and still fully supported -- Settings can turn
+  # it back on under "Voz experimental" -- it simply no longer runs unasked.
+  wake_phrase_enabled: false
   # Bare "nano" desligado por omissao: causava activacoes falsas.
   wake_phrase_allow_nano_only: false
   wake_phrase_cooldown_seconds: 3.0

@@ -85,6 +85,10 @@
   --inspector-w-compact: 268px;
   --topbar-h:            56px;
   --chat-max:            760px;
+  /* Desktop caption height. 0 in a browser, where there is no title bar --
+     every rule that needs to clear it reads this token rather than hardcoding
+     a number, so the browser build stays pixel-identical to before. */
+  --titlebar-h:          0px;
 
   --transition: 140ms cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -449,12 +453,72 @@ kbd {
    The centre track is minmax(0, 1fr): it may shrink but never pushes the
    others offscreen, which is what caused content to be clipped before.
    ========================================================================== */
+/* The desktop shell wraps the caption and the workspace. In a browser it is a
+   plain full-height column with nothing above the grid. */
+.shell {
+  display: flex; flex-direction: column;
+  height: 100vh; width: 100vw; overflow: hidden;
+  background: var(--bg-base);
+}
+
 .app {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-areas: "sidebar main inspector";
-  height: 100vh; width: 100vw; overflow: hidden; background: var(--bg-base);
+  /* flex child of .shell: min-height:0 is what lets the inner scroll
+     containers scroll instead of stretching the page. */
+  flex: 1; min-height: 0; min-width: 0;
+  width: 100%; overflow: hidden; background: var(--bg-base);
 }
+
+/* ============================================================================
+   DESKTOP TITLE BAR
+   Frameless window, so this is the caption. Two rules keep it usable:
+   the bar drags, and every interactive child opts out of dragging. A control
+   that forgets `-webkit-app-region: no-drag` is not clickable at all, so the
+   opt-out lives on the shared class rather than on each button.
+   ========================================================================== */
+:root[data-desktop="true"] { --titlebar-h: 34px; }
+
+.titlebar {
+  flex: none; height: var(--titlebar-h);
+  display: flex; align-items: stretch;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border);
+  /* A one-pixel highlight along the top edge: the cheapest way to make a
+     frameless window read as a raised surface rather than a cropped page. */
+  box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.06);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+.titlebar[data-focused="false"] { background: var(--bg-sunken); }
+.titlebar[data-focused="false"] .titlebar__name { color: var(--text-dim); }
+
+.titlebar__brand {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: 0 var(--sp-3); min-width: 0;
+}
+.titlebar__name {
+  font-size: var(--fs-sm); font-weight: 600; letter-spacing: 0.01em;
+  color: var(--text);
+}
+.titlebar__version {
+  font-family: var(--font-mono); font-size: 10px; color: var(--text-dim);
+  letter-spacing: 0.03em;
+}
+.titlebar__drag { flex: 1; min-width: 0; }
+
+.titlebar__controls { display: flex; align-items: stretch; flex: none; }
+.titlebar__control {
+  width: 46px; display: grid; place-items: center;
+  color: var(--text-muted);
+  transition: background var(--transition), color var(--transition);
+  -webkit-app-region: no-drag;
+}
+.titlebar__control:hover { background: var(--surface-3); color: var(--text); }
+.titlebar__control:active { background: var(--surface-4); }
+.titlebar__control--close:hover { background: #C0392B; color: #FFFFFF; }
+.titlebar__control:focus-visible { outline-offset: -3px; }
 
 /* ── Sidebar ──────────────────────────────────────────────────────────── */
 .sidebar {
@@ -481,6 +545,7 @@ kbd {
 .sidebar[data-collapsed="true"] .nav-item__badge,
 .sidebar[data-collapsed="true"] .sidebar-health__text { display: none; }
 .sidebar[data-collapsed="true"] .sidebar-cta .btn { padding: 0; }
+.sidebar[data-collapsed="true"] .sidebar-health { align-items: center; }
 
 .nav-item {
   display: flex; align-items: center; gap: var(--sp-3);
@@ -505,11 +570,15 @@ kbd {
 .nav-item__badge--alert { background: rgba(245,158,11,0.18); color: var(--st-approval); }
 
 .sidebar-footer { border-top: 1px solid var(--border); padding: var(--sp-2); flex: none; }
+/* Stacked, not side by side. At the compact sidebar width the status chip and
+   the health sentence were competing for ~180 px and both ended as three
+   characters and an ellipsis ("Precisa ..." / "Todos os servico..."), which
+   tells the user nothing. One per line, each with the full width. */
 .sidebar-health {
-  display: flex; align-items: center; gap: var(--sp-2);
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
   padding: var(--sp-2) var(--sp-2) var(--sp-3); min-width: 0;
 }
-.sidebar-health__text { min-width: 0; }
+.sidebar-health__text { min-width: 0; max-width: 100%; }
 .sidebar-health__title { font-size: var(--fs-sm); color: var(--text); }
 .sidebar-health__hint { font-size: var(--fs-xs); color: var(--text-dim); }
 .sidebar-profile { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
@@ -539,8 +608,17 @@ kbd {
 .topbar__actions { display: flex; align-items: center; gap: var(--sp-2); flex: none; }
 
 .page { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; min-width: 0; }
-.page__inner { padding: var(--sp-5); max-width: 1100px; min-width: 0; }
-.page__inner--wide { max-width: none; }
+.page__inner {
+  padding: var(--sp-5);
+  /* A max, never a floor: `min()` guarantees the column can always shrink to
+     the window, so a narrow desktop width can never clip a page. */
+  width: 100%; max-width: min(1180px, 100%); min-width: 0;
+}
+.page__inner--wide { max-width: 100%; }
+
+/* Settings content column. Wide enough not to strand half the window empty on
+   a desktop-sized display, and it collapses to the available width below that. */
+.settings-body { width: 100%; max-width: min(900px, 100%); min-width: 0; margin-top: var(--sp-5); }
 
 /* ── Conversation ─────────────────────────────────────────────────────── */
 .conversation { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; scroll-behavior: smooth; }
@@ -715,6 +793,14 @@ kbd {
   flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0;
   padding: var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-3);
 }
+/* THE PANELS MUST NOT SHRINK. This is a column flex container, so its children
+   default to flex-shrink: 1 -- when the panels together are taller than the
+   inspector, the browser squeezes them instead of scrolling, and because
+   .panel sets overflow: hidden the last line of each one is cut off. That is
+   what produced "Nenhuma tarefa em" with the "execução" missing, and it is
+   almost certainly why the app looked right only at 80% zoom: zooming out made
+   everything fit, so nothing was squeezed. Pin them and let the column scroll. */
+.inspector__scroll > * { flex: 0 0 auto; }
 
 .provider-row {
   display: flex; align-items: center; gap: var(--sp-2);
@@ -723,8 +809,10 @@ kbd {
 }
 .provider-row--primary { background: var(--accent-faint); border-color: var(--border-accent); }
 .provider-row__icon { width: 26px; height: 26px; border-radius: var(--r-sm); flex: none; display: grid; place-items: center; background: var(--surface-3); }
-.provider-row__text { flex: 1; min-width: 0; }
-.provider-row__name { font-size: var(--fs-sm); font-weight: 500; }
+/* Two stacked lines, not two inline spans: without an explicit column the name
+   and the model ran together as "Groq (Cloud)openai/gpt-oss-20b". */
+.provider-row__text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.provider-row__name { font-size: var(--fs-sm); font-weight: 500; line-height: 1.3; }
 .provider-row__model { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── Timeline ─────────────────────────────────────────────────────────── */
@@ -824,7 +912,7 @@ kbd {
 
 /* Roomy: everything visible, wider chat column. */
 @media (min-width: 1800px) {
-  :root { --chat-max: 820px; --inspector-w: 340px; }
+  :root { --chat-max: 860px; --inspector-w: 348px; }
 }
 
 /* Standard laptop: trim the side columns before touching the chat. */
@@ -832,25 +920,34 @@ kbd {
   :root { --sidebar-w: var(--sidebar-w-compact); --inspector-w: var(--inspector-w-compact); }
 }
 
-/* 1366x768 and 1280x720 class: collapse the sidebar to icons, keep the
-   inspector docked but narrow. The conversation keeps priority. */
+/* 1366x768 class. The sidebar goes to icons and the inspector narrows, but
+   both stay docked: the conversation still has ~830 px, which is comfortable. */
+@media (max-width: 1400px) {
+  :root { --inspector-w: 248px; }
+}
+
+/* 1280x720 class. Same shape, tighter: the conversation keeps priority and
+   the chat column stops being capped so it uses everything that is left. */
 @media (max-width: 1280px) {
-  :root { --sidebar-w: var(--sidebar-w-collapsed); --inspector-w: 260px; --chat-max: 100%; }
+  :root { --sidebar-w: var(--sidebar-w-collapsed); --inspector-w: 240px; --chat-max: 100%; }
   .sidebar .sidebar-section__label,
   .sidebar .nav-item__label,
   .sidebar .nav-item__badge,
   .sidebar .brand-lockup__text,
-  .sidebar .sidebar-health__text { display: none; }
+  .sidebar .sidebar-health__text,
+  .sidebar .sidebar-profile__text { display: none; }
   .sidebar .sidebar-cta .btn { padding: 0; }
   .conversation__inner, .composer-inner { padding-left: var(--sp-4); padding-right: var(--sp-4); }
+  .page__inner { padding: var(--sp-4); }
 }
 
 /* Narrow: the inspector becomes an overlay drawer so the chat keeps the full
-   width instead of being squeezed to nothing. */
+   width instead of being squeezed to nothing. It starts BELOW the desktop
+   title bar -- `top: 0` would slide it over the window controls. */
 @media (max-width: 1080px) {
   .app { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "sidebar main"; }
   .inspector {
-    position: fixed; top: 0; right: 0; bottom: 0; z-index: 100;
+    position: fixed; top: var(--titlebar-h); right: 0; bottom: 0; z-index: 100;
     width: min(320px, 88vw); box-shadow: var(--shadow-lg);
   }
   .inspector[data-collapsed="true"] { display: none; }
@@ -860,7 +957,7 @@ kbd {
 @media (max-width: 720px) {
   .app { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main"; }
   .sidebar {
-    position: fixed; top: 0; left: 0; bottom: 0; z-index: 110;
+    position: fixed; top: var(--titlebar-h); left: 0; bottom: 0; z-index: 110;
     width: min(260px, 84vw); box-shadow: var(--shadow-lg);
   }
   .sidebar[data-collapsed="true"] { display: none; }
@@ -868,17 +965,42 @@ kbd {
   .sidebar .nav-item__label,
   .sidebar .nav-item__badge,
   .sidebar .brand-lockup__text,
-  .sidebar .sidebar-health__text { display: flex; }
+  .sidebar .sidebar-health__text,
+  .sidebar .sidebar-profile__text { display: flex; }
   .sidebar .nav-item__label { display: block; }
   .page__inner { padding: var(--sp-4); }
   .topbar { padding: var(--sp-2) var(--sp-3); }
   .topbar__subtitle { display: none; }
 }
 
-/* Short viewports (e.g. 1366x768 at 150% scaling): reclaim vertical space so
-   the composer never falls below the fold. */
-@media (max-height: 720px) {
+/* Short viewports. 1366x768 at 150% Windows scaling presents as roughly
+   910x512 CSS pixels, and the desktop title bar takes a further 34 -- so
+   vertical space, not horizontal, is what runs out first. Reclaim it from the
+   chrome rather than from the conversation. */
+@media (max-height: 780px) {
   :root { --topbar-h: 48px; }
   .conversation__inner { padding-top: var(--sp-4); }
   .composer__textarea { min-height: 44px; padding-top: var(--sp-3); }
 }
+@media (max-height: 620px) {
+  :root { --topbar-h: 42px; }
+  .topbar__subtitle { display: none; }
+  .conversation__inner { padding-top: var(--sp-3); padding-bottom: var(--sp-2); }
+  .composer-wrap { padding-bottom: var(--sp-3); }
+  .msg { margin-bottom: var(--sp-4); }
+}
+
+/* ============================================================================
+   DESKTOP SHELL ADJUSTMENTS
+   Only applied when the Electron title bar is actually present.
+   ========================================================================== */
+
+/* The caption owns Nano's identity, so the sidebar does not repeat it. The row
+   itself stays, keeping the collapse control aligned with the page header. */
+:root[data-desktop="true"] .sidebar-brand .brand-lockup { display: none; }
+:root[data-desktop="true"] .sidebar-brand { justify-content: flex-end; min-height: 44px; }
+
+/* A frameless window has no OS resize border on the client area. Electron adds
+   its own hit-testing, but the top edge is shared with the caption, so the
+   title bar sits one pixel below the frame to keep the grab area reachable. */
+:root[data-desktop="true"] .shell { border-top: 1px solid rgba(0, 0, 0, 0.6); }

@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8" />
+<!--
+  NANO VOICE OVERLAY
+
+  A small, quiet status panel that appears bottom-centre while Nano is
+  listening and disappears when it is done. It is NOT a window the user
+  interacts with: it is click-through, never takes focus, and has no controls.
+
+  Design: the same tokens as the main UI (near-black surface, aqua primary,
+  light-blue secondary), scaled down to something that can sit on top of a
+  game or a document without shouting. The animation is deliberately small —
+  a slow breath while listening, a short travelling bar while working — and it
+  is torn down the moment the overlay hides, so nothing repaints off-screen.
+
+  Every state comes from a real backend voice event (see lib/overlay-state.js).
+  This file never advances a state on its own.
+-->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src data:;" />
+<title>Nano</title>
+<style>
+  :root {
+    --surface:  rgba(10, 14, 19, 0.92);
+    --border:   rgba(148, 163, 184, 0.14);
+    --accent:   #2DD4BF;
+    --accent-2: #7DD3FC;
+    --text:     #E8EEF4;
+    --text-dim: #7C8B9B;
+    --danger:   #F87171;
+    --warn:     #FBBF24;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: transparent;
+    overflow: hidden;
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: default;
+    font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+
+  #panel {
+    position: absolute; inset: 12px;
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 18px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    box-shadow: 0 18px 44px -14px rgba(0, 0, 0, 0.75),
+                0 0 0 1px rgba(0, 0, 0, 0.35);
+    /* Acrylic-ish depth, so it reads as a system surface rather than a toast. */
+    backdrop-filter: blur(18px) saturate(140%);
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+    transition: opacity 170ms ease, transform 190ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  #panel[data-visible="true"] { opacity: 1; transform: translateY(0) scale(1); }
+
+  /* ── The orb ───────────────────────────────────────────────────────── */
+  #orb { position: relative; width: 34px; height: 34px; flex: none; }
+  #orb svg { display: block; width: 100%; height: 100%; }
+  #orb .core  { stroke: var(--accent); }
+  #orb .letter { stroke: var(--accent); }
+  #orb .node-a { fill: var(--accent); }
+  #orb .node-b { fill: var(--accent-2); }
+
+  /* A soft halo behind the mark, coloured per state. */
+  #halo {
+    position: absolute; inset: -8px;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--accent) 0%, transparent 68%);
+    opacity: 0.18;
+    transform: scale(0.9);
+  }
+
+  /* ── Text ──────────────────────────────────────────────────────────── */
+  #text { flex: 1; min-width: 0; }
+  #label {
+    font-size: 14.5px; font-weight: 550; letter-spacing: -0.01em;
+    color: var(--text); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  #detail {
+    font-size: 11.5px; color: var(--text-dim); margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    min-height: 0;
+  }
+  #detail:empty { display: none; }
+
+  /* ── Progress rail ─────────────────────────────────────────────────── */
+  #rail {
+    position: absolute; left: 18px; right: 18px; bottom: 10px;
+    height: 2px; border-radius: 2px;
+    background: rgba(148, 163, 184, 0.12);
+    overflow: hidden; opacity: 0;
+    transition: opacity 160ms ease;
+  }
+  #rail i {
+    display: block; width: 34%; height: 100%; border-radius: 2px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    transform: translateX(-100%);
+  }
+
+  /* ── State colouring and motion ────────────────────────────────────── */
+
+  /* Listening: a slow breath. One property, one keyframe, 2.4 s — present
+     enough to say "go ahead", quiet enough to ignore. */
+  #panel[data-state="activated"] #halo,
+  #panel[data-state="listening"] #halo { animation: breathe 2400ms ease-in-out infinite; }
+
+  #panel[data-state="transcribing"] #rail,
+  #panel[data-state="processing"] #rail { opacity: 1; }
+  #panel[data-state="transcribing"] #rail i,
+  #panel[data-state="processing"] #rail i { animation: travel 1250ms ease-in-out infinite; }
+
+  #panel[data-state="speaking"] #halo {
+    background: radial-gradient(circle, var(--accent-2) 0%, transparent 68%);
+    animation: breathe 1600ms ease-in-out infinite;
+  }
+  #panel[data-state="speaking"] #orb .core,
+  #panel[data-state="speaking"] #orb .letter { stroke: var(--accent-2); }
+
+  #panel[data-state="busy"]  #halo,
+  #panel[data-state="quiet"] #halo {
+    background: radial-gradient(circle, var(--warn) 0%, transparent 68%);
+  }
+  #panel[data-state="busy"]  #orb .core,   #panel[data-state="busy"]  #orb .letter,
+  #panel[data-state="quiet"] #orb .core,   #panel[data-state="quiet"] #orb .letter { stroke: var(--warn); }
+
+  #panel[data-state="error"] #halo {
+    background: radial-gradient(circle, var(--danger) 0%, transparent 68%);
+  }
+  #panel[data-state="error"] #orb .core,
+  #panel[data-state="error"] #orb .letter { stroke: var(--danger); }
+  #panel[data-state="error"] #label { color: var(--danger); }
+
+  #panel[data-state="done"] #halo { opacity: 0.10; }
+
+  @keyframes breathe {
+    0%, 100% { opacity: 0.14; transform: scale(0.88); }
+    50%      { opacity: 0.36; transform: scale(1.06); }
+  }
+  @keyframes travel {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(330%); }
+  }
+
+  /* Nothing animates while hidden: a window nobody can see must not repaint. */
+  #panel[data-visible="false"] #halo,
+  #panel[data-visible="false"] #rail i { animation: none !important; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #halo, #rail i { animation: none !important; }
+    #panel { transition: opacity 120ms linear; transform: none; }
+  }
+</style>
+</head>
+<body>
+  <div id="panel" data-visible="false" data-state="idle" role="status" aria-live="polite">
+    <div id="orb">
+      <div id="halo"></div>
+      <!-- The Nano mark, same geometry as frontend/components/NanoLogo.tsx. -->
+      <svg viewBox="0 0 48 48" fill="none" aria-hidden="true">
+        <path class="core"
+              d="M24 8.5 38.5 16.75v14.5L24 39.5 9.5 31.25v-14.5L24 8.5Z"
+              stroke-width="1.9" stroke-linejoin="round" />
+        <path class="letter" d="M18.5 31V17l11 14V17"
+              stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" />
+        <circle class="node-a" cx="18.5" cy="17" r="1.9" />
+        <circle class="node-b" cx="29.5" cy="31" r="1.9" />
+      </svg>
+    </div>
+
+    <div id="text">
+      <div id="label">Nano</div>
+      <div id="detail"></div>
+    </div>
+
+    <div id="rail"><i></i></div>
+  </div>
+
+  <script src="overlay.js"></script>
+</body>
+</html>

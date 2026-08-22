@@ -32,7 +32,11 @@ logs/
 .mypy_cache/
 .ruff_cache/
 
-# Runtime scratch produced by the voice stack
+# Legacy scratch names. The voice stack no longer writes audio into the
+# project: each utterance now gets a unique file in the OS temp directory and
+# deletes it afterwards. Writing to one fixed name here is what locked the file
+# open and left Nano able to speak only once per launch. Kept so an older
+# working copy stays clean; do not reintroduce the pattern.
 nano_tts_tmp.mp3
 nano_audio_output.wav
 

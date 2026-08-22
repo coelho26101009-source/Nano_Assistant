@@ -14,6 +14,7 @@ from typing import Callable
 
 import pytest
 
+from core import speech_filter
 from core.wake_phrase import (
     DEFAULT_CHUNK_SECONDS,
     DEFAULT_COOLDOWN_SECONDS,
@@ -203,6 +204,9 @@ class _FakeAudioProvider:
         self._available = available
         self._chunks = list(chunks) if chunks else [speech_wav()]
         self.captured_durations: list[float] = []
+        # The provider owns the speech gate; the wake engine borrows it. See
+        # core.voice.AudioInputProvider.gate.
+        self.gate = speech_filter.AdaptiveGate()
 
     def capture(self, duration_seconds: float) -> bytes | None:
         self.captured_durations.append(duration_seconds)
