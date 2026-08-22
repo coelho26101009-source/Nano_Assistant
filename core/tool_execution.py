@@ -59,6 +59,23 @@ _ALLOWED_TEST_RUNNERS: dict[str, list[str]] = {
     "unittest": ["-m", "unittest", "discover", "-q"],
 }
 
+# Synchronous tool handlers run here rather than on asyncio's shared default
+# executor, for two reasons.
+#
+# 1. Isolation. A tool that times out leaves its worker running -- Python cannot
+#    interrupt a thread -- and that orphan occupies a slot until the handler
+#    returns. On the shared default executor those orphans would also delay
+#    every other asyncio.to_thread caller in the process, and would block
+#    interpreter shutdown while the loop waits to join them.
+# 2. A stated ceiling. Tool concurrency is now an explicit number instead of
+#    asyncio's implicit min(32, cpu_count + 4).
+#
+# Threads are created on demand and the pool is never resized, so an idle Nano
+# holds no tool threads at all.
+_TOOL_THREADS = concurrent.futures.ThreadPoolExecutor(
+    max_workers=8, thread_name_prefix="nano-tool"
+)
+
 
 class ToolExecutor:
     """Registry and runner for real Nano tools with permission enforcement."""
@@ -422,7 +439,20 @@ class ToolExecutor:
         return self._run_and_verify(name, auth, task_id, self._run_handler_sync)
 
     async def execute_tool_async(self, name: str, args: dict | None = None, *, task_id: str | None = None) -> dict:
-        """Async execution used by the chat loop. Never blocks the event loop."""
+        """Async execution used by the chat loop. Never blocks the event loop.
+
+        Authorization (_authorize) and the handler itself both run off-thread,
+        so the loop stays responsive for the whole call and the per-tool timeout
+        below is genuinely enforceable.
+
+        Cancellation note: a timeout cancels the *await*, not the worker thread
+        -- Python cannot interrupt a running thread. The call returns
+        tool_timeout immediately and the orphaned worker finishes into a result
+        nobody reads. That is the correct trade for a desktop assistant: the
+        alternative is the loop hanging until the tool decides to return.
+        Handlers keep their own internal timeouts (subprocess.run(timeout=...),
+        httpx timeouts) so the thread is bounded in practice too.
+        """
         args = dict(args or {})
         auth = await asyncio.to_thread(self._authorize, name, args, task_id)
         if not auth["ok"]:
@@ -457,8 +487,30 @@ class ToolExecutor:
         return result
 
     async def _run_handler_async(self, handler: Callable[[dict], Any], args: dict) -> Any:
-        result = handler(args)
+        """Run one handler without ever occupying the calling event loop.
+
+        Almost every handler here is SYNCHRONOUS -- the four built-ins that use
+        subprocess or httpx, and all 36 plugin handlers. Calling one directly
+        from this coroutine ran its whole body before the coroutine ever
+        yielded, so the loop was blocked for the full duration of the tool: up
+        to the 180 s ceiling of shell.execute. Two things followed from that.
+        Streamed chunks, eel callbacks and confirmation dialogs all stalled;
+        and the asyncio.wait_for() wrapped around this call could never fire,
+        because a timeout callback cannot be scheduled on a loop that is not
+        running. The declared per-tool timeout was decorative.
+
+        Off-loading to a worker thread fixes both at once: the loop keeps
+        turning, so the UI stays live and the timeout is real.
+        """
+        if inspect.iscoroutinefunction(handler):
+            return await handler(args)
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(_TOOL_THREADS, handler, args)
         if inspect.isawaitable(result):
+            # A sync function that returns a coroutine (the plugin dispatch
+            # wrapper does this for async plugin handlers). Await it here, on
+            # the loop, where it belongs.
             return await result
         return result
 

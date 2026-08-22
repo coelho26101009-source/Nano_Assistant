@@ -65,17 +65,29 @@
   function on_stream_end(msgId, result) { return dispatch("on_stream_end", [msgId, result]); }
   eel.expose(on_stream_end, "on_stream_end");
 
+  // A model/provider failure, as distinct from the bridge being unreachable.
+  function on_stream_error(msgId, error) { return dispatch("on_stream_error", [msgId, error]); }
+  eel.expose(on_stream_error, "on_stream_error");
+
+  // Groq rate limit: carries the real wait time so the UI can explain it.
+  function on_rate_limited(msgId, info) { return dispatch("on_rate_limited", [msgId, info]); }
+  eel.expose(on_rate_limited, "on_rate_limited");
+
   function on_confirm_request(requestId, message, meta) { return dispatch("on_confirm_request", [requestId, message, meta]); }
   eel.expose(on_confirm_request, "on_confirm_request");
 
   function on_wake_detected(transcript) { return dispatch("on_wake_detected", [transcript]); }
   eel.expose(on_wake_detected, "on_wake_detected");
 
-  function on_voice_exchange(userText, assistantText) { return dispatch("on_voice_exchange", [userText, assistantText]); }
+  function on_voice_exchange(turnId, userText, assistantText) { return dispatch("on_voice_exchange", [turnId, userText, assistantText]); }
   eel.expose(on_voice_exchange, "on_voice_exchange");
 
   function on_voice_state(state, detail) { return dispatch("on_voice_state", [state, detail]); }
   eel.expose(on_voice_state, "on_voice_state");
 
-  console.info("[nano-bridge] ready: 8 Python -> UI callbacks registered.");
+  // Which phase of a voice turn Nano is in, so the UI can narrate it.
+  function on_voice_phase(phase, detail) { return dispatch("on_voice_phase", [phase, detail]); }
+  eel.expose(on_voice_phase, "on_voice_phase");
+
+  console.info("[nano-bridge] ready: 11 Python -> UI callbacks registered.");
 })();

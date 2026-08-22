@@ -632,7 +632,7 @@ export function StatusPage({
     { name: "Groq (cloud)", state: providers?.groq.state, note: providers?.groq.detail },
     { name: "Ollama (local)", state: providers?.ollama.state, note: providers?.ollama.detail },
     { name: "Voz / STT", state: readiness?.voice.state, note: readiness?.voice.blockers?.join(" · ") || "Transcrição local" },
-    { name: "Wake phrase", state: readiness?.wakePhrase.state, note: `"${readiness?.wakePhrase.phrase ?? "hey nano"}"` },
+    { name: "Wake phrase", state: readiness?.wakePhrase.state, note: `"${readiness?.wakePhrase.phrase ?? "ei nano"}"` },
     { name: "Worker de tarefas", state: readiness?.worker.state, note: `Fila: ${readiness?.worker.queue_size ?? 0}` },
     { name: "Browser", state: readiness?.browser.state, note: "Requer Playwright" },
   ];

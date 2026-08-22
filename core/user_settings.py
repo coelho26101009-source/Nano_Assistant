@@ -28,14 +28,18 @@ _cache: dict[str, Any] | None = None
 # malicious page reaching the local bridge) from rewriting arbitrary config.
 ALLOWED_KEYS: frozenset[str] = frozenset({
     "provider_mode",           # AUTO | CLOUD | LOCAL
-    "groq_model",
+    "groq_model",              # legacy alias of groq_fast_model
+    "groq_fast_model",         # ordinary conversation and voice
+    "groq_complex_model",      # only for explicitly COMPLEX requests
     "local_model",
     "wake_phrase_enabled",
     "wake_phrase_allow_nano_only",
     "wake_phrase_cooldown_seconds",
     "wake_command_timeout_seconds",
     "voice_enabled",
-    "tts_enabled",
+    "tts_enabled",             # master switch for any spoken output
+    "typed_chat_tts",          # speak replies to messages the user TYPED
+    "voice_reply_tts",         # speak replies to messages the user SPOKE
     "input_device_index",
     "output_device_index",
     "theme",
@@ -116,6 +120,14 @@ def apply_overlay(config: dict[str, Any]) -> dict[str, Any]:
 
     if "groq_model" in stored:
         config["groq_model"] = stored["groq_model"]
+    # groq_model stays the legacy name for the conversation model, so an older
+    # stored setting keeps working without a migration step.
+    if "groq_fast_model" in stored:
+        config["groq_fast_model"] = stored["groq_fast_model"]
+    elif "groq_model" in stored:
+        config["groq_fast_model"] = stored["groq_model"]
+    if "groq_complex_model" in stored:
+        config["groq_complex_model"] = stored["groq_complex_model"]
     if "local_model" in stored:
         local["model"] = stored["local_model"]
     if "provider_mode" in stored:
@@ -127,6 +139,8 @@ def apply_overlay(config: dict[str, Any]) -> dict[str, Any]:
         "wake_phrase_cooldown_seconds",
         "wake_command_timeout_seconds",
         "tts_enabled",
+        "typed_chat_tts",
+        "voice_reply_tts",
     ):
         if key in stored:
             voice[key] = stored[key]

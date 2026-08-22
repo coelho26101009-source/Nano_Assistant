@@ -21,6 +21,22 @@ export type ToolEvent = {
   detail?: string;
 };
 
+/** Safe per-response diagnostics. Never contains prompts, arguments or keys. */
+export interface ResponseMeta {
+  provider?: string;
+  model?: string;
+  mode?: string;
+  tier?: string;
+  task?: string;
+  fallback_used?: boolean;
+  tools_offered?: number;
+  tools_available?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  time_to_first_token_ms?: number;
+  total_latency_ms?: number;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
@@ -29,6 +45,7 @@ export interface Message {
   streaming?: boolean;
   tools?: ToolEvent[];
   error?: boolean;
+  meta?: ResponseMeta;
 }
 
 /* ── Cleaning model output ────────────────────────────────────────────── */
@@ -265,6 +282,42 @@ function MessageBubble({ message }: { message: Message }) {
           )}
           {message.streaming && text && <span className="caret" aria-hidden="true" />}
         </div>
+
+        {/* Technical details, collapsed by default so normal chat stays clean.
+            Safe metadata only: provider, model, tokens and latency. */}
+        {!isUser && !message.streaming && message.meta?.model && (
+          <details className="msg__meta">
+            <summary>Detalhes técnicos</summary>
+            <dl className="kv">
+              <dt>Provedor</dt>
+              <dd>
+                {message.meta.provider}
+                {message.meta.fallback_used ? " (fallback)" : ""}
+              </dd>
+              <dt>Modelo</dt><dd>{message.meta.model}</dd>
+              <dt>Modo</dt><dd>{message.meta.mode} · {message.meta.tier}</dd>
+              <dt>Pedido</dt><dd>{message.meta.task}</dd>
+              <dt>Ferramentas</dt>
+              <dd>{message.meta.tools_offered ?? 0} de {message.meta.tools_available ?? 0}</dd>
+              {message.meta.prompt_tokens != null && (
+                <>
+                  <dt>Tokens</dt>
+                  <dd>{message.meta.prompt_tokens} entrada · {message.meta.completion_tokens ?? 0} saída</dd>
+                </>
+              )}
+              {message.meta.time_to_first_token_ms != null && (
+                <>
+                  <dt>1.º token</dt><dd>{message.meta.time_to_first_token_ms} ms</dd>
+                </>
+              )}
+              {message.meta.total_latency_ms != null && (
+                <>
+                  <dt>Total</dt><dd>{message.meta.total_latency_ms} ms</dd>
+                </>
+              )}
+            </dl>
+          </details>
+        )}
       </div>
     </article>
   );
@@ -283,7 +336,7 @@ export function Conversation({
           <EmptyState
             icon={<NanoLogo size={40} />}
             title="Pronto quando quiseres"
-            hint="Pergunta alguma coisa, ou diz “Hey Nano”. Ações sensíveis pedem sempre a tua autorização antes de acontecerem."
+            hint="Pergunta alguma coisa, ou diz “Ei Nano”. Ações sensíveis pedem sempre a tua autorização antes de acontecerem."
           />
         </div>
       </div>

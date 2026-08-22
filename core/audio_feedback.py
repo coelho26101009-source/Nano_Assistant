@@ -141,7 +141,14 @@ def output_device_report() -> dict:
         # Shares the process-wide PortAudio lock: initialising PyAudio here
         # while the wake-phrase thread is capturing crashes the process with an
         # access violation. Imported lazily to avoid an import cycle.
-        from core.voice import _PORTAUDIO_LOCK
+        from core.voice import _PORTAUDIO_LOCK, microphone_busy
+
+        if microphone_busy():
+            # A PyAudio instance created and terminated here would tear down
+            # PortAudio underneath the live capture stream. Enumeration is a
+            # diagnostic nicety; never risk the running voice loop for it.
+            report["devices_skipped"] = "capture stream in use"
+            return report
 
         with _PORTAUDIO_LOCK:
             pa = pyaudio.PyAudio()

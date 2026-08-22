@@ -77,6 +77,20 @@ _APPROVAL_GATED_CAPABILITIES = frozenset({
     "system",
 })
 
+# How long an approved-but-unconsumed ALLOW_ONCE grant stays valid.
+#
+# A one-shot grant used to live for the lifetime of the process: it was added
+# when the user approved and removed only when it was consumed. If the approved
+# action then failed to run -- a validation error, a cancelled turn, a crash --
+# the grant survived and silently authorised the NEXT identical call, with no
+# prompt, arbitrarily later. The user's "yes" applied to a moment; it must not
+# outlive that moment.
+#
+# 90 seconds is long enough to cover a slow confirmation round trip followed by
+# a slow tool (the confirmation dialog itself times out at 60 s), and short
+# enough that an unused grant is gone before the user has moved on.
+ONCE_GRANT_TTL_SECONDS = 90.0
+
 # Critical capabilities: never allow persistent/autonomous bypass.
 _CRITICAL_CAPABILITIES = frozenset({
     "filesystem.delete",
@@ -105,7 +119,8 @@ class PermissionManager:
         self._policies: dict[str, dict[str, Any]] = {}
         self._pending_requests: dict[str, dict[str, Any]] = {}
         self._audit_log: list[dict[str, Any]] = []
-        self._once_grants: set[tuple[str, str]] = set()
+        # ALLOW_ONCE grants: key -> monotonic deadline. See ONCE_GRANT_TTL_SECONDS.
+        self._once_grants: dict[tuple[str, str], float] = {}
         self._task_grants: dict[str, set[TaskGrant]] = {}
         self._policy_store_path = Path(policy_store_path) if policy_store_path else DATA_DIR / "permission_policies.json"
         self._policy_store_path.parent.mkdir(parents=True, exist_ok=True)
@@ -167,9 +182,40 @@ class PermissionManager:
             scope=str(resolved_scope),
         )
 
+    @staticmethod
+    def _monotonic() -> float:
+        import time
+
+        return time.monotonic()
+
+    def _purge_expired_once_grants(self) -> int:
+        """Drop every one-shot grant past its deadline. Returns how many went.
+
+        Called on every read and write of the collection, which is what keeps it
+        bounded: a grant that is never consumed is removed by the next lookup
+        rather than accumulating for the lifetime of the process.
+        """
+        now = self._monotonic()
+        expired = [key for key, deadline in self._once_grants.items() if deadline <= now]
+        for key in expired:
+            del self._once_grants[key]
+            self.log_decision(
+                key[0],
+                "expired",
+                target=key[1] if key[1] != "*" else None,
+                reason=f"One-shot permission grant expired unused after {ONCE_GRANT_TTL_SECONDS:.0f}s.",
+                event_name="PermissionGrantExpired",
+            )
+        return len(expired)
+
+    def _has_once_grant(self, key: tuple[str, str]) -> bool:
+        """True only for a grant that exists AND has not expired."""
+        self._purge_expired_once_grants()
+        return key in self._once_grants
+
     def _has_execution_grant(self, capability: str, args: dict | None = None, *, task_id: str | None = None, scope: str | None = None) -> bool:
         key = self._grant_key(capability, args)
-        if key in self._once_grants:
+        if self._has_once_grant(key):
             return True
         return self._has_task_execution_grant(capability, task_id=task_id, args=args, scope=scope)
 
@@ -180,8 +226,10 @@ class PermissionManager:
 
     def _consume_execution_grant(self, capability: str, args: dict | None = None, *, task_id: str | None = None, scope: str | None = None) -> bool:
         key = self._grant_key(capability, args)
-        if key in self._once_grants:
-            self._once_grants.discard(key)
+        if self._has_once_grant(key):
+            # Removed BEFORE the caller executes, so a one-shot grant authorises
+            # exactly one execution even if the same call is retried.
+            del self._once_grants[key]
             self.log_decision(
                 self._canonical_capability(capability),
                 "allow_once",
@@ -506,7 +554,12 @@ class PermissionManager:
         request["allow_permanent"] = False
 
         if normalized == "allow_once":
-            self._once_grants.add(self._grant_key(capability, request_args))
+            # Bounded from the moment it is granted: an approval the user gives
+            # now must not authorise an action minutes later.
+            self._purge_expired_once_grants()
+            self._once_grants[self._grant_key(capability, request_args)] = (
+                self._monotonic() + ONCE_GRANT_TTL_SECONDS
+            )
         elif normalized == "allow_for_task":
             if not request_task_id:
                 return {"ok": False, "error": "task_id_required"}

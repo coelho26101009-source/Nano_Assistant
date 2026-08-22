@@ -211,7 +211,7 @@ export default function Inspector({
                 <div className="tl-meta" style={{ whiteSpace: "normal" }}>{readiness.voice.blockers.join(" · ")}</div>
               ) : null}
               <MetricRow
-                label={`"${readiness?.wakePhrase.phrase ?? "hey nano"}"`}
+                label={`"${readiness?.wakePhrase.phrase ?? "ei nano"}"`}
                 value={<StatusIndicator state={readiness?.wakePhrase.state} />}
               />
               {readiness?.wakePhrase.error ? (

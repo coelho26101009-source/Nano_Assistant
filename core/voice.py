@@ -8,6 +8,7 @@ import os
 import tempfile
 import threading
 import time
+import uuid
 import wave
 from dataclasses import dataclass
 from enum import Enum
@@ -31,6 +32,18 @@ _PORTAUDIO_LOCK = threading.RLock()
 # Device enumeration is stable in practice, so it is cached: the readiness poll
 # then costs nothing and does not have to touch PortAudio at all.
 _DEVICE_CACHE_TTL_SECONDS = 30.0
+
+# Set while a long-lived capture stream is open. PyAudio.terminate() tears down
+# PortAudio process-wide, so no other component may construct or destroy a
+# PyAudio instance while a stream is live -- that is exactly the access
+# violation (0xC0000005) this module already had once. Everything that would
+# otherwise enumerate devices checks this flag and serves cached data instead.
+_MIC_STREAM_OPEN = threading.Event()
+
+
+def microphone_busy() -> bool:
+    """True while Nano holds its single long-lived capture stream open."""
+    return _MIC_STREAM_OPEN.is_set()
 
 
 class ProviderError(RuntimeError):
@@ -193,8 +206,16 @@ class WakePhraseProvider(BaseProvider):
     def pause(self) -> None:
         self._engine.pause()
 
+    def pause_and_wait(self, timeout: float = 5.0) -> bool:
+        """Pause and block until the engine is genuinely off the microphone."""
+        return self._engine.pause_and_wait(timeout)
+
     def resume(self) -> None:
         self._engine.resume()
+
+    @property
+    def running(self) -> bool:
+        return self._engine.running
 
     def set_state(self, state: WakePhraseState) -> None:
         self._engine.set_state(state)
@@ -343,12 +364,18 @@ class AudioInputProvider(BaseProvider):
     _device_cache: list[dict[str, Any]] | None = None
     _device_cache_at: float = 0.0
 
+    _FRAMES_PER_BUFFER = 1024
+
     def __init__(self, config: dict | None = None):
         self.config = config or {}
         self.sample_rate = int(self.config.get("sample_rate", 16000))
         self.channels = int(self.config.get("channels", 1))
         self.device_index = self.config.get("device_index")
         self._available = importlib.util.find_spec("pyaudio") is not None
+        # The single long-lived stream, when one is open.
+        self._pyaudio: Any = None
+        self._stream: Any = None
+        self._stream_rate: int | None = None
 
     def list_devices(self) -> list[dict[str, Any]]:
         """Enumerate input devices, cached and serialised against capture().
@@ -365,6 +392,12 @@ class AudioInputProvider(BaseProvider):
         cached = type(self)._device_cache
         if cached is not None and (now - type(self)._device_cache_at) < _DEVICE_CACHE_TTL_SECONDS:
             return cached
+
+        # Constructing a second PyAudio while the persistent stream is live and
+        # then terminating it would tear PortAudio down under the running
+        # stream, so the cache is served instead. Never refresh here.
+        if _MIC_STREAM_OPEN.is_set():
+            return cached if cached is not None else []
 
         # Non-blocking: if a capture holds PortAudio, serve the previous list
         # rather than waiting (or worse, racing it).
@@ -394,10 +427,116 @@ class AudioInputProvider(BaseProvider):
         finally:
             _PORTAUDIO_LOCK.release()
 
-    def capture(self, duration_seconds: int = 5, sample_rate: int | None = None) -> bytes | None:
-        """Record one bounded chunk. Serialised against every other PortAudio user."""
+    # ------------------------------------------------------- persistent stream
+
+    def open_stream(self, sample_rate: int | None = None) -> bool:
+        """Open the single long-lived capture stream. Idempotent.
+
+        Reopening PyAudio for every 2.5 s chunk cost 78-125 ms of measured dead
+        time per iteration and, worse, guaranteed a hard boundary every chunk
+        where "Hey Nano" could be cut in half. One stream plus a rolling buffer
+        removes both problems.
+        """
         if not self._available:
             raise ProviderError("microphone unavailable")
+        with _PORTAUDIO_LOCK:
+            if self._stream is not None:
+                return True
+            try:
+                import pyaudio
+
+                rate = sample_rate or self.sample_rate
+                self._pyaudio = pyaudio.PyAudio()
+                self._stream = self._pyaudio.open(
+                    format=pyaudio.paInt16,
+                    channels=self.channels,
+                    rate=rate,
+                    input=True,
+                    input_device_index=self.device_index,
+                    frames_per_buffer=self._FRAMES_PER_BUFFER,
+                )
+                self._stream_rate = rate
+                _MIC_STREAM_OPEN.set()
+                logger.info("[Mic] persistent stream open (rate=%d device=%s)",
+                            rate, self.device_index)
+                return True
+            except Exception as exc:
+                self._teardown_stream_locked()
+                logger.warning("could not open persistent microphone stream: %s", exc)
+                raise ProviderError(str(exc)) from exc
+
+    def close_stream(self) -> None:
+        with _PORTAUDIO_LOCK:
+            self._teardown_stream_locked()
+
+    def _teardown_stream_locked(self) -> None:
+        """Caller must hold _PORTAUDIO_LOCK."""
+        _MIC_STREAM_OPEN.clear()
+        if self._stream is not None:
+            try:
+                self._stream.stop_stream()
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
+        if self._pyaudio is not None:
+            try:
+                self._pyaudio.terminate()
+            except Exception:
+                pass
+            self._pyaudio = None
+
+    @property
+    def stream_open(self) -> bool:
+        return self._stream is not None
+
+    def read_stream(self, duration_seconds: float) -> bytes | None:
+        """Read a bounded slice from the open stream as a WAV payload.
+
+        Reading does not initialise or terminate PortAudio, so it deliberately
+        does NOT hold _PORTAUDIO_LOCK: holding it for the whole read would
+        block the readiness poll for seconds at a time.
+        """
+        stream = self._stream
+        if stream is None:
+            return None
+        rate = self._stream_rate or self.sample_rate
+        wanted = max(1, int(rate / self._FRAMES_PER_BUFFER * float(duration_seconds)))
+        frames: list[bytes] = []
+        for _ in range(wanted):
+            if self._stream is None:            # closed underneath us
+                return None
+            try:
+                frames.append(stream.read(self._FRAMES_PER_BUFFER, exception_on_overflow=False))
+            except Exception as exc:
+                logger.warning("[Mic] stream read failed: %s", exc)
+                return None
+        return self._to_wav(b"".join(frames), rate)
+
+    def _to_wav(self, raw: bytes, rate: int) -> bytes:
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as wav:
+            wav.setnchannels(self.channels)
+            wav.setsampwidth(2)
+            wav.setframerate(rate)
+            wav.writeframes(raw)
+        return buffer.getvalue()
+
+    def capture(self, duration_seconds: int = 5, sample_rate: int | None = None) -> bytes | None:
+        """Record one bounded chunk.
+
+        If the persistent stream is open this reads from it, so a command turn
+        never opens a second microphone. Otherwise it falls back to the
+        original open/read/close cycle, fully serialised.
+        """
+        if not self._available:
+            raise ProviderError("microphone unavailable")
+
+        if self._stream is not None and (sample_rate is None or sample_rate == self._stream_rate):
+            payload = self.read_stream(duration_seconds)
+            if payload is not None:
+                return payload
+            # Stream died mid-read; fall through and reopen the one-shot way.
 
         # Held for the whole open/read/close cycle: PortAudio cannot tolerate
         # another thread initialising or terminating it while a stream is live.
@@ -487,9 +626,17 @@ class VoiceSession:
         self._triggered_by_wake_word = False
 
     def transition(self, new_state: VoiceSessionState) -> VoiceSessionState:
+        """Move to a new state and log the real transition.
+
+        The previous state was being overwritten before the log call, so every
+        line read "X -> X" and the actual sequence was unrecoverable from the
+        log. The old value is captured first.
+        """
+        previous = self.state
         self.state = new_state
         self.last_state_change = time.time()
-        logger.info("voice session state: %s -> %s", self.state, new_state)
+        if previous != new_state:
+            logger.info("voice session state: %s -> %s", previous.value, new_state.value)
         return self.state
 
     def start(self) -> VoiceSessionState:
@@ -645,12 +792,24 @@ class VoiceEngine:
             logger.warning("could not start wake phrase: %s", exc)
             return False
 
-    def stop(self) -> None:
+    def stop_playback(self) -> None:
+        """Stop what is being spoken RIGHT NOW. Voice stays available.
+
+        This is what the UI's Stop button needs. It used to call stop(), which
+        also tears down the wake detectors -- so interrupting a single spoken
+        reply silently disabled "Ei Nano" for the rest of the session, and the
+        only way back was to toggle the setting off and on. Stopping a sound is
+        not the same request as shutting down the subsystem that makes sounds.
+        """
         self.session.cancel()
         try:
             self.tts_provider.stop()
         except Exception:
-            pass
+            logger.debug("could not stop TTS playback", exc_info=True)
+
+    def shutdown(self) -> None:
+        """Tear down the whole voice subsystem. Only for application exit."""
+        self.stop_playback()
         try:
             self.wake_word_provider.stop()
         except Exception:
@@ -659,6 +818,10 @@ class VoiceEngine:
             self.wake_phrase_provider.stop()
         except Exception:
             pass
+
+    def stop(self) -> None:
+        """Backwards-compatible alias for the full teardown."""
+        self.shutdown()
 
     async def listen(self, duration_seconds: int | None = None) -> str | None:
         if not self.enabled:
@@ -730,6 +893,79 @@ class VoiceRuntime:
             voice_cfg.get("wake_command_timeout_seconds", 7)
         )))
 
+        # --- one voice turn at a time -------------------------------------
+        # Every trigger (wake phrase, global hotkey, UI button) funnels through
+        # run_voice_turn, and exactly one may hold the microphone. The guard is
+        # NON-BLOCKING on purpose: a second trigger must be told "already
+        # listening" immediately, not queued behind the first. Queueing would
+        # mean the user presses the hotkey, nothing appears to happen, and a
+        # turn starts later against a command they are no longer speaking.
+        self._turn_lock = threading.Lock()
+        self._turn_source: str | None = None
+        self._turn_started_at: float | None = None
+        self._turn_phase: str = "IDLE"
+        # UI notifications, injected by the host so this module never imports
+        # eel. Absent hooks are simply not called.
+        self._on_phase: Callable[[str, str], None] | None = None
+        self._on_exchange: Callable[[str, str, str], None] | None = None
+        self._on_activation: Callable[[str], None] | None = None
+
+    # ------------------------------------------------------------- observers
+
+    def set_observer(
+        self,
+        *,
+        on_phase: Callable[[str, str], None] | None = None,
+        on_exchange: Callable[[str, str, str], None] | None = None,
+        on_activation: Callable[[str], None] | None = None,
+    ) -> None:
+        """Attach the host's UI notifications to the voice turn.
+
+        Keeps the choreography here and the transport in the host: this module
+        stays importable and testable with no eel, no browser and no UI.
+        """
+        self._on_phase = on_phase
+        self._on_exchange = on_exchange
+        self._on_activation = on_activation
+
+    def _phase(self, phase: str, detail: str = "") -> None:
+        self._turn_phase = phase
+        if self._on_phase is None:
+            return
+        try:
+            self._on_phase(phase, detail)
+        except Exception:
+            logger.debug("voice phase notification failed: %s", phase, exc_info=True)
+
+    def _exchange(self, turn_id: str, user_text: str, assistant_text: str) -> None:
+        if self._on_exchange is None:
+            return
+        try:
+            self._on_exchange(turn_id, user_text, assistant_text)
+        except Exception:
+            logger.debug("voice exchange notification failed", exc_info=True)
+
+    def _activation(self, transcript: str = "") -> None:
+        if self._on_activation is None:
+            return
+        try:
+            self._on_activation(transcript)
+        except Exception:
+            logger.debug("voice activation notification failed", exc_info=True)
+
+    def turn_status(self) -> dict:
+        """Whether a voice turn is running, and which trigger started it."""
+        active = self._turn_source is not None
+        return {
+            "active": active,
+            "source": self._turn_source,
+            "phase": self._turn_phase,
+            "elapsed_seconds": (
+                round(time.time() - self._turn_started_at, 1)
+                if active and self._turn_started_at else None
+            ),
+        }
+
     def status(self) -> dict:
         readiness, blockers = self.voice.readiness()
         return {
@@ -742,6 +978,23 @@ class VoiceRuntime:
             # which is true whenever voice is enabled. It now means live-ready.
             "ready": readiness == VoiceReadiness.READY,
         }
+
+    def _command_has_speech(self, audio: bytes) -> bool:
+        """Energy gate for a spoken command, calibrated to this microphone.
+
+        Reuses the wake detector's gate so both halves of a turn agree on what
+        counts as speech; falls back to the static filter only when the wake
+        engine is not running (e.g. a manual listen with no wake path).
+        """
+        try:
+            gate = self.voice.wake_phrase_provider._engine.gate
+        except Exception:
+            gate = None
+        if gate is not None and gate.calibrated:
+            rms = speech_filter.rms_of_wav(audio)
+            return rms >= gate.threshold and speech_filter.voiced_ratio(
+                audio, silence_rms=gate.threshold) >= gate.min_voiced_ratio
+        return speech_filter.has_speech_energy(audio)
 
     def _publish(self, event: str, payload: dict | None = None) -> None:
         if self.event_bus is not None:
@@ -840,7 +1093,10 @@ class VoiceRuntime:
             self.session.thinking()
             response = await self._direct_chat(normalized["text"])
             self.session.cancel()
-            return {"ok": True, "mode": "quick", "response": response, "task": None}
+            # The transcript travels with the result so the UI can show what
+            # was actually said rather than the wake phrase that preceded it.
+            return {"ok": True, "mode": "quick", "response": response,
+                    "transcript": normalized["text"], "task": None}
 
         self.session.thinking()
         task_result = await self._create_task(normalized["text"])
@@ -849,7 +1105,8 @@ class VoiceRuntime:
             return {"ok": False, "error": "task_creation_failed", "details": task_result}
         brief = "Vou tratar disso. Aviso-te quando terminar."
         self.session.cancel()
-        return {"ok": True, "mode": "task", "response": brief, "task": task_result}
+        return {"ok": True, "mode": "task", "response": brief,
+                "transcript": normalized["text"], "task": task_result}
 
     async def speak_response(self, text: str) -> bool:
         if not text or not text.strip():
@@ -895,7 +1152,10 @@ class VoiceRuntime:
             self._publish("VoiceError", {"session_id": self.session.session_id, "error": "microphone_failed"})
             return {"ok": False, "error": "microphone_failed", "detail": str(exc)}
 
-        if not audio or not speech_filter.has_speech_energy(audio):
+        # The same calibrated gate the wake detector uses. A fixed RMS floor
+        # here would reject a real command on a quiet microphone exactly as it
+        # rejected the wake phrase.
+        if not audio or not self._command_has_speech(audio):
             self.session.cancel()
             self._publish("VoiceWakeCancelled", {"session_id": self.session.session_id, "reason": "no_speech"})
             logger.info("Wake turn cancelled: no speech within %ss.", window)
@@ -903,6 +1163,7 @@ class VoiceRuntime:
                     "detail": "Nenhum comando detetado; a voltar a escutar."}
 
         self.session.transcribing()
+        self._phase("TRANSCRIBING", "A transcrever…")
         result = self.voice.stt_provider.transcribe(audio)
         transcript = (result.text or "").strip() if result.ok else ""
 
@@ -914,10 +1175,217 @@ class VoiceRuntime:
                     "detail": "Não percebi nenhum comando; a voltar a escutar."}
 
         self._publish("TranscriptionCompleted", {"session_id": self.session.session_id, "text_length": len(transcript)})
+        self._phase("PROCESSING", "A pensar…")
         return await self.process_request(transcript)
 
     async def handle_wake_word(self, *, duration_seconds: int | None = None) -> dict:
         return await self.process_wake_word_turn(duration_seconds=duration_seconds)
+
+    # ==================================================================
+    #  THE VOICE TURN
+    # ==================================================================
+
+    #: Triggers that may start a voice turn. "hotkey" is reserved for the
+    #: global shortcut that becomes the primary V1 activation; nothing
+    #: registers it yet.
+    TURN_SOURCES = ("wake_phrase", "hotkey", "ui")
+
+    def _busy_result(self) -> dict:
+        status = self.turn_status()
+        return {
+            "ok": False,
+            "busy": True,
+            "error": "voice_turn_in_progress",
+            "active_source": status.get("source"),
+            "phase": status.get("phase"),
+            "detail": "O Nano já está a ouvir. Espera que este turno termine.",
+        }
+
+    def _take_microphone(self) -> bool:
+        """Make this thread the only reader of the microphone.
+
+        The wake-phrase engine holds a persistent capture stream and reads from
+        it continuously. A hotkey or UI turn arriving mid-read would be a second
+        reader on that same stream, so the engine is paused and we WAIT for its
+        in-flight read to finish before capturing anything.
+
+        A wake-phrase turn does not need this: that engine calls us from its own
+        loop thread, so by construction it is not reading.
+        """
+        provider = getattr(self.voice, "wake_phrase_provider", None)
+        waiter = getattr(provider, "pause_and_wait", None)
+        if waiter is None:
+            return True
+        try:
+            return bool(waiter(5.0))
+        except Exception:
+            logger.warning("could not pause the wake detector", exc_info=True)
+            return False
+
+    def _release_microphone(self, resumed: bool) -> None:
+        provider = getattr(self.voice, "wake_phrase_provider", None)
+        if provider is None or not resumed:
+            return
+        try:
+            provider.resume()
+        except Exception:
+            logger.debug("could not resume the wake detector", exc_info=True)
+
+    def _mark(self, method: str) -> None:
+        """Best-effort wake-engine state marker; absent engine is fine."""
+        provider = getattr(self.voice, "wake_phrase_provider", None)
+        fn = getattr(provider, method, None)
+        if fn is None:
+            return
+        try:
+            fn()
+        except Exception:
+            logger.debug("wake state marker %s failed", method, exc_info=True)
+
+    def _idle_phase(self) -> tuple[str, str]:
+        """Where the UI should return to once a turn ends."""
+        provider = getattr(self.voice, "wake_phrase_provider", None)
+        try:
+            running = bool(getattr(provider, "running", False))
+            phrase = (provider.status().get("phrase") if provider else None) or "ei nano"
+        except Exception:
+            running, phrase = False, "ei nano"
+        if running:
+            return "WAKE_LISTENING", f"\"{phrase}\" — A ouvir"
+        return "IDLE", ""
+
+    async def run_voice_turn(
+        self,
+        source: str = "ui",
+        *,
+        transcript: str = "",
+        duration_seconds: int | None = None,
+        chime: bool = True,
+        speak: bool = True,
+    ) -> dict:
+        """One complete spoken turn, from acknowledgement to silence.
+
+        THIS IS THE ONLY PLACE THE CHOREOGRAPHY LIVES. It used to be inlined in
+        main._on_wake_phrase, which meant any second trigger -- the global
+        hotkey being the imminent one -- would have had to reimplement the
+        chime, the phase events, the on-screen exchange, the TTS dispatch and
+        the return to listening, and the two copies would have drifted. Every
+        trigger now calls this and differs only in ``source``.
+
+        The sequence, in order:
+
+            acknowledgement chime      immediate, local, before anything slow
+            COMMAND_LISTENING          UI phase + wake-engine state
+            capture                    bounded by command_timeout_seconds
+            speech gate                calibrated; silence never becomes a request
+            STT + hallucination filter
+            PROCESSING                 UI phase
+            Brain                      through the normal request pipeline
+            visible exchange           so a spoken answer leaves a record
+            SPEAKING + TTS
+            back to IDLE / WAKE_LISTENING
+
+        Safety: this resolves no capability and runs no tool. Everything it
+        triggers goes through process_request -> Brain -> policy -> permission
+        -> execution, exactly as a typed message does.
+        """
+        if source not in self.TURN_SOURCES:
+            source = "ui"
+
+        # Non-blocking: a second trigger is answered honestly, not queued.
+        if not self._turn_lock.acquire(blocking=False):
+            logger.info("Voice turn from %r refused: a %r turn is already active.",
+                        source, self._turn_source)
+            return self._busy_result()
+
+        self._turn_source = source
+        self._turn_started_at = time.time()
+        took_microphone = False
+        try:
+            if not self.voice.enabled:
+                self._publish("VoiceError", {"session_id": self.session.session_id,
+                                             "error": "voice_disabled"})
+                return {"ok": False, "error": "voice_disabled", "source": source}
+
+            # 1. Audible acknowledgement FIRST. The user needs to know within a
+            #    moment that Nano heard them, otherwise they talk into the gap.
+            #    Synthesised locally: no TTS model, no network, a few ms.
+            if chime:
+                from core import audio_feedback
+
+                if not audio_feedback.acknowledge_wake():
+                    logger.warning("Activação sem som de confirmação audível.")
+
+            self._activation(transcript)
+            self._phase("WAKE_DETECTED", "Nano acordou")
+
+            # 2. Take sole ownership of the microphone.
+            if source != "wake_phrase":
+                took_microphone = True
+                if not self._take_microphone():
+                    self._phase(*self._idle_phase())
+                    return {"ok": False, "error": "microphone_busy", "source": source,
+                            "detail": "O microfone ainda está ocupado; tenta outra vez."}
+
+            self._mark("mark_command_listening")
+            self._phase("COMMAND_LISTENING", "A ouvir comando…")
+
+            # 3. Capture -> gate -> STT -> Brain, through the existing pipeline.
+            result = await self.process_wake_word_turn(duration_seconds=duration_seconds)
+            result["source"] = source
+
+            self._mark("mark_processing")
+
+            if result.get("requires_permission"):
+                logger.info("Voice permission request pending: %s", result.get("request_id"))
+
+            response = result.get("response")
+            if result.get("ok") and response:
+                # A spoken answer the user cannot see afterwards leaves no
+                # record of what was asked or answered.
+                turn_id = uuid.uuid4().hex
+                result["turn_id"] = turn_id
+                self._exchange(turn_id,
+                               str(result.get("transcript") or transcript or ""),
+                               str(response))
+                if speak:
+                    self._phase("SPEAKING", "A falar…")
+                    spoken = await self.speak_response(str(response))
+                    result["spoken"] = spoken
+                    if not spoken:
+                        logger.warning("Resposta gerada mas o TTS não a reproduziu: %r",
+                                       str(response)[:80])
+                        self._signal_error()
+            elif result.get("cancelled"):
+                # Silence after an activation is a normal, quiet outcome: no
+                # Brain request was made and nothing is spoken.
+                logger.info("Turno de voz cancelado: %s", result.get("error"))
+            elif not result.get("ok"):
+                logger.warning("Turno de voz falhou: %s", result.get("error"))
+                self._signal_error()
+
+            return result
+        except Exception as exc:
+            logger.exception("Erro no turno de voz (%s)", source)
+            self._signal_error()
+            return {"ok": False, "error": "voice_turn_failed", "detail": str(exc),
+                    "source": source}
+        finally:
+            self._mark("mark_idle")
+            self._release_microphone(took_microphone)
+            self._phase(*self._idle_phase())
+            self._turn_source = None
+            self._turn_started_at = None
+            self._turn_lock.release()
+
+    @staticmethod
+    def _signal_error() -> None:
+        try:
+            from core import audio_feedback
+
+            audio_feedback.signal_error()
+        except Exception:
+            logger.debug("could not play the error tone", exc_info=True)
 
     async def process_manual(self, transcript: str, *, speak: bool = False, session_context: dict | None = None) -> dict:
         result = await self.process_request(transcript, session_context=session_context)

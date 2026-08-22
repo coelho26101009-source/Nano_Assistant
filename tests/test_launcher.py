@@ -190,7 +190,7 @@ def test_captured_command_output_uses_call_so_quoting_survives():
             )
 
 
-def test_the_launcher_only_builds_the_frontend_when_it_is_missing():
+def test_the_launcher_never_builds_the_frontend_unconditionally():
     """A rebuild on every launch is a minute of dead time per start."""
     code = LAUNCHER.read_text(encoding="ascii")
     build = re.search(r"npm run build", code)
@@ -198,4 +198,29 @@ def test_the_launcher_only_builds_the_frontend_when_it_is_missing():
     guard = code[:build.start()]
     assert "if not exist" in guard and "index.html" in guard, (
         "npm run build is not guarded by a check for an existing build"
+    )
+
+
+def test_the_launcher_rebuilds_when_the_frontend_sources_changed():
+    """Guarding only on a missing index.html served a stale bundle forever.
+
+    Building only when frontend\\out\\index.html was absent meant any edit to a
+    component or stylesheet was silently ignored on the next launch. The guard
+    must therefore also consult the staleness check, not just file existence.
+    """
+    code = LAUNCHER.read_text(encoding="ascii")
+    build = re.search(r"npm run build", code)
+    assert build, "the launcher can no longer build the frontend at all"
+    guard = code[:build.start()]
+    assert "core.frontend_build check" in guard, (
+        "the launcher does not consult core.frontend_build, so a changed "
+        "frontend source cannot trigger a rebuild"
+    )
+    assert "errorlevel" in guard.lower(), (
+        "the staleness check result is never read via ERRORLEVEL"
+    )
+    # A successful build must record a stamp, or every later launch rebuilds.
+    assert "core.frontend_build stamp" in code, (
+        "the launcher never records a build stamp, so the build would always "
+        "look stale afterwards"
     )

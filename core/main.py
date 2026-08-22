@@ -6,12 +6,14 @@ streaming bidirecional, execução de ferramentas, guardrails e modo de voz.
 from __future__ import annotations
 import argparse
 import asyncio
+import json
 import logging
 import os
 import re
 import socket
 import sys
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -28,6 +30,7 @@ import eel
 import psutil
 from dotenv import load_dotenv
 from core.app_paths import DATA_DIR, FRONTEND_DIR, PLUGINS_DIR, ROOT
+from core import data_migration
 from core.brain import Brain
 from core.config import CONFIG_PATH, load_config
 from core.guardrails import GuardrailsEngine
@@ -36,6 +39,7 @@ from core.memory import get_memory
 from core.logger import setup_logger
 from core.local_runtime import choose_model, ollama_available, model_available
 from core.voice import VoiceEngine, VoiceRuntime
+from core import wake_phrase as wake_phrase_mod
 from core.wake_word import WakeWordEngine
 from core.errors import NanoError
 from core.events import EventBus
@@ -46,18 +50,57 @@ from core.agent_orchestrator import AgentOrchestrator
 from core.agent_registry import AgentRegistry
 from core.tool_execution import ToolExecutor
 from core.background_worker import BackgroundTaskWorker
-from core import audio_feedback, ollama_service, providers, secret_store, speech_filter, user_settings
+from core import audio_feedback, ollama_service, provider_status, providers, secret_store, speech_filter, user_settings
 
 if not getattr(sys, "frozen", False):
     load_dotenv(ROOT / ".env")
 
 setup_logger()
 logger = logging.getLogger("nano.main")
+
+# Before ANY database is opened or any secret is read. Nano's data directory
+# is %LOCALAPPDATA%/NanoAssistant, but Store-Python redirects writes there
+# into a per-package cache, so running under a different interpreter (or
+# Electron) would otherwise present an empty directory and look like a fresh
+# install. This copies data in only when the destination is empty, never
+# overwrites and never deletes the source. See core.data_migration.
+DATA_MIGRATION = data_migration.migrate_user_data()
+if DATA_MIGRATION.get("copied"):
+    logger.info("Migracao de dados: %d ficheiro(s) de %s",
+                len(DATA_MIGRATION["copied"]), DATA_MIGRATION.get("source"))
+
 CONFIG = load_config()
 guardrails = GuardrailsEngine()
 memory = get_memory()
 voice = VoiceEngine(CONFIG.get("voice", {}))
-API_KEY = os.getenv("NANO_API_KEY") or os.getenv("HELIOS_API_KEY") or os.getenv("GROQ_API_KEY") or str(CONFIG.get("groq_api_key") or "")
+# The key the user saved in Settings wins over anything in the environment.
+# secret_store.get_secret() already implements exactly this precedence (the
+# encrypted store first, then NANO_API_KEY / HELIOS_API_KEY / GROQ_API_KEY),
+# so it is the single source of truth.
+#
+# Reading the environment first was a real failure: a stale key left in .env
+# from an earlier session silently beat the valid key saved through Settings,
+# and every cloud request failed with AuthenticationError while the Settings
+# page cheerfully reported "Pronto" -- because the status check reads the
+# store while the Brain was built from .env.
+API_KEY = secret_store.get_secret("groq_api_key") or str(CONFIG.get("groq_api_key") or "")
+
+
+def cloud_configured() -> bool:
+    """Whether a Groq credential is loaded RIGHT NOW.
+
+    The module-level API_KEY above is a snapshot taken once at import. It is
+    still the value the Brain is constructed from, but it must never be the
+    value the UI reports: set_groq_api_key() and remove_groq_api_key() update
+    the encrypted store and call brain.reload_cloud_credentials(), and neither
+    rebinds a module global. Readiness read that stale snapshot, so saving a key
+    left the status panel reporting "not configured" while chat worked, and
+    removing one left it reporting "configured" until the next restart.
+
+    brain.groq_enabled is the live answer: reload_cloud_credentials() sets it
+    from the secret store every time the credential changes.
+    """
+    return bool(getattr(brain, "groq_enabled", False))
 
 # Agent-core foundations for Nano: queue, context, events and autonomous task planning.
 event_bus = EventBus()
@@ -187,29 +230,61 @@ guardrails.set_confirm_callback(guardrails.request_from_ui)
 
 @eel.expose
 def send_message(user_text: str, msg_id: str | None = None) -> dict:
-    """Processa uma mensagem do utilizador via chat com streaming e tool-calling."""
+    """Accept a message and answer it asynchronously over the stream events.
+
+    This returns an ACK, not the answer. It used to block until the whole
+    completion was ready, so a slow turn timed out on the bridge and the UI
+    reported "Motor offline" while the backend was healthy and still working.
+    The answer now arrives exclusively through on_stream_start / _status /
+    _chunk / _end, and this ACK only says the request was accepted.
+
+    A transport failure (no ACK at all) and a model failure (ACK, then an error
+    on the stream) are therefore distinguishable by the UI.
+    """
     if not user_text or not user_text.strip():
-        return {"error": "Mensagem vazia"}
+        return {"ok": False, "accepted": False, "error": "empty_message"}
+    request_id = msg_id or uuid.uuid4().hex
     try:
-        return run_coro(_process_message(user_text, msg_id=msg_id))
+        loop = _get_or_create_loop()
+        asyncio.run_coroutine_threadsafe(
+            _process_message(user_text, msg_id=request_id), loop
+        )
     except Exception:
-        logger.exception("Erro ao processar mensagem")
-        return {"error": "Falha ao processar o pedido", "text": "Ups Simão, ocorreu um erro ao processar o teu pedido."}
+        logger.exception("Não foi possível aceitar a mensagem")
+        return {"ok": False, "accepted": False, "error": "dispatch_failed",
+                "request_id": request_id}
+    return {"ok": True, "accepted": True, "request_id": request_id, "msg_id": request_id}
+
+@eel.expose
+def get_last_response_meta() -> dict:
+    """Safe diagnostics for the last answer: provider, model, tokens, latency.
+
+    Used by the technical-details panel and by latency measurement. Contains no
+    prompt text, no tool arguments and no credentials.
+    """
+    return dict(getattr(brain, "last_metadata", {}) or {})
+
 
 @eel.expose
 def stop_voice():
-    """Interrompe qualquer reprodução ou captura ativa de áudio.
+    """Stop what is being spoken right now. Voice REMAINS available.
 
     Esta é a única exposição Eel de 'stop_voice'. Uma segunda definição com o
     mesmo nome fazia com que eel._expose falhasse no import e a aplicação nunca
     arrancasse.
+
+    This used to call voice.stop(), the full teardown, which also stopped the
+    wake detectors -- so pressing Stop once to interrupt a spoken reply
+    silently disabled "Ei Nano" for the rest of the session. Stopping a sound
+    and shutting down the voice subsystem are different requests; only
+    shutdown() does the latter, and only application exit calls it.
     """
     try:
-        voice.stop()
+        voice.stop_playback()
     except Exception as exc:
         logger.error("Falha ao parar a voz: %s", exc)
         return {"ok": False, "error": "stop_failed"}
-    return {"ok": True}
+    return {"ok": True, "voiceStillAvailable": True}
 
 @eel.expose
 def confirm_action(request_id: str, confirmed: bool) -> dict:
@@ -235,7 +310,7 @@ def get_health_status() -> dict:
         "ok": bool(FRONTEND_DIR.exists() and db_ok),
         "version": "8.1.0",
         "name": "Nano Assistant",
-        "cloud": {"configured": bool(API_KEY), "model": brain.groq_model},
+        "cloud": {"configured": cloud_configured(), "model": brain.groq_fast_model},
         "local": {
             "enabled": brain.local_enabled,
             "model": brain.ollama_model,
@@ -304,6 +379,14 @@ def revoke_permission_policy(capability: str) -> dict:
     return {"ok": permission_manager.revoke_policy(capability), "capability": capability}
 
 @eel.expose
+def get_data_location() -> dict:
+    """Where Nano's user data actually lives, plus the last migration result."""
+    info = data_migration.describe_data_location()
+    info["migration"] = DATA_MIGRATION
+    return info
+
+
+@eel.expose
 def get_runtime_info() -> dict:
     """Retorna informações de ambiente de execução (OS, RAM, Modelo sugerido)."""
     profile = choose_model(CONFIG)
@@ -320,7 +403,15 @@ def get_runtime_info() -> dict:
 
 @eel.expose
 def start_voice_listen() -> dict:
-    """Inicia a escuta por voz e processa a mensagem atravs do Nano real."""
+    """DEPRECATED. Use start_voice_turn_from_ui().
+
+    Kept because it is still a public bridge function, but nothing in the UI
+    calls it any more and nothing new should. Two problems, both solved by the
+    turn abstraction: it BLOCKS the eel handler for the whole listen (and eel
+    serves its websocket from a single cooperative hub, so that freezes the
+    entire bridge), and it captures without pausing the wake detector, so it
+    can become a second reader on the same PortAudio stream.
+    """
     try:
         result = run_coro(voice_runtime.process_audio())
         if result.get("response"):
@@ -489,21 +580,45 @@ def current_provider_mode() -> providers.ProviderMode:
     )
 
 
-def describe_providers() -> dict:
-    """Live status of both providers plus the route a request would take."""
-    groq = providers.describe_groq(brain.groq_model)
-    ollama = providers.describe_ollama(
-        brain.ollama_model,
-        brain.ollama_url.removesuffix("/api/chat"),
-        local_enabled=brain.local_enabled,
-    )
+def describe_providers(*, stale_ok: bool = False) -> dict:
+    """Live status of both providers plus the route a request would take.
+
+    Both Groq tiers are validated against the account, so Settings can show the
+    conversation model and the complex model honestly instead of implying a
+    single model answers everything.
+
+    ``stale_ok`` is for high-frequency polling. This function used to call
+    describe_groq() unconditionally, and the Settings page polls get_settings()
+    once per second so microphone levels stay live -- which meant one blocking
+    request to api.groq.com per second, per open Settings page. With stale_ok
+    the poller is served from the shared snapshot and any refresh happens on a
+    background thread. The snapshot is the same one the Brain routes from, so
+    the two no longer probe the same account separately.
+    """
     mode = current_provider_mode()
+    key = provider_status.cache_key(
+        mode, brain.groq_fast_model, brain.groq_complex_model, brain.ollama_model)
+
+    def _produce() -> tuple[dict, dict]:
+        return provider_status.describe_pair(
+            mode,
+            groq_fast_model=brain.groq_fast_model,
+            groq_complex_model=brain.groq_complex_model,
+            ollama_model=brain.ollama_model,
+            ollama_base_url=brain.ollama_url.removesuffix("/api/chat"),
+            local_enabled=brain.local_enabled,
+        )
+
+    getter = provider_status.CACHE.get_stale_ok if stale_ok else provider_status.CACHE.get_fresh
+    groq, ollama = getter(key, _produce)
     return {
         "mode": mode.value,
         "modes": [m.value for m in providers.ProviderMode],
         "groq": groq,
         "ollama": ollama,
-        "route": providers.resolve_route(mode, groq, ollama),
+        # The route a normal conversational message would take right now.
+        "route": providers.resolve_route(mode, groq, ollama, tier="FAST"),
+        "complexRoute": providers.resolve_route(mode, groq, ollama, tier="STRONG"),
     }
 
 
@@ -595,21 +710,80 @@ def set_groq_model(model: str) -> dict:
 # ===========================================================================
 
 @eel.expose
+def get_voice_diagnostics() -> dict:
+    """The live microphone/wake numbers ONLY. Cheap enough to poll every second.
+
+    This exists because the Settings page needs live audio levels: fetched once
+    at page load they showed a snapshot from before the user spoke, which read
+    as "the wake listener hears nothing" when it simply had not looked yet.
+
+    The fix was a 1 s poll of get_settings(), which was far too expensive --
+    get_settings() also describes both providers, and describing Groq is a
+    blocking HTTPS request. That was one call to api.groq.com per second.
+
+    Everything below is read from objects already in memory: no network, no
+    subprocess, no database, no PortAudio. Provider and credential state is NOT
+    here on purpose; it belongs to the slow readiness cadence.
+    """
+    wake = voice.wake_phrase_provider.status()
+    return {
+        "state": wake.get("readiness"),
+        "turnState": wake.get("state"),
+        "explain": wake.get("explain"),
+        "phrase": wake.get("phrase"),
+        "error": wake.get("error"),
+        "lastTranscript": wake.get("last_transcript"),
+        "recentTranscripts": wake.get("recent_transcripts") or [],
+        "audio": wake.get("audio"),
+        "voiceTurn": voice_runtime.turn_status(),
+        "counters": {
+            "chunksCaptured": wake.get("chunks_captured"),
+            "silentChunks": wake.get("silent_chunks"),
+            "speechChunks": wake.get("speech_chunks"),
+            "transcriptsSeen": wake.get("transcripts_seen"),
+            "wakeMatches": wake.get("wake_matches"),
+        },
+    }
+
+
+@eel.expose
 def get_settings() -> dict:
-    """Everything the Settings UI renders. Secrets are described, never sent."""
+    """Everything the Settings UI renders. Secrets are described, never sent.
+
+    Provider status is served from the shared snapshot with ``stale_ok``: this
+    endpoint must never block on the Groq API, because the Settings page is
+    open for as long as the user is configuring things.
+    """
     voice_cfg = CONFIG.get("voice", {}) or {}
     wake_status = voice.wake_phrase_provider.status()
     return {
-        "providers": describe_providers(),
+        "providers": describe_providers(stale_ok=True),
         "voice": {
             "enabled": bool(voice_cfg.get("enabled")),
-            "ttsEnabled": bool(voice_cfg.get("tts_enabled")),
+            "ttsEnabled": bool(voice_cfg.get("tts_enabled", True)),
+            # Typing and talking are separate conversations, so their spoken
+            # output is configured separately.
+            "typedChatTts": bool(voice_cfg.get("typed_chat_tts", False)),
+            "voiceReplyTts": bool(voice_cfg.get("voice_reply_tts", True)),
             "wakePhrase": wake_status.get("phrase"),
             "wakePhraseEnabled": bool(voice_cfg.get("wake_phrase_enabled")),
             "allowNanoOnly": bool(voice_cfg.get("wake_phrase_allow_nano_only")),
             "cooldownSeconds": float(voice_cfg.get("wake_phrase_cooldown_seconds", 3.0)),
             "commandTimeoutSeconds": int(voice_cfg.get("wake_command_timeout_seconds", 7)),
             "state": wake_status.get("readiness"),
+            "explain": wake_status.get("explain"),
+            # What the transcriber actually heard, matched or not.
+            "lastTranscript": wake_status.get("last_transcript"),
+            "recentTranscripts": wake_status.get("recent_transcripts") or [],
+            # Live microphone characteristics for Voice diagnostics.
+            "audio": wake_status.get("audio"),
+            "counters": {
+                "chunksCaptured": wake_status.get("chunks_captured"),
+                "silentChunks": wake_status.get("silent_chunks"),
+                "speechChunks": wake_status.get("speech_chunks"),
+                "transcriptsSeen": wake_status.get("transcripts_seen"),
+                "wakeMatches": wake_status.get("wake_matches"),
+            },
         },
         "devices": get_audio_devices(),
         "security": {
@@ -650,8 +824,8 @@ def update_setting(key: str, value) -> dict:
     elif key == "wake_command_timeout_seconds":
         voice_cfg["wake_command_timeout_seconds"] = int(value)
         voice_runtime.command_timeout_seconds = max(3, min(15, int(value)))
-    elif key == "tts_enabled":
-        voice_cfg["tts_enabled"] = bool(value)
+    elif key in ("tts_enabled", "typed_chat_tts", "voice_reply_tts"):
+        voice_cfg[key] = bool(value)
     elif key == "voice_enabled":
         voice_cfg["enabled"] = bool(value)
         voice.enabled = bool(value)
@@ -659,8 +833,100 @@ def update_setting(key: str, value) -> dict:
         index = None if value in (None, "", -1) else int(value)
         voice_cfg.setdefault("microphone", {})["device_index"] = index
         voice.input_provider.device_index = index
+    elif key in ("groq_fast_model", "groq_complex_model"):
+        CONFIG[key] = str(value)
+        setattr(brain, key, str(value))
+        # The cached provider snapshot names the old model until it expires.
+        brain.invalidate_provider_snapshot()
 
     return {"ok": True, "key": key, "value": value, "settings": get_settings()}
+
+
+# Candidate phrases offered in the wake-phrase calibration tool. All are
+# Portuguese: faster-whisper-tiny is forced to Portuguese, which is exactly why
+# the English "Hey Nano" was transcribed as "Ei, não." / "E ai, no." / "NÃO!".
+WAKE_PHRASE_CANDIDATES = ("ei nano", "olá nano", "acorda nano")
+
+
+@eel.expose
+def list_wake_phrase_candidates() -> list[str]:
+    return list(WAKE_PHRASE_CANDIDATES)
+
+
+@eel.expose
+def test_wake_phrase(phrase: str = "", seconds: int = 3) -> dict:
+    """Record one utterance and report what the wake matcher would do with it.
+
+    Diagnostic only: this never wakes Nano, never reaches the Brain and never
+    runs a tool. It exists because a wake that does not fire is otherwise
+    invisible -- the user says the phrase, nothing happens, and there is no way
+    to tell whether the microphone, the transcriber or the matcher is at fault.
+
+    The audio goes through exactly the same provider, the same STT settings and
+    the same normalisation as the live detector, so the result is honest. No
+    audio is retained.
+    """
+    candidate = (phrase or "").strip() or str(
+        voice.wake_phrase_provider.status().get("phrase") or wake_phrase_mod.DEFAULT_WAKE_PHRASE)
+    window = max(1, min(6, int(seconds)))
+    engine = voice.wake_phrase_provider._engine
+
+    # Pause the live detector for the moment of the test: two readers on one
+    # stream would split the utterance between them and neither would hear it
+    # whole. Always resumed, even if the capture fails.
+    was_running = engine.running and not engine._paused.is_set()
+    if was_running:
+        # Wait for the detector to actually leave the microphone. pause() alone
+        # returns while a multi-second read may still be in flight, and two
+        # readers on one PortAudio stream split the utterance between them --
+        # or worse. pause_and_wait() blocks until the read has finished.
+        if not voice.wake_phrase_provider.pause_and_wait(5.0):
+            voice.wake_phrase_provider.resume()
+            return {"ok": False, "error": "microphone_busy", "phrase": candidate,
+                    "detail": "O microfone ainda está ocupado pelo detector."}
+    try:
+        audio = voice.input_provider.capture(window)
+    except Exception as exc:
+        return {"ok": False, "error": "capture_failed", "detail": str(exc), "phrase": candidate}
+    finally:
+        if was_running:
+            voice.wake_phrase_provider.resume()
+
+    if not audio:
+        return {"ok": False, "error": "no_audio", "phrase": candidate,
+                "detail": "O microfone não devolveu áudio."}
+
+    rms = speech_filter.rms_of_wav(audio)
+    threshold = engine.gate.threshold
+    passed_gate = rms >= threshold and speech_filter.voiced_ratio(
+        audio, silence_rms=threshold) >= engine.gate.min_voiced_ratio
+
+    if not passed_gate:
+        return {
+            "ok": True, "phrase": candidate, "matched": False,
+            "transcript": "", "normalized": "", "gate": False,
+            "rms": round(rms, 1), "threshold": round(threshold, 1),
+            "detail": (f"Nível demasiado baixo ({rms:.0f}; é preciso {threshold:.0f}). "
+                       "Fala mais perto do microfone."),
+        }
+
+    result = voice.stt_provider.transcribe(audio)
+    transcript = (result.text or "").strip() if result.ok else ""
+    detector = wake_phrase_mod.WakePhraseDetector(
+        phrase=candidate,
+        allow_nano_only=bool(engine.allow_nano_only),
+        cooldown_seconds=0.0,          # a test must never be debounced away
+    )
+    matched = detector.matches(transcript) if transcript else False
+    return {
+        "ok": True, "phrase": candidate, "matched": matched,
+        "transcript": transcript,
+        "normalized": wake_phrase_mod.normalize_transcript(transcript),
+        "gate": True, "rms": round(rms, 1), "threshold": round(threshold, 1),
+        "detail": (f"Reconhecido: \"{candidate}\"." if matched
+                   else (f"Ouvi \"{transcript}\" — não corresponde a \"{candidate}\"."
+                         if transcript else "Não percebi nenhuma fala.")),
+    }
 
 
 @eel.expose
@@ -676,24 +942,58 @@ def test_speaker() -> dict:
 
 @eel.expose
 def test_microphone(seconds: int = 3) -> dict:
-    """Record a short sample and report measured energy. No audio is kept."""
+    """Record a short sample and report measured energy. No audio is kept.
+
+    Takes the microphone properly first. This used to capture with no
+    coordination at all while the wake thread was reading the same persistent
+    stream -- two concurrent readers, so the sample was whatever survived the
+    split and the diagnostic could report a false negative.
+    """
+    engine = voice.wake_phrase_provider._engine
+    was_running = engine.running and not engine._paused.is_set()
+    if was_running and not voice.wake_phrase_provider.pause_and_wait(5.0):
+        voice.wake_phrase_provider.resume()
+        return {"ok": False, "error": "microphone_busy",
+                "detail": "O microfone ainda está ocupado pelo detector de wake."}
     try:
         audio = voice.input_provider.capture(max(1, min(5, int(seconds))))
     except Exception as exc:
         return {"ok": False, "error": "capture_failed", "detail": str(exc)}
+    finally:
+        if was_running:
+            voice.wake_phrase_provider.resume()
     if not audio:
         return {"ok": False, "error": "no_audio", "detail": "O microfone não devolveu áudio."}
 
-    measurement = speech_filter.describe(audio)
+    # Measure against the SAME calibrated threshold the wake detector uses.
+    # speech_filter.describe() applies the old fixed floor, so it could report
+    # "no voice" for audio the live detector would happily accept -- the test
+    # button must agree with the thing it is testing.
+    rms = speech_filter.rms_of_wav(audio)
+    ratio = speech_filter.voiced_ratio(audio)
+    gate = voice.wake_phrase_provider._engine.gate
+    threshold = gate.threshold
+    detected = rms >= threshold and speech_filter.voiced_ratio(
+        audio, silence_rms=threshold) >= gate.min_voiced_ratio
+
+    if detected:
+        detail = f"Voz detetada (nível {rms:.0f}, limiar {threshold:.0f})."
+    elif rms < max(2.0, gate.noise_floor):
+        detail = ("O microfone não está a receber áudio nenhum. Verifica o "
+                  "dispositivo de entrada e o nível de captura no Windows.")
+    else:
+        detail = (f"Nível demasiado baixo: {rms:.0f}, é preciso {threshold:.0f}. "
+                  "Fala mais perto ou aumenta o volume do microfone nas "
+                  "Definições de Som do Windows.")
+
     return {
         "ok": True,
-        "speechDetected": measurement["has_speech"],
-        "rms": measurement["rms"],
-        "voicedRatio": measurement["voiced_ratio"],
-        "detail": (
-            "Voz detetada com bom nível." if measurement["has_speech"]
-            else "Não foi detetada voz. Fala mais perto ou verifica o microfone."
-        ),
+        "speechDetected": detected,
+        "rms": round(rms, 1),
+        "voicedRatio": round(ratio, 3),
+        "threshold": round(threshold, 1),
+        "noiseFloor": round(gate.noise_floor, 1),
+        "detail": detail,
     }
 
 
@@ -949,8 +1249,8 @@ def get_system_readiness() -> dict:
                 "enabled": brain.local_enabled,
                 "url": local.get("url"),
             },
-            "cloud": {"model": brain.groq_model, "configured": bool(API_KEY)},
-            "provider": "ollama" if model_ready else ("cloud" if API_KEY else "none"),
+            "cloud": {"model": brain.groq_fast_model, "configured": cloud_configured()},
+            "provider": "ollama" if model_ready else ("cloud" if cloud_configured() else "none"),
         },
         "worker": {"state": "READY" if worker.get("running") else "OFFLINE", **worker},
         "providers": get_provider_health(),
@@ -985,7 +1285,7 @@ def get_provider_health() -> dict:
 
     return {
         "ollama": ollama,
-        "cloud": "configured" if API_KEY else "not_configured",
+        "cloud": "configured" if cloud_configured() else "not_configured",
         "browser": browser,
         "desktop": desktop,
         "voice": voice_runtime.status().get("readiness", "UNKNOWN"),
@@ -1086,34 +1386,64 @@ def get_system_stats() -> dict:
         "networkRecvMb": network_recv,
     }
 
-def _emit_stream_start(msg_id: str, user_text: str | None = None):
+_NOOP_CALLBACK = lambda *_args: None
+
+
+def _notify_ui(call) -> None:
+    """Send a UI notification without waiting for the browser to answer.
+
+    eel's `eel.fn(args)` already puts the message on the websocket; the usual
+    trailing `()` then *polls* for a JS return value. For a notification that
+    return value is worthless, and paying a round trip for it once per streamed
+    chunk stalled the shared event loop -- measured at up to 1.6 s of added
+    latency on a single answer. Passing a callback makes eel return
+    immediately, so the chunk is sent and the loop keeps running.
+    """
     try:
-        eel.on_stream_start(msg_id, user_text)()
+        call(_NOOP_CALLBACK)
     except Exception:
-        pass
+        logger.debug("UI notification failed", exc_info=True)
+
+
+def _emit_stream_start(msg_id: str, user_text: str | None = None):
+    _notify_ui(eel.on_stream_start(msg_id, user_text))
 
 def _emit_stream_status(msg_id: str, status: str):
-    try:
-        eel.on_stream_status(msg_id, status)()
-    except Exception:
-        pass
+    _notify_ui(eel.on_stream_status(msg_id, status))
 
 def _emit_stream_chunk(msg_id: str, chunk: str):
-    try:
-        eel.on_stream_chunk(msg_id, chunk)()
-    except Exception:
-        pass
+    _notify_ui(eel.on_stream_chunk(msg_id, chunk))
 
 def _emit_stream_end(msg_id: str, result: dict):
-    try:
-        eel.on_stream_end(msg_id, result)()
-    except Exception:
-        pass
+    _notify_ui(eel.on_stream_end(msg_id, result))
+
+def _emit_stream_error(msg_id: str, code: str, detail: str = ""):
+    """A model/provider failure, as distinct from the bridge being down."""
+    _notify_ui(eel.on_stream_error(msg_id, {"code": code, "detail": detail}))
+
+def _emit_rate_limited(msg_id: str, info: dict):
+    """Tell the UI it is rate-limited and for how long, never just 'Error'."""
+    payload = dict(info or {})
+    payload["message"] = providers.rate_limit_message(payload)
+    _notify_ui(eel.on_rate_limited(msg_id, payload))
+
+def _emit_voice_phase(phase: str, detail: str = ""):
+    """Publish the current voice turn phase so the UI can narrate it."""
+    _notify_ui(eel.on_voice_phase(phase, detail))
+
+def _emit_voice_exchange(turn_id: str, user_text: str, assistant_text: str):
+    """Show a completed spoken turn in the conversation.
+
+    A voice turn does not go through _process_message, so without this the
+    user heard an answer that never appeared on screen. The turn id lets the
+    UI insert it exactly once.
+    """
+    _notify_ui(eel.on_voice_exchange(turn_id, user_text, assistant_text))
 
 def _emit_wake_detected(transcript: str = ""):
     """Best-effort UI notification. The chime is the guaranteed feedback."""
     try:
-        eel.on_wake_detected(transcript)()
+        _notify_ui(eel.on_wake_detected(transcript))
     except Exception as exc:
         logger.debug("UI não recebeu o evento de wake: %s", exc)
 
@@ -1137,9 +1467,26 @@ def _on_wake_word():
 
 
 def _start_wake_word() -> None:
-    """Start the optional wake-word listener if the runtime is enabled."""
+    """Start the optional legacy ONNX wake-word listener, if it is enabled.
+
+    ONE MICROPHONE OWNER (do not break this):
+    core.wake_word opens and terminates PyAudio directly, without the shared
+    _PORTAUDIO_LOCK that core.voice documents as mandatory for every PortAudio
+    init/teardown in this process. Two owners is the concurrency that crashed
+    Nano with an access violation (0xC0000005). Until that engine is taught to
+    use the shared lock, it may never run alongside the wake-phrase detector --
+    so this refuses to start it rather than relying on config discipline alone.
+    """
     global wake_word
-    if not CONFIG.get("voice", {}).get("wake_word", {}).get("enabled", False):
+    voice_cfg = CONFIG.get("voice", {}) or {}
+    if not voice_cfg.get("wake_word", {}).get("enabled", False):
+        return
+    if voice_cfg.get("wake_phrase_enabled", False):
+        logger.warning(
+            "Wake-word legado ignorado: a wake phrase por STT já é a dona do "
+            "microfone e os dois motores não podem partilhar o PortAudio."
+        )
+        _report("Wake Word", "SKIPPED", "wake phrase owns the microphone")
         return
     try:
         wake_word = WakeWordEngine(CONFIG.get("voice", {}).get("wake_word", {}), on_wake=_on_wake_word)
@@ -1153,54 +1500,89 @@ def _start_wake_word() -> None:
 
 
 def _on_wake_phrase(transcript: str) -> None:
-    """Fired by the STT-based 'Hey Nano' detector.
+    """Fired by the STT-based 'Ei Nano' detector.
 
-    Order matters here. The audible chime comes FIRST, before any work: the
-    user needs to know within a moment that Nano heard them, otherwise they
-    talk into the gap. The chime is synthesised locally (no TTS model, no
-    network) so it costs a few milliseconds.
+    This is now a THIN TRIGGER, nothing more. The whole choreography -- chime,
+    phase events, capture, gate, STT, Brain, on-screen exchange, TTS, return to
+    listening -- lives in VoiceRuntime.run_voice_turn, so the global hotkey can
+    reuse it verbatim instead of growing a second copy that drifts.
 
-    This callback only wakes Nano. It never resolves a capability and never
-    runs a tool: everything it triggers goes through voice_runtime, i.e. the
-    normal request -> policy -> permission -> execution pipeline.
+    This callback still only wakes Nano. It resolves no capability and runs no
+    tool: everything it triggers goes through the normal request -> policy ->
+    permission -> execution pipeline.
     """
     logger.info("Wake phrase detected: %r", transcript)
-
-    # 1. Audible acknowledgment — immediate, local, before anything slow.
-    if not audio_feedback.acknowledge_wake():
-        logger.warning("Wake detectada mas não foi possível reproduzir o som de confirmação.")
-
-    # 2. Tell the UI (best-effort: the chime already confirmed to the user).
-    _emit_wake_detected(transcript)
-
-    voice.wake_phrase_provider.mark_command_listening()
     try:
-        # 3. Capture and process the actual command through the normal pipeline.
-        result = run_coro(voice_runtime.handle_wake_word())
-        voice.wake_phrase_provider.mark_processing()
-
-        if result.get("requires_permission"):
-            logger.info("Voice permission request pending: %s", result.get("request_id"))
-
-        response = result.get("response")
-        if result.get("ok") and response:
-            # 4. Speak the answer. Failures here are reported, never swallowed.
-            loop = _get_or_create_loop()
-            future = asyncio.run_coroutine_threadsafe(
-                voice_runtime.speak_response(str(response)), loop
-            )
-            spoken = future.result(timeout=45)
-            if not spoken:
-                logger.warning("Resposta gerada mas o TTS não a reproduziu: %r", str(response)[:80])
-                audio_feedback.signal_error()
-        elif not result.get("ok"):
-            logger.warning("Turno de voz falhou: %s", result.get("error"))
-            audio_feedback.signal_error()
+        result = run_coro(
+            voice_runtime.run_voice_turn("wake_phrase", transcript=transcript),
+            timeout=180,
+        )
+        if result.get("busy"):
+            logger.info("Wake ignorada: já existe um turno de voz activo (%s).",
+                        result.get("active_source"))
     except Exception:
         logger.exception("Erro no fluxo de wake-phrase")
-        audio_feedback.signal_error()
-    finally:
-        voice.wake_phrase_provider.mark_idle()
+
+
+def start_voice_turn(source: str = "ui") -> dict:
+    """Start one voice turn from any trigger. Returns an ACK, not the answer.
+
+    This must NOT wait for the turn. Eel serves its websocket from a single
+    cooperative hub, so blocking an exposed function blocks the ENTIRE bridge:
+    a measured 14.7 s freeze during which no poll, no chat message and no
+    permission dialog could get through, because a voice turn listens for up to
+    wake_command_timeout_seconds and then thinks and speaks.
+
+    So this dispatches onto the shared loop and returns immediately, exactly as
+    send_message does. Progress arrives on the existing on_voice_phase /
+    on_voice_exchange events, which the UI already renders.
+
+    The authoritative single-turn guard is the non-blocking lock inside
+    run_voice_turn; the check here is a courtesy so the caller gets an honest
+    answer without waiting for the dispatch to land.
+    """
+    status = voice_runtime.turn_status()
+    if status.get("active"):
+        logger.info("Turno de voz de %r recusado: %r já está activo.", source, status.get("source"))
+        return {"ok": False, "accepted": False, "busy": True,
+                "error": "voice_turn_in_progress",
+                "active_source": status.get("source"),
+                "phase": status.get("phase"),
+                "detail": "O Nano já está a ouvir."}
+    try:
+        loop = _get_or_create_loop()
+        asyncio.run_coroutine_threadsafe(voice_runtime.run_voice_turn(source), loop)
+    except Exception as exc:
+        logger.exception("Falha ao iniciar o turno de voz (%s)", source)
+        return {"ok": False, "accepted": False, "error": "voice_turn_failed", "detail": str(exc)}
+    return {"ok": True, "accepted": True, "source": source}
+
+
+@eel.expose
+def start_voice_turn_from_ui() -> dict:
+    """UI-triggered voice turn: the same pipeline the wake phrase uses."""
+    return start_voice_turn("ui")
+
+
+@eel.expose
+def get_voice_turn_status() -> dict:
+    """Whether a voice turn is currently running, and which trigger began it."""
+    return voice_runtime.turn_status()
+
+
+def _attach_voice_observer() -> None:
+    """Give the voice runtime its UI notifications.
+
+    The choreography lives in VoiceRuntime; the transport stays here. That is
+    what lets core.voice be imported and tested with no eel and no browser,
+    and what lets a future trigger (the global hotkey) reuse the whole turn
+    without reimplementing any of it.
+    """
+    voice_runtime.set_observer(
+        on_phase=_emit_voice_phase,
+        on_exchange=_emit_voice_exchange,
+        on_activation=_emit_wake_detected,
+    )
 
 
 def _start_wake_phrase() -> None:
@@ -1263,15 +1645,39 @@ def set_output_device(device_id: int):
     return True
 
 
-async def _process_message(user_text: str, msg_id: str | None = None, blocking_tts: bool = False) -> dict:
+def _should_speak(source: str) -> bool:
+    """Whether a reply from this source should be spoken aloud.
+
+    Typing and talking are different conversations. A single global
+    `tts_enabled` meant every typed reply was read out, which is how a spoken
+    "Olá" arrived a minute after a chat message the user had already read.
+    """
+    voice_cfg = CONFIG.get("voice", {}) or {}
+    if not voice_cfg.get("tts_enabled", True):
+        return False
+    if source == "voice":
+        return bool(voice_cfg.get("voice_reply_tts", True))
+    return bool(voice_cfg.get("typed_chat_tts", False))
+
+
+async def _process_message(user_text: str, msg_id: str | None = None,
+                           blocking_tts: bool = False, source: str = "text") -> dict:
     if not msg_id:
         msg_id = uuid.uuid4().hex
     try:
         memory.save_message("user", user_text)
         _emit_stream_start(msg_id, user_text)
         full_response, status_updates = "", []
+        rate_limit: dict | None = None
         async for token in brain.chat(user_text, stream=True):
-            if token.startswith("_thinking_:"):
+            if token.startswith("_ratelimit_:"):
+                # A 429 is a state the UI must show, not a wall of red text.
+                try:
+                    rate_limit = json.loads(token.split(":", 1)[1])
+                except Exception:
+                    rate_limit = {}
+                _emit_rate_limited(msg_id, rate_limit)
+            elif token.startswith("_thinking_:"):
                 status = token.removeprefix("_thinking_:")
                 status_updates.append(status)
                 _emit_stream_status(msg_id, status)
@@ -1280,9 +1686,16 @@ async def _process_message(user_text: str, msg_id: str | None = None, blocking_t
                 _emit_stream_chunk(msg_id, token)
         full_response = full_response.strip() or "Desculpa Simão, não consegui gerar uma resposta."
         memory.save_message("assistant", full_response)
-        result = {"msg_id": msg_id, "text": full_response, "status": status_updates, "ok": True}
+        result = {
+            "msg_id": msg_id, "text": full_response, "status": status_updates, "ok": True,
+            # Safe diagnostics only: provider, model, tier, token counts and
+            # latency. Never the prompt, never a tool argument, never the key.
+            "meta": dict(getattr(brain, "last_metadata", {}) or {}),
+        }
+        if rate_limit:
+            result["rate_limit"] = rate_limit
         _emit_stream_end(msg_id, result)
-        if CONFIG.get("voice", {}).get("tts_enabled", False):
+        if _should_speak(source) and not rate_limit:
             if blocking_tts:
                 await voice.speak(full_response)
             else:
@@ -1291,6 +1704,7 @@ async def _process_message(user_text: str, msg_id: str | None = None, blocking_t
     except Exception:
         logger.exception("Erro no _process_message")
         error_result = {"msg_id": msg_id, "text": "Ups Simão, ocorreu um erro ao processar o teu pedido.", "ok": False, "error": "processing_error"}
+        _emit_stream_error(msg_id, "processing_error", error_result["text"])
         _emit_stream_end(msg_id, error_result)
         return error_result
 
@@ -1373,7 +1787,9 @@ def shutdown() -> None:
         except Exception:
             logger.exception("Falha ao parar a wake-word")
     try:
-        voice.stop()
+        # Full teardown here, and ONLY here: application exit is the one place
+        # that is allowed to take the voice subsystem down.
+        voice.shutdown()
     except Exception:
         logger.exception("Falha ao parar a voz")
 
@@ -1436,7 +1852,8 @@ def main():
     else:
         _report("Ollama", "UNAVAILABLE", str(OLLAMA_BOOT.get("detail", ""))[:70])
 
-    _report("Cloud", "OK" if API_KEY else "NOT CONFIGURED", brain.groq_model if API_KEY else "")
+    _report("Cloud", "OK" if cloud_configured() else "NOT CONFIGURED",
+            brain.groq_fast_model if cloud_configured() else "")
 
     voice_state = voice_runtime.status()
     _report(
@@ -1445,6 +1862,9 @@ def main():
         "; ".join(voice_state.get("blockers", []))[:70],
     )
 
+    # The voice turn is trigger-independent; hook up its UI notifications
+    # before any trigger can fire.
+    _attach_voice_observer()
     _start_wake_word()
     _start_wake_phrase()
     wake_status = voice.wake_phrase_provider.status()

@@ -1,4 +1,4 @@
-"""Local, offline "Hey Nano" wake-phrase detection built on the existing STT stack.
+"""Local, offline "Ei Nano" wake-phrase detection built on the existing STT stack.
 
 Unlike ``core.wake_word.WakeWordEngine`` (which needs a trained ONNX/Porcupine
 keyword model before it will ever start), this module spots a plain phrase
@@ -19,10 +19,12 @@ Nano is the only thing this module is allowed to do.
 """
 from __future__ import annotations
 
+import io
 import logging
 import re
 import threading
 import time
+import wave
 from enum import Enum
 from typing import Any, Callable
 
@@ -30,7 +32,12 @@ from core import speech_filter
 
 logger = logging.getLogger("nano.wake_phrase")
 
-DEFAULT_WAKE_PHRASE = "hey nano"
+# Portuguese on purpose. The detector transcribes with faster-whisper-tiny
+# forced to Portuguese, and that model renders the English "Hey" unreliably:
+# real user recordings of "Hey Nano" came back as "Ei, nano!", "Ei, nanos!",
+# "Ei, não.", "E ai, no.", "ai na no" and "NÃO!" -- zero wake matches. "Ei" is
+# a native Portuguese interjection, so the transcriber has a word to land on.
+DEFAULT_WAKE_PHRASE = "ei nano"
 DEFAULT_COOLDOWN_SECONDS = 3.0
 DEFAULT_CHUNK_SECONDS = 2.5
 MIN_CHUNK_SECONDS = 1.0
@@ -42,10 +49,36 @@ _WHITESPACE_PATTERN = re.compile(r"\s+")
 _NANO_ONLY_PATTERN = re.compile(r"\bnano\b")
 
 
+def _join_wav(first: bytes, second: bytes) -> bytes:
+    """Concatenate two 16-bit mono WAV payloads into one.
+
+    Used to overlap analysis windows: the previous slice is prepended to the
+    new one so a phrase spoken across a boundary is still transcribed whole.
+    Falls back to the newer slice if either payload is unreadable, because a
+    missed window is recoverable but a crash in the wake loop is not.
+    """
+    try:
+        with wave.open(io.BytesIO(first)) as handle:
+            params = handle.getparams()
+            frames_a = handle.readframes(handle.getnframes())
+        with wave.open(io.BytesIO(second)) as handle:
+            frames_b = handle.readframes(handle.getnframes())
+    except Exception:
+        return second
+
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as out:
+        out.setnchannels(params.nchannels)
+        out.setsampwidth(params.sampwidth)
+        out.setframerate(params.framerate)
+        out.writeframes(frames_a + frames_b)
+    return buffer.getvalue()
+
+
 def normalize_transcript(text: str | None) -> str:
     """Lowercase, trim and strip simple punctuation from a raw STT transcript.
 
-    "Hey, Nano!" and "hey   nano" and "  Hey Nano." all normalize to "hey nano".
+    "Ei, Nano!" and "ei   nano" and "  Ei Nano." all normalize to "ei nano".
     """
     if not text:
         return ""
@@ -59,7 +92,13 @@ def _phrase_pattern(phrase: str) -> re.Pattern[str]:
 
     Word boundaries are what stop "nano" from matching inside "nanotechnology"
     or "nanosecond" — there is no boundary between "nano" and the letters that
-    follow it in either word, so \\bnano\\b cannot match there.
+    follow it in either word, so \\bnano\\b cannot match there. The same rule
+    is what makes the transcriber's "Ei, nanos!" a non-match: the trailing "s"
+    is a word character, so \\bnano\\b cannot end there either.
+
+    Matching is exact-after-normalisation on purpose. Broad fuzzy matching
+    would happily accept "Ei, não." and "e aí", which are exactly the things
+    Whisper produces when nobody is calling Nano at all.
     """
     words = normalize_transcript(phrase).split()
     if not words:
@@ -76,7 +115,22 @@ class WakePhraseReadiness(str, Enum):
     DISABLED = "DISABLED"
     STT_UNAVAILABLE = "STT_UNAVAILABLE"
     MIC_UNAVAILABLE = "MIC_UNAVAILABLE"
+    # The thread is alive and chunks are arriving, but they carry no energy.
+    # Reporting LISTENING here is a lie: the wake phrase can never fire.
+    MIC_SILENT = "MIC_SILENT"
     ERROR = "ERROR"
+
+
+# How much each analysis window overlaps the previous one. Without overlap a
+# phrase spoken across a window boundary is split -- "hey" in one window,
+# "nano" in the next -- and neither matches. One second of overlap is longer
+# than the phrase itself, so every utterance lands whole in some window.
+OVERLAP_SECONDS = 1.0
+
+# Ambient sampling at startup, bounded so a broken microphone cannot stall the
+# engine: a handful of short reads is enough to estimate a noise floor.
+CALIBRATION_WINDOWS = 6
+CALIBRATION_WINDOW_SECONDS = 0.25
 
 
 class WakePhraseState(str, Enum):
@@ -195,10 +249,27 @@ class WakePhraseEngine:
         self.chunks_captured = 0
         self.transcripts_seen = 0
         self.silent_chunks = 0
+        self.speech_chunks = 0
+        self.wake_matches = 0
+        # The last few things the transcriber actually heard, matched or not.
+        # Without this a non-matching wake is invisible: the user says
+        # "Hey Nano", nothing happens, and there is no way to see whether the
+        # phrase was misheard or never reached the transcriber at all.
+        self.recent_transcripts: list[str] = []
+
+        # The energy gate calibrates itself against this microphone rather than
+        # using a fixed RMS floor, which rejected 100% of real input.
+        self.gate = speech_filter.AdaptiveGate()
 
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._paused = threading.Event()
+        # Held for the duration of every microphone read this engine performs.
+        # pause() only sets a flag that the loop checks at the TOP of an
+        # iteration, so a caller that paused and then immediately captured was
+        # racing a read already in flight -- two threads calling read() on one
+        # PortAudio stream. pause_and_wait() below waits on this lock instead.
+        self._read_lock = threading.Lock()
 
     # ------------------------------------------------------------- lifecycle
 
@@ -239,6 +310,28 @@ class WakePhraseEngine:
     def pause(self) -> None:
         self._paused.set()
 
+    def pause_and_wait(self, timeout: float = 5.0) -> bool:
+        """Pause AND block until any in-flight microphone read has finished.
+
+        This is the only safe way for another thread to take the microphone.
+        pause() alone returns immediately while the loop may still be inside a
+        multi-second read: the caller then opens its own read on the same
+        stream, and two concurrent readers on one PortAudio stream is
+        undefined behaviour in the library that already crashed this process
+        once with an access violation.
+
+        Returns False if the read did not finish within ``timeout``, so the
+        caller can refuse to take the microphone rather than take it anyway.
+        """
+        self.pause()
+        if not self.running:
+            return True
+        if self._read_lock.acquire(timeout=timeout):
+            self._read_lock.release()
+            return True
+        logger.warning("[WakePhrase] in-flight capture did not finish within %.1fs", timeout)
+        return False
+
     def resume(self) -> None:
         self._paused.clear()
 
@@ -270,9 +363,32 @@ class WakePhraseEngine:
             return WakePhraseReadiness.MIC_UNAVAILABLE
         if self.last_error:
             return WakePhraseReadiness.ERROR
+        # Honesty rule: a live thread is not the same as a working microphone.
+        # If chunks are arriving with no energy at all, say so instead of
+        # cheerfully reporting "A ouvir" while nothing can ever be heard.
+        if self.gate.looks_dead():
+            return WakePhraseReadiness.MIC_SILENT
         if self.running and not self._paused.is_set():
             return WakePhraseReadiness.LISTENING
         return WakePhraseReadiness.READY
+
+    def explain(self) -> str:
+        """A sentence the UI can show the user, in Portuguese."""
+        readiness = self.readiness()
+        if readiness == WakePhraseReadiness.MIC_SILENT:
+            return ("O Nano não está a receber áudio suficiente do microfone. "
+                    "Verifica o dispositivo de entrada e o nível de captura no Windows.")
+        if readiness == WakePhraseReadiness.MIC_UNAVAILABLE:
+            return "Nenhum microfone disponível para o Nano."
+        if readiness == WakePhraseReadiness.STT_UNAVAILABLE:
+            return "O motor local de transcrição não está disponível."
+        if readiness == WakePhraseReadiness.DISABLED:
+            return f"A deteção de \"{self.phrase}\" está desligada."
+        if readiness == WakePhraseReadiness.ERROR:
+            return str(self.last_error or "Erro na deteção de wake.")
+        if readiness == WakePhraseReadiness.LISTENING:
+            return f"\"{self.phrase}\" — A ouvir"
+        return "Pronto."
 
     def status(self) -> dict:
         return {
@@ -285,15 +401,52 @@ class WakePhraseEngine:
             "paused": self._paused.is_set(),
             "state": self.state.value,
             "readiness": self.readiness().value,
+            "explain": self.explain(),
             "error": self.last_error,
             "last_transcript": self.last_transcript,
+            "recent_transcripts": list(self.recent_transcripts),
             # Counters make a silent failure diagnosable at a glance.
             "chunks_captured": self.chunks_captured,
             "transcripts_seen": self.transcripts_seen,
             "silent_chunks": self.silent_chunks,
+            "speech_chunks": self.speech_chunks,
+            "wake_matches": self.wake_matches,
+            # Live microphone characteristics for Voice diagnostics.
+            "audio": self.gate.stats(),
         }
 
     # ------------------------------------------------------------------ loop
+
+    def _calibrate(self) -> None:
+        """Sample ambient noise briefly so the gate matches this microphone."""
+        samples: list[float] = []
+        for _ in range(CALIBRATION_WINDOWS):
+            if self._stop.is_set():
+                break
+            try:
+                with self._read_lock:
+                    chunk = self._capture(CALIBRATION_WINDOW_SECONDS)
+            except Exception as exc:
+                logger.warning("[WakePhrase] calibration capture failed: %s", exc)
+                break
+            if chunk:
+                samples.append(speech_filter.rms_of_wav(chunk))
+        if samples:
+            threshold = self.gate.calibrate(samples)
+            logger.info(
+                "[WakePhrase] calibrated | noise_floor=%.1f threshold=%.1f (from %d samples)",
+                self.gate.noise_floor, threshold, len(samples),
+            )
+        else:
+            logger.warning("[WakePhrase] could not calibrate; using default threshold %.1f",
+                           self.gate.threshold)
+
+    def _capture(self, seconds: float) -> bytes | None:
+        """Read from the persistent stream when there is one."""
+        reader = getattr(self._audio, "read_stream", None)
+        if reader is not None and getattr(self._audio, "stream_open", False):
+            return reader(seconds)
+        return self._audio.capture(seconds)
 
     def _run(self) -> None:
         # Every stage below logs at DEBUG so a silent failure can be traced with
@@ -307,6 +460,25 @@ class WakePhraseEngine:
         self.chunks_captured = 0
         self.transcripts_seen = 0
         self.silent_chunks = 0
+        self.speech_chunks = 0
+
+        # One long-lived stream instead of reopening PyAudio every chunk. That
+        # removed 78-125 ms of measured dead time per iteration and, with the
+        # overlap below, stops a phrase being cut in half at a chunk boundary.
+        opener = getattr(self._audio, "open_stream", None)
+        if opener is not None:
+            try:
+                opener()
+            except Exception as exc:
+                logger.warning("[WakePhrase] persistent stream unavailable (%s); "
+                               "falling back to per-chunk capture.", exc)
+
+        self._calibrate()
+
+        # The rolling tail carries the end of the previous window into the next
+        # one, so every utterance appears whole in at least one analysed window.
+        tail: bytes | None = None
+        step = max(0.5, self.chunk_seconds - OVERLAP_SECONDS)
 
         while not self._stop.is_set():
             if self._paused.is_set():
@@ -315,8 +487,11 @@ class WakePhraseEngine:
 
             self.state = WakePhraseState.WAKE_LISTENING
             try:
-                # Bounded by chunk_seconds: no unbounded audio ever accumulates.
-                audio = self._audio.capture(self.chunk_seconds)
+                # Held across the read so pause_and_wait() can tell the
+                # difference between "paused" and "paused, and the microphone
+                # is genuinely free now".
+                with self._read_lock:
+                    fresh = self._capture(step)
             except Exception as exc:
                 self.last_error = str(exc)
                 logger.warning("[WakePhrase] capture failed: %s", exc)
@@ -325,23 +500,28 @@ class WakePhraseEngine:
 
             if self._stop.is_set() or self._paused.is_set():
                 continue
-            if not audio:
+            if not fresh:
                 logger.debug("[WakePhrase] captured empty chunk")
                 time.sleep(0.05)
                 continue
 
+            audio = _join_wav(tail, fresh) if tail else fresh
+            tail = fresh
+
             self.chunks_captured += 1
-            logger.debug("[WakePhrase] captured chunk #%d (%d bytes)", self.chunks_captured, len(audio))
+            logger.debug("[WakePhrase] window #%d (%d bytes)", self.chunks_captured, len(audio))
 
             # Silence never reaches the transcriber. Whisper does not return an
             # empty string for silence -- it invents filler, and a hallucinated
             # fragment containing "nano" was tripping the wake with nobody
             # speaking. Gating on energy removes that at the source.
-            if not speech_filter.has_speech_energy(audio):
+            if not self.gate.has_speech(audio):
                 self.silent_chunks += 1
-                logger.debug("[WakePhrase] chunk #%d is silence, skipped", self.chunks_captured)
+                logger.debug("[WakePhrase] window #%d below threshold %.1f (rms=%.1f), skipped",
+                             self.chunks_captured, self.gate.threshold, self.gate.last_rms)
                 time.sleep(0.02)
                 continue
+            self.speech_chunks += 1
 
             try:
                 result = self._stt.transcribe(audio)
@@ -372,6 +552,9 @@ class WakePhraseEngine:
             self.last_transcript = text
             normalized = normalize_transcript(text)
             matched = self.detector.matches(text)
+            # Kept whether or not it matched, so a mishearing is visible.
+            self.recent_transcripts.append(f"{text}{'' if matched else '  (sem correspondência)'}")
+            del self.recent_transcripts[:-5]
             logger.debug(
                 "[WakePhrase] STT transcript=%r | normalized=%r | matched=%s",
                 text, normalized, matched,
@@ -385,6 +568,7 @@ class WakePhraseEngine:
                 continue
 
             self.state = WakePhraseState.WAKE_DETECTED
+            self.wake_matches += 1
             logger.info("[WakePhrase] DETECTED %r -> waking Nano", normalized)
             self.pause()
             try:
@@ -394,17 +578,30 @@ class WakePhraseEngine:
                 logger.exception("[WakePhrase] callback failed")
             finally:
                 self.state = WakePhraseState.IDLE
+                # The turn consumed the microphone; the stale tail belongs to
+                # the wake utterance and must not be re-analysed afterwards.
+                tail = None
                 if not self._stop.is_set():
                     self.resume()
 
-        logger.info("[WakePhrase] engine stopped (chunks=%d transcripts=%d)",
-                    getattr(self, "chunks_captured", 0), getattr(self, "transcripts_seen", 0))
+        closer = getattr(self._audio, "close_stream", None)
+        if closer is not None:
+            try:
+                closer()
+            except Exception:
+                logger.debug("[WakePhrase] could not close the capture stream", exc_info=True)
+
+        logger.info("[WakePhrase] engine stopped (chunks=%d transcripts=%d speech=%d wakes=%d)",
+                    getattr(self, "chunks_captured", 0), getattr(self, "transcripts_seen", 0),
+                    getattr(self, "speech_chunks", 0), getattr(self, "wake_matches", 0))
 
 
 __all__ = [
+    "CALIBRATION_WINDOWS",
     "DEFAULT_CHUNK_SECONDS",
     "DEFAULT_COOLDOWN_SECONDS",
     "DEFAULT_WAKE_PHRASE",
+    "OVERLAP_SECONDS",
     "WakePhraseDetector",
     "WakePhraseEngine",
     "WakePhraseReadiness",

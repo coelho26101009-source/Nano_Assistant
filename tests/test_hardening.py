@@ -165,7 +165,11 @@ def test_malicious_page_cannot_grant_a_permission(workspace, manager):
 
     # Nothing about the page has touched the grant store or the policy.
     assert manager.list_task_grants() == []
-    assert manager._once_grants == set()
+    assert not manager._once_grants
+    # Stronger than "the collection is empty": no grant of any kind authorises
+    # the capability the page was fishing for.
+    assert manager._has_execution_grant("filesystem.read", {"path": "C:/secrets/.env"}) is False
+    assert manager._has_execution_grant("shell.execute", {"command": "whoami"}) is False
     assert dict(manager.policy_engine.get_rules()) == before_rules
     assert manager.get_decision_for_action("filesystem.read", {"path": "C:/secrets/.env"}) == before_decision
 

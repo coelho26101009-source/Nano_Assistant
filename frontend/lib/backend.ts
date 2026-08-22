@@ -34,6 +34,10 @@ export type ProviderInfo = {
   secret: SecretInfo;
   detail: string;
   url?: string;
+  /** Groq only: the conversation model and the complex-work model. */
+  tiers?: { fast: string; complex: string };
+  /** Groq only: whether each configured tier actually exists on the account. */
+  tiers_ok?: { fast: boolean; complex: boolean };
 };
 
 export type ProviderPayload = {
@@ -106,12 +110,44 @@ export type CommandCenterPayload = {
   autonomy_mode: string;
 };
 
+/** Live wake/microphone numbers. Cheap enough to poll once a second. */
+export type VoiceDiagnostics = {
+  state?: string;
+  turnState?: string;
+  explain?: string;
+  phrase?: string;
+  error?: string | null;
+  lastTranscript?: string | null;
+  recentTranscripts?: string[];
+  audio?: Record<string, number> | null;
+  voiceTurn?: { active: boolean; source: string | null; phase: string; elapsed_seconds: number | null };
+  counters?: {
+    chunksCaptured?: number; silentChunks?: number; speechChunks?: number;
+    transcriptsSeen?: number; wakeMatches?: number;
+  };
+};
+
 export type SettingsPayload = {
   providers: ProviderPayload;
   voice: {
     enabled: boolean; ttsEnabled: boolean; wakePhrase: string;
     wakePhraseEnabled: boolean; allowNanoOnly: boolean;
     cooldownSeconds: number; commandTimeoutSeconds: number; state: string;
+    // Typing and talking are separate conversations.
+    typedChatTts: boolean; voiceReplyTts: boolean;
+    // Honest microphone diagnostics: what Nano is really hearing.
+    explain?: string;
+    lastTranscript?: string | null;
+    recentTranscripts?: string[];
+    audio?: {
+      calibrated?: boolean; noise_floor?: number; threshold?: number;
+      last_rms?: number; peak_rms?: number;
+      chunks_seen?: number; speech_chunks?: number; silent_chunks?: number;
+    };
+    counters?: {
+      chunksCaptured?: number; silentChunks?: number; speechChunks?: number;
+      transcriptsSeen?: number; wakeMatches?: number;
+    };
   };
   devices: { inputs: { id: number; name: string }[]; outputs: { id: number; name: string }[]; error?: string };
   security: {
@@ -200,6 +236,13 @@ export const POLL = {
   readiness: 10000,
   taskCounts: 8000,
   page: 6000,
+  /**
+   * Live microphone levels only. Fast BECAUSE it is cheap: get_voice_diagnostics
+   * reads in-memory counters and touches no network, database or audio device.
+   * Never point a 1 s poll at get_settings() again -- that endpoint describes
+   * both providers, and describing Groq is a blocking HTTPS request.
+   */
+  voiceDiagnostics: 1000,
 } as const;
 
 /**

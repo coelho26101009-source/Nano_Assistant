@@ -6,7 +6,19 @@
 # O modelo cloud tem de existir na tua conta Groq. "llama-3.3-70b-versatile"
 # foi descontinuado e devolvia 404 em TODAS as mensagens, obrigando sempre ao
 # fallback local (e sem resposta nenhuma quando o Ollama tambem estava parado).
+#
+# Dois niveis. A conversa normal usa sempre o modelo rapido; o modelo forte so
+# e escolhido quando o pedido e classificado como COMPLEX (analise, codigo,
+# raciocinio), nunca por a mensagem ser comprida.
+#
+# Escolhidos por benchmark real nesta conta (nao por documentacao):
+#   - llama-3.1-8b-instant e llama-3.3-70b-versatile NAO existem nesta conta.
+#   - qwen/qwen3.6-27b escreve o raciocinio <think> dentro da resposta e gasta
+#     400-700 tokens num simples "Ola".
+#   - openai/gpt-oss-20b: 1o token ~344 ms, portugues de Portugal correcto.
 groq_model: "openai/gpt-oss-20b"
+groq_fast_model: "openai/gpt-oss-20b"
+groq_complex_model: "openai/gpt-oss-120b"
 
 # ── LLM local ─────────────────────────────────────────────────────────────────
 local:
@@ -29,6 +41,12 @@ local:
 memory:
   history_messages: 20
   max_history_chars: 8000
+  # Orcamento REAL do historico, em tokens -- a unidade em que o limite da Groq
+  # (8000 tokens por minuto) e contado. Um orcamento em caracteres permitia que
+  # UMA mensagem reservasse ~6300 dos 8000 tokens do minuto, e duas mensagens
+  # seguidas davam 429. Com 1200 tokens sobra folga confortavel para o prompt
+  # de sistema, as ferramentas e a resposta.
+  max_history_tokens: 1200
   facts_enabled: true
   rag_enabled: true
   rag_results: 3
@@ -41,7 +59,14 @@ voice:
   cloud_audio: false
   listen_seconds: 7
   session_timeout_seconds: 30
+  # Interruptor geral da voz falada.
   tts_enabled: true
+  # Falar a resposta a uma mensagem ESCRITA. Desligado por omissao: escrever no
+  # chat e comecar a ouvir a resposta em voz alta era surpreendente e indesejado.
+  typed_chat_tts: false
+  # Falar a resposta a uma mensagem DITADA (turno de voz). Ligado: se o
+  # utilizador falou com o Nano, espera ouvir a resposta.
+  voice_reply_tts: true
   tts_provider: "edge"
   elevenlabs_voice_id: "RROBrqjHiRb8zmRgGV11"
   openai_voice: "onyx"
@@ -55,7 +80,20 @@ voice:
   stop_on_silence: true
   silence_threshold: 500
   wake_word:
-    enabled: true
+    # DESLIGADO por omissao. Este e o motor ONNX/Porcupine EXPERIMENTAL, que
+    # precisa de um modelo de keyword treinado -- e nunca houve nenhum em
+    # models/wakeword/, por isso nunca chegou a arrancar.
+    #
+    # REGRA DO MICROFONE (nao quebrar): so pode existir UM dono activo do
+    # microfone. O core/wake_word.py cria e destroi o PyAudio directamente,
+    # sem passar pelo _PORTAUDIO_LOCK partilhado do core/voice.py -- e foi
+    # exactamente essa concorrencia que rebentou o processo com um access
+    # violation (0xC0000005). Enquanto nao passar pelo lock partilhado, este
+    # motor fica desligado. O codigo mantem-se para trabalho futuro.
+    #
+    # A activacao primaria da V1 passa a ser o atalho global (Ctrl+Shift+Space).
+    # A wake phrase por STT ("ei nano") continua disponivel e experimental.
+    enabled: false
     provider: "openwakeword"
     phrase: "Nano"
     model_path: ""
@@ -65,10 +103,16 @@ voice:
     backend: "auto"
     framework: "onnx"
     custom_verifier_model_path: ""
-  # Simple local wake phrase ("Hey Nano") — spots the phrase in local STT
+  # Simple local wake phrase ("Ei Nano") - spots the phrase in local STT
   # transcripts. No trained model needed; works offline. Independent of the
   # wake_word block above.
-  wake_phrase: "hey nano"
+  #
+  # Em portugues de proposito. O faster-whisper-tiny forcado a portugues nao
+  # transcreve o "Hey" ingles de forma fiavel: gravacoes reais de "Hey Nano"
+  # voltaram como "Ei, nano!", "Ei, nanos!", "Ei, nao.", "E ai, no." e "NAO!",
+  # por isso o matcher nunca disparava. "Ei" e uma interjeicao portuguesa que
+  # o modelo reconhece.
+  wake_phrase: "ei nano"
   wake_phrase_enabled: true
   # Bare "nano" desligado por omissao: causava activacoes falsas.
   wake_phrase_allow_nano_only: false

@@ -24,7 +24,7 @@ import {
 import { Button, ErrorState, StatusIndicator, ToastStack, stateLabel, useToasts } from "../components/ui";
 import {
   ActivityEvent, CommandCenterPayload, POLL, ProviderPayload, ReadinessPayload,
-  SettingsPayload, TaskCounts, TaskRow,
+  SettingsPayload, TaskCounts, TaskRow, VoiceDiagnostics,
   call, expose, useBridgeReady, useFetch, usePolled,
 } from "../lib/backend";
 
@@ -48,6 +48,13 @@ const VIEW_META: Record<ViewId, { title: string; subtitle: string; icon: React.R
   settings:     { title: "Definições", subtitle: "Configurar o Nano", icon: <span aria-hidden="true">⚙</span> },
 };
 
+/** The id of the user bubble belonging to a turn.
+ *
+ * One authoritative insertion per user turn, keyed by the request id rather
+ * than by comparing message text: the same text may legitimately be sent
+ * twice, so text equality can never be the identity of a turn. */
+const userMessageId = (requestId: string) => `user:${requestId}`;
+
 export default function Home() {
   const { ready, gaveUp } = useBridgeReady();
   const { toasts, notify } = useToasts();
@@ -66,6 +73,10 @@ export default function Home() {
   const [thinking, setThinking] = useState(false);
   const [status, setStatus] = useState("");
   const [listening, setListening] = useState(false);
+  // Rate limiting is a temporary, self-clearing state with a known wait, not
+  // an error message. Kept separate so the UI can count it down.
+  const [rateLimit, setRateLimit] = useState<{ message: string; waitSeconds: number } | null>(null);
+  const [voicePhase, setVoicePhase] = useState<{ phase: string; detail: string } | null>(null);
 
   /* ── Dialogs ────────────────────────────────────────────────────────── */
   const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
@@ -103,6 +114,18 @@ export default function Home() {
   const { data: settings, loading: settingsLoading, refresh: refreshSettings } =
     useFetch<SettingsPayload>("get_settings", ready && view === "settings", []);
 
+  // The microphone diagnostics are only useful live. Fetched once at page
+  // load they showed a snapshot from before the user spoke -- which read as
+  // "the wake listener hears nothing" when it simply had not looked yet.
+  //
+  // This used to poll get_settings() once a second, which ALSO describes both
+  // providers -- and describing Groq is a blocking HTTPS request. That was one
+  // call to api.groq.com every second the Settings page was open.
+  // get_voice_diagnostics() reads only in-memory counters: no network, no
+  // database, no PortAudio. Provider state keeps the slow readiness cadence.
+  const { data: voiceDiag } = usePolled<VoiceDiagnostics>(
+    "get_voice_diagnostics", POLL.voiceDiagnostics, ready && view === "settings");
+
   useEffect(() => { document.documentElement.setAttribute("data-theme", theme); }, [theme]);
   useEffect(() => {
     document.documentElement.style.setProperty("--transition", reduceMotion ? "0ms" : "140ms cubic-bezier(0.4, 0, 0.2, 1)");
@@ -128,9 +151,17 @@ export default function Home() {
       setStatus("A pensar…");
       setMessages((prev) => {
         const next = [...prev];
-        const last = next[next.length - 1];
-        if (userText && (!last || last.role !== "user" || last.content !== userText)) {
-          next.push({ id: crypto.randomUUID(), role: "user", content: userText, timestamp: new Date() });
+        // Exactly ONE user bubble per turn, identified by the turn's own id.
+        //
+        // This used to compare the text of the LAST message in the list. But
+        // sendMessage appends [user, assistant], so the last entry was the
+        // empty assistant bubble, the comparison never matched, and the user's
+        // text was appended a second time -- after Nano's reply. Deriving the
+        // id from the request id also survives the user legitimately sending
+        // the same text twice, which text equality never could.
+        const userId = userMessageId(msgId);
+        if (userText && !next.some((m) => m.id === userId)) {
+          next.push({ id: userId, role: "user", content: userText, timestamp: new Date() });
         }
         if (!next.some((m) => m.id === msgId)) {
           next.push({ id: msgId, role: "assistant", content: "", timestamp: new Date(), streaming: true });
@@ -185,18 +216,70 @@ export default function Home() {
       setMessages((prev) => prev.map((m) => {
         if (m.id !== msgId) return m;
         const tools = (m.tools ?? []).map((t) => t.state === "running" ? { ...t, state: "ok" as const, summary: `${t.name} concluída` } : t);
-        return { ...m, content: text ?? m.content, streaming: false, tools };
+        return {
+          ...m,
+          content: text ?? m.content,
+          streaming: false,
+          error: final?.ok === false,
+          // Safe per-response diagnostics (provider, model, tokens, latency).
+          meta: final?.meta ?? m.meta,
+          tools,
+        };
       }));
       refreshCC();
       refreshCounts();
     }, "on_stream_end");
 
-    expose((userText: string, assistantText: string) => {
-      setMessages((prev) => [
-        ...prev,
-        { id: crypto.randomUUID(), role: "user", content: userText, timestamp: new Date() },
-        { id: crypto.randomUUID(), role: "assistant", content: assistantText, timestamp: new Date() },
-      ]);
+    // A provider/model failure. Distinct from the bridge being unreachable:
+    // the request WAS accepted, so this is never "Motor offline".
+    expose((msgId: string, error: any) => {
+      setThinking(false);
+      setStatus("");
+      setMessages((prev) => prev.map((m) => m.id === msgId
+        ? { ...m, streaming: false, error: true,
+            content: m.content || `**Não foi possível responder.** ${error?.detail ?? error?.code ?? ""}` }
+        : m));
+      notify("Erro ao responder", "error");
+    }, "on_stream_error");
+
+    // Rate limiting is a state with a known wait, not a generic error.
+    expose((_msgId: string, info: any) => {
+      const wait = Math.max(1, Math.round(Number(info?.wait_seconds ?? 0)));
+      setRateLimit({ message: info?.message ?? "Limite temporário atingido.", waitSeconds: wait });
+      setStatus("");
+      setThinking(false);
+      notify(info?.message ?? "Limite temporário da Groq atingido.", "default");
+    }, "on_rate_limited");
+
+    // Which phase of a voice turn we are in, so the UI can narrate it.
+    // Every trigger -- wake phrase, mic button, and the global hotkey when it
+    // arrives -- drives the same sequence, so this is the single place the
+    // composer learns that a turn started and, crucially, that it ended.
+    expose((phase: string, detail: string) => {
+      setVoicePhase({ phase, detail });
+      setListening(phase === "COMMAND_LISTENING");
+      // A turn that ends without producing an answer (silence, no usable
+      // command) still has to release the composer, or the UI sits on
+      // "A ouvir…" forever after the microphone has already been let go.
+      if (phase === "WAKE_LISTENING" || phase === "IDLE") {
+        setThinking(false);
+        setStatus("");
+      } else if (phase === "PROCESSING" || phase === "SPEAKING") {
+        setThinking(true);
+      }
+    }, "on_voice_phase");
+
+    // A completed voice turn. Carries its own turn id so a retry or a repeated
+    // phrase cannot insert the exchange twice.
+    expose((turnId: string, userText: string, assistantText: string) => {
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === turnId)) return prev;
+        return [
+          ...prev,
+          { id: userMessageId(turnId), role: "user", content: userText, timestamp: new Date() },
+          { id: turnId, role: "assistant", content: assistantText, timestamp: new Date() },
+        ];
+      });
     }, "on_voice_exchange");
 
     call<any[]>("get_conversation_history").then((history) => {
@@ -213,14 +296,30 @@ export default function Home() {
     call<any[]>("list_permission_policies").then((v) => v && setPolicies(v));
   }, [ready, notify, refreshCC, refreshCounts]);
 
+  /* ── Rate-limit countdown ───────────────────────────────────────────── */
+  // The wait comes from Groq's own retry-after header, so the banner clears
+  // itself exactly when the limit does instead of lingering as a stale error.
+  useEffect(() => {
+    if (!rateLimit) return;
+    if (rateLimit.waitSeconds <= 0) { setRateLimit(null); return; }
+    const timer = setTimeout(
+      () => setRateLimit((prev) => (prev ? { ...prev, waitSeconds: prev.waitSeconds - 1 } : null)),
+      1000,
+    );
+    return () => clearTimeout(timer);
+  }, [rateLimit]);
+
   /* ── Actions ────────────────────────────────────────────────────────── */
   const sendMessage = useCallback((override?: string) => {
     const text = (override ?? input).trim();
     if (!text || thinking || !ready) return;
     const msgId = crypto.randomUUID();
+    // The user bubble's id is derived from the turn id, so on_stream_start can
+    // recognise that this turn's message is already on screen and never append
+    // a second copy.
     setMessages((prev) => [
       ...prev,
-      { id: crypto.randomUUID(), role: "user", content: text, timestamp: new Date() },
+      { id: userMessageId(msgId), role: "user", content: text, timestamp: new Date() },
       { id: msgId, role: "assistant", content: "", timestamp: new Date(), streaming: true },
     ]);
     if (override === undefined) setInput("");
@@ -228,38 +327,26 @@ export default function Home() {
     setStatus("A pensar…");
     setView("chat");
 
-    call<any>("send_message", text, msgId).then((result) => {
+    // send_message returns an ACK, never the answer: the reply arrives on the
+    // stream events. Treating a slow turn's missing return value as "offline"
+    // is what produced a false "Motor offline" while the backend was working.
+    call<any>("send_message", text, msgId).then((ack) => {
+      if (ack?.accepted) return;               // healthy: the stream takes over
+
+      // Only a genuine transport failure lands here.
       setThinking(false);
       setStatus("");
-
-      // A failed message must never look like silence.
-      let answer: string;
-      let isError = false;
-      if (result === null) {
-        answer = "**Sem resposta do motor do Nano.** A ligação ao backend caiu ou expirou. Confirma que a janela do Nano continua aberta e recarrega a página.";
-        isError = true;
-        notify("Motor offline", "error");
-      } else if (result?.text) {
-        answer = result.text;
-      } else if (result?.error) {
-        const route = providers?.route;
-        const hint = route && !route.usable ? ` ${route.reason}` : "";
-        answer = `**Não foi possível responder.** ${result.error}.${hint}`;
-        isError = true;
-        notify("Erro ao responder", "error");
-      } else {
-        answer = "**Sem resposta.** O pedido terminou sem texto nem erro.";
-        isError = true;
-      }
-
+      const transportDown = ack === null || ack === undefined;
+      const answer = transportDown
+        ? "**Sem resposta do motor do Nano.** A ligação ao backend caiu ou expirou. Confirma que a janela do Nano continua aberta e recarrega a página."
+        : `**O pedido não foi aceite.** ${ack?.error ?? "motivo desconhecido"}.`;
+      notify(transportDown ? "Motor offline" : "Pedido recusado", "error");
       setMessages((prev) => prev.map((m) => m.id === msgId
-        ? { ...m, content: answer, streaming: false, error: isError,
+        ? { ...m, content: answer, streaming: false, error: true,
             tools: (m.tools ?? []).map((t) => t.state === "running" ? { ...t, state: "ok" as const } : t) }
         : m));
-      refreshCC();
-      refreshCounts();
     });
-  }, [input, thinking, ready, providers, notify, refreshCC, refreshCounts]);
+  }, [input, thinking, ready, notify]);
 
   const stopWork = useCallback(() => {
     call("stop_voice");
@@ -278,16 +365,21 @@ export default function Home() {
       notify(`Voz: ${stateLabel(readiness.voice.state)}`, "error");
       return;
     }
-    setListening(true);
-    setThinking(true);
-    setStatus("A ouvir…");
-    call<any>("start_voice_listen").then((result) => {
+    // One shared voice turn for every trigger. This returns an ACK, not the
+    // answer: the turn narrates itself through on_voice_phase and delivers the
+    // exchange through on_voice_exchange, exactly like the wake phrase does.
+    // The old start_voice_listen blocked the whole bridge for the listen.
+    call<any>("start_voice_turn_from_ui").then((result) => {
+      if (result?.accepted) return;
       setListening(false);
       setThinking(false);
       setStatus("");
-      if (result?.text) setInput(result.text);
-      else if (result?.error) notify(`Voz: ${result.error}`, "error");
+      if (result?.busy) notify("O Nano já está a ouvir");
+      else notify(`Voz: ${result?.error ?? "não foi possível iniciar"}`, "error");
     });
+    setListening(true);
+    setThinking(true);
+    setStatus("A ouvir…");
   }, [ready, thinking, readiness, notify]);
 
   const cancelVoice = useCallback(() => {
@@ -446,11 +538,22 @@ export default function Home() {
 
   const healthLabel = useMemo(() => {
     if (gaveUp) return "Motor offline";
+    if (rateLimit) return `Groq: espera ~${rateLimit.waitSeconds}s`;
     if (readiness?.emergencyStop) return "Execução bloqueada";
     if (pendingCount > 0) return `${pendingCount} por autorizar`;
     if (providers?.route?.usable === false) return "Sem provedor de IA";
+    // The wake detector reports MIC_SILENT when chunks arrive with no energy.
+    // Saying "operacional" then would be untrue.
+    if (readiness?.wakePhrase?.state === "MIC_SILENT") return "Microfone sem áudio";
     return "Todos os serviços operacionais";
-  }, [gaveUp, readiness, pendingCount, providers]);
+  }, [gaveUp, rateLimit, readiness, pendingCount, providers]);
+
+  /** What Nano is doing right now, in one short line for the composer. */
+  const activityLabel = useMemo(() => {
+    if (rateLimit) return `${rateLimit.message}`;
+    if (voicePhase && voicePhase.phase !== "WAKE_LISTENING") return voicePhase.detail;
+    return status;
+  }, [rateLimit, voicePhase, status]);
 
   const suggestions = useMemo(() => {
     if (messages.length > 0) return [];
@@ -539,7 +642,7 @@ export default function Home() {
 
           {view === "chat" && (
             <>
-              <Conversation messages={messages} status={status} thinking={thinking} />
+              <Conversation messages={messages} status={activityLabel} thinking={thinking} />
               <Composer
                 value={input} onChange={setInput}
                 onSend={() => sendMessage()} onStop={stopWork}
@@ -589,6 +692,7 @@ export default function Home() {
               {view === "settings" && (
                 <SettingsPage
                   settings={settings} providers={providers}
+                  diagnostics={voiceDiag}
                   loading={settingsLoading} busy={busy}
                   onSetMode={setMode} onSaveGroqKey={saveGroqKey} onRemoveGroqKey={removeGroqKey}
                   onTestGroq={testGroq} onSetGroqModel={setGroqModel} onUpdate={updateSetting}

@@ -63,14 +63,28 @@ if errorlevel 1 (
 )
 echo  [NANO] Dependencies .. OK
 
-REM --- 3. Frontend (build only when missing) ------------------------------
+REM --- 3. Frontend (build when missing OR when the sources changed) -------
 REM PARENTHESIS RULE (do not break this):
 REM Inside an IF block, an unescaped ( or ) in an echo argument ends the block
 REM early. That happened here: everything after the "BUILDING (...)" line fell
 REM outside the IF and npm ran on EVERY launch, adding about a minute to each
 REM startup even when frontend\out was already built. Escape them as ^( and ^).
-if not exist "frontend\out\index.html" (
-    echo  [NANO] Frontend ...... BUILDING ^(first run, this takes a minute^)
+REM
+REM STALENESS RULE:
+REM Building only when index.html was missing meant an edited component was
+REM silently ignored and the launcher served the previous bundle. Rebuilding
+REM every launch costs about a minute. core.frontend_build compares the newest
+REM frontend source against a stamp written at build time and exits 1 when a
+REM rebuild is actually needed, so the common case still skips npm entirely.
+set "NANO_BUILD=0"
+if not exist "frontend\out\index.html" set "NANO_BUILD=1"
+if "%NANO_BUILD%"=="0" (
+    "%NANO_PY%" -m core.frontend_build check
+    if errorlevel 1 set "NANO_BUILD=1"
+)
+
+if "%NANO_BUILD%"=="1" (
+    echo  [NANO] Frontend ...... BUILDING ^(sources changed, this takes a minute^)
     pushd frontend
     call npm run build
     popd
@@ -84,8 +98,11 @@ if not exist "frontend\out\index.html" (
         echo.
         goto :fail
     )
+    "%NANO_PY%" -m core.frontend_build stamp
+    echo  [NANO] Frontend ...... OK ^(rebuilt^)
+) else (
+    echo  [NANO] Frontend ...... CURRENT
 )
-echo  [NANO] Frontend ...... OK
 
 REM --- 4. Backend ----------------------------------------------------------
 REM main.py starts Ollama if needed, starts the wake listener, and opens the

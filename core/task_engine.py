@@ -12,29 +12,108 @@ from typing import Any
 from core.app_paths import DATA_DIR
 
 
-# Hard ceiling on a task's metadata blob. A recursive context bug once grew
-# metadata exponentially and produced a 1.5 GB task database; this cap makes
-# that class of bug loud and bounded instead of silent and unbounded.
+# Hard ceilings on what a single task row may persist. A recursive context bug
+# once grew metadata exponentially and produced a 1.5 GB task database; these
+# caps make that class of bug loud and bounded instead of silent and unbounded.
+#
+# The size cap alone is not enough. It was applied on create_task only, while
+# growth actually happens in update_task, which MERGES the new metadata into
+# whatever is already stored -- so every update carried the previous blob
+# forward and the one guarded write was the one that could not grow. Both
+# writers now go through the same bounded encoder.
 MAX_METADATA_BYTES = 64 * 1024
+MAX_RESULT_BYTES = 128 * 1024
+
+# Nesting deeper than this is treated as a runaway structure rather than data.
+# This is the guard that actually stops the recursive case: a task whose
+# metadata embeds a snapshot of the task (which embeds its metadata, ...) grows
+# by DEPTH, not by breadth, so a byte cap only notices once the blob is already
+# enormous. Pruning by depth is also what makes a genuine reference cycle safe
+# to serialise at all -- json.dumps raises ValueError on one.
+MAX_JSON_DEPTH = 8
+
+# Individual values up to this size survive a trim intact; larger ones are
+# replaced by an explicit marker so the row stays valid JSON and the loss is
+# visible rather than silent.
+MAX_KEPT_VALUE_BYTES = 4096
 
 
-def _encode_metadata(metadata: dict | None) -> str:
-    """Serialise task metadata, refusing to persist an unbounded blob."""
-    encoded = json.dumps(metadata or {}, ensure_ascii=False)
-    if len(encoded.encode("utf-8")) <= MAX_METADATA_BYTES:
+def _prune_depth(value: Any, *, depth: int = 0, limit: int = MAX_JSON_DEPTH) -> Any:
+    """Rebuild a structure with anything below ``limit`` levels replaced.
+
+    Returning a marker instead of the sub-tree bounds both runaway nesting and
+    reference cycles: the recursion is depth-limited, so a self-referential
+    object terminates instead of recursing until the interpreter gives up.
+    """
+    if depth >= limit:
+        if isinstance(value, (dict, list, tuple, set)):
+            return f"<omitido: estrutura mais profunda que {limit} níveis>"
+        return value
+    if isinstance(value, dict):
+        return {str(k): _prune_depth(v, depth=depth + 1, limit=limit) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_prune_depth(v, depth=depth + 1, limit=limit) for v in value]
+    return value
+
+
+def _dumps_safe(payload: Any) -> str:
+    """json.dumps that cannot raise on an unserialisable or cyclic payload."""
+    try:
+        return json.dumps(payload, ensure_ascii=False)
+    except (TypeError, ValueError):
+        # default=str handles unserialisable leaves; the depth prune above has
+        # already removed any cycle, so this is the belt to that braces.
+        try:
+            return json.dumps(payload, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            return json.dumps({"_encoding_failed": True}, ensure_ascii=False)
+
+
+def _encode_bounded(payload: Any, *, max_bytes: int, marker: str) -> str:
+    """Serialise a payload, refusing to persist an unbounded blob.
+
+    Valid data that fits is stored byte-for-byte unchanged. Only a payload that
+    exceeds the ceiling is trimmed, and the trim is recorded in the row itself
+    (``marker``) so a reader can tell truncated data from complete data.
+    """
+    pruned = _prune_depth(payload)
+    encoded = _dumps_safe(pruned)
+    if len(encoded.encode("utf-8")) <= max_bytes:
         return encoded
 
     # Keep the small, useful keys and record why the rest was dropped, rather
     # than truncating into invalid JSON.
-    trimmed: dict[str, Any] = {}
-    for key, value in (metadata or {}).items():
-        candidate = json.dumps(value, ensure_ascii=False)
-        if len(candidate.encode("utf-8")) <= 4096:
-            trimmed[key] = value
-        else:
-            trimmed[key] = f"<omitido: {len(candidate)} bytes excedem o limite de metadata>"
-    trimmed["_metadata_truncated"] = True
-    return json.dumps(trimmed, ensure_ascii=False)
+    if isinstance(pruned, dict):
+        trimmed: dict[str, Any] = {}
+        for key, value in pruned.items():
+            candidate = _dumps_safe(value)
+            if len(candidate.encode("utf-8")) <= MAX_KEPT_VALUE_BYTES:
+                trimmed[key] = value
+            else:
+                trimmed[key] = f"<omitido: {len(candidate)} bytes excedem o limite>"
+        trimmed[marker] = True
+        result = _dumps_safe(trimmed)
+        if len(result.encode("utf-8")) <= max_bytes:
+            return result
+        # Even the trimmed row is too large (very many keys). Refuse it whole
+        # rather than persisting something unbounded.
+        return _dumps_safe({marker: True, "_dropped_keys": len(trimmed)})
+
+    return _dumps_safe({marker: True, "_dropped_bytes": len(encoded.encode("utf-8"))})
+
+
+def _encode_metadata(metadata: dict | None) -> str:
+    """Serialise task metadata under the metadata ceiling."""
+    return _encode_bounded(metadata or {}, max_bytes=MAX_METADATA_BYTES, marker="_metadata_truncated")
+
+
+def _encode_result(result: Any) -> str:
+    """Serialise a task result under the result ceiling.
+
+    Results carry raw tool output -- a fetched page is up to 12 KB per step --
+    so this is the other blob that can grow without a bound of its own.
+    """
+    return _encode_bounded(result, max_bytes=MAX_RESULT_BYTES, marker="_result_truncated")
 
 
 class TaskEngine:
@@ -275,9 +354,12 @@ class TaskEngine:
                 (
                     new_status,
                     new_progress,
-                    json.dumps(new_result, ensure_ascii=False) if new_result is not None else current.get("result"),
+                    # Both blobs go through the SAME bounded encoders create_task
+                    # uses. A bare json.dumps here is what let the metadata cap
+                    # be bypassed on the only write path that accumulates.
+                    _encode_result(new_result) if new_result is not None else current.get("result"),
                     new_error,
-                    json.dumps(new_metadata, ensure_ascii=False),
+                    _encode_metadata(new_metadata),
                     started_at,
                     finished_at,
                     now,

@@ -14,7 +14,14 @@ CONFIG_PATH = CONFIG_DIR / "settings.yaml"
 _cache: dict | None = None
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    "groq_model": "llama-3.3-70b-versatile",
+    # Two Groq tiers. Conversation must never pay for the big model, and the
+    # big model is reached only by an explicit COMPLEX classification (see
+    # core.model_selection) -- never because a message happens to be long.
+    # These ids were chosen from a measured benchmark on the real account:
+    # llama-3.1-8b-instant / llama-3.3-70b-versatile are NOT available there.
+    "groq_model": "openai/gpt-oss-20b",          # legacy alias of the fast model
+    "groq_fast_model": "openai/gpt-oss-20b",
+    "groq_complex_model": "openai/gpt-oss-120b",
     "groq_api_key": "",
     "ollama_enabled": True,
     "local": {
@@ -55,6 +62,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "cloud_audio": False,
         "listen_seconds": 5,
         "session_timeout_seconds": 30,
+        # Spoken output is split in three so typing never talks back at you.
+        # A single global tts_enabled meant every typed reply was read aloud,
+        # which is how a delayed "Olá" arrived a minute after a chat message.
+        "tts_enabled": True,        # master switch
+        "typed_chat_tts": False,    # replies to messages the user TYPED
+        "voice_reply_tts": True,    # replies to messages the user SPOKE
         "wake_word": {
             "enabled": False,
             "provider": "openwakeword",
@@ -68,9 +81,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "keyword_path": "",
             "custom_verifier_model_path": "",
         },
-        # Simple local wake-phrase detector ("Hey Nano"): local STT phrase
+        # Simple local wake-phrase detector ("Ei Nano"): local STT phrase
         # spotting, no trained model required. Independent of "wake_word" above.
-        "wake_phrase": "hey nano",
+        #
+        # Portuguese on purpose. faster-whisper-tiny forced to Portuguese does
+        # not reliably produce the English "Hey": real recordings of "Hey Nano"
+        # came back as "Ei, nano!", "Ei, não.", "E ai, no." and "NÃO!", so the
+        # matcher never fired. "Ei" is a native interjection the model knows.
+        "wake_phrase": "ei nano",
         "wake_phrase_enabled": True,
         # Bare "nano" is OFF by default. It caused real false activations: a
         # single hallucinated or overheard "nano" was enough to wake Nano.
@@ -104,6 +122,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "memory": {
         "history_messages": 20,
         "max_history_chars": 8000,
+        # The conversation budget that actually binds, in TOKENS -- the unit the
+        # Groq tokens-per-minute ceiling is denominated in. See
+        # Brain._trim_conversation: a character budget let one message reserve
+        # most of a minute's allowance, which is how rate limiting kept coming
+        # back after tool scoping had already fixed the tool half of the cost.
+        "max_history_tokens": 1200,
         "facts_enabled": True,
         "rag_enabled": True,
         "rag_results": 3,

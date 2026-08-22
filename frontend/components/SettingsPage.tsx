@@ -7,7 +7,8 @@
  * the user never has to open .env.
  */
 import React, { useState } from "react";
-import type { ProviderPayload, SettingsPayload } from "../lib/backend";
+import type { ProviderPayload, SettingsPayload, VoiceDiagnostics } from "../lib/backend";
+import { call } from "../lib/backend";
 import {
   Badge, Button, ConfirmDialog, EmptyState, ErrorState, Field, MetricRow,
   Panel, SecretField, SegmentedControl, StatusIndicator, Tabs, Toggle,
@@ -15,13 +16,107 @@ import {
 
 type Section = "general" | "ai" | "voice" | "appearance" | "privacy" | "advanced";
 
+type WakeTest = {
+  phrase: string;
+  matched: boolean;
+  transcript?: string;
+  normalized?: string;
+  gate?: boolean;
+  rms?: number;
+  threshold?: number;
+  detail?: string;
+  error?: string;
+};
+
+/** Candidate wake phrases, all Portuguese: the transcriber runs in Portuguese,
+ *  which is precisely why the English "Hey Nano" was heard as "Ei, não.". */
+const WAKE_CANDIDATES = ["ei nano", "olá nano", "acorda nano"];
+
+/**
+ * Try a wake phrase out loud without waking Nano.
+ *
+ * A wake that does not fire is otherwise invisible: you say the phrase,
+ * nothing happens, and there is no way to tell whether the microphone, the
+ * transcriber or the matcher is at fault. This runs the same provider, the
+ * same STT settings and the same matcher as the live detector, and shows the
+ * transcript verbatim. It never reaches the Brain and stores no audio.
+ */
+function WakePhraseTester({ phrase }: { phrase: string }) {
+  const [active, setActive] = useState<string | null>(null);
+  const [history, setHistory] = useState<WakeTest[]>([]);
+
+  const run = async (candidate: string) => {
+    setActive(candidate);
+    try {
+      const result = await call<WakeTest>("test_wake_phrase", candidate, 3);
+      if (result) setHistory((prev) => [result, ...prev].slice(0, 8));
+    } finally {
+      setActive(null);
+    }
+  };
+
+  return (
+    <Panel title="Testar frase de ativação">
+      <p className="dim" style={{ fontSize: 12, marginBottom: 10 }}>
+        Carrega numa frase e di-la em voz alta. O Nano mostra o que ouviu, sem
+        acordar nem responder. Repete algumas vezes para veres se é fiável.
+      </p>
+      <div className="inline" style={{ flexWrap: "wrap", gap: 8 }}>
+        {WAKE_CANDIDATES.map((candidate) => (
+          <Button
+            key={candidate}
+            size="sm"
+            variant={candidate === phrase ? "primary" : "default"}
+            disabled={active !== null}
+            onClick={() => run(candidate)}
+          >
+            {active === candidate ? "A ouvir…" : candidate}
+          </Button>
+        ))}
+      </div>
+
+      {history.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          {history.map((entry, index) => (
+            <div
+              key={index}
+              style={{
+                display: "flex", gap: 8, alignItems: "baseline",
+                padding: "5px 0", borderTop: index ? "1px solid var(--border)" : "none",
+                fontSize: 12,
+              }}
+            >
+              <Badge tone={entry.matched ? "accent" : "neutral"}>
+                {entry.matched ? "MATCH" : "NO MATCH"}
+              </Badge>
+              <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+                <span className="dim">{entry.phrase} → </span>
+                <span style={{ fontFamily: "var(--font-mono)" }}>
+                  {entry.transcript ? `"${entry.transcript}"` : (entry.detail ?? "—")}
+                </span>
+                {entry.gate === false && entry.rms != null && (
+                  <span className="dim"> · nível {entry.rms} / limiar {entry.threshold}</span>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 export default function SettingsPage({
-  settings, providers, loading, busy, onSetMode, onSaveGroqKey, onRemoveGroqKey,
+  settings, providers, diagnostics, loading, busy, onSetMode, onSaveGroqKey, onRemoveGroqKey,
   onTestGroq, onSetGroqModel, onUpdate, onTestSpeaker, onTestMicrophone,
   onToggleEmergencyStop, onClearConversation, theme, onTheme, reduceMotion, onReduceMotion,
 }: {
   settings: SettingsPayload | null;
   providers: ProviderPayload | null;
+  /** Live microphone/wake numbers, polled once a second on their own cheap
+   *  endpoint. get_settings() carries the same fields but is slow and cached,
+   *  so anything that must be live is read from here first. */
+  diagnostics: VoiceDiagnostics | null;
   loading: boolean;
   busy: boolean;
   onSetMode: (mode: "AUTO" | "CLOUD" | "LOCAL") => void;
@@ -53,7 +148,19 @@ export default function SettingsPage({
     );
   }
 
-  const voice = settings.voice;
+  // Live fields come from the fast diagnostics poll; everything else (the
+  // toggles, the configured phrase, the timeouts) comes from the settings
+  // snapshot. Falling back to the snapshot keeps the panel correct on the
+  // first render, before the first diagnostics tick has landed.
+  const voice = {
+    ...settings.voice,
+    state: diagnostics?.state ?? settings.voice.state,
+    explain: diagnostics?.explain ?? settings.voice.explain,
+    audio: diagnostics?.audio ?? settings.voice.audio,
+    counters: diagnostics?.counters ?? settings.voice.counters,
+    lastTranscript: diagnostics?.lastTranscript ?? settings.voice.lastTranscript,
+    recentTranscripts: diagnostics?.recentTranscripts ?? settings.voice.recentTranscripts,
+  };
   const groq = providers?.groq;
   const ollama = providers?.ollama;
 
@@ -123,15 +230,41 @@ export default function SettingsPage({
               {groq?.models?.length ? (
                 <>
                   <div style={{ height: 12 }} />
-                  <Field label="Modelo" hint="Apenas modelos que existem na tua conta Groq.">
-                    <select className="select" value={groq.model}
-                            onChange={(e) => onSetGroqModel(e.target.value)} disabled={busy}>
-                      {!groq.models.includes(groq.model) && (
-                        <option value={groq.model}>{groq.model} (indisponível)</option>
+                  {/* Two tiers. Conversation must never pay for the big model,
+                      so they are configured (and shown) separately. */}
+                  <Field label="Modelo de conversa"
+                         hint="Usado em conversa normal e em voz. Deve ser o mais rápido.">
+                    <select className="select" value={groq.tiers?.fast ?? groq.model}
+                            onChange={(e) => onUpdate("groq_fast_model", e.target.value)}
+                            disabled={busy}>
+                      {!groq.models.includes(groq.tiers?.fast ?? groq.model) && (
+                        <option value={groq.tiers?.fast ?? groq.model}>
+                          {groq.tiers?.fast ?? groq.model} (indisponível)
+                        </option>
                       )}
                       {groq.models.map((model) => <option key={model} value={model}>{model}</option>)}
                     </select>
                   </Field>
+                  <div style={{ height: 8 }} />
+                  <Field label="Modelo complexo"
+                         hint="Só para análise, código e raciocínio. Nunca por a mensagem ser comprida.">
+                    <select className="select" value={groq.tiers?.complex ?? groq.model}
+                            onChange={(e) => onUpdate("groq_complex_model", e.target.value)}
+                            disabled={busy}>
+                      {!groq.models.includes(groq.tiers?.complex ?? groq.model) && (
+                        <option value={groq.tiers?.complex ?? groq.model}>
+                          {groq.tiers?.complex ?? groq.model} (indisponível)
+                        </option>
+                      )}
+                      {groq.models.map((model) => <option key={model} value={model}>{model}</option>)}
+                    </select>
+                  </Field>
+                  {groq.tiers_ok && groq.tiers_ok.complex === false && (
+                    <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>
+                      O modelo complexo configurado não existe nesta conta; os pedidos
+                      complexos usam o modelo de conversa.
+                    </p>
+                  )}
                 </>
               ) : null}
             </Panel>
@@ -208,9 +341,21 @@ export default function SettingsPage({
             <Panel title="Resposta falada">
               <Toggle
                 label="Ler as respostas em voz alta"
-                hint="Usa a síntese de voz local. Requer ligação à internet para o edge-tts."
+                hint="Interruptor geral. Desligado, o Nano nunca fala."
                 checked={voice.ttsEnabled}
                 onChange={(v) => onUpdate("tts_enabled", v)}
+              />
+              <Toggle
+                label="Falar respostas do chat escrito"
+                hint="Desligado por omissão: escreveres no chat não faz o Nano falar."
+                checked={voice.typedChatTts}
+                onChange={(v) => onUpdate("typed_chat_tts", v)}
+              />
+              <Toggle
+                label="Falar respostas às perguntas por voz"
+                hint="Se falaste com o Nano, ouves a resposta."
+                checked={voice.voiceReplyTts}
+                onChange={(v) => onUpdate("voice_reply_tts", v)}
               />
               <Toggle
                 label="Voz ativada"
@@ -219,6 +364,50 @@ export default function SettingsPage({
                 onChange={(v) => onUpdate("voice_enabled", v)}
               />
             </Panel>
+
+            <WakePhraseTester phrase={voice.wakePhrase} />
+
+            {/* Honest microphone diagnostics: what Nano is really hearing. */}
+            {voice.audio && (
+              <Panel title="Diagnóstico do microfone">
+                {voice.explain && (
+                  <p className="dim" style={{ fontSize: 12, marginBottom: 10 }}>{voice.explain}</p>
+                )}
+                <MetricRow label="Ruído de fundo" value={String(voice.audio.noise_floor ?? "—")} />
+                <MetricRow label="Limiar de fala" value={String(voice.audio.threshold ?? "—")} />
+                <MetricRow label="Nível atual" value={String(voice.audio.last_rms ?? "—")} />
+                <MetricRow label="Pico observado" value={String(voice.audio.peak_rms ?? "—")} />
+                {voice.counters && (
+                  <>
+                    <MetricRow label="Blocos captados" value={String(voice.counters.chunksCaptured ?? 0)} />
+                    <MetricRow label="Com fala" value={String(voice.counters.speechChunks ?? 0)} />
+                    <MetricRow label="Em silêncio" value={String(voice.counters.silentChunks ?? 0)} />
+                    <MetricRow label="Transcrições" value={String(voice.counters.transcriptsSeen ?? 0)} />
+                    <MetricRow label="Ativações" value={String(voice.counters.wakeMatches ?? 0)} />
+                  </>
+                )}
+                {/* What the transcriber actually heard. A wake that does not
+                    fire is otherwise invisible: this shows whether the phrase
+                    was misheard or never reached the transcriber at all. */}
+                {voice.recentTranscripts && voice.recentTranscripts.length > 0 && (
+                  <>
+                    <div style={{ height: 10 }} />
+                    <p className="dim" style={{ fontSize: 11, marginBottom: 4 }}>
+                      Últimas transcrições
+                    </p>
+                    <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                      {voice.recentTranscripts.map((line, i) => (
+                        <li key={i} style={{ fontFamily: "var(--font-mono)", fontSize: 11,
+                                             color: "var(--text-muted)", padding: "2px 0",
+                                             overflowWrap: "anywhere" }}>
+                          {line}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </Panel>
+            )}
           </div>
         )}
 
