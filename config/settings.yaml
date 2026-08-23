@@ -73,12 +73,47 @@ voice:
   openai_speed: 1.0
   edge_voice: "pt-PT-DuarteNeural"
   edge_rate: "-5%"
-  stt_provider: "auto"
-  whisper_model: "tiny"
-  whisper_compute_type: "int8"
-  whisper_device: "cpu"
+  # ATENCAO: estas duas chaves NAO sao lidas por nenhum codigo. O silencio e
+  # decidido pelo AdaptiveGate em core/speech_filter.py, calibrado ao microfone
+  # real. Ficam aqui apenas para nao mexer no comportamento de captura; nao as
+  # edites a espera de efeito.
   stop_on_silence: true
   silence_threshold: 500
+
+  # ── Speech-to-text (STT) ────────────────────────────────────────────────────
+  # ESTA E A UNICA CONFIGURACAO DE STT. core.voice.LocalSTTProvider le este
+  # bloco e mais nenhum.
+  #
+  # As chaves antigas voice.stt_provider / voice.whisper_model /
+  # voice.whisper_compute_type / voice.whisper_device foram REMOVIDAS: nunca
+  # foram lidas por nada. Diziam "tiny" ao mesmo tempo que voice.stt.model
+  # dizia "tiny", por isso concordavam por sorte e editar a chave visivel nao
+  # tinha qualquer efeito. Se voltarem a aparecer, o core/config.py remove-as e
+  # escreve um aviso no log.
+  #
+  # Todos os valores abaixo foram escolhidos pelo benchmark real de fala, com
+  # 30 gravacoes da voz do utilizador e os MESMOS ficheiros WAV para todos os
+  # candidatos. Ver docs/architecture/SPEECH_ACCURACY.md.
+  stt:
+    provider: "local"
+    # small vs tiny na voz real: WER 32.7% vs 67.3%, CER 12.6% vs 33.0%.
+    # O base nao compensava (61.0% WER). Custo: ~1.25s de mediana quente em vez
+    # de 0.23s, e ~600 MB residentes em vez de ~290 MB.
+    model: "small"
+    # CPU de proposito. O CUDA NAO funciona nesta maquina (falta o cuBLAS) e
+    # falha com um BLOQUEIO nativo, nao com um erro limpo.
+    device: "cpu"
+    compute_type: "int8"
+    # Portugues FORCADO. A deteccao automatica foi medida e e claramente pior.
+    language: "pt"
+    # Pista de vocabulario curta (initial_prompt do faster-whisper). Foi esta
+    # linha que salvou o vocabulario do Nano: entidades criticas passaram de
+    # 42.9% (6/14) para 92.9% (13/14) nas gravacoes reais, e o WER tambem
+    # melhorou (32.7% -> 27.0%), sem custo mensuravel de latencia.
+    # MANTER CURTA: um prompt longo puxa a transcricao para as palavras do
+    # proprio prompt.
+    vocabulary_hint: "Vocabulário: Nano, Spotify, Discord, GitHub, Visual Studio Code, VS Code, Windows, Groq, Ollama, Claude."
+    vocabulary_hint_enabled: true
   wake_word:
     # DESLIGADO por omissao. Este e o motor ONNX/Porcupine EXPERIMENTAL, que
     # precisa de um modelo de keyword treinado -- e nunca houve nenhum em

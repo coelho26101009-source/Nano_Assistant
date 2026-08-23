@@ -248,12 +248,115 @@ class SpeechToTextProvider(BaseProvider):
 
 
 class LocalSTTProvider(SpeechToTextProvider):
+    """faster-whisper, loaded ONCE per process and reused for every turn.
+
+    THE DECODING SETTINGS HERE ARE BENCHMARK OUTPUT, NOT PREFERENCES.
+
+    Thirty recordings of the user's own voice, on this microphone, replayed
+    through every candidate over byte-identical WAVs (see
+    docs/architecture/SPEECH_ACCURACY.md):
+
+        tiny  / cpu / int8            WER 67.3%   entities  4/14
+        base  / cpu / int8            WER 61.0%   entities  4/14
+        small / cpu / int8            WER 32.7%   entities  6/14
+        small / cpu / int8 + vocab    WER 27.0%   entities 13/14
+
+    Two consequences worth defending against future "tidying":
+
+    * The language is FORCED. Auto-detection was measured and is markedly
+      worse; it must never be reintroduced.
+    * ``initial_prompt`` is what took critical entities from 6/14 to 13/14.
+      It must stay SHORT -- it is decoder context, so a long prompt costs
+      tokens and drags the transcript towards the prompt's own wording.
+
+    MODEL LIFETIME. The model is built lazily on the first transcription and
+    cached on the instance for the life of the process. It is NOT rebuilt per
+    voice turn: ``small`` costs ~1.3 s to construct, which would be added to
+    every single Ctrl+Shift+Space. One instance is shared with the wake-phrase
+    engine, so there is never a second copy in RAM.
+    """
+
     name = "local_stt"
 
     def __init__(self, config: dict | None = None):
         super().__init__(config)
         self._model = None
         self.online = importlib.util.find_spec("faster_whisper") is not None
+
+    @property
+    def model_name(self) -> str:
+        return str(self.config.get("model") or "small")
+
+    @property
+    def device(self) -> str:
+        return str(self.config.get("device") or "cpu")
+
+    @property
+    def compute_type(self) -> str:
+        return str(self.config.get("compute_type") or "int8")
+
+    @property
+    def decode_language(self) -> str:
+        """The language code actually handed to faster-whisper.
+
+        Accepts both "pt" and the older "pt-PT" spelling, and NEVER returns an
+        empty string: an empty language means auto-detection, which the
+        benchmark measured as substantially worse.
+        """
+        return (self.language.split("-")[0] or "pt")
+
+    @property
+    def vocabulary_hint(self) -> str | None:
+        """The short initial_prompt, or None when it is switched off."""
+        if not self.config.get("vocabulary_hint_enabled", True):
+            return None
+        hint = str(self.config.get("vocabulary_hint") or "").strip()
+        return hint or None
+
+    @property
+    def model_loaded(self) -> bool:
+        return self._model is not None
+
+    def describe(self) -> dict:
+        """What this provider WILL do, without loading anything."""
+        return {
+            "model": self.model_name,
+            "device": self.device,
+            "compute_type": self.compute_type,
+            "language": self.decode_language,
+            "vocabulary_hint_enabled": self.vocabulary_hint is not None,
+            "vocabulary_hint_chars": len(self.vocabulary_hint or ""),
+            "model_loaded": self.model_loaded,
+        }
+
+    def _ensure_model(self):
+        """Build the model once, and record exactly what was built.
+
+        The log line is the thing that proves production is running what the
+        benchmark chose. Without it, a silent fallback to `tiny` -- a stale
+        config, a bad merge, an old settings.yaml -- would be invisible until
+        somebody noticed the transcripts had got worse again. It contains no
+        audio, no transcript and no secret.
+        """
+        if self._model is not None:
+            return self._model
+
+        from faster_whisper import WhisperModel
+
+        started = time.perf_counter()
+        self._model = WhisperModel(
+            self.model_name,
+            device=self.device,
+            compute_type=self.compute_type,
+        )
+        hint = self.vocabulary_hint
+        logger.info(
+            "STT model loaded: model=%s device=%s compute_type=%s language=%s "
+            "vocabulary_hint_enabled=%s vocabulary_hint_chars=%d load_seconds=%.2f",
+            self.model_name, self.device, self.compute_type, self.decode_language,
+            hint is not None, len(hint or ""), time.perf_counter() - started,
+        )
+        return self._model
 
     def transcribe(self, audio_bytes: bytes) -> VoiceResult:
         if not self.online:
@@ -265,32 +368,44 @@ class LocalSTTProvider(SpeechToTextProvider):
                 error="STT not available locally",
             )
         try:
-            from faster_whisper import WhisperModel
+            model = self._ensure_model()
 
-            if self._model is None:
-                self._model = WhisperModel(
-                    self.config.get("model", "tiny"),
-                    device=self.config.get("device", "cpu"),
-                    compute_type=self.config.get("compute_type", "int8"),
-                )
+            options: dict[str, Any] = {
+                "language": self.decode_language,
+                "vad_filter": True,
+            }
+            hint = self.vocabulary_hint
+            if hint:
+                options["initial_prompt"] = hint
 
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fp:
                 fp.write(audio_bytes)
                 tmp_path = fp.name
             try:
-                segments, _info = self._model.transcribe(tmp_path, language=self.language.split("-")[0], vad_filter=True)
+                started = time.perf_counter()
+                segments, _info = model.transcribe(tmp_path, **options)
                 text = " ".join(part.text.strip() for part in segments if part.text and part.text.strip()).strip()
+                elapsed = time.perf_counter() - started
             finally:
                 try:
                     os.unlink(tmp_path)
                 except OSError:
                     pass
+            # Lengths and timings only -- never the transcript itself, which is
+            # the user's private speech.
+            logger.info("STT transcribe: model=%s %.2fs -> %d chars",
+                        self.model_name, elapsed, len(text))
             if not text:
                 return VoiceResult(text="", provider=self.name, language=self.language, ok=False, error="empty transcription")
-            return VoiceResult(text=text, provider=self.name, language=self.language, duration=0.0, confidence=None, ok=True)
+            return VoiceResult(text=text, provider=self.name, language=self.language, duration=elapsed, confidence=None, ok=True)
         except Exception as exc:
             logger.warning("local STT failed: %s", exc)
             return VoiceResult(text="", provider=self.name, language=self.language, ok=False, error=str(exc))
+
+    def status(self) -> dict:
+        data = super().status()
+        data.update(self.describe())
+        return data
 
 
 class TextToSpeechProvider(BaseProvider):

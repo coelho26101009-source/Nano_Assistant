@@ -144,11 +144,28 @@ def _check_stt() -> dict[str, Any]:
                 "reason": "Required package is not installed.",
                 "install": "pip install faster-whisper",
             }
+        # Name the model, device and language that WILL be used. A diagnostic
+        # that only says "local STT is available" cannot distinguish the
+        # benchmarked configuration from a silent fallback to `tiny`, which is
+        # exactly the regression this pass has to make visible.
+        model = str(stt_cfg.get("model") or "small")
+        device = str(stt_cfg.get("device") or "cpu")
+        compute = str(stt_cfg.get("compute_type") or "int8")
+        language = str(stt_cfg.get("language") or "pt").split("-")[0] or "pt"
+        hint_on = bool(stt_cfg.get("vocabulary_hint_enabled", True)
+                       and str(stt_cfg.get("vocabulary_hint") or "").strip())
         return {
             "ok": True,
             "status": "OK",
             "provider": provider,
-            "detail": "Local STT is available and ready for initialization.",
+            "model": model,
+            "device": device,
+            "compute_type": compute,
+            "language": language,
+            "vocabulary_hint_enabled": hint_on,
+            "detail": (f"Local STT ready: {model}/{device}/{compute}, "
+                       f"language={language}, "
+                       f"vocabulary_hint={'on' if hint_on else 'off'}."),
         }
     if provider == "google":
         if not has_sr:

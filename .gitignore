@@ -18,6 +18,12 @@ env/
 runtime/python/
 runtime/wheels/
 
+# Speech-accuracy benchmark sessions. These hold RAW RECORDINGS OF THE
+# USER'S VOICE plus the reports derived from them. They are developer
+# measurements of a private human being and must never be committed,
+# never be uploaded, and never be staged by accident.
+runtime/speech_benchmark/
+
 # User data / databases / logs (runtime-generated, never source)
 *.db
 *.sqlite3

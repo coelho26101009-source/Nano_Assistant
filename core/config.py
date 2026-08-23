@@ -105,12 +105,49 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "channels": 1,
             "device_index": None,
         },
+        # THE ONE AUTHORITATIVE SPEECH-TO-TEXT CONFIGURATION.
+        #
+        # core.voice.LocalSTTProvider reads this block and nothing else. The
+        # legacy voice.whisper_model / whisper_device / whisper_compute_type
+        # keys that used to sit in settings.yaml were never read by anything --
+        # they simply happened to agree with these values, so editing them
+        # changed nothing while looking as though it had. They are gone from
+        # settings.yaml, and _strip_legacy_whisper_keys removes them LOUDLY if
+        # an older config still carries them.
+        #
+        # Every value here was chosen by the real speech benchmark on the
+        # user's own voice and microphone (30 recordings, identical WAVs for
+        # every candidate). See docs/architecture/SPEECH_ACCURACY.md.
         "stt": {
             "provider": "local",
-            "model": "tiny",
+            # small beat tiny decisively: WER 32.7% vs 67.3%, CER 12.6% vs
+            # 33.0%. base was not worth its cost (61.0% WER, barely better
+            # than tiny). The price is warm latency, 1.25 s median against
+            # tiny's 0.23 s, and ~600 MB resident instead of ~290 MB.
+            "model": "small",
+            # CPU, deliberately. CUDA is NOT usable on this machine: cuBLAS is
+            # missing, and the failure is a native HANG rather than a clean
+            # error. Nothing here may select "cuda" until that is fixed.
             "device": "cpu",
             "compute_type": "int8",
-            "language": "pt-PT",
+            # FORCED Portuguese. Auto-detection was measured and is markedly
+            # worse; it must never be enabled.
+            "language": "pt",
+            # The short vocabulary hint fed to faster-whisper as
+            # initial_prompt. This is the single change that rescued Nano's own
+            # vocabulary: critical-entity accuracy went from 42.9% (6/14) to
+            # 92.9% (13/14) on the user's real recordings, and WER improved as
+            # well (32.7% -> 27.0%) at no measurable latency cost.
+            #
+            # KEEP IT SHORT. initial_prompt is decoder context: a long prompt
+            # costs tokens and drags the transcript towards the prompt's own
+            # wording. tests/test_stt_production.py pins this string to the one
+            # the benchmark measured, so production and benchmark cannot drift.
+            "vocabulary_hint": (
+                "Vocabulário: Nano, Spotify, Discord, GitHub, Visual Studio Code, "
+                "VS Code, Windows, Groq, Ollama, Claude."
+            ),
+            "vocabulary_hint_enabled": True,
         },
         "tts": {
             "provider": "local",
@@ -146,10 +183,43 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+# Keys that once lived under `voice:` in settings.yaml and were read by
+# NOTHING. They are the configuration-drift trap the speech benchmark found:
+# `voice.whisper_model` said "tiny" and so did `voice.stt.model`, so the two
+# agreed by luck and editing the visible one had no effect whatsoever. Now that
+# `voice.stt.model` is "small", an old config carrying `whisper_model: tiny`
+# would look like an explicit instruction to use tiny while doing nothing.
+_LEGACY_WHISPER_KEYS = ("whisper_model", "whisper_device", "whisper_compute_type")
+
+
+def _strip_legacy_whisper_keys(voice_cfg: dict) -> list[str]:
+    """Remove dead whisper_* keys and SAY SO. Returns what was removed.
+
+    Deliberately not an exception: an old settings.yaml must not stop Nano from
+    starting. Deliberately not honoured either -- honouring them would restore
+    the two-sources-of-truth problem, and could silently pin production back to
+    `tiny` after a benchmark chose `small`. The one authoritative block is
+    `voice.stt`, and the warning names it.
+    """
+    removed = [key for key in _LEGACY_WHISPER_KEYS if key in voice_cfg]
+    for key in removed:
+        voice_cfg.pop(key, None)
+    if removed:
+        logger.warning(
+            "settings.yaml contém chaves de STT obsoletas que NUNCA foram lidas "
+            "e foram ignoradas: %s. A configuração real de speech-to-text é o "
+            "bloco voice.stt (model/device/compute_type/language). Remove estas "
+            "linhas do settings.yaml.",
+            ", ".join(f"voice.{key}" for key in removed),
+        )
+    return removed
+
+
 def _normalize_voice_config(cfg: dict) -> dict:
     voice_cfg = cfg.setdefault("voice", {})
     if not isinstance(voice_cfg, dict):
         return cfg
+    _strip_legacy_whisper_keys(voice_cfg)
     wake_cfg = voice_cfg.setdefault("wake_word", {})
     if not isinstance(wake_cfg, dict):
         wake_cfg = {}

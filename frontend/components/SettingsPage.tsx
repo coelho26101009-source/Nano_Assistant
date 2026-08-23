@@ -400,8 +400,10 @@ export default function SettingsPage({
               </p>
               <p className="dim" style={{ fontSize: 11, marginBottom: 12, lineHeight: 1.6 }}>
                 Esta alternativa mantém o microfone aberto e passa tudo o que ouve pelo
-                Whisper-tiny local. Funciona, mas é lenta a reconhecer a frase, falha com
-                alguma frequência e consome CPU continuamente — por isso vem desligada.
+                Whisper local. Consome CPU continuamente — e agora mais ainda, porque a
+                transcrição passou para o modelo <code>small</code>, que é bastante mais
+                exacto mas também mais pesado que o antigo <code>tiny</code>. Por isso
+                vem desligada.
               </p>
               <MetricRow label="Estado" value={<StatusIndicator state={voice.state} />} />
               <MetricRow label="Frase" value={`"${voice.wakePhrase}"`} />
