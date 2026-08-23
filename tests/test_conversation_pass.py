@@ -43,10 +43,17 @@ def _tools(*names):
             for n in names]
 
 
+# A stand-in for the live registry. It must track the real tool surface: when
+# PC Control V1 landed, "Abre o Spotify" started routing to the pc_* tools, and
+# a fixture that still listed only system_run_powershell/system_volume (both
+# withdrawn from the model) made the router look broken when it was correct.
 ALL_TOOLS = _tools(
-    "system_stats", "system_run_powershell", "system_files", "system_volume",
+    "system_stats", "system_files", "system_brightness",
     "web_search", "web_navigate_extract", "remember_fact", "list_facts",
     "calendar_add_event", "set_reminder", "iot_command", "organize_downloads",
+    "pc_app_search", "pc_app_launch", "pc_window_list", "pc_window_close",
+    "pc_volume_get", "pc_volume_set", "pc_system_info", "pc_folder_open",
+    "pc_file_search", "pc_screenshot_capture",
 )
 
 
@@ -142,6 +149,21 @@ def test_a_pc_request_sends_only_pc_tools():
     assert selected, "an action request must still get tools"
     assert "web_search" not in selected
     assert "calendar_add_event" not in selected
+    # Launching an application is what this request is; the app tools must be
+    # the ones that arrive.
+    assert "pc_app_launch" in selected
+
+
+def test_pc_subcategories_keep_unrelated_pc_tools_out_of_the_prompt():
+    """Eighteen PC schemas on every PC request would burn the token budget."""
+    volume = {t["function"]["name"] for t in ms.select_tools("Qual é o volume atual?", ALL_TOOLS)}
+    assert "pc_volume_get" in volume
+    assert "pc_window_close" not in volume
+    assert "pc_screenshot_capture" not in volume
+
+    apps = {t["function"]["name"] for t in ms.select_tools("Minimiza a calculadora", ALL_TOOLS)}
+    assert "pc_window_minimize" in apps or "pc_window_list" in apps
+    assert "pc_volume_set" not in apps
 
 
 def test_a_search_request_sends_only_browser_tools():

@@ -20,7 +20,7 @@ from core.guardrails import GuardrailsEngine
 from core.memory import MemoryEngine
 from core.errors import ToolExecutionError, GuardrailError
 from core.model_router import ModelRequest, ModelRouter, PrivacyLevel, TaskType
-from core import model_selection, provider_status, providers
+from core import model_selection, provider_failures, provider_status, providers
 from core.trust import TRUST_BOUNDARY_SYSTEM_RULES, TrustLevel, wrap_untrusted
 
 logger = logging.getLogger("nano.brain")
@@ -80,6 +80,86 @@ async def _stream_text_chunks(text: str, chunk_size: int = 4, delay: float = 0.0
         if delay > 0:
             await asyncio.sleep(delay)
 
+def _looks_like_a_leaked_tool_call(text: str) -> bool:
+    """True when a local model emitted a tool call as CONTENT instead of a call.
+
+    Observed for real: asked "Como está a RAM?", qwen3:8b answered with the
+    literal text `{"name": "pc", "arguments": {}}`. That is a malformed
+    attempt at the tool protocol which leaked into the answer, and the user was
+    shown raw JSON.
+
+    THIS FUNCTION ONLY DETECTS. It never parses the blob into a call and never
+    executes it -- "pc" is not even a real tool, and executing model prose is
+    precisely the unsafe shortcut this design refuses. The caller replaces the
+    text with a clean sentence and logs the original for diagnostics.
+    """
+    stripped = str(text or "").strip()
+    if not stripped.startswith("{") or not stripped.endswith("}"):
+        return False
+    if len(stripped) > 600:
+        return False
+    try:
+        parsed = json.loads(stripped)
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(parsed, dict):
+        return False
+    keys = set(parsed)
+    return bool(keys & {"name", "function", "tool", "tool_name"}) and bool(
+        keys & {"arguments", "parameters", "args", "name", "function"})
+
+
+class _SimulatedGroqResponse:
+    def __init__(self, status_code: int, headers: dict):
+        self.status_code = status_code
+        self.headers = headers
+
+
+class SimulatedGroqFailure(RuntimeError):
+    """A Groq failure injected on purpose. DEVELOPMENT AND TESTING ONLY.
+
+    Set NANO_SIMULATE_GROQ_FAILURE to exercise the fallback without waiting to
+    organically exhaust the real token budget:
+
+        rate_limit    a 429 carrying realistic headers (the default)
+        timeout       a connection timeout
+        server_error  a 503
+        auth_error    a 401, to check the failure that must NOT fall back
+        off / unset   normal operation
+
+    It is raised at the same point a real SDK error would surface, so the whole
+    production path downstream -- classification, cooldown, continuation,
+    duplicate protection -- is the real one. Nothing about it is reachable
+    unless the variable is set.
+    """
+
+    def __init__(self, status_code: int, headers: dict | None = None, message: str = ""):
+        super().__init__(message or f"simulated Groq failure ({status_code})")
+        self.status_code = status_code
+        self.response = _SimulatedGroqResponse(status_code, headers or {})
+
+
+_SIMULATED_FAILURES: dict[str, tuple[int, dict]] = {
+    "rate_limit": (429, {"retry-after": "3", "x-ratelimit-reset-tokens": "47s",
+                         "x-ratelimit-limit-tokens": "8000",
+                         "x-ratelimit-remaining-tokens": "412"}),
+    "timeout": (408, {}),
+    "server_error": (503, {}),
+    "auth_error": (401, {}),
+}
+
+
+def _simulated_groq_failure() -> None:
+    import os
+
+    mode = (os.getenv("NANO_SIMULATE_GROQ_FAILURE") or "").strip().lower()
+    if not mode or mode in {"off", "0", "false", "none"}:
+        return
+    status, headers = _SIMULATED_FAILURES.get(mode, _SIMULATED_FAILURES["rate_limit"])
+    logger.warning("NANO_SIMULATE_GROQ_FAILURE=%s active: injecting %d", mode, status)
+    raise SimulatedGroqFailure(status, headers)
+
+
 class Brain:
     def __init__(self, api_key: str, guardrails: GuardrailsEngine, memory: MemoryEngine, config: dict | None = None, permission_manager: Any | None = None, tool_executor: Any | None = None):
         cfg = config if config is not None else load_config()
@@ -104,6 +184,10 @@ class Brain:
         # Safe, per-response diagnostics for the UI's technical details panel.
         # Never contains the key, the prompt or any tool argument.
         self.last_metadata: dict[str, Any] = {}
+        # Tool calls already executed in the CURRENT turn, keyed by
+        # (name, arguments). Provider failover happens inside a turn, so this
+        # is what stops a consequential action running twice. See _run_tool.
+        self._turn_tool_results: dict[str, dict] = {}
         self.conversation: list[dict] = []
         self.groq_model = str(cfg.get("groq_model") or providers.DEFAULT_FAST_MODEL)
         # Two cloud tiers; the strong one is only reached by an explicit
@@ -452,6 +536,8 @@ class Brain:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
 
+        _simulated_groq_failure()
+
         try:
             response = await self.client.chat.completions.create(**kwargs)
         except Exception as exc:
@@ -501,6 +587,9 @@ class Brain:
     async def chat(self, user_message: str, stream: bool = True) -> AsyncIterator[str]:
         """Answer one message, streaming real provider tokens as they arrive."""
         started = time.monotonic()
+        # One ledger per logical user turn. Provider failover happens INSIDE a
+        # turn, so this must not be cleared between model steps.
+        self._turn_tool_results = {}
         self.conversation.append({"role": "user", "content": user_message})
         self._trim_conversation()
 
@@ -550,6 +639,24 @@ class Brain:
                 yield token
             return
 
+        # THE BREAKER, CHECKED BEFORE PAYING FOR A ROUND TRIP.
+        #
+        # In AUTO, a Groq we already know is rate-limited is not worth asking:
+        # the request costs latency, fails, and spends tokens that have not
+        # come back yet. CLOUD deliberately still tries -- the user chose
+        # cloud-only, and a stale cooldown must not turn into a refusal to work.
+        if mode == "AUTO" and provider_failures.GROQ_COOLDOWN.is_cooling_down():
+            remaining = provider_failures.GROQ_COOLDOWN.remaining_seconds()
+            logger.info("Groq skipped: cooling down for another %.0fs", remaining)
+            self.last_provider_used = "ollama"
+            self.last_metadata["fallback_used"] = True
+            self.last_metadata["fallback_reason"] = "groq_cooldown"
+            self.last_metadata["groq_cooldown_seconds"] = round(remaining, 1)
+            async for token in self._ollama_fallback(
+                    user_message, "Groq temporariamente limitada", system_prompt):
+                yield token
+            return
+
         model = str(route.get("model") or self.groq_fast_model)
         self.last_metadata["model"] = model
 
@@ -562,34 +669,33 @@ class Brain:
                         tools, collector, max_tokens):
                     text_parts.append(piece)
                     yield piece
-            except RateLimited as limited:
-                # Never a silent sleep and never a hidden downgrade: the user is
-                # told what happened and when it clears.
-                logger.warning("Groq rate-limited: %s", limited.message)
-                self._rollback_turn()
-                self.last_provider_used = None
-                self.last_metadata["rate_limited"] = limited.info
-                self.last_metadata["error"] = "rate_limited"
-                yield f"_ratelimit_:{json.dumps(limited.info)}"
-                yield f"**{limited.message}**"
-                return
             except Exception as exc:
-                logger.warning("Groq indisponível (round %d): %s", round_num, exc)
-                self.last_metadata["error"] = type(exc).__name__
-                if mode == "CLOUD":
-                    self._rollback_turn()
-                    self.last_provider_used = None
-                    yield (f"**O Groq não respondeu.** {type(exc).__name__}. "
-                           "Estás em modo Cloud, por isso o Nano não recorre ao modelo local. "
-                           "Muda para Automático em Definições se quiseres o fallback local.")
-                    return
-                self.last_provider_used = "ollama"
-                self.last_metadata["fallback_used"] = True
-                async for token in self._ollama_fallback(user_message, "Groq indisponível", system_prompt):
+                # ONE classification for every provider failure. What follows
+                # depends on the TYPE, not on where the exception was raised.
+                failure = provider_failures.classify(exc)
+                cooldown = provider_failures.GROQ_COOLDOWN.note_failure(failure)
+                logger.warning("Groq %s (round %d, cooldown %.0fs): %s",
+                               failure.type.value, round_num, cooldown, failure.message[:200])
+                # Rate-limit numbers live HERE, in structured diagnostics --
+                # never concatenated into the answer. `_ratelimit_:{...}` used
+                # to be yielded as a token and was read aloud on voice turns.
+                self.last_metadata["error"] = failure.type.value
+                self.last_metadata["provider_failure"] = failure.as_dict()
+                if failure.rate_limit:
+                    self.last_metadata["rate_limited"] = failure.rate_limit
+                if cooldown:
+                    self.last_metadata["groq_cooldown_seconds"] = round(cooldown, 1)
+
+                async for token in self._handle_provider_failure(
+                        failure, mode=mode, user_message=user_message,
+                        system_prompt=system_prompt,
+                        emitted_text=bool("".join(text_parts).strip()),
+                        did_work=self._turn_has_tool_results()):
                     yield token
                 return
 
             self.last_provider_used = "groq"
+            provider_failures.GROQ_COOLDOWN.note_success()
             self._record_metrics(started, collector)
 
             calls = collector.get("tool_calls") or []
@@ -625,6 +731,86 @@ class Brain:
                 })
 
         yield "Atingi o limite de operações encadeadas. Podes reformular o pedido?"
+
+    def _turn_has_tool_results(self) -> bool:
+        """True when this turn already executed a tool and recorded its result.
+
+        That changes everything about how a provider failure must be handled:
+        the action HAPPENED. Discarding the turn would throw away a real effect
+        on the machine, and replaying the user message would invite a second
+        one.
+        """
+        for entry in reversed(self.conversation):
+            role = entry.get("role")
+            if role == "tool":
+                return True
+            if role == "user":
+                return False
+        return False
+
+    async def _handle_provider_failure(self, failure, *, mode: str, user_message: str,
+                                       system_prompt: str, emitted_text: bool,
+                                       did_work: bool):
+        """Decide what a classified Groq failure means for this turn.
+
+        Four questions, in order, and each one can end the turn:
+
+        1. Did the user ask for cloud-only? CLOUD never falls back. That is the
+           contract, and a clean error is the correct output.
+        2. Is this failure one we must not hide? A rejected key or our own
+           malformed request must reach the user; answering from Ollama would
+           bury a problem only the user can fix.
+        3. Has visible text already been streamed? Then a second, complete
+           answer would appear underneath a half-finished one. See below.
+        4. Otherwise: continue the SAME turn on the local model.
+        """
+        self.last_provider_used = None
+
+        if mode == "CLOUD":
+            self.last_metadata["fallback_used"] = False
+            self.last_metadata["fallback_reason"] = "cloud_mode_no_fallback"
+            if not did_work:
+                self._rollback_turn()
+            yield (f"**{failure.user_message()}** "
+                   "Estás em modo Cloud, por isso o Nano não recorre ao modelo local. "
+                   "Muda para Automático em Definições se quiseres o fallback local.")
+            return
+
+        if not failure.may_fall_back:
+            self.last_metadata["fallback_used"] = False
+            self.last_metadata["fallback_reason"] = f"not_eligible:{failure.type.value}"
+            if not did_work:
+                self._rollback_turn()
+            yield f"**{failure.user_message()}**"
+            return
+
+        if emitted_text:
+            # THE STREAMING POLICY, CHOSEN DELIBERATELY.
+            #
+            # Groq already sent visible words to the screen. Running the local
+            # model now would append a second, complete answer under a
+            # half-finished one -- two assistant voices in one bubble. The
+            # alternative, buffering every response until it completes, would
+            # cost the streaming UX on every healthy turn to improve a rare
+            # one. So a partial answer stays partial and says so.
+            self.last_metadata["fallback_used"] = False
+            self.last_metadata["fallback_reason"] = "partial_stream_not_replaced"
+            self.last_metadata["partial_answer"] = True
+            self.conversation.append({"role": "assistant", "content": "", "_partial": True})
+            self._rollback_turn()
+            yield "\n\n_(A resposta foi interrompida. Pede outra vez para continuar.)_"
+            return
+
+        self.last_provider_used = "ollama"
+        self.last_metadata["fallback_used"] = True
+        self.last_metadata["fallback_reason"] = failure.type.value
+        # continue_turn: when a tool has already run, the conversation holds the
+        # assistant tool_calls entry AND the tool results. The local model must
+        # continue from those, not be handed the original request again.
+        async for token in self._ollama_fallback(
+                user_message, "Groq indisponível", system_prompt,
+                continue_turn=did_work):
+            yield token
 
     def _rollback_turn(self) -> None:
         """Undo a turn that produced no answer, back to the last clean state.
@@ -674,6 +860,11 @@ class Brain:
         except Exception:
             logger.exception("Falha ao sincronizar ferramentas de plugin")
 
+    @staticmethod
+    def _call_fingerprint(name: str, args: dict) -> str:
+        """A stable identity for "this exact tool call, with these arguments"."""
+        return json.dumps({"n": name, "a": args}, sort_keys=True, ensure_ascii=False)
+
     async def _run_tool(self, tool_call) -> dict:
         if isinstance(tool_call, dict):
             fn = tool_call.get("function") or {}
@@ -707,11 +898,39 @@ class Brain:
         if self.guardrails.requires_confirmation(name, args) and not await self.guardrails.ask_confirmation(name, args):
             return {"ok": False, "cancelled": True, "message": "Operação cancelada pelo utilizador."}
 
+        # DUPLICATE-EXECUTION PROTECTION, AND THE REASON IT LIVES HERE.
+        #
+        # A provider failover mid-turn hands the local model a conversation in
+        # which a tool has ALREADY run. A competent model continues from the
+        # recorded result -- but "competent" is not a safety property. If it
+        # re-issues the identical call, replaying it would open a second
+        # Calculator, take a second screenshot, or close a second window.
+        #
+        # So the first execution of a given (name, arguments) pair in a turn is
+        # remembered, and an identical repeat returns THAT RESULT instead of
+        # touching Windows again. The model still sees a truthful answer; the
+        # machine is only acted on once. The ledger is per turn, so a genuine
+        # second request in a later turn is unaffected.
+        fingerprint = self._call_fingerprint(name, args)
+        cached = self._turn_tool_results.get(fingerprint)
+        if cached is not None:
+            logger.info("Tool %s replayed from this turn's ledger; not executed again", name)
+            replay = dict(cached)
+            metadata = dict(replay.get("metadata") or {})
+            metadata["replayed"] = True
+            replay["metadata"] = metadata
+            return replay
+
         try:
             result = await self.tool_executor.execute_tool_async(name, args)
         except Exception:
             logger.exception("Tool %s lançou uma exceção", name)
             return {"ok": False, "error": "tool_exception"}
+
+        # Only a genuine execution is remembered. A refusal or a validation
+        # error must be retryable -- the user may approve on a second ask.
+        if result.get("success"):
+            self._turn_tool_results[fingerprint] = result
 
         if not result.get("success") and result.get("status") == "permission_denied":
             return {
@@ -754,14 +973,26 @@ class Brain:
             return json.dumps(output, ensure_ascii=False)
         return str(output or "")
 
-    async def _ollama_fallback(self, message: str, reason: str = "", system_prompt: str | None = None) -> AsyncIterator[str]:
+    async def _ollama_fallback(self, message: str, reason: str = "",
+                               system_prompt: str | None = None,
+                               *, continue_turn: bool = False) -> AsyncIterator[str]:
+        """Answer on the local model.
+
+        ``continue_turn=True`` means this is the SECOND half of a turn Groq
+        started: a tool has already executed and its result is in the
+        conversation. The user message must NOT be appended again -- doing so
+        produced a duplicate user entry and invited the local model to re-issue
+        a tool call that had already succeeded.
+        """
         if not self.local_enabled:
-            yield "O Nano não tem um modelo local ativo e o serviço online não está disponível."
+            yield ("Não consegui obter resposta da cloud nem do modelo local. "
+                   "O modelo local não está ativo.")
             return
         # The configured local model is an instruction, not a hint: scoring the
         # installed models here could silently substitute a different one.
         selected_model = self.ollama_model
         yield f"_thinking_:🧠 {reason + ' — ' if reason else ''}a usar {selected_model} local..."
+        self.last_metadata["local_model"] = selected_model
         # Local models are far weaker at ignoring irrelevant tools, and the
         # local context window is small, so the same scoped subset applies.
         tools = model_selection.select_tools(message, get_all_tools())
@@ -776,7 +1007,8 @@ class Brain:
                     msg_obj["tool_calls"] = m["tool_calls"]
                 local_messages.append(msg_obj)
 
-        if not local_messages or local_messages[-1].get("content") != message:
+        if not continue_turn and (not local_messages
+                                  or local_messages[-1].get("content") != message):
             local_messages.append({"role": "user", "content": message})
 
         client_timeout = httpx.Timeout(60.0, connect=10.0)
@@ -800,6 +1032,14 @@ class Brain:
 
                     if not tool_calls:
                         text = msg.get("content") or ""
+                        if _looks_like_a_leaked_tool_call(text):
+                            # Never shown, never executed. See the helper.
+                            logger.warning(
+                                "Local model leaked a tool call as content (%d chars); "
+                                "replaced with a clean message.", len(text))
+                            self.last_metadata["local_malformed_tool_call"] = True
+                            text = ("Não consegui completar esse pedido com o modelo local. "
+                                    "Tenta outra vez daqui a pouco.")
                         self.conversation.append({"role": "assistant", "content": text})
                         if text:
                             async for chunk in _stream_text_chunks(text):

@@ -1,7 +1,11 @@
 """
-H.E.L.I.O.S. Plugin: God Mode V2
-Controlo total do PC em linguagem natural via PowerShell.
-Ações destrutivas → guardrails obrigatórios.
+Nano Plugin: legacy system helpers (brightness, bluetooth, files).
+
+HISTORICALLY "God Mode": arbitrary PowerShell in natural language. The
+arbitrary-execution and Wi-Fi tools were withdrawn from the model when PC
+Control V1 landed -- see the note above TOOL_HANDLERS. Volume moved to
+plugins/pc_control.py, which talks to the audio endpoint directly instead of
+generating a script.
 """
 
 import asyncio
@@ -154,20 +158,6 @@ def file_operations(operation: str, path: str,
 def get_tools() -> list[dict]:
     return [
         {"type": "function", "function": {
-            "name": "system_run_powershell",
-            "description": "Executa qualquer comando PowerShell no sistema. Para operações avançadas que não têm tool dedicada.",
-            "parameters": {"type": "object", "required": ["command"], "properties": {
-                "command": {"type": "string", "description": "Comando PowerShell completo"},
-            }},
-        }},
-        {"type": "function", "function": {
-            "name": "system_volume",
-            "description": "Define o volume do sistema Windows (0-100).",
-            "parameters": {"type": "object", "required": ["level"], "properties": {
-                "level": {"type": "integer", "minimum": 0, "maximum": 100},
-            }},
-        }},
-        {"type": "function", "function": {
             "name": "system_brightness",
             "description": "Define o brilho do ecrã (0-100). Funciona em monitores com suporte WMI.",
             "parameters": {"type": "object", "required": ["level"], "properties": {
@@ -179,14 +169,6 @@ def get_tools() -> list[dict]:
             "description": "Liga ou desliga o Bluetooth do sistema.",
             "parameters": {"type": "object", "required": ["enable"], "properties": {
                 "enable": {"type": "boolean"},
-            }},
-        }},
-        {"type": "function", "function": {
-            "name": "system_wifi",
-            "description": "Gere redes Wi-Fi: listar perfis, ligar a uma rede, desligar.",
-            "parameters": {"type": "object", "required": ["action"], "properties": {
-                "action":       {"type": "string", "enum": ["list","connect","disconnect","status"]},
-                "network_name": {"type": "string", "description": "Nome da rede para conectar"},
             }},
         }},
         {"type": "function", "function": {
@@ -202,11 +184,26 @@ def get_tools() -> list[dict]:
     ]
 
 
+# WITHDRAWN FROM THE MODEL, deliberately. The functions above still exist and
+# still work; they are simply no longer tools the model can call.
+#
+# * system_run_powershell handed the model a full command line. PC Control V1's
+#   security premise is that the model picks a TOOL and typed ARGUMENTS which
+#   reach a Win32 call as values -- a general PowerShell tool defeats every
+#   narrow tool next to it, because anything refused elsewhere can be spelled
+#   out as a script here.
+# * system_wifi interpolated `network_name` straight into a PowerShell string
+#   (`netsh wlan connect name="{network_name}"`), so a crafted network name was
+#   command injection into that shell.
+# * system_volume was superseded by pc_volume_* AND was broken: its non-nircmd
+#   fallback allocates a buffer, copies bytes into it, changes nothing, and
+#   reports success. A tool that reports a result it did not produce is exactly
+#   what the real-result contract forbids.
+#
+# Restoring any of these means re-adding both the declaration in get_tools()
+# and the entry here.
 TOOL_HANDLERS: dict = {
-    "system_run_powershell": lambda a: run_powershell(**a),
-    "system_volume":         lambda a: set_volume(**a),
     "system_brightness":     lambda a: set_brightness(**a),
     "system_bluetooth":      lambda a: toggle_bluetooth(**a),
-    "system_wifi":           lambda a: manage_wifi(**a),
     "system_files":          lambda a: file_operations(**a),
 }

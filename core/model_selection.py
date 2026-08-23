@@ -145,6 +145,14 @@ _QUESTION_MARKERS = _EXPLANATORY_MARKERS + ("qual e", "quando", "onde")
 class ToolCategory(str, Enum):
     NONE = "NONE"
     PC = "PC"
+    # PC Control V1 is split into three narrow categories rather than piled
+    # into PC. Eighteen tool schemas is roughly 1400 prompt tokens, and the
+    # Groq tier here allows 8000 tokens per minute -- shipping window, volume
+    # and screenshot definitions on every "como esta a RAM?" would burn the
+    # budget on tools the request cannot use.
+    PC_APPS = "PC_APPS"
+    PC_AUDIO = "PC_AUDIO"
+    PC_SCREEN = "PC_SCREEN"
     FILES = "FILES"
     BROWSER = "BROWSER"
     MEMORY = "MEMORY"
@@ -156,15 +164,29 @@ class ToolCategory(str, Enum):
 # or exact name, so a plugin adding "web_foo" lands in BROWSER automatically.
 _CATEGORY_TOOLS: dict[ToolCategory, tuple[str, ...]] = {
     ToolCategory.PC: (
-        "system_stats", "system_run_powershell", "system_volume",
-        "system_brightness", "system_bluetooth", "system_wifi",
+        # system_run_powershell, system_volume and system_wifi were withdrawn
+        # from the model when PC Control V1 landed (see plugins/god_mode.py);
+        # they are deliberately absent here too.
+        "system_stats", "pc_system_info",
+        "system_brightness", "system_bluetooth",
         "context_activate_mode", "context_list_modes",
         "monitor_status", "monitor_start", "monitor_stop",
         "clean_windows_cache",
     ),
+    ToolCategory.PC_APPS: (
+        "pc_app_search", "pc_app_launch",
+        "pc_window_list", "pc_window_focus", "pc_window_minimize",
+        "pc_window_maximize", "pc_window_restore", "pc_window_close",
+    ),
+    ToolCategory.PC_AUDIO: (
+        "pc_volume_get", "pc_volume_set", "pc_volume_change",
+        "pc_volume_mute", "pc_volume_unmute",
+    ),
+    ToolCategory.PC_SCREEN: ("pc_screenshot_capture",),
     ToolCategory.FILES: (
         "system_files", "organize_downloads", "rename_file_smart",
         "rag_index_pdf", "clean_windows_cache",
+        "pc_file_search", "pc_file_open", "pc_folder_open",
     ),
     ToolCategory.BROWSER: (
         "web_navigate_extract", "web_extract_prices", "web_search",
@@ -185,18 +207,35 @@ _CATEGORY_TOOLS: dict[ToolCategory, tuple[str, ...]] = {
 # Keyword evidence for each category, Portuguese first.
 _CATEGORY_KEYWORDS: dict[ToolCategory, tuple[str, ...]] = {
     ToolCategory.PC: (
-        "abre", "abrir", "fecha", "fechar", "executa", "executar", "corre",
-        "lanca", "lancar", "inicia", "iniciar", "desliga", "desligar", "liga",
-        "ligar", "reinicia", "reiniciar", "volume", "som", "brilho",
-        "bluetooth", "wifi", "wi fi", "rede", "cpu", "ram", "memoria ram",
-        "disco", "bateria", "processos", "processo", "aplicacao", "aplicacoes",
-        "app", "apps", "programa", "programas", "spotify", "chrome", "browser",
-        "powershell", "comando", "terminal", "sistema", "pc", "computador",
-        "temperatura", "desempenho", "limpa", "limpar", "cache", "modo",
-        "open", "close", "run", "launch", "kill", "shutdown", "restart",
+        "desliga", "desligar", "liga", "ligar", "reinicia", "reiniciar",
+        "brilho", "bluetooth", "wifi", "wi fi", "rede", "cpu", "ram",
+        "memoria ram", "disco", "bateria", "processos", "processo",
+        "sistema", "pc", "computador", "temperatura", "desempenho",
+        "limpa", "limpar", "cache", "modo", "uptime", "gpu", "placa grafica",
+        "shutdown", "restart",
         # The clock lives on the machine: without a tool the model can only
         # guess the time, which is exactly what produced wrong answers before.
         "horas", "hora", "data", "dia de hoje", "que dia", "time", "date",
+    ),
+    ToolCategory.PC_APPS: (
+        "abre", "abrir", "fecha", "fechar", "executa", "executar", "corre",
+        "lanca", "lancar", "inicia", "iniciar", "minimiza", "minimizar",
+        "maximiza", "maximizar", "restaura", "restaurar", "foca", "focar",
+        "janela", "janelas", "aplicacao", "aplicacoes", "app", "apps",
+        "programa", "programas", "spotify", "discord", "chrome", "brave",
+        "calculadora", "bloco de notas", "explorador", "steam",
+        "visual studio code", "vs code",
+        "open", "close", "run", "launch", "window", "windows", "minimize",
+        "maximize", "restore",
+    ),
+    ToolCategory.PC_AUDIO: (
+        "volume", "som", "audio", "silencio", "silenciar", "mute", "unmute",
+        "aumenta o volume", "baixa o volume", "sem som", "mais alto",
+        "mais baixo", "volume atual",
+    ),
+    ToolCategory.PC_SCREEN: (
+        "captura de ecra", "capturar o ecra", "screenshot", "print do ecra",
+        "print screen", "fotografia do ecra", "imagem do ecra",
     ),
     ToolCategory.FILES: (
         "ficheiro", "ficheiros", "pasta", "pastas", "diretorio", "directorio",
@@ -243,8 +282,11 @@ _CATEGORY_KEYWORDS: dict[ToolCategory, tuple[str, ...]] = {
 
 # When the request clearly wants an action but no category matches, send this
 # bounded general set rather than the whole registry.
+# The bounded set an action request gets when it names no category at all.
+# system_run_powershell used to be here; it no longer exists as a tool, and a
+# general command line was never the right answer to "do something".
 _AMBIGUOUS_FALLBACK = (
-    "system_stats", "system_run_powershell", "system_files", "web_search",
+    "system_stats", "pc_system_info", "system_files", "web_search",
 )
 
 # Verbs that mean "do something", used to tell an ACTION from a QUESTION.

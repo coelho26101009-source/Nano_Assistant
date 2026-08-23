@@ -1248,7 +1248,10 @@ class VoiceRuntime:
             return "O Nano não está disponível no momento."
         chunks: list[str] = []
         async for token in self.brain.chat(text, stream=True):
-            if token.startswith("_thinking_:"):
+            # Every control token, not just "_thinking_:". This path feeds TTS,
+            # and it used to READ THE RATE-LIMIT JSON ALOUD because it filtered
+            # one sentinel by name instead of the whole class of them.
+            if token.startswith("_") and ":" in token.split("\n", 1)[0][:24]:
                 continue
             chunks.append(token)
         return "".join(chunks).strip() or "Não consegui responder a esse pedido no momento."

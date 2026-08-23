@@ -77,6 +77,38 @@ _TOOL_THREADS = concurrent.futures.ThreadPoolExecutor(
 )
 
 
+def _pc_control_target(tool_name: str, args: dict) -> str | None:
+    """A stable, human-readable target string for one PC-control call.
+
+    Returns None for non-PC tools, so nothing else in the registry is touched.
+    """
+    if not str(tool_name).startswith("pc_"):
+        return None
+    if tool_name == "pc_app_launch":
+        value = str(args.get("app_id") or args.get("name") or "").strip()
+        return f"app:{value}" if value else "app:*"
+    if tool_name.startswith("pc_window_"):
+        window_id = args.get("window_id")
+        if window_id not in (None, ""):
+            return f"window:{window_id}"
+        query = str(args.get("query") or "").strip()
+        return f"window:{query}" if query else "window:*"
+    if tool_name in {"pc_folder_open", "pc_file_open"}:
+        # A real `path` is already preferred by _resolve_target. A known-folder
+        # NAME arrives as `folder` (see the handler for why) and still has to
+        # bind the grant to something specific.
+        if not str(args.get("path") or "").strip():
+            folder = str(args.get("folder") or "").strip()
+            return f"folder:{folder}" if folder else None
+        return None
+    if tool_name in {"pc_app_search", "pc_file_search"}:
+        query = str(args.get("query") or "").strip()
+        return f"query:{query}" if query else None
+    if tool_name.startswith("pc_volume_"):
+        return f"volume:{tool_name.rsplit('_', 1)[-1]}"
+    return tool_name
+
+
 class ToolExecutor:
     """Registry and runner for real Nano tools with permission enforcement."""
 
@@ -337,6 +369,21 @@ class ToolExecutor:
             if not ok:
                 raise ToolExecutionError(error or "invalid_url")
             context.setdefault("urls", []).append(value)
+
+        pc_target = _pc_control_target(name, prepared)
+        if pc_target is not None:
+            # TARGET BINDING FOR PC CONTROL.
+            #
+            # PermissionManager._resolve_target only inspects
+            # (path, target, url, command, cwd). A PC tool's real target lives
+            # in `name`, `app_id`, `window_id` or `query`, so without this the
+            # grant key would be (capability, "*") -- and an ALLOW_ONCE for
+            # "close the Calculator window" would silently authorise closing
+            # Discord. Normalising into `target` here makes the existing grant
+            # machinery bind to the actual thing, with no change to the
+            # permission layer and no effect on any other tool.
+            prepared["target"] = pc_target
+            context["pc_target"] = pc_target
 
         if scopes:
             # The least trusted scope touched by the call decides the scope of
@@ -619,6 +666,12 @@ class ToolExecutor:
                 return (False, str(output.get("error"))[:200])
             if output.get("success") is False:
                 return (False, "handler_reported_failure")
+            # Plugin handlers report with `ok`, not `success`. Without this a
+            # handler returning {"ok": False, "status": "not_found"} and no
+            # "error" key was wrapped as success:true -- so "não encontrei o
+            # Spotify" would reach the model looking like a completed action.
+            if output.get("ok") is False:
+                return (False, str(output.get("status") or "handler_reported_failure")[:200])
         return (True, "no_verification_required")
 
     def _tool_result(self, success: bool, status: str, *, output: Any = None, error: str | None = None, metadata: dict | None = None) -> dict:

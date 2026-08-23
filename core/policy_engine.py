@@ -135,6 +135,28 @@ class PolicyEngine:
         "monitor_start": "process.start",
         "self.authorize": "credential.write",
         "voice.command": "shell.execute",
+        # --- PC Control V1 -------------------------------------------------
+        # Groq function names cannot contain dots, so the TOOLS are
+        # pc_app_launch and the CAPABILITIES are pc.app.launch. This table is
+        # the only place the two vocabularies meet.
+        "pc_app_search": "pc.app.search",
+        "pc_app_launch": "pc.app.launch",
+        "pc_window_list": "pc.window.read",
+        "pc_window_focus": "pc.window.control",
+        "pc_window_minimize": "pc.window.control",
+        "pc_window_maximize": "pc.window.control",
+        "pc_window_restore": "pc.window.control",
+        "pc_window_close": "pc.window.close",
+        "pc_volume_get": "pc.volume.read",
+        "pc_volume_set": "pc.volume.control",
+        "pc_volume_change": "pc.volume.control",
+        "pc_volume_mute": "pc.volume.control",
+        "pc_volume_unmute": "pc.volume.control",
+        "pc_folder_open": "pc.folder.open",
+        "pc_file_search": "pc.file.search",
+        "pc_file_open": "pc.file.open",
+        "pc_system_info": "pc.system.read",
+        "pc_screenshot_capture": "pc.screen.capture",
     }
 
     def __init__(self, autonomy_mode: str | AutonomyMode = AutonomyMode.SAFE):
@@ -206,6 +228,30 @@ class PolicyEngine:
             "financial.transaction": (AuthorityDecision.APPROVAL_REQUIRED.value, RiskLevel.CRITICAL, "external_service", "Financial actions are critical and require approval."),
             "credential.write": (AuthorityDecision.APPROVAL_REQUIRED.value, RiskLevel.CRITICAL, "system", "Credential changes are highly sensitive."),
             "system": (AuthorityDecision.APPROVAL_REQUIRED.value, RiskLevel.HIGH, "system", "System-level actions require explicit confirmation."),
+            # --- PC Control V1 -------------------------------------------
+            # Scope is "current_workspace" for the autonomous entries on
+            # purpose: an AUTONOMOUS decision at scope "system" is upgraded to
+            # APPROVAL_REQUIRED further down, which would put a confirmation
+            # dialog in front of "what is the volume?".
+            #
+            # Risk must stay LOW/MEDIUM for anything meant to run without a
+            # prompt, because requires_confirmation is also true for any rule
+            # whose risk is HIGH or CRITICAL. The sensitive three below rely on
+            # exactly that.
+            "pc.app.search": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Listing installed applications is read-only."),
+            "pc.window.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Listing open windows is read-only."),
+            "pc.volume.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Reading the volume is read-only."),
+            "pc.system.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "The system snapshot is read-only and carries no identifiers."),
+            "pc.file.search": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Bounded filename search returns metadata only, never contents."),
+            "pc.app.launch": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.MEDIUM, "current_workspace", "Launching a catalogued application is reversible; the model cannot supply a path."),
+            "pc.window.control": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.MEDIUM, "current_workspace", "Focus, minimise, maximise and restore are reversible and lose no data."),
+            "pc.volume.control": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.MEDIUM, "current_workspace", "Volume changes are bounded and reversible."),
+            "pc.folder.open": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.MEDIUM, "current_workspace", "Showing a folder in Explorer reads nothing and changes nothing."),
+            "pc.file.open": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.MEDIUM, "current_workspace", "Opening a document; executable and script types are refused by the tool itself."),
+            # SENSITIVE. Confirmation is required for all three, and the risk
+            # level alone would force it even if the decision were relaxed.
+            "pc.window.close": (AuthorityDecision.APPROVAL_REQUIRED.value, RiskLevel.HIGH, "system", "Closing a window can lose unsaved work and needs explicit confirmation."),
+            "pc.screen.capture": (AuthorityDecision.APPROVAL_REQUIRED.value, RiskLevel.HIGH, "system", "A screenshot may contain anything on screen; it always needs explicit consent."),
         }
         for capability, (decision, risk, scope, reason) in default_rules.items():
             self.register_rule(capability, decision=decision, risk=risk, scope=scope, reason=reason)

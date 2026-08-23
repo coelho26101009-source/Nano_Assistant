@@ -50,7 +50,7 @@ from core.agent_orchestrator import AgentOrchestrator
 from core.agent_registry import AgentRegistry
 from core.tool_execution import ToolExecutor
 from core.background_worker import BackgroundTaskWorker
-from core import audio_feedback, desktop_bridge, ollama_service, provider_status, providers, secret_store, speech_filter, user_settings
+from core import audio_feedback, desktop_bridge, ollama_service, provider_failures, provider_status, providers, secret_store, speech_filter, user_settings
 
 if not getattr(sys, "frozen", False):
     load_dotenv(ROOT / ".env")
@@ -611,11 +611,25 @@ def describe_providers(*, stale_ok: bool = False) -> dict:
 
     getter = provider_status.CACHE.get_stale_ok if stale_ok else provider_status.CACHE.get_fresh
     groq, ollama = getter(key, _produce)
+
+    # The live circuit-breaker state, read from memory. This is why Settings can
+    # say "Groq temporarily limited, using local" once per second without that
+    # becoming one Groq API call per second -- the cooldown knows the answer
+    # already, from the last real chat failure.
+    cooldown = provider_failures.GROQ_COOLDOWN.status()
+    groq = dict(groq)
+    groq["temporarily_limited"] = cooldown["temporarily_limited"]
+    groq["retry_in_seconds"] = cooldown["retry_in_seconds"]
+    if cooldown["temporarily_limited"]:
+        groq["detail"] = (f"Limite temporário atingido. Volta a estar disponível em "
+                          f"~{int(cooldown['retry_in_seconds'] or 0)} s.")
+
     return {
         "mode": mode.value,
         "modes": [m.value for m in providers.ProviderMode],
         "groq": groq,
         "ollama": ollama,
+        "cooldown": cooldown,
         # The route a normal conversational message would take right now.
         "route": providers.resolve_route(mode, groq, ollama, tier="FAST"),
         "complexRoute": providers.resolve_route(mode, groq, ollama, tier="STRONG"),
@@ -635,6 +649,10 @@ def set_provider_mode(mode: str) -> dict:
         return {"ok": False, "error": result.get("error", "write_failed")}
     CONFIG["provider_mode"] = parsed.value
     brain.provider_mode = parsed.value
+    # A manual mode change is an explicit instruction and takes effect NOW. A
+    # cooldown left over from an earlier failure must not make the user's very
+    # next request skip the provider they just chose.
+    provider_failures.GROQ_COOLDOWN.reset()
     logger.info("Modo de provedor: %s", parsed.value)
     return {"ok": True, "mode": parsed.value, "providers": describe_providers()}
 
@@ -1875,20 +1893,23 @@ async def _process_message(user_text: str, msg_id: str | None = None,
         full_response, status_updates = "", []
         rate_limit: dict | None = None
         async for token in brain.chat(user_text, stream=True):
-            if token.startswith("_ratelimit_:"):
-                # A 429 is a state the UI must show, not a wall of red text.
-                try:
-                    rate_limit = json.loads(token.split(":", 1)[1])
-                except Exception:
-                    rate_limit = {}
-                _emit_rate_limited(msg_id, rate_limit)
-            elif token.startswith("_thinking_:"):
+            # Control tokens never reach the answer. The rate-limit payload used
+            # to travel as a `_ratelimit_:{json}` token; it now lives in
+            # brain.last_metadata and is read below, which is what stops it
+            # leaking into any consumer that forgets to filter it -- the voice
+            # path did exactly that and spoke the JSON aloud.
+            if token.startswith("_thinking_:"):
                 status = token.removeprefix("_thinking_:")
                 status_updates.append(status)
                 _emit_stream_status(msg_id, status)
             else:
                 full_response += token
                 _emit_stream_chunk(msg_id, token)
+        rate_limit = (getattr(brain, "last_metadata", {}) or {}).get("rate_limited") or None
+        if rate_limit:
+            # A 429 is a state the UI shows in its own affordance, not a wall
+            # of red text inside the answer.
+            _emit_rate_limited(msg_id, rate_limit)
         full_response = full_response.strip() or "Desculpa Simão, não consegui gerar uma resposta."
         memory.save_message("assistant", full_response)
         result = {
