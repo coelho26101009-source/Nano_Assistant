@@ -11,6 +11,14 @@ real defect observed in the running app:
 
 They read source rather than render it: there is no JS test runner in this
 project, and a contract that holds in the shipped file is the one that matters.
+The layout claims are the exception: those are measured for real, in real
+Chromium, by electron/test/render-check.js.
+
+The V2 shell replaced the left navigation rail with a top bar of five sections,
+turned the left column into the conversation list, and dissolved the fixed
+inspector column into PC > Estado. The FILES these tests read moved with it
+(Sidebar.tsx -> TopNav.tsx; the inspector column -> ContextPanels). Every
+promise they pin is unchanged, and several are now stricter.
 """
 from __future__ import annotations
 
@@ -52,12 +60,14 @@ def shell() -> str:
 
 
 @pytest.fixture(scope="module")
-def sidebar() -> str:
-    return _read(COMPONENTS / "Sidebar.tsx")
+def navigation() -> str:
+    """The navigation model. It was Sidebar.tsx; it is TopNav.tsx now."""
+    return _read(COMPONENTS / "TopNav.tsx")
 
 
 @pytest.fixture(scope="module")
 def inspector() -> str:
+    """The live context panels: a fixed column once, a section of PC now."""
     return _read(COMPONENTS / "Inspector.tsx")
 
 
@@ -74,25 +84,42 @@ def main_module():
 
 # =============================================================== navigation
 
-def test_every_sidebar_entry_has_a_view_the_shell_renders(sidebar, shell):
+def test_every_navigation_entry_has_a_view_the_shell_renders(navigation, shell):
     """A nav item that leads nowhere is a dead control."""
-    declared = set(re.findall(r'\{\s*id:\s*"([a-z]+)"', sidebar))
-    assert declared, "the sidebar declares no navigation entries"
+    declared = set(re.findall(r'\{\s*id:\s*"([a-z]+)"', navigation))
+    assert declared, "the navigation declares no entries"
     for view in declared:
         assert f'view === "{view}"' in shell, f"the shell never renders the '{view}' view"
 
 
-def test_the_view_union_and_the_shell_agree(sidebar, shell):
+def test_the_view_union_and_the_shell_agree(navigation, shell):
     """ViewId is the single source of truth for what can be navigated to."""
-    union = re.search(r"export type ViewId =(.*?);", sidebar, re.S)
+    union = re.search(r"export type ViewId =(.*?);", navigation, re.S)
     assert union, "ViewId is no longer a declared union"
     ids = set(re.findall(r'"([a-z]+)"', union.group(1)))
     assert ids == set(VIEWS), f"ViewId drifted from the expected set: {ids ^ set(VIEWS)}"
 
 
-def test_settings_is_reachable_without_a_keyboard(sidebar):
-    """Settings has no nav row, so the gear is the only way in."""
-    assert 'onView("settings")' in sidebar or "onSettings" in sidebar, (
+def test_every_view_is_owned_by_exactly_one_section(navigation):
+    """Grouping nine views into five sections must lose none and duplicate none.
+
+    The top bar shows sections; a section with several views shows them as
+    sub-tabs. A view in no section would be unreachable with the mouse, and a
+    view in two would light up two tabs at once.
+    """
+    blocks = re.findall(r"views:\s*\[(.*?)\],\n  \},", navigation, re.S)
+    assert blocks, "the section model disappeared"
+    owned: list[str] = []
+    for block in blocks:
+        owned.extend(re.findall(r'\{\s*id:\s*"([a-z]+)"', block))
+    assert sorted(owned) == sorted(VIEWS), (
+        f"sections do not cover every view exactly once: {sorted(owned)}"
+    )
+
+
+def test_settings_is_reachable_without_a_keyboard(navigation):
+    """Settings must have a clickable route, not only Ctrl+comma."""
+    assert 'id: "settings"' in navigation, (
         "there is no clickable route into Settings"
     )
 
@@ -100,8 +127,11 @@ def test_settings_is_reachable_without_a_keyboard(sidebar):
 def test_keyboard_shortcuts_exist_but_are_not_the_only_route(shell):
     code = _strip_comments(shell)
     assert "key" in code and ("ctrlKey" in code or "metaKey" in code), "no keyboard shortcuts wired"
-    # Every shortcut target must also have a visible control somewhere.
-    assert "onToggleInspector" in code or "setInspectorCollapsed" in code
+    # Every shortcut target must also have a visible control somewhere. Ctrl+B
+    # toggles the conversation rail, and TopNav renders the button that does
+    # the same thing with the mouse.
+    assert "setRailOpen" in code, "Ctrl+B has no state to toggle"
+    assert "onToggleRail" in code, "the rail can only be toggled from the keyboard"
 
 
 def test_the_removed_chrome_is_not_reintroduced():
@@ -161,6 +191,22 @@ def test_inspector_is_a_summary_not_a_dead_end(inspector):
     assert inspector.count("onNavigate(") >= 5
 
 
+def test_the_context_panels_are_still_rendered_somewhere(inspector):
+    """Removing the column must not have deleted six cards of real state."""
+    assert "export default function ContextPanels" in inspector
+    pages = _strip_comments(_read(COMPONENTS / "Pages.tsx"))
+    assert "<ContextPanels" in pages, "nothing renders the context panels any more"
+
+
+def test_the_fixed_inspector_column_is_gone(shell, css):
+    """The permanent right-hand column was what made the shell feel technical."""
+    code = _strip_comments(shell)
+    assert "<Inspector" not in code, "the fixed inspector column is back in the shell"
+    assert "inspector" not in css, (
+        "the shell stylesheet still reserves space for the inspector column"
+    )
+
+
 # =========================================================== sidebar badge
 
 def test_the_badge_counts_only_work_that_needs_the_user(main_module):
@@ -189,8 +235,8 @@ def test_a_cancelled_task_does_not_raise_the_badge(main_module):
     assert after <= before, "cancelling a task increased the attention badge"
 
 
-def test_the_sidebar_badge_is_fed_by_task_counts(sidebar, shell):
-    assert "counts" in sidebar, "the sidebar takes no counts prop"
+def test_the_navigation_badge_is_fed_by_task_counts(navigation, shell):
+    assert "counts" in navigation, "the navigation takes no counts prop"
     assert "get_task_counts" in shell, "the shell never fetches the badge counts"
 
 
@@ -199,14 +245,23 @@ def test_the_sidebar_badge_is_fed_by_task_counts(sidebar, shell):
 def test_the_shell_grid_cannot_overflow_horizontally(css):
     """`1fr` refuses to shrink below its content; `minmax(0, 1fr)` does not.
 
-    That difference is why the centre column pushed the inspector offscreen
+    That difference is why the centre column pushed the side panel offscreen
     and the window had to be zoomed out to read it.
+
+    EVERY `.app` rule that declares a column track is checked, not the first
+    block whose selector happens to contain ".app". The first-match version of
+    this test silently started reading the shell's drag-region rule when that
+    was added above the grid, and would have gone on passing -- or failing --
+    for reasons that had nothing to do with the track it exists to guard.
     """
-    grid = re.search(r"\.app\s*\{[^}]*\}", css, re.S)
-    assert grid, ".app grid definition is missing"
-    assert "minmax(0, 1fr)" in grid.group(0), (
-        ".app uses a bare 1fr track, which cannot shrink and clips the layout"
-    )
+    blocks = re.findall(r"[^{}]*\.app\b[^{}]*\{([^}]*)\}", css, re.S)
+    tracks = [body for body in blocks if "grid-template-columns" in body]
+    assert tracks, ".app never declares a column track"
+    for body in tracks:
+        assert "minmax(0, 1fr)" in body, (
+            ".app uses a bare 1fr track, which cannot shrink and clips the layout: "
+            f"{body.strip()!r}"
+        )
 
 
 def test_every_scroll_container_can_actually_shrink(css):
@@ -218,7 +273,7 @@ def test_every_scroll_container_can_actually_shrink(css):
     inside the pane instead of widening the whole shell.
     """
     checked = 0
-    for selector in (".conversation", ".inspector__scroll", ".page-scroll"):
+    for selector in (".conversation", ".rail__scroll", ".page-scroll"):
         block = re.search(re.escape(selector) + r"\s*\{[^}]*\}", css, re.S)
         if not block:
             continue

@@ -32,12 +32,18 @@ const ROOT = path.join(__dirname, '..', '..');
 const OUT_DIR = path.join(ROOT, 'frontend', 'out');
 const PRELOAD = path.join(__dirname, '..', 'preload.js');
 
-/** The desktop resolutions Nano must be comfortable at, as CSS pixels. */
+/** The desktop resolutions Nano must be comfortable at, as CSS pixels.
+ *
+ *  The last entry is not a monitor: it is the SMALLEST window Electron will
+ *  allow (windowState.MIN_WIDTH x MIN_HEIGHT). The user can drag the window to
+ *  it, so it has to hold together there too -- that is where the exterior
+ *  spacing of the floating shell is under the most pressure. */
 const VIEWPORTS = [
   { name: '1920x1080', width: 1920, height: 1040 },
   { name: '1600x900', width: 1600, height: 860 },
   { name: '1366x768', width: 1366, height: 728 },
   { name: '1280x720', width: 1280, height: 680 },
+  { name: '940x620-min', width: 940, height: 620 },
 ];
 
 const MIME = {
@@ -136,21 +142,53 @@ const PROBE = `(() => {
     if (shrinkable.length >= 12) break;
   }
 
+  // DRAG REGIONS. The frameless window is moved by dragging the shell, and
+  // every control has to opt out or it is not clickable at all -- a defect that
+  // looks exactly like "the button does nothing". -webkit-app-region is NOT an
+  // inherited property in Chromium, so a child reporting 'none' simply defers
+  // to the nearest ancestor that declared one; what matters is that the
+  // ancestors declare the right thing and that controls say no-drag themselves.
+  const appRegion = (selector) => {
+    const el = document.querySelector(selector);
+    if (!el) return null;
+    const style = getComputedStyle(el);
+    return style.getPropertyValue('-webkit-app-region').trim() || 'none';
+  };
+  const dragRegions = {
+    shell: appRegion('.shell'),
+    app: appRegion('.app'),
+    topnavItem: appRegion('.topnav-item'),
+    statusPill: appRegion('.status-pill'),
+    windowControl: appRegion('.window-control'),
+    railToggle: appRegion('.topbar .icon-btn'),
+  };
+
   const app = document.querySelector('.app');
   return {
     clipped,
     shrinkable,
+    dragRegions,
     viewport,
     devicePixelRatio: window.devicePixelRatio,
     docScrollWidth: doc.scrollWidth,
     docClientWidth: doc.clientWidth,
     bodyScrollWidth: document.body.scrollWidth,
     horizontalOverflow: doc.scrollWidth > doc.clientWidth || document.body.scrollWidth > doc.clientWidth,
-    hasTitleBar: Boolean(document.querySelector('.titlebar')),
+    // The caption merged into the top bar in the redesign, so the thing that
+    // must be absent without the desktop shell is the window-control cluster,
+    // not a bar of its own. The bar itself renders in a browser too.
+    hasWindowControls: Boolean(document.querySelector('.window-controls')),
+    hasTopBar: Boolean(document.querySelector('.topbar')),
     hasApp: Boolean(app),
-    sidebarWidth: Math.round(document.querySelector('.sidebar')?.getBoundingClientRect().width || 0),
-    inspectorWidth: Math.round(document.querySelector('.inspector')?.getBoundingClientRect().width || 0),
-    workspaceWidth: Math.round(document.querySelector('.workspace')?.getBoundingClientRect().width || 0),
+    railWidth: Math.round(document.querySelector('.rail')?.getBoundingClientRect().width || 0),
+    stageWidth: Math.round(document.querySelector('.stage')?.getBoundingClientRect().width || 0),
+    // The reading column inside the stage. A stage that is wide while the
+    // column inside it is a hairline would still be a squeezed layout. The
+    // composer's column is measured because it is present in every chat state
+    // and is capped by the same --chat-max as the transcript.
+    readingColumnWidth: Math.round(
+      (document.querySelector('.conversation__inner') || document.querySelector('.composer-inner'))
+        ?.getBoundingClientRect().width || 0),
     composerVisible: (() => {
       const c = document.querySelector('.composer');
       if (!c) return false;
@@ -159,6 +197,14 @@ const PROBE = `(() => {
     })(),
     offenders,
   };
+})()`;
+
+/** Click a top-bar section by its label and let the stage settle. */
+const OPEN_SECTION = (label) => `(() => {
+  for (const el of document.querySelectorAll('.topnav-item')) {
+    if ((el.textContent || '').trim().startsWith(${JSON.stringify(label)})) { el.click(); return true; }
+  }
+  return false;
 })()`;
 
 async function measure(window, url, viewport) {
@@ -172,6 +218,21 @@ async function measure(window, url, viewport) {
   return { viewport: viewport.name, requested: viewport, ...result };
 }
 
+/**
+ * Measure one section without reloading.
+ *
+ * The chat is empty here -- there is no backend in this harness -- but the
+ * pages are not: PC, Ferramentas and Definicoes render their full structure
+ * from null data, and they are the densest layouts in the app. Measuring only
+ * the chat would have left them unchecked.
+ */
+async function measureSection(window, viewport, label) {
+  await window.webContents.executeJavaScript(OPEN_SECTION(label));
+  await new Promise((r) => setTimeout(r, 500));
+  const result = await window.webContents.executeJavaScript(PROBE);
+  return { viewport: viewport.name, section: label, ...result };
+}
+
 async function main() {
   if (!fs.existsSync(path.join(OUT_DIR, 'index.html'))) {
     console.log(JSON.stringify({ ok: false, error: 'frontend/out is not built' }));
@@ -181,7 +242,7 @@ async function main() {
 
   const server = await serve();
   const url = `http://127.0.0.1:${server.address().port}/index.html`;
-  const report = { ok: true, desktop: [], browser: null, consoleErrors: [] };
+  const report = { ok: true, desktop: [], sections: [], browser: null, consoleErrors: [] };
 
   // The real preload asks the main process for the window state. Answer it, so
   // the title bar renders in its normal state rather than in an error path.
@@ -207,6 +268,9 @@ async function main() {
     });
     for (const viewport of VIEWPORTS) {
       report.desktop.push(await measure(desktopWindow, url, viewport));
+      for (const section of ['Ferramentas', 'PC', 'Mem', 'Defini']) {
+        report.sections.push(await measureSection(desktopWindow, viewport, section));
+      }
     }
 
     /* Browser fallback: the SAME bundle with no preload at all. It must render

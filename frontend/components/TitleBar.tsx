@@ -1,26 +1,31 @@
 /**
- * The Nano desktop title bar.
+ * The Windows caption controls.
  *
- * The window is frameless, so this replaces the Windows caption. Two things
- * make that safe rather than annoying:
+ * The window is frameless, so these replace the OS caption buttons. They no
+ * longer live in a bar of their own: the redesign merges the caption into the
+ * top navigation bar, exactly as the approved reference does, so this component
+ * is just the minimise / maximise / close cluster that sits at its right end.
  *
- *  1. DRAG REGIONS ARE DELIBERATE. `-webkit-app-region: drag` is applied to the
- *     bar and then explicitly REMOVED from every interactive element. Miss one
- *     and that button becomes un-clickable: the drag region swallows the press
- *     before it reaches the handler. The `.titlebar__control` class carries the
- *     no-drag rule, so a new control cannot forget it.
+ * Three things make that safe rather than annoying:
  *
- *  2. IT ONLY EXISTS IN THE DESKTOP SHELL. Rendered from capability detection,
- *     so the same bundle opened in a browser during development simply has no
- *     title bar — no broken buttons, no crash.
+ *  1. DRAG REGIONS ARE DELIBERATE. The top bar carries
+ *     `-webkit-app-region: drag`, and every interactive child explicitly opts
+ *     out. Miss one and that control becomes un-clickable: the drag region
+ *     swallows the press before it reaches the handler. `.window-control`
+ *     carries the no-drag rule, and globals.css also applies it by selector to
+ *     every button, link and input inside `.topbar`, so a new control cannot
+ *     forget it.
  *
- * Close hides to the tray rather than quitting, because the global shortcut has
- * to keep working with the window gone. The tooltip says so, and Quit is a
- * separate explicit action in the tray menu.
+ *  2. IT ONLY EXISTS IN THE DESKTOP SHELL. TopNav renders it from capability
+ *     detection, so the same bundle opened in a browser during development
+ *     simply has no caption buttons — no dead controls, no crash.
+ *
+ *  3. CLOSE HIDES TO THE TRAY rather than quitting, because the global shortcut
+ *     has to keep working with the window gone. The tooltip says so, and Quit
+ *     is a separate explicit action in the tray menu.
  */
 import React from "react";
 
-import NanoLogo from "./NanoLogo";
 import {
   hideWindow, minimizeWindow, toggleMaximizeWindow, useWindowState,
 } from "../lib/desktop";
@@ -53,55 +58,43 @@ const Close = () => (
   </svg>
 );
 
-export default function TitleBar({ version }: { version?: string }) {
+export default function WindowControls() {
   const windowState = useWindowState();
   const maximized = windowState?.maximized ?? false;
 
   return (
-    <div
-      className="titlebar"
-      data-focused={windowState?.focused !== false}
-      // Double-clicking the caption maximises, as every Windows window does.
-      onDoubleClick={toggleMaximizeWindow}
-    >
-      <div className="titlebar__brand">
-        <NanoLogo size={17} bare />
-        <span className="titlebar__name">Nano</span>
-        {version && <span className="titlebar__version">{version}</span>}
-      </div>
-
-      {/* The draggable middle. Deliberately empty: a control here would have to
-          opt out of dragging, and an accidental drag on a control is worse than
-          a slightly emptier bar. */}
-      <div className="titlebar__drag" />
-
-      <div className="titlebar__controls">
-        <button
-          type="button" className="titlebar__control"
-          onClick={minimizeWindow}
-          aria-label="Minimizar" title="Minimizar"
-        >
-          <Minimize />
-        </button>
-        <button
-          type="button" className="titlebar__control"
-          onClick={toggleMaximizeWindow}
-          aria-label={maximized ? "Restaurar" : "Maximizar"}
-          title={maximized ? "Restaurar" : "Maximizar"}
-        >
-          {maximized ? <Restore /> : <Maximize />}
-        </button>
-        <button
-          type="button" className="titlebar__control titlebar__control--close"
-          onClick={hideWindow}
-          aria-label="Fechar para o tabuleiro"
-          // Says exactly what happens. A close button that does not close is
-          // only acceptable if it never surprises anyone.
-          title="Fechar para o tabuleiro — o Nano continua a correr"
-        >
-          <Close />
-        </button>
-      </div>
+    <div className="window-controls">
+      <button
+        type="button" className="window-control"
+        onClick={minimizeWindow}
+        aria-label="Minimizar" title="Minimizar"
+      >
+        <Minimize />
+      </button>
+      <button
+        type="button" className="window-control"
+        onClick={toggleMaximizeWindow}
+        aria-label={maximized ? "Restaurar" : "Maximizar"}
+        title={maximized ? "Restaurar" : "Maximizar"}
+      >
+        {maximized ? <Restore /> : <Maximize />}
+      </button>
+      <button
+        type="button" className="window-control window-control--close"
+        onClick={hideWindow}
+        aria-label="Fechar para o tabuleiro"
+        // Says exactly what happens. A close button that does not close is
+        // only acceptable if it never surprises anyone.
+        title="Fechar para o tabuleiro — o Nano continua a correr"
+      >
+        <Close />
+      </button>
     </div>
   );
+}
+
+/** Whether the window currently reports focus, for chrome that dims with it. */
+export function useCaptionFocus(): boolean {
+  const state = useWindowState();
+  return state?.focused !== false;
 }

@@ -674,9 +674,15 @@ def test_the_ui_has_no_horizontal_overflow_at_any_desktop_size():
         assert not row["offenders"], (
             f"{row['viewport']}: elements stick out past the viewport: {row['offenders']}"
         )
-        assert row["workspaceWidth"] >= 600, (
-            f"{row['viewport']}: the conversation column collapsed to "
-            f"{row['workspaceWidth']}px — the side panels are taking priority"
+        assert row["stageWidth"] >= 600, (
+            f"{row['viewport']}: the stage collapsed to "
+            f"{row['stageWidth']}px — the conversation rail is taking priority"
+        )
+        # A wide stage holding a hairline-thin reading column would still be a
+        # squeezed layout, so the column inside it is measured too.
+        assert row["readingColumnWidth"] >= 520, (
+            f"{row['viewport']}: the reading column is only "
+            f"{row['readingColumnWidth']}px wide"
         )
         assert row["composerVisible"], f"{row['viewport']}: the composer fell below the fold"
 
@@ -691,6 +697,51 @@ def test_the_ui_has_no_horizontal_overflow_at_any_desktop_size():
         )
         assert not row["clipped"], (
             f"{row['viewport']}: content is cut off inside these boxes: {row['clipped']}"
+        )
+
+    # DRAG REGIONS, measured rather than read off the stylesheet.
+    #
+    # The redesign made the whole shell draggable so the new exterior margin
+    # moves the window like a title bar would. That is only safe if the panels
+    # and every control opt back out: a control inside a drag region is not
+    # clickable at all, and the failure looks like a button that silently does
+    # nothing. Verified by hand at the time (top bar and margin drag the window,
+    # the panels do not, and the navigation still switches sections) -- this is
+    # what keeps it true.
+    for row in report["desktop"]:
+        regions = row["dragRegions"]
+        where = row["viewport"]
+        assert regions["shell"] == "drag", (
+            f"{where}: the shell is not a drag region, so the frameless window "
+            f"cannot be moved (got {regions['shell']!r})"
+        )
+        assert regions["app"] == "no-drag", (
+            f"{where}: the panels did not opt out of the drag region, so nothing "
+            f"inside them is clickable (got {regions['app']!r})"
+        )
+        for control in ("topnavItem", "statusPill", "windowControl", "railToggle"):
+            value = regions[control]
+            if value is None:
+                continue          # not rendered at this width; nothing to check
+            assert value == "no-drag", (
+                f"{where}: .{control} is inside the drag region and cannot be "
+                f"clicked (got {value!r})"
+            )
+
+    # The chat is not the only screen. Ferramentas, PC, Memoria and Definicoes
+    # are the densest layouts in the app -- cards, tab strips, meters, tables --
+    # and measuring only the conversation left every one of them unchecked.
+    assert report["sections"], "the section sweep produced no measurements"
+    for row in report["sections"]:
+        where = f"{row['viewport']} / {row['section']}"
+        assert not row["horizontalOverflow"], (
+            f"{where}: the page scrolls horizontally. Offenders: {row['offenders']}"
+        )
+        assert not row["offenders"], f"{where}: elements stick out past the viewport: {row['offenders']}"
+        assert not row["clipped"], f"{where}: content is cut off inside these boxes: {row['clipped']}"
+        assert not row["shrinkable"], (
+            f"{where}: these children of a scrolling flex column can be squeezed "
+            f"instead of scrolled: {row['shrinkable']}"
         )
 
 
@@ -715,9 +766,12 @@ def test_the_same_bundle_still_works_with_no_desktop_shell():
     browser = report["browser"]
 
     assert browser is not None and browser["hasApp"], "the browser fallback did not render"
-    assert browser["hasTitleBar"] is False, (
-        "the native title bar must not appear without the desktop shell: its "
-        "buttons would do nothing"
+    # The caption merged into the top bar, so the bar itself renders in both.
+    # What must never appear without the desktop shell is the caption cluster.
+    assert browser["hasTopBar"] is True, "the top bar did not render in the browser fallback"
+    assert browser["hasWindowControls"] is False, (
+        "the native window controls must not appear without the desktop shell: "
+        "their buttons would do nothing"
     )
     assert not browser["horizontalOverflow"]
 

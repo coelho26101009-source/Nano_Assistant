@@ -1,7 +1,13 @@
-﻿@echo off
+@echo off
 setlocal EnableExtensions EnableDelayedExpansion
-title Nano - GitHub Commit & Push
-cd /d "%~dp0"
+REM The & is escaped: cmd.exe treats a bare & as a command separator, so the
+REM unescaped version ran `title Nano - GitHub Commit` and then tried to run
+REM `Push` as a program, printing a spurious error on every launch.
+title Nano - GitHub Commit ^& Push
+REM This helper lives in scripts\ so it cannot be mistaken for one of the two
+REM sanctioned launchers in the project root. It still has to operate on the
+REM repository, so it walks one level up before touching git.
+cd /d "%~dp0.."
 
 echo.
 echo ============================================================

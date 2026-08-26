@@ -65,7 +65,10 @@ const ICON_PATH = path.join(ASSETS, 'icon.ico');
 const TRAY_ICON_PATH = path.join(ASSETS, 'tray.png');
 const MAIN_PY = path.join(APP_ROOT, 'core', 'main.py');
 
-const OVERLAY_SIZE = { width: 320, height: 96 };
+// Wide enough for the longest real label plus the visualiser, and no wider:
+// the panel is inset 14 px inside this window for its shadow, so the visible
+// card is 384x84.
+const OVERLAY_SIZE = { width: 412, height: 112 };
 
 /* ── Process state ──────────────────────────────────────────────────────── */
 

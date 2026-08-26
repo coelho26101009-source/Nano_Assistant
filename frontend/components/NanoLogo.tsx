@@ -1,28 +1,48 @@
 /**
- * The Nano mark.
+ * The Nano brand marks.
  *
- * An original identity: a geometric "N" cut from a hexagonal core, wrapped by a
- * broken orbital ring. The hexagon reads as something engineered and small-scale
- * (nano), the ring as something in motion (an assistant that is working), and
- * the gap in the ring keeps it from looking like a generic loading spinner.
+ * THESE ARE THE SUPPLIED ASSETS, NOT A REDRAWING. `public/branding/` holds the
+ * artwork the identity was approved on: `nano-mark.png` (the white "N" inside
+ * the red flame) and `nano-wordmark.png` (the "NANO" lettering). Nothing here
+ * recolours, restyles or reinvents them.
  *
- * Drawn from primitives rather than a traced illustration so it stays crisp at
- * 16 px, where fine detail would turn to mush. Everything scales from the
- * `size` prop and inherits colour from the tokens, so one component serves the
- * sidebar, the avatar and the favicon.
+ * WHY THE `-alpha` FILES EXIST. The supplied PNGs are colour-type 2 — truecolour
+ * with NO alpha channel — so the artwork is burned onto an opaque black square.
+ * Dropped straight onto a glass panel or a rounded avatar that renders as a
+ * black tile with hard corners, which is exactly what the redesign is trying to
+ * get away from. `scripts/derive_brand_assets.py` recovers the alpha channel
+ * (the artwork is effectively premultiplied against black, so alpha is
+ * max(R,G,B) and the straight colour is rgb/alpha — an exact recovery, not a
+ * guess), trims the empty margin and writes the `-alpha` variants. The
+ * originals are left untouched as the masters.
+ *
+ * Sizing is always `object-fit: contain` inside a square (mark) or a
+ * height-driven box (wordmark), so neither can be stretched out of proportion.
  */
 import React from "react";
 
+export const NANO_MARK_SRC = "/branding/nano-mark-alpha.png";
+export const NANO_WORDMARK_SRC = "/branding/nano-wordmark-alpha.png";
+
+/** The wordmark's own aspect ratio, so a height never distorts the width. */
+const WORDMARK_RATIO = 720 / 239;
+
 export type NanoLogoProps = {
   size?: number;
-  /** Hide the orbit ring — used at very small sizes and inside dense rows. */
+  /** Drop the red drop-shadow. Used at very small sizes and in dense rows. */
   bare?: boolean;
-  /** Animate the orbit. Ignored when the user prefers reduced motion. */
+  /** Breathe the glow while Nano is working. Ignored under reduced motion. */
   active?: boolean;
   title?: string;
   className?: string;
 };
 
+/**
+ * The flame mark on its own, with no container.
+ *
+ * Used wherever the app needs its symbol: the top bar, message avatars, the
+ * conversation header, list rows and empty states.
+ */
 export default function NanoLogo({
   size = 28,
   bare = false,
@@ -30,79 +50,94 @@ export default function NanoLogo({
   title,
   className = "",
 }: NanoLogoProps) {
-  const gradientId = React.useId();
   const labelled = Boolean(title);
+  const classes = [
+    "nano-mark",
+    bare ? "nano-mark--plain" : "",
+    active ? "nano-mark--active" : "",
+    className,
+  ].filter(Boolean).join(" ");
 
   return (
-    <svg
+    <img
+      src={NANO_MARK_SRC}
       width={size}
       height={size}
-      viewBox="0 0 48 48"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      className={`nano-logo${active ? " nano-logo--active" : ""} ${className}`.trim()}
+      className={classes}
+      alt={labelled ? title : ""}
       role={labelled ? "img" : "presentation"}
-      aria-label={title}
       aria-hidden={labelled ? undefined : true}
-      focusable="false"
-    >
-      <defs>
-        <linearGradient id={`${gradientId}-core`} x1="8" y1="6" x2="40" y2="42" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="var(--accent)" />
-          <stop offset="100%" stopColor="var(--accent-2)" />
-        </linearGradient>
-      </defs>
-
-      {/* Orbit: two arcs with deliberate gaps, so it never reads as a spinner. */}
-      {!bare && (
-        <g className="nano-logo__orbit" stroke="var(--accent)" strokeWidth="1.6" strokeLinecap="round" opacity="0.55">
-          <path d="M24 3.5A20.5 20.5 0 0 1 44.5 24" />
-          <path d="M24 44.5A20.5 20.5 0 0 1 3.5 24" />
-        </g>
-      )}
-
-      {/* Hexagonal core. */}
-      <path
-        d="M24 8.5 38.5 16.75v14.5L24 39.5 9.5 31.25v-14.5L24 8.5Z"
-        fill={`url(#${gradientId}-core)`}
-        fillOpacity="0.14"
-        stroke={`url(#${gradientId}-core)`}
-        strokeWidth="1.8"
-        strokeLinejoin="round"
-      />
-
-      {/* The N: two uprights and the diagonal, as one continuous stroke path. */}
-      <path
-        d="M18.5 31V17l11 14V17"
-        stroke={`url(#${gradientId}-core)`}
-        strokeWidth="2.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-      />
-
-      {/* Two nodes on the diagonal: the "circuit" read, dropped when bare. */}
-      {!bare && (
-        <>
-          <circle cx="18.5" cy="17" r="1.9" fill="var(--accent)" />
-          <circle cx="29.5" cy="31" r="1.9" fill="var(--accent-2)" />
-        </>
-      )}
-    </svg>
+      draggable={false}
+    />
   );
 }
 
-/** Sidebar lockup: mark plus wordmark and version. */
-export function NanoWordmark({ version, collapsed }: { version?: string; collapsed?: boolean }) {
+/**
+ * The mark inside its disc.
+ *
+ * The disc is what makes the mark read as an identity at avatar sizes: a
+ * faint radial of the flame's own red behind it, and a hairline that picks up
+ * the same hue. `size` is the diameter; the mark is inset inside it.
+ */
+export function NanoAvatar({
+  size = 34,
+  active = false,
+  title,
+  className = "",
+}: { size?: number; active?: boolean; title?: string; className?: string }) {
   return (
-    <div className="brand-lockup">
-      <NanoLogo size={collapsed ? 24 : 30} title="Nano" />
-      {!collapsed && (
-        <span className="brand-lockup__text">
-          <span className="brand-lockup__name">Nano</span>
-          {version && <span className="brand-lockup__version">{version}</span>}
-        </span>
-      )}
-    </div>
+    <span
+      className={`mark-disc ${className}`.trim()}
+      style={{ width: size, height: size }}
+      role={title ? "img" : "presentation"}
+      aria-label={title}
+      aria-hidden={title ? undefined : true}
+    >
+      <NanoLogo size={Math.round(size * 0.62)} active={active} />
+    </span>
+  );
+}
+
+/**
+ * The "NANO" lettering.
+ *
+ * Reserved for real branding moments — the welcome state and the About panel —
+ * rather than sprinkled through the chrome, where the mark alone is stronger.
+ * Driven by height so the aspect ratio is fixed by construction.
+ */
+export function NanoWordmark({
+  height = 34,
+  title = "Nano",
+  className = "",
+}: { height?: number; title?: string; className?: string }) {
+  return (
+    <img
+      src={NANO_WORDMARK_SRC}
+      height={height}
+      width={Math.round(height * WORDMARK_RATIO)}
+      className={`nano-wordmark ${className}`.trim()}
+      alt={title}
+      draggable={false}
+    />
+  );
+}
+
+/**
+ * Top-bar lockup: the mark beside the wordmark.
+ *
+ * The product name is the ARTWORK, not text set in the UI font. A "Nano" typed
+ * in Inter beside a hand-drawn flame reads as two different brands; the
+ * wordmark is the approved lettering and it is what belongs here. The version
+ * stays as text — it is data, not identity — and is deliberately small.
+ */
+export function NanoLockup({
+  version, size = 26,
+}: { version?: string; size?: number }) {
+  return (
+    <span className="brand-lockup">
+      <NanoLogo size={size} title="Nano" />
+      <NanoWordmark height={Math.round(size * 0.68)} className="brand-lockup__word" />
+      {version && <span className="brand-lockup__version">{version}</span>}
+    </span>
   );
 }

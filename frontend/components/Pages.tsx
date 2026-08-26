@@ -6,7 +6,8 @@
  * nothing, the page says so explicitly rather than showing a plausible zero.
  */
 import React, { useMemo, useState } from "react";
-import { ActivityTimeline, eventLabel } from "./Inspector";
+import ContextPanels, { ActivityTimeline, eventLabel } from "./Inspector";
+import type { ViewId } from "./TopNav";
 import type {
   ActivityEvent, CommandCenterPayload, ProviderPayload,
   ReadinessPayload, TaskCounts, TaskRow,
@@ -427,6 +428,18 @@ export function AgentsPage({ agents }: { agents: any[] | null }) {
    MEMÓRIA
    ====================================================================== */
 
+/** The stored value of a profile entry, whether or not it is wrapped. */
+function profileValue(entry: any): string {
+  const raw = entry && typeof entry === "object" && "value" in entry ? entry.value : entry;
+  if (raw === null || raw === undefined) return "—";
+  return typeof raw === "object" ? JSON.stringify(raw) : String(raw);
+}
+
+/** Where the entry came from, when the backend recorded it. */
+function profileSource(entry: any): string {
+  return entry && typeof entry === "object" && typeof entry.source === "string" ? entry.source : "";
+}
+
 export function MemoryPage({
   memory, onForget, loading,
 }: {
@@ -459,7 +472,18 @@ export function MemoryPage({
             {profileEntries.map(([key, value]) => (
               <React.Fragment key={key}>
                 <dt>{key}</dt>
-                <dd className="mono">{typeof value === "object" ? JSON.stringify(value) : String(value)}</dd>
+                {/* memory.remember_preference stores each entry as
+                    {value, source, updated_at}. Dumping that object rendered
+                    literal JSON in the user's face; show the value, and let the
+                    provenance sit quietly beside it. */}
+                <dd>
+                  <span className="mono">{profileValue(value)}</span>
+                  {profileSource(value) && (
+                    <span className="dim" style={{ marginLeft: 8, fontSize: 11 }}>
+                      · {profileSource(value)}
+                    </span>
+                  )}
+                </dd>
               </React.Fragment>
             ))}
           </dl>
@@ -617,14 +641,18 @@ export function IntegrationsPage({
    ====================================================================== */
 
 export function StatusPage({
-  readiness, providers, commandCenter, onToggleEmergencyStop,
+  readiness, providers, commandCenter, loading, onToggleEmergencyStop,
+  onOpenTask, onCancelTask, onNavigate,
 }: {
   readiness: ReadinessPayload | null;
   providers: ProviderPayload | null;
   commandCenter: CommandCenterPayload | null;
+  loading: boolean;
   onToggleEmergencyStop: (enabled: boolean) => void;
+  onOpenTask: (id: string) => void;
+  onCancelTask: (id: string) => void;
+  onNavigate: (view: ViewId) => void;
 }) {
-  const system = commandCenter?.system ?? {};
   const [confirmStop, setConfirmStop] = useState(false);
 
   const services = [
@@ -639,6 +667,16 @@ export function StatusPage({
 
   return (
     <div className="page__inner">
+      {/* The live overview that used to be a permanent column beside every
+          conversation. It belongs here, where it is the answer to a question
+          the user came to ask, instead of competing with the chat. */}
+      <h2 className="page-title">Agora</h2>
+      <ContextPanels
+        readiness={readiness} providers={providers}
+        commandCenter={commandCenter} loading={loading}
+        onOpenTask={onOpenTask} onCancelTask={onCancelTask} onNavigate={onNavigate}
+      />
+
       <h2 className="page-title">Serviços</h2>
       <div className="stack stack--tight">
         {services.map((service) => (
@@ -652,36 +690,11 @@ export function StatusPage({
         ))}
       </div>
 
-      <h2 className="page-title">Recursos</h2>
-      <div className="grid-auto">
-        <div className="tile">
-          <div className="tile__label">CPU</div>
-          <div className="tile__value">{system.cpu ?? 0}%</div>
-          <Meter value={Number(system.cpu ?? 0)} tone={usageTone(Number(system.cpu ?? 0))} />
-        </div>
-        <div className="tile">
-          <div className="tile__label">Memória</div>
-          <div className="tile__value">{system.ram ?? 0}%</div>
-          <Meter value={Number(system.ram ?? 0)} tone={usageTone(Number(system.ram ?? 0))} />
-          <p className="dim" style={{ fontSize: 11, marginTop: 6 }}>
-            {system.ramUsed ?? 0} / {system.ramTotal ?? 0} GB
-          </p>
-        </div>
-        <div className="tile">
-          <div className="tile__label">Disco</div>
-          <div className="tile__value">{system.disk ?? 0}%</div>
-          <Meter value={Number(system.disk ?? 0)} tone={usageTone(Number(system.disk ?? 0))} />
-          <p className="dim" style={{ fontSize: 11, marginTop: 6 }}>
-            {system.diskUsed ?? 0} / {system.diskTotal ?? 0} GB
-          </p>
-        </div>
-      </div>
-      {/* Temperature is deliberately absent: psutil cannot read CPU temperature
-          reliably on Windows, and a fabricated number is worse than none. */}
-      <p className="dim" style={{ fontSize: 11, marginTop: 10 }}>
-        A temperatura do CPU não é apresentada: não é legível de forma fiável nesta
-        plataforma, e um valor inventado seria pior do que nenhum.
-      </p>
+      {/* CPU / RAM / disk are NOT repeated here. They used to be rendered twice
+          from the same payload — as tiles in this section and as meters in the
+          inspector's "Saúde do sistema" card. That card is now the single
+          place, at the top of this page, and it carries the used/total figures
+          the tiles used to add. */}
 
       <h2 className="page-title">Segurança</h2>
       <div className="card" style={{ maxWidth: 560 }}>

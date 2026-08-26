@@ -1,7 +1,15 @@
 /**
  * Nano application shell.
  *
- * Layout: sidebar · workspace · inspector.
+ * Layout: top bar · conversation rail · stage.
+ *
+ * The bar carries the five sections (Chat, Ferramentas, PC, Memória,
+ * Definições) and, in the desktop shell, doubles as the window caption. The
+ * rail on the left lists real conversations. The stage on the right holds the
+ * conversation or the page of whichever section is open. There is no longer a
+ * fixed inspector column: its panels moved to PC › Estado, where they answer a
+ * question instead of permanently occupying the main screen.
+ *
  * All state shown here is read from the Python backend through lib/backend.
  * Nothing is mocked and nothing defaults to "ready".
  */
@@ -10,45 +18,35 @@ import Head from "next/head";
 
 import CommandPalette, { Command } from "../components/CommandPalette";
 import ConfirmModal from "../components/Confirm";
-import Inspector from "../components/Inspector";
-import NanoLogo from "../components/NanoLogo";
 import PluginCodeModal from "../components/PluginCodeModal";
-import Sidebar, { ViewId } from "../components/Sidebar";
+import Rail from "../components/Rail";
 import SettingsPage from "../components/SettingsPage";
 import TaskDetailModal from "../components/TaskDetailModal";
-import TitleBar from "../components/TitleBar";
+import TopNav, { SECTIONS, ViewId, sectionEntry, sectionOf, viewEntry } from "../components/TopNav";
+import NanoLogo from "../components/NanoLogo";
 import { Composer, Conversation, Message, ToolEvent } from "../components/Conversation";
 import {
   ActivityFilter, ActivityPage, AgentsPage, IntegrationsPage, MemoryPage,
   PermissionsPage, StatusPage, TaskScope, TasksPage,
 } from "../components/Pages";
-import { Button, ErrorState, StatusIndicator, ToastStack, stateLabel, useToasts } from "../components/ui";
+import { Button, ErrorState, ToastStack, stateLabel, useToasts } from "../components/ui";
 import {
   ActivityEvent, CommandCenterPayload, POLL, ProviderPayload, ReadinessPayload,
   SettingsPayload, TaskCounts, TaskRow, VoiceDiagnostics,
   call, expose, useBridgeReady, useFetch, usePolled,
 } from "../lib/backend";
+import {
+  HistoryMessage, Session, recordSessionBreak, splitSessions,
+} from "../lib/conversations";
 import { useIsDesktop } from "../lib/desktop";
 
-const APP_VERSION = "v0.8.0-β";
+const APP_VERSION = "v1.0";
 
 export interface ConfirmRequest {
   requestId: string;
   message: string;
   meta: Record<string, any>;
 }
-
-const VIEW_META: Record<ViewId, { title: string; subtitle: string; icon: React.ReactNode }> = {
-  chat:         { title: "Conversa",   subtitle: "Fale com o Nano", icon: <span aria-hidden="true">◈</span> },
-  tasks:        { title: "Tarefas",    subtitle: "Trabalho em segundo plano", icon: <span aria-hidden="true">▤</span> },
-  activity:     { title: "Atividade",  subtitle: "O que o Nano tem feito", icon: <span aria-hidden="true">≋</span> },
-  permissions:  { title: "Permissões", subtitle: "Autorizações e policies", icon: <span aria-hidden="true">⛨</span> },
-  agents:       { title: "Agentes",    subtitle: "Agentes registados", icon: <span aria-hidden="true">◇</span> },
-  memory:       { title: "Memória",    subtitle: "O que o Nano sabe sobre ti", icon: <span aria-hidden="true">▦</span> },
-  integrations: { title: "Integrações", subtitle: "Provedores e componentes", icon: <span aria-hidden="true">⬡</span> },
-  status:       { title: "Estado",     subtitle: "Saúde do sistema", icon: <span aria-hidden="true">◉</span> },
-  settings:     { title: "Definições", subtitle: "Configurar o Nano", icon: <span aria-hidden="true">⚙</span> },
-};
 
 /** The id of the user bubble belonging to a turn.
  *
@@ -57,17 +55,36 @@ const VIEW_META: Record<ViewId, { title: string; subtitle: string; icon: React.R
  * twice, so text equality can never be the identity of a turn. */
 const userMessageId = (requestId: string) => `user:${requestId}`;
 
+/**
+ * Whether the window is narrow enough that the rail has to become a drawer.
+ *
+ * Resolved in an effect, never during render: the statically exported HTML and
+ * the first client render must agree or React logs a hydration mismatch.
+ */
+function useNarrow(query = "(max-width: 1080px)"): boolean {
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const media = window.matchMedia(query);
+    const sync = () => setNarrow(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, [query]);
+  return narrow;
+}
+
 export default function Home() {
   const { ready, gaveUp } = useBridgeReady();
   const { toasts, notify } = useToasts();
   // Capability detection, resolved after mount. In a browser this stays false
-  // and the native title bar is simply never rendered.
+  // and the window controls are simply never rendered.
   const isDesktop = useIsDesktop();
+  const narrow = useNarrow();
 
   /* ── Shell state ────────────────────────────────────────────────────── */
   const [view, setView] = useState<ViewId>("chat");
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
+  const [railOpen, setRailOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [reduceMotion, setReduceMotion] = useState(false);
@@ -82,6 +99,18 @@ export default function Home() {
   // an error message. Kept separate so the UI can count it down.
   const [rateLimit, setRateLimit] = useState<{ message: string; waitSeconds: number } | null>(null);
   const [voicePhase, setVoicePhase] = useState<{ phase: string; detail: string } | null>(null);
+
+  /* ── Conversation list ──────────────────────────────────────────────────
+   * `history` is the stored message log; the rail derives conversations from
+   * it. `reading` is set only while the user is looking at an older one, which
+   * is read-only because the Brain's context holds the live conversation and
+   * nothing else. */
+  const [history, setHistory] = useState<HistoryMessage[] | null>(null);
+  const [sessionBreaks, setSessionBreaks] = useState<number[]>([]);
+  const [reading, setReading] = useState<Session | null>(null);
+  const [chatQuery, setChatQuery] = useState("");
+  const [profileName, setProfileName] = useState<string | null>(null);
+  const [messageCount, setMessageCount] = useState<number | null>(null);
 
   /* ── Dialogs ────────────────────────────────────────────────────────── */
   const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
@@ -132,15 +161,23 @@ export default function Home() {
     "get_voice_diagnostics", POLL.voiceDiagnostics, ready && view === "settings");
 
   useEffect(() => { document.documentElement.setAttribute("data-theme", theme); }, [theme]);
-  // Stamped on the root so rules that cannot see the React tree -- the fixed
-  // sidebar/inspector drawers at narrow widths -- can leave room for the
-  // title bar instead of sliding underneath it.
+  // Stamped on the root so rules that cannot see the React tree -- the drag
+  // region on the top bar, the fixed rail drawer at narrow widths -- can tell
+  // whether they are inside the desktop shell.
   useEffect(() => {
     document.documentElement.setAttribute("data-desktop", isDesktop ? "true" : "false");
   }, [isDesktop]);
   useEffect(() => {
     document.documentElement.style.setProperty("--transition", reduceMotion ? "0ms" : "140ms cubic-bezier(0.4, 0, 0.2, 1)");
   }, [reduceMotion]);
+
+  /* ── The stored conversation log ────────────────────────────────────────
+   * Re-read after anything that appends to it, so the rail is never a stale
+   * picture of what is on disk. */
+  const reloadHistory = useCallback(async () => {
+    const stored = await call<HistoryMessage[]>("get_conversation_history");
+    if (stored) setHistory(stored);
+  }, []);
 
   /* ── Streaming events ───────────────────────────────────────────────── */
   useEffect(() => {
@@ -239,6 +276,8 @@ export default function Home() {
       }));
       refreshCC();
       refreshCounts();
+      // The turn is on disk now, so the rail can see it.
+      reloadHistory();
     }, "on_stream_end");
 
     // A provider/model failure. Distinct from the bridge being unreachable:
@@ -263,9 +302,9 @@ export default function Home() {
     }, "on_rate_limited");
 
     // Which phase of a voice turn we are in, so the UI can narrate it.
-    // Every trigger -- wake phrase, mic button, and the global hotkey when it
-    // arrives -- drives the same sequence, so this is the single place the
-    // composer learns that a turn started and, crucially, that it ended.
+    // Every trigger -- wake phrase, mic button, and the global hotkey -- drives
+    // the same sequence, so this is the single place the composer learns that a
+    // turn started and, crucially, that it ended.
     expose((phase: string, detail: string) => {
       setVoicePhase({ phase, detail });
       setListening(phase === "COMMAND_LISTENING");
@@ -291,21 +330,39 @@ export default function Home() {
           { id: turnId, role: "assistant", content: assistantText, timestamp: new Date() },
         ];
       });
+      reloadHistory();
     }, "on_voice_exchange");
 
-    call<any[]>("get_conversation_history").then((history) => {
-      if (!history?.length) return;
-      setMessages(history.slice(-40).map((m: any) => ({
-        id: crypto.randomUUID(),
+    call<HistoryMessage[]>("get_conversation_history").then((stored) => {
+      if (!stored?.length) { setHistory([]); return; }
+      setHistory(stored);
+      // The live conversation is the tail of the log: exactly the messages the
+      // Brain still holds in its context window.
+      const live = splitSessions(stored)[0];
+      if (!live) return;
+      setMessages(live.messages.map((m, index) => ({
+        id: `stored:${m.timestamp}:${index}`,
         role: m.role === "user" ? "user" : "assistant",
         content: m.content,
         timestamp: new Date(m.timestamp),
       })));
     });
 
+    // The user's own name, if the backend actually knows one. There is no
+    // fallback initials: an invented "PA" in the corner would be a claim about
+    // the user that nothing measured.
+    call<any>("get_memory_overview").then((overview) => {
+      if (!overview) return;
+      setMessageCount(typeof overview.messageCount === "number" ? overview.messageCount : null);
+      const profile = overview.profile ?? {};
+      const raw = profile.name ?? profile.nome ?? profile.user_name;
+      const value = raw && typeof raw === "object" ? raw.value : raw;
+      if (typeof value === "string" && value.trim()) setProfileName(value.trim());
+    });
+
     call<Record<string, string[]>>("get_loaded_plugins").then((v) => v && setPlugins(v));
     call<any[]>("list_permission_policies").then((v) => v && setPolicies(v));
-  }, [ready, notify, refreshCC, refreshCounts]);
+  }, [ready, notify, refreshCC, refreshCounts, reloadHistory]);
 
   /* ── Rate-limit countdown ───────────────────────────────────────────── */
   // The wait comes from Groq's own retry-after header, so the banner clears
@@ -323,7 +380,7 @@ export default function Home() {
   /* ── Actions ────────────────────────────────────────────────────────── */
   const sendMessage = useCallback((override?: string) => {
     const text = (override ?? input).trim();
-    if (!text || thinking || !ready) return;
+    if (!text || thinking || !ready || reading) return;
     const msgId = crypto.randomUUID();
     // The user bubble's id is derived from the turn id, so on_stream_start can
     // recognise that this turn's message is already on screen and never append
@@ -357,7 +414,7 @@ export default function Home() {
             tools: (m.tools ?? []).map((t) => t.state === "running" ? { ...t, state: "ok" as const } : t) }
         : m));
     });
-  }, [input, thinking, ready, notify]);
+  }, [input, thinking, ready, reading, notify]);
 
   const stopWork = useCallback(() => {
     call("stop_voice");
@@ -371,7 +428,7 @@ export default function Home() {
   }, [commandCenter, notify, refreshCC, refreshCounts]);
 
   const startVoice = useCallback(() => {
-    if (!ready || thinking) return;
+    if (!ready || thinking || reading) return;
     if (readiness && readiness.voice.state !== "READY") {
       notify(`Voz: ${stateLabel(readiness.voice.state)}`, "error");
       return;
@@ -391,7 +448,7 @@ export default function Home() {
     setListening(true);
     setThinking(true);
     setStatus("A ouvir…");
-  }, [ready, thinking, readiness, notify]);
+  }, [ready, thinking, reading, readiness, notify]);
 
   const cancelVoice = useCallback(() => {
     call("stop_voice");
@@ -401,11 +458,42 @@ export default function Home() {
     notify("Escuta cancelada");
   }, [notify]);
 
+  /**
+   * Start a new conversation.
+   *
+   * The moment is remembered for this session: the Brain forgets its context
+   * immediately, but the stored log has no idea a boundary happened, and
+   * without the mark a fresh conversation started minutes after the last one
+   * would fold straight back into it in the rail. See lib/conversations.ts for
+   * why it is not persisted across reloads.
+   */
   const newConversation = useCallback(() => {
     call("clear_conversation").then(() => {
-      setMessages([]); setInput(""); setView("chat"); notify("Nova conversa");
+      setSessionBreaks((prev) => recordSessionBreak(prev));
+      setMessages([]);
+      setInput("");
+      setReading(null);
+      setView("chat");
+      notify("Nova conversa");
     });
   }, [notify]);
+
+  const copyConversation = useCallback(async () => {
+    const source = reading
+      ? reading.messages.map((m) => ({ role: m.role, content: m.content }))
+      : messages.map((m) => ({ role: m.role, content: m.content }));
+    const text = source
+      .filter((m) => m.content.trim())
+      .map((m) => `${m.role === "user" ? "Você" : "Nano"}: ${m.content}`)
+      .join("\n\n");
+    if (!text) { notify("Não há nada para copiar"); return; }
+    try {
+      await navigator.clipboard.writeText(text);
+      notify("Conversa copiada", "success");
+    } catch {
+      notify("A área de transferência está bloqueada", "error");
+    }
+  }, [reading, messages, notify]);
 
   const openTask = useCallback((taskId: string) => {
     call<any>("get_task_detail", taskId).then((result) => {
@@ -527,8 +615,7 @@ export default function Home() {
       if (!mod) return;
       const key = event.key.toLowerCase();
       if (key === "k") { event.preventDefault(); setPaletteOpen((v) => !v); }
-      else if (key === "b") { event.preventDefault(); setSidebarCollapsed((v) => !v); }
-      else if (key === "i") { event.preventDefault(); setInspectorCollapsed((v) => !v); }
+      else if (key === "b") { event.preventDefault(); setRailOpen((v) => !v); }
       else if (key === "n") { event.preventDefault(); newConversation(); }
       else if (key === "m") { event.preventDefault(); startVoice(); }
       else if (key === ",") { event.preventDefault(); setView("settings"); }
@@ -540,7 +627,28 @@ export default function Home() {
   /* ── Derived ────────────────────────────────────────────────────────── */
   const pendingCount = commandCenter?.permissions?.length ?? 0;
   const agentState = readiness?.agent.state ?? (gaveUp ? "BACKEND_OFFLINE" : "UNKNOWN");
-  const meta = VIEW_META[view];
+  const section = sectionOf(view);
+  const sectionDef = sectionEntry(section);
+  const meta = viewEntry(view);
+
+  const sessions = useMemo(
+    () => splitSessions(history, sessionBreaks),
+    [history, sessionBreaks],
+  );
+  /* The live conversation is the newest stored one, and only while the shell
+     actually holds it. Straight after "Nova conversa" there are no messages
+     yet, so nothing is live and the rail highlights nothing. */
+  const liveSessionId = messages.length > 0 ? (sessions[0]?.id ?? null) : null;
+
+  /** Open a conversation from the rail. The live one is also how you get back. */
+  const openSession = useCallback((session: Session) => {
+    setReading((current) => {
+      if (session.id === liveSessionId) return null;
+      return current?.id === session.id ? null : session;
+    });
+    setView("chat");
+    if (narrow) setRailOpen(false);
+  }, [liveSessionId, narrow]);
 
   const navCounts = useMemo(() => ({
     tasks: counts?.badge ?? 0,
@@ -558,6 +666,16 @@ export default function Home() {
     if (readiness?.wakePhrase?.state === "MIC_SILENT") return "Microfone sem áudio";
     return "Todos os serviços operacionais";
   }, [gaveUp, rateLimit, readiness, pendingCount, providers]);
+
+  /** What is actually answering, in the few words the top-bar pill can hold. */
+  const routeLabel = useMemo(() => {
+    if (gaveUp) return "Motor offline";
+    const route = providers?.route;
+    if (!route) return "A ligar…";
+    if (!route.usable) return "Sem provedor";
+    const name = route.provider === "groq" ? "Groq" : route.provider === "ollama" ? "Local" : "—";
+    return route.fallback ? `${name} · fallback` : `${name} · ${route.mode}`;
+  }, [providers, gaveUp]);
 
   /** What Nano is doing right now, in one short line for the composer. */
   const activityLabel = useMemo(() => {
@@ -580,11 +698,13 @@ export default function Home() {
 
   const commands: Command[] = useMemo(() => [
     { id: "new", label: "Nova conversa", hint: "Ctrl+N", run: newConversation },
-    ...(Object.keys(VIEW_META) as ViewId[]).map((id) => ({
-      id: `go-${id}`, label: `Ir para ${VIEW_META[id].title}`, run: () => setView(id),
-    })),
-    { id: "inspector", label: "Alternar inspector", hint: "Ctrl+I", run: () => setInspectorCollapsed((v) => !v) },
-    { id: "sidebar", label: "Alternar barra lateral", hint: "Ctrl+B", run: () => setSidebarCollapsed((v) => !v) },
+    ...SECTIONS.flatMap((entry) => entry.views.map((v) => ({
+      id: `go-${v.id}`,
+      label: entry.views.length > 1 ? `Ir para ${entry.label} › ${v.label}` : `Ir para ${v.label}`,
+      run: () => setView(v.id),
+    }))),
+    { id: "rail", label: "Mostrar/ocultar conversas", hint: "Ctrl+B", run: () => setRailOpen((v) => !v) },
+    { id: "copy", label: "Copiar conversa", run: () => { copyConversation(); } },
     { id: "theme", label: "Alternar tema", run: () => setTheme((t) => (t === "dark" ? "light" : "dark")) },
     { id: "voice", label: "Falar com o Nano", hint: "Ctrl+M", run: startVoice },
     {
@@ -592,53 +712,146 @@ export default function Home() {
       label: readiness?.emergencyStop ? "Retomar execução" : "Paragem de emergência",
       run: () => toggleEmergencyStop(!readiness?.emergencyStop),
     },
-  ], [newConversation, startVoice, readiness, toggleEmergencyStop]);
+  ], [newConversation, startVoice, copyConversation, readiness, toggleEmergencyStop]);
 
-  const inspectorVisible = view === "chat" && !inspectorCollapsed;
+  /* ── Chat presentation ──────────────────────────────────────────────── */
+  const isChat = view === "chat";
+  const railDocked = isChat && !narrow;
+  const railVisible = isChat && (railDocked || railOpen);
+
+  /** The messages actually on screen: the live conversation, or the one being read. */
+  const shownMessages: Message[] = useMemo(() => {
+    if (!reading) return messages;
+    return reading.messages.map((m, index) => ({
+      id: `read:${reading.id}:${index}`,
+      role: m.role === "user" ? "user" : "assistant",
+      content: m.content,
+      timestamp: new Date(m.timestamp),
+    }));
+  }, [reading, messages]);
+
+  /* The Brain's context window holds the live conversation only, so a message
+     typed while reading an older one would be answered against the wrong
+     history. Saying so is better than letting the user find out. */
+  const readOnlyReason = reading
+    ? "Volta à conversa atual para escrever."
+    : undefined;
+
+  const chatTitle = reading
+    ? reading.title
+    : messages.length
+      ? (sessions[0]?.title ?? "Conversa")
+      : "Nova conversa";
+
+  const chatSubtitle = reading
+    ? `${reading.messages.length} mensagens · arquivada`
+    : messages.length
+      ? (activityLabel || `${messages.length} mensagens`)
+      : "Escreve, ou diz “Ei Nano”";
 
   return (
     <>
       <Head>
         <title>Nano</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <meta name="theme-color" content="#05070A" />
-        <link
-          rel="icon"
-          href={"data:image/svg+xml," + encodeURIComponent(
-            `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><path d="M24 8.5 38.5 16.75v14.5L24 39.5 9.5 31.25v-14.5L24 8.5Z" fill="none" stroke="#2DD4BF" stroke-width="2"/><path d="M18.5 31V17l11 14V17" fill="none" stroke="#2DD4BF" stroke-width="3" stroke-linecap="round"/></svg>`
-          )}
-        />
+        <meta name="theme-color" content="#050303" />
+        {/* The real mark, so the taskbar and the tab carry the brand rather
+            than a hand-drawn stand-in. */}
+        <link rel="icon" href="/branding/nano-mark-alpha.png" />
       </Head>
 
       <div className="shell">
-        {isDesktop && <TitleBar version={APP_VERSION} />}
+        <TopNav
+          view={view} onView={(next) => { setView(next); if (narrow) setRailOpen(false); }}
+          counts={navCounts}
+          agentState={agentState}
+          healthLabel={healthLabel}
+          routeLabel={routeLabel}
+          pendingCount={pendingCount}
+          profileName={profileName}
+          isDesktop={isDesktop}
+          railOpen={railOpen}
+          onToggleRail={() => setRailOpen((v) => !v)}
+          showRailToggle={isChat && narrow}
+          version={APP_VERSION}
+        />
 
-        <div className="app">
-          <Sidebar
-            view={view} onView={setView}
-            collapsed={sidebarCollapsed}
-            onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
-            counts={navCounts}
-            agentState={agentState}
-            healthLabel={healthLabel}
-            onNewChat={newConversation}
-            onSettings={() => setView("settings")}
-            version={APP_VERSION}
-          />
+        <div className="app" data-rail={railDocked ? "true" : "false"}>
+          {railVisible && (
+            <Rail
+              sessions={sessions}
+              liveId={liveSessionId}
+              openId={reading ? reading.id : liveSessionId}
+              query={chatQuery} onQuery={setChatQuery}
+              onNew={newConversation}
+              onOpen={openSession}
+              loading={history === null}
+              messageCount={messageCount}
+              onOpenMemory={() => setView("memory")}
+              drawer={railDocked ? "docked" : "open"}
+              onCloseDrawer={() => setRailOpen(false)}
+            />
+          )}
+          {railVisible && !railDocked && (
+            <div className="drawer-scrim" onClick={() => setRailOpen(false)} aria-hidden="true" />
+          )}
 
-          <main className="workspace">
-            <header className="topbar">
-              <span className="topbar__icon">{meta.icon}</span>
-              <span className="topbar__text">
-                <div className="topbar__title">{meta.title}</div>
-                <div className="topbar__subtitle">{meta.subtitle}</div>
-              </span>
-              <span className="topbar__actions">
-                {view === "chat" && inspectorCollapsed && (
-                  <Button variant="ghost" icon size="sm" onClick={() => setInspectorCollapsed(false)}
-                          aria-label="Abrir inspector" title="Inspector (Ctrl+I)">◧</Button>
-                )}
-              </span>
+          <main className="stage surface-panel">
+            <header className="stage__header">
+              {isChat ? (
+                <>
+                  <span className="stage__title">
+                    <NanoLogo size={22} />
+                    <span className="stage__title-text">
+                      <span className="stage__name">{chatTitle}</span>
+                      <span className="stage__sub">{chatSubtitle}</span>
+                    </span>
+                  </span>
+                  <span className="stage__spacer" />
+                  <span className="stage__actions">
+                    {reading && (
+                      <Button size="sm" onClick={() => setReading(null)}>Voltar à conversa atual</Button>
+                    )}
+                    <Button variant="ghost" size="sm" onClick={copyConversation}
+                            title="Copiar a conversa para a área de transferência">
+                      Copiar
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => setPaletteOpen(true)}
+                            title="Paleta de comandos (Ctrl+K)">
+                      ⌘K
+                    </Button>
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="stage__title">
+                    <span className="stage__title-text">
+                      <span className="stage__name">{sectionDef.label}</span>
+                      <span className="stage__sub">{meta.hint}</span>
+                    </span>
+                  </span>
+                  {sectionDef.views.length > 1 && (
+                    <nav className="stage__tabs" aria-label={`Secções de ${sectionDef.label}`}>
+                      {sectionDef.views.map((entry) => (
+                        <button
+                          key={entry.id} type="button" className="subtab"
+                          aria-current={view === entry.id ? "page" : undefined}
+                          onClick={() => setView(entry.id)}
+                          title={entry.hint}
+                        >
+                          {entry.label}
+                          {(navCounts as Record<string, number>)[entry.id] > 0 && (
+                            <span className="subtab__count">
+                              {(navCounts as Record<string, number>)[entry.id]}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </nav>
+                  )}
+                  <span className="stage__spacer" />
+                </>
+              )}
             </header>
 
             {gaveUp && (
@@ -656,22 +869,27 @@ export default function Home() {
 
             {view === "chat" && (
               <>
-                <Conversation messages={messages} status={activityLabel} thinking={thinking} />
+                <Conversation messages={shownMessages} status={activityLabel} thinking={thinking && !reading} />
                 <Composer
                   value={input} onChange={setInput}
                   onSend={() => sendMessage()} onStop={stopWork}
                   onVoice={startVoice} onCancelVoice={cancelVoice}
+                  onNew={newConversation}
                   thinking={thinking} disabled={!ready}
                   voiceState={readiness?.voice.state ?? "UNKNOWN"}
                   listening={listening}
                   suggestions={suggestions}
                   onSuggestion={(text) => sendMessage(text)}
+                  readOnlyReason={readOnlyReason}
                 />
+                <p className="stage__footer">
+                  O Nano pode cometer erros. Ações sensíveis pedem sempre a tua autorização.
+                </p>
               </>
             )}
 
             {view !== "chat" && (
-              <div className="page">
+              <div className="page-scroll">
                 {view === "tasks" && (
                   <TasksPage
                     tasks={tasks} counts={counts} scope={taskScope} onScope={setTaskScope}
@@ -701,7 +919,10 @@ export default function Home() {
                 )}
                 {view === "status" && (
                   <StatusPage readiness={readiness} providers={providers}
-                              commandCenter={commandCenter} onToggleEmergencyStop={toggleEmergencyStop} />
+                              commandCenter={commandCenter} loading={ccLoading}
+                              onToggleEmergencyStop={toggleEmergencyStop}
+                              onOpenTask={openTask} onCancelTask={cancelTask}
+                              onNavigate={setView} />
                 )}
                 {view === "settings" && (
                   <SettingsPage
@@ -720,17 +941,6 @@ export default function Home() {
               </div>
             )}
           </main>
-
-          {view === "chat" && (
-            <Inspector
-              collapsed={inspectorCollapsed}
-              onToggle={() => setInspectorCollapsed(true)}
-              readiness={readiness} providers={providers}
-              commandCenter={commandCenter} loading={ccLoading}
-              onOpenTask={openTask} onCancelTask={cancelTask}
-              onNavigate={setView}
-            />
-          )}
         </div>
       </div>
 

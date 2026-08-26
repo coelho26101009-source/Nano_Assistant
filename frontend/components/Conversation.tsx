@@ -11,8 +11,8 @@
  *    wants it. Raw JSON is never dumped inline.
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import NanoLogo from "./NanoLogo";
-import { Button, EmptyState, StatusIndicator, formatTime } from "./ui";
+import NanoLogo, { NanoAvatar, NanoWordmark } from "./NanoLogo";
+import { Button, StatusIndicator, formatTime } from "./ui";
 
 export type ToolEvent = {
   name: string;
@@ -251,12 +251,35 @@ function MessageBubble({ message }: { message: Message }) {
   };
 
   return (
-    <article className={`msg msg--${message.role}`}>
-      <div className="msg__avatar" aria-hidden="true">
-        {isUser ? "S" : <NanoLogo size={16} bare active={message.streaming} />}
-      </div>
+    <article className={`msg msg--${message.role}${message.error ? " msg--error" : ""}`}>
+      {/* The Nano mark IS the assistant's avatar. The user has no avatar: the
+          bubble's own colour and its right alignment already say whose it is,
+          and a second disc on the right only adds noise. */}
+      {!isUser && (
+        <NanoAvatar className="msg__avatar" size={34} active={message.streaming} title="Nano" />
+      )}
+
       <div className="msg__main">
-        <header className="msg__head">
+        {message.tools?.length ? (
+          <div style={{ width: "100%" }}>
+            {message.tools.map((tool, index) => <ToolCard key={`${tool.name}-${index}`} event={tool} />)}
+          </div>
+        ) : null}
+
+        <div className="msg__bubble">
+          <div className="msg__body">
+            {isUser ? text : <Markdown text={text} />}
+            {message.streaming && !text && (
+              <span className="thinking">
+                <span className="thinking__dots" aria-hidden="true"><i /><i /><i /></span>
+                <span>O Nano está a pensar…</span>
+              </span>
+            )}
+            {message.streaming && text && <span className="caret" aria-hidden="true" />}
+          </div>
+        </div>
+
+        <div className="msg__foot">
           <span className="msg__author">{isUser ? "Você" : "Nano"}</span>
           <span className="msg__time">{formatTime(message.timestamp)}</span>
           {!isUser && text && !message.streaming && (
@@ -266,21 +289,6 @@ function MessageBubble({ message }: { message: Message }) {
               </Button>
             </span>
           )}
-        </header>
-
-        {message.tools?.length ? (
-          <div>{message.tools.map((tool, index) => <ToolCard key={`${tool.name}-${index}`} event={tool} />)}</div>
-        ) : null}
-
-        <div className="msg__body">
-          {isUser ? text : <Markdown text={text} />}
-          {message.streaming && !text && (
-            <span className="thinking">
-              <span className="thinking__dots" aria-hidden="true"><i /><i /><i /></span>
-              <span>O Nano está a pensar…</span>
-            </span>
-          )}
-          {message.streaming && text && <span className="caret" aria-hidden="true" />}
         </div>
 
         {/* Technical details, collapsed by default so normal chat stays clean.
@@ -331,13 +339,17 @@ export function Conversation({
 
   if (!messages.length && !thinking) {
     return (
-      <div className="conversation">
-        <div className="conversation__inner">
-          <EmptyState
-            icon={<NanoLogo size={40} />}
-            title="Pronto quando quiseres"
-            hint="Pergunta alguma coisa, ou diz “Ei Nano”. Ações sensíveis pedem sempre a tua autorização antes de acontecerem."
-          />
+      <div className="conversation conversation--hero">
+        {/* The one place the full wordmark earns its size: an empty screen is
+            the moment the product introduces itself. Everywhere else the mark
+            alone carries the identity. */}
+        <div className="chat-hero">
+          <NanoLogo size={72} className="chat-hero__mark" title="Nano" />
+          <NanoWordmark height={30} />
+          <p className="chat-hero__hint">
+            Pergunta alguma coisa, ou diz “Ei Nano”. Ações sensíveis pedem sempre a tua
+            autorização antes de acontecerem.
+          </p>
         </div>
       </div>
     );
@@ -361,9 +373,39 @@ export function Conversation({
 
 /* ── Composer ─────────────────────────────────────────────────────────── */
 
+const ICON = {
+  attach: "M21.4 11.05 12.25 20.2a5.5 5.5 0 0 1-7.78-7.78l9.19-9.19a3.67 3.67 0 0 1 5.19 5.19l-9.2 9.19a1.83 1.83 0 0 1-2.59-2.59l8.49-8.48",
+  plus: "M12 5v14M5 12h14",
+  mic: "M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3ZM19 10v1a7 7 0 0 1-14 0v-1M12 18v4",
+  send: "M12 19V5M5 12l7-7 7 7",
+  stop: "M7 7h10v10H7z",
+} as const;
+
+const Icon = ({ d, size = 17, fill = false }: { d: string; size?: number; fill?: boolean }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={fill ? "currentColor" : "none"}
+       stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+       aria-hidden="true">
+    <path d={d} />
+  </svg>
+);
+
+/**
+ * The message composer.
+ *
+ * The two round controls on the right are the reference's, and they are
+ * deliberately different weights: the microphone is quiet glass, the send
+ * button is the one saturated red object on the screen. Secondary actions sit
+ * on the left as ghost buttons so they are available without competing.
+ *
+ * `readOnlyReason`, when set, means the user is looking at an older
+ * conversation. The whole composer is disabled and says why — the Brain's
+ * context holds only the live conversation, so a message typed here would be
+ * answered against the wrong history.
+ */
 export function Composer({
-  value, onChange, onSend, onStop, onVoice, onCancelVoice,
+  value, onChange, onSend, onStop, onVoice, onCancelVoice, onNew,
   thinking, disabled, voiceState, listening, suggestions, onSuggestion,
+  readOnlyReason,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -371,16 +413,19 @@ export function Composer({
   onStop: () => void;
   onVoice: () => void;
   onCancelVoice: () => void;
+  onNew: () => void;
   thinking: boolean;
   disabled: boolean;
   voiceState: string;
   listening: boolean;
   suggestions: string[];
   onSuggestion: (text: string) => void;
+  readOnlyReason?: string;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  const locked = disabled || Boolean(readOnlyReason);
 
-  useEffect(() => { if (!disabled) ref.current?.focus(); }, [disabled]);
+  useEffect(() => { if (!locked) ref.current?.focus(); }, [locked]);
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
@@ -389,14 +434,22 @@ export function Composer({
   }, [value]);
 
   const voiceReady = voiceState === "READY";
-  const voiceTitle = listening
-    ? "A ouvir — clica para cancelar"
-    : voiceReady ? "Falar com o Nano (Ctrl+M)" : `Voz indisponível`;
+  const voiceTitle = readOnlyReason
+    ? readOnlyReason
+    : listening
+      ? "A ouvir — clica para cancelar"
+      : voiceReady ? "Falar com o Nano (Ctrl+M)" : "Voz indisponível";
+
+  // The placeholder and the line in the button bar are two halves of one
+  // sentence, not the same sentence twice.
+  const placeholder = readOnlyReason
+    ? "Conversa anterior — só leitura."
+    : disabled ? "A aguardar o motor do Nano…" : "Envie uma mensagem para o Nano…";
 
   return (
     <div className="composer-wrap">
       <div className="composer-inner">
-        {suggestions.length > 0 && !value && (
+        {suggestions.length > 0 && !value && !readOnlyReason && (
           <div className="suggestions">
             {suggestions.map((text) => (
               <button key={text} type="button" className="suggestion" onClick={() => onSuggestion(text)}>
@@ -410,35 +463,30 @@ export function Composer({
           <label className="sr-only" htmlFor="composer-input">Mensagem para o Nano</label>
           <textarea
             id="composer-input" ref={ref} className="composer__textarea" rows={1}
-            value={value} disabled={disabled}
-            placeholder={disabled ? "A aguardar o motor do Nano…" : "Pergunte ou peça alguma coisa ao Nano..."}
+            value={value} disabled={locked}
+            placeholder={placeholder}
+            aria-describedby={readOnlyReason ? "composer-readonly" : undefined}
             onChange={(event) => onChange(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); onSend(); }
             }}
           />
+
           <div className="composer__bar">
-            {/* Attachments are not supported by the backend yet. The control is
-                shown disabled with the reason rather than silently doing
-                nothing when clicked. */}
-            <Button variant="ghost" icon size="sm" disabled title="Anexos: brevemente" aria-label="Anexar ficheiro (brevemente)">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true">
-                <path d="M21.4 11.05 12.25 20.2a5.5 5.5 0 0 1-7.78-7.78l9.19-9.19a3.67 3.67 0 0 1 5.19 5.19l-9.2 9.19a1.83 1.83 0 0 1-2.59-2.59l8.49-8.48" />
-              </svg>
+            <Button
+              variant="ghost" icon size="sm" onClick={onNew}
+              aria-label="Nova conversa" title="Nova conversa (Ctrl+N)"
+            >
+              <Icon d={ICON.plus} size={17} />
             </Button>
 
+            {/* Attachments are not supported by the backend yet. Shown disabled
+                with the reason rather than silently doing nothing when clicked. */}
             <Button
-              variant="ghost" icon size="sm"
-              onClick={listening ? onCancelVoice : onVoice}
-              disabled={disabled || thinking || (!voiceReady && !listening)}
-              aria-label={voiceTitle} title={voiceTitle}
+              variant="ghost" icon size="sm" disabled
+              title="Anexos: brevemente" aria-label="Anexar ficheiro (brevemente)"
             >
-              {listening ? "■" : (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true">
-                  <path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3Z" />
-                  <path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4" />
-                </svg>
-              )}
+              <Icon d={ICON.attach} size={16} />
             </Button>
 
             {listening && (
@@ -447,21 +495,43 @@ export function Composer({
                 A ouvir…
               </span>
             )}
-            {!listening && !voiceReady && <StatusIndicator state={voiceState} label="voz" />}
+            {!listening && !voiceReady && !readOnlyReason && (
+              <StatusIndicator state={voiceState} label="voz" />
+            )}
+            {readOnlyReason && (
+              <span id="composer-readonly" className="dim" style={{ fontSize: 12 }}>
+                {readOnlyReason}
+              </span>
+            )}
 
             <span className="composer__spacer" />
-            <span className="composer__hint"><kbd>Enter</kbd> enviar</span>
+            {!locked && <span className="composer__hint"><kbd>Enter</kbd> enviar</span>}
+
+            <button
+              type="button"
+              className={`composer__mic${listening ? " composer__mic--live" : ""}`}
+              onClick={listening ? onCancelVoice : onVoice}
+              disabled={locked || thinking || (!voiceReady && !listening)}
+              aria-label={voiceTitle} title={voiceTitle}
+            >
+              {listening ? <Icon d={ICON.stop} size={15} fill /> : <Icon d={ICON.mic} size={17} />}
+            </button>
 
             {thinking ? (
-              <Button variant="danger" size="sm" onClick={onStop}>Parar</Button>
+              <button
+                type="button" className="composer__send" onClick={onStop}
+                aria-label="Parar a resposta" title="Parar"
+              >
+                <Icon d={ICON.stop} size={16} fill />
+              </button>
             ) : (
               <button
                 type="button" className="composer__send" onClick={onSend}
-                disabled={disabled || !value.trim()} aria-label="Enviar mensagem"
+                disabled={locked || !value.trim()}
+                aria-label="Enviar mensagem"
+                title={readOnlyReason ?? "Enviar (Enter)"}
               >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="m4 12 16-8-6 16-2-6-8-2Z" />
-                </svg>
+                <Icon d={ICON.send} size={19} />
               </button>
             )}
           </div>
