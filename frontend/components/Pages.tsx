@@ -6,11 +6,11 @@
  * nothing, the page says so explicitly rather than showing a plausible zero.
  */
 import React, { useMemo, useState } from "react";
-import ContextPanels, { ActivityTimeline, eventLabel } from "./Inspector";
+import ContextPanels, { ActivityTimeline } from "./Inspector";
 import type { ViewId } from "./TopNav";
 import type {
-  ActivityEvent, CommandCenterPayload, PcSnapshot, ProviderPayload,
-  ReadinessPayload, TaskCounts, TaskRow,
+  ActivityEvent, CommandCenterPayload, PcActivityCategory, PcActivityEntry,
+  PcSnapshot, ProviderPayload, ReadinessPayload, TaskCounts, TaskRow,
 } from "../lib/backend";
 import {
   Badge, Button, ConfirmDialog, EmptyState, ErrorState, Meter, MetricRow,
@@ -137,70 +137,107 @@ export function TasksPage({
    ATIVIDADE
    ====================================================================== */
 
-export type ActivityFilter = "all" | "tasks" | "tools" | "permissions" | "voice" | "system" | "errors";
+/**
+ * PC -> Atividade: the chronological, authorised history of what Nano has
+ * done ON THIS COMPUTER.
+ *
+ * This is deliberately NOT the same thing as PC -> Tarefas. Tarefas is the
+ * Task Engine's lifecycle view -- running / completed / failed / cancelled,
+ * with progress and retries -- and reads from task_engine. Atividade reads
+ * from the permission audit trail, scoped server-side to `pc.*` capabilities
+ * (`core.main.get_pc_activity`), so a background task's internal steps never
+ * appear here and a PC action never appears in Tarefas. Two different
+ * questions, two different data sources -- not one feed sliced two ways,
+ * which is how a "Tarefas" filter tab here would have quietly become a worse
+ * copy of the real Tarefas page.
+ *
+ * The three category filters are exactly the outcomes the audit trail
+ * distinguishes for a PC action -- executed, a permission decision, or a
+ * failure. There is no invented fourth category standing in for something the
+ * backend cannot actually tell apart.
+ */
+const PC_ACTIVITY_TABS: { value: PcActivityCategory; label: string }[] = [
+  { value: "all", label: "Tudo" },
+  { value: "acoes", label: "Ações" },
+  { value: "permissoes", label: "Permissões" },
+  { value: "erros", label: "Erros" },
+];
+
+/**
+ * Whether one row belongs to a category, mirroring
+ * `core.main._PC_ACTIVITY_CATEGORIES`. The categories partition the same
+ * decisions the backend distinguishes, so the shell fetches the unfiltered
+ * list once and filters here rather than round-tripping on every tab click.
+ */
+export function pcActivityMatches(entry: PcActivityEntry, category: PcActivityCategory): boolean {
+  switch (category) {
+    case "acoes": return entry.decision === "executed";
+    case "permissoes": return entry.decision === "allow_once" || entry.decision === "deny";
+    case "erros": return entry.decision === "failed";
+    default: return true;
+  }
+}
+
+const DECISION_LABEL: Record<PcActivityEntry["decision"], string> = {
+  executed: "Executada",
+  allow_once: "Permitida (uma vez)",
+  deny: "Recusada",
+  failed: "Falhou",
+};
+
+const DECISION_TONE: Record<PcActivityEntry["decision"], "accent" | "info" | "neutral"> = {
+  executed: "accent",
+  allow_once: "info",
+  deny: "neutral",
+  failed: "neutral",
+};
 
 export function ActivityPage({
-  events, filter, onFilter, loading,
+  entries, category, onCategory, loading, totalCount,
 }: {
-  events: ActivityEvent[] | null;
-  filter: ActivityFilter;
-  onFilter: (filter: ActivityFilter) => void;
+  entries: PcActivityEntry[] | null;
+  category: PcActivityCategory;
+  onCategory: (category: PcActivityCategory) => void;
   loading: boolean;
+  /** Whether ANY activity exists at all, independent of the current filter --
+   *  distinguishes "nothing has happened yet" from "nothing in this filter". */
+  totalCount: number | null;
 }) {
-  const [expanded, setExpanded] = useState<string | null>(null);
-
   return (
     <div className="page__inner">
-      <Tabs<ActivityFilter>
-        value={filter} onChange={onFilter}
-        tabs={[
-          { value: "all", label: "Tudo" }, { value: "tasks", label: "Tarefas" },
-          { value: "tools", label: "Ferramentas" }, { value: "permissions", label: "Permissões" },
-          { value: "voice", label: "Voz" }, { value: "system", label: "Sistema" },
-          { value: "errors", label: "Erros" },
-        ]}
-      />
+      <Tabs<PcActivityCategory> value={category} onChange={onCategory} tabs={PC_ACTIVITY_TABS} />
 
       <div style={{ marginTop: 16 }}>
-        {loading && !events ? (
+        {loading && entries === null ? (
           <EmptyState title="A carregar atividade…" />
-        ) : !events?.length ? (
-          <EmptyState title="Sem eventos" hint="A atividade aparece aqui assim que o Nano executar alguma coisa." />
+        ) : totalCount === 0 ? (
+          <EmptyState
+            title="Ainda não há atividade recente"
+            hint="As ações do Nano neste computador aparecerão aqui."
+          />
+        ) : !entries?.length ? (
+          <EmptyState
+            title="Sem eventos nesta categoria"
+            hint="Muda de filtro para ver outra atividade."
+          />
         ) : (
           <div className="stack stack--tight">
-            {events.map((event, index) => {
-              const id = `${event.timestamp}-${index}`;
-              const open = expanded === id;
-              const payloadKeys = Object.keys(event.payload ?? {});
-              return (
-                <div className="row-item" key={id} style={{ alignItems: "flex-start" }}>
-                  <div className="row-item__main">
-                    <div className="inline">
-                      <span className="row-item__title" style={{ flex: "none" }}>{eventLabel(event.event)}</span>
-                      <Badge tone="neutral">{event.event}</Badge>
-                    </div>
-                    <div className="row-item__meta">
-                      {formatDateTime(event.timestamp)}
-                      {event.payload?.tool ? ` · ${event.payload.tool}` : ""}
-                      {event.payload?.error ? ` · ${String(event.payload.error).slice(0, 60)}` : ""}
-                    </div>
-                    {open && payloadKeys.length > 0 && (
-                      <div className="error-state__details" style={{ marginTop: 8 }}>
-                        {payloadKeys.map((key) => (
-                          <div key={key}>{key}: {String(event.payload[key]).slice(0, 200)}</div>
-                        ))}
-                      </div>
-                    )}
+            {entries.map((entry, index) => (
+              <div className="row-item" key={`${entry.at}-${index}`} style={{ alignItems: "flex-start" }}>
+                <div className="row-item__main">
+                  <div className="inline">
+                    <span className="row-item__title" style={{ flex: "none" }}>{entry.action}</span>
+                    <Badge tone={DECISION_TONE[entry.decision]}>{DECISION_LABEL[entry.decision]}</Badge>
+                    <RiskBadge risk={entry.risk} />
                   </div>
-                  {payloadKeys.length > 0 && (
-                    <Button size="sm" variant="ghost" onClick={() => setExpanded(open ? null : id)}
-                            aria-expanded={open}>
-                      {open ? "ocultar" : "detalhes"}
-                    </Button>
-                  )}
+                  <div className="row-item__meta">
+                    {entry.target}
+                    {entry.requiresConfirmation ? " · pediu confirmação" : ""}
+                  </div>
                 </div>
-              );
-            })}
+                <span className="row-item__meta" style={{ flex: "none" }}>{formatTime(entry.at)}</span>
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -564,6 +601,34 @@ export function IntegrationsPage({
 
   return (
     <div className="page__inner">
+      <h2 className="page-title">
+        Componentes locais <Badge tone="neutral">{pluginEntries.length}</Badge>
+      </h2>
+      <p className="dim" style={{ marginBottom: 12, maxWidth: "68ch" }}>
+        {toolTotal} ferramentas carregadas. Todas correm pela autoridade central de execução:
+        passam por policy, permissão e validação de scope antes de executar.
+      </p>
+      {pluginEntries.length === 0 ? (
+        <EmptyState title="Nenhum componente carregado" />
+      ) : (
+        <div className="grid-auto">
+          {pluginEntries.map(([name, tools]) => (
+            <button type="button" className="tile card--interactive" key={name}
+                    onClick={() => onOpenPlugin(name)} style={{ textAlign: "left" }}>
+              <div className="tile__label">{name}</div>
+              <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{tools.length} ferramentas</div>
+              <div className="inline" style={{ marginTop: 8 }}>
+                {tools.slice(0, 3).map((tool) => <ToolChip key={tool} name={tool} muted />)}
+                {tools.length > 3 && <span className="dim" style={{ fontSize: 11 }}>+{tools.length - 3}</span>}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* A read-only summary. Everything that CHANGES a provider - mode,
+          key, models - lives in Definicoes -> IA, so there is exactly one
+          place to configure one. */}
       <h2 className="page-title">Provedores de IA</h2>
       <div className="grid-auto">
         {providers ? (
@@ -593,31 +658,6 @@ export function IntegrationsPage({
           </>
         ) : <EmptyState title="Sem informação de provedores" />}
       </div>
-
-      <h2 className="page-title">
-        Componentes locais <Badge tone="neutral">{pluginEntries.length}</Badge>
-      </h2>
-      <p className="dim" style={{ marginBottom: 12, maxWidth: "68ch" }}>
-        {toolTotal} ferramentas carregadas. Todas correm pela autoridade central de execução:
-        passam por policy, permissão e validação de scope antes de executar.
-      </p>
-      {pluginEntries.length === 0 ? (
-        <EmptyState title="Nenhum componente carregado" />
-      ) : (
-        <div className="grid-auto">
-          {pluginEntries.map(([name, tools]) => (
-            <button type="button" className="tile card--interactive" key={name}
-                    onClick={() => onOpenPlugin(name)} style={{ textAlign: "left" }}>
-              <div className="tile__label">{name}</div>
-              <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{tools.length} ferramentas</div>
-              <div className="inline" style={{ marginTop: 8 }}>
-                {tools.slice(0, 3).map((tool) => <ToolChip key={tool} name={tool} muted />)}
-                {tools.length > 3 && <span className="dim" style={{ fontSize: 11 }}>+{tools.length - 3}</span>}
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
 
       <h2 className="page-title">Capacidades externas</h2>
       <div className="grid-auto">

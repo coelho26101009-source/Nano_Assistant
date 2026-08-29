@@ -20,18 +20,20 @@ import CommandPalette, { Command } from "../components/CommandPalette";
 import ConfirmModal from "../components/Confirm";
 import PluginCodeModal from "../components/PluginCodeModal";
 import Rail from "../components/Rail";
-import SettingsPage from "../components/SettingsPage";
+import CapabilitiesPage from "../components/CapabilitiesPage";
+import SettingsPage, { type Section as SettingsSection } from "../components/SettingsPage";
 import TaskDetailModal from "../components/TaskDetailModal";
 import TopNav, { SECTIONS, ViewId, sectionEntry, sectionOf, viewEntry } from "../components/TopNav";
 import NanoLogo from "../components/NanoLogo";
 import { Composer, Conversation, Message, ToolEvent } from "../components/Conversation";
 import {
-  ActivityFilter, ActivityPage, AgentsPage, IntegrationsPage, MemoryPage,
-  PermissionsPage, StatusPage, TaskScope, TasksPage,
+  ActivityPage, AgentsPage, IntegrationsPage, MemoryPage,
+  PermissionsPage, StatusPage, TaskScope, TasksPage, pcActivityMatches,
 } from "../components/Pages";
 import { Button, ErrorState, ToastStack, stateLabel, useToasts } from "../components/ui";
 import {
-  ActivityEvent, CommandCenterPayload, PcSnapshot, POLL, ProviderPayload, ReadinessPayload,
+  CommandCenterPayload, PcActivityCategory, PcActivityEntry, PcSnapshot,
+  POLL, ProviderPayload, ReadinessPayload,
   SettingsPayload, TaskCounts, TaskRow, VoiceDiagnostics,
   call, expose, useBridgeReady, useFetch, usePolled,
 } from "../lib/backend";
@@ -39,8 +41,11 @@ import {
   HistoryMessage, Session, recordSessionBreak, splitSessions,
 } from "../lib/conversations";
 import { useIsDesktop } from "../lib/desktop";
+// The product version comes from version.json, which core/version.py and the
+// Electron main process read too. It used to be a literal here, which is how
+// the UI said "v1.0" while the backend reported "8.1.0".
+import { APP_VERSION } from "../lib/version";
 
-const APP_VERSION = "v1.0";
 
 export interface ConfirmRequest {
   requestId: string;
@@ -84,6 +89,10 @@ export default function Home() {
 
   /* ── Shell state ────────────────────────────────────────────────────── */
   const [view, setView] = useState<ViewId>("chat");
+  /* Which Settings category is open. Lifted out of SettingsPage so "Abrir
+     definições de IA" in the AI pill can land on IA directly instead of on
+     whichever category happened to be open last. */
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const [railOpen, setRailOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
@@ -124,7 +133,7 @@ export default function Home() {
   /* ── Page-scoped state ──────────────────────────────────────────────── */
   const [taskScope, setTaskScope] = useState<TaskScope>("active");
   const [taskQuery, setTaskQuery] = useState("");
-  const [activityFilter, setActivityFilter] = useState<ActivityFilter>("all");
+  const [activityCategory, setActivityCategory] = useState<PcActivityCategory>("all");
   const [plugins, setPlugins] = useState<Record<string, string[]>>({});
   const [policies, setPolicies] = useState<any[]>([]);
 
@@ -140,8 +149,12 @@ export default function Home() {
 
   const { data: tasks, loading: tasksLoading, refresh: refreshTasks } =
     useFetch<TaskRow[]>("list_tasks_filtered", ready && view === "tasks", [taskScope], taskScope, 100);
-  const { data: activity, loading: activityLoading, refresh: refreshActivity } =
-    useFetch<ActivityEvent[]>("get_activity", ready && view === "activity", [activityFilter], activityFilter, 120);
+  /* PC -> Atividade. Fetched unfiltered once per page visit -- the category
+     tabs are a client-side filter over this one list (see
+     Pages.tsx:pcActivityMatches), not a re-fetch per tab, since the backend
+     already returns a small bounded set. */
+  const { data: pcActivity, loading: pcActivityLoading, refresh: refreshActivity } =
+    useFetch<PcActivityEntry[]>("get_pc_activity", ready && view === "activity", [], "all", 100);
   const { data: memoryData, loading: memoryLoading, refresh: refreshMemory } =
     useFetch<any>("get_memory_overview", ready && view === "memory", []);
   const { data: agents } = useFetch<any[]>("get_agents_detail", ready && view === "agents", []);
@@ -574,6 +587,32 @@ export default function Home() {
     else notify(result?.detail ?? "Chave recusada", "error");
   }, [notify, refreshProviders, refreshSettings, refreshReadiness]);
 
+  const setLocalModel = useCallback((model: string) => {
+    setBusy(true);
+    call<any>("set_local_model", model).then((result) => {
+      setBusy(false);
+      if (result?.ok) { notify(`Modelo local: ${result.model}`, "success"); refreshProviders(); refreshSettings(); }
+      else notify(result?.detail ?? "Não foi possível mudar o modelo local", "error");
+    });
+  }, [notify, refreshProviders, refreshSettings]);
+
+  const forgetAllMemory = useCallback(() => {
+    call<any>("forget_all_memory_facts").then((result) => {
+      notify(
+        result?.ok ? `${result.removed} facto(s) esquecido(s)` : "Não foi possível esquecer tudo",
+        result?.ok ? "success" : "error",
+      );
+      refreshMemory();
+      refreshSettings();
+    });
+  }, [notify, refreshMemory, refreshSettings]);
+
+  /** Open Settings on a specific category. Used by the AI pill. */
+  const openSettingsSection = useCallback((section: SettingsSection) => {
+    setSettingsSection(section);
+    setView("settings");
+  }, []);
+
   const removeGroqKey = useCallback(() => {
     call<any>("remove_groq_api_key").then(() => {
       notify("Chave removida"); refreshProviders(); refreshSettings(); refreshReadiness();
@@ -682,6 +721,15 @@ export default function Home() {
     return route.fallback ? `${name} · fallback` : `${name} · ${route.mode}`;
   }, [providers, gaveUp]);
 
+  /** The Atividade list, filtered to the open category. See pcActivityMatches.
+   *  Stays `null` while unloaded, distinct from an empty array once the
+   *  backend has genuinely answered "nothing" -- ActivityPage tells the two
+   *  apart to show a loading state rather than a premature empty one. */
+  const pcActivityFiltered = useMemo<PcActivityEntry[] | null>(
+    () => (pcActivity === null ? null : pcActivity.filter((entry) => pcActivityMatches(entry, activityCategory))),
+    [pcActivity, activityCategory],
+  );
+
   /** What Nano is doing right now, in one short line for the composer. */
   const activityLabel = useMemo(() => {
     if (rateLimit) return `${rateLimit.message}`;
@@ -771,7 +819,11 @@ export default function Home() {
           counts={navCounts}
           agentState={agentState}
           healthLabel={healthLabel}
-          routeLabel={routeLabel}
+          providers={providers}
+          offline={gaveUp}
+          busy={busy}
+          onSetMode={setMode}
+          onOpenAiSettings={() => openSettingsSection("ai")}
           pendingCount={pendingCount}
           profileName={profileName}
           isDesktop={isDesktop}
@@ -903,8 +955,12 @@ export default function Home() {
                   />
                 )}
                 {view === "activity" && (
-                  <ActivityPage events={activity} filter={activityFilter}
-                                onFilter={setActivityFilter} loading={activityLoading} />
+                  <ActivityPage
+                    entries={pcActivityFiltered}
+                    category={activityCategory} onCategory={setActivityCategory}
+                    loading={pcActivityLoading}
+                    totalCount={pcActivity?.length ?? null}
+                  />
                 )}
                 {view === "permissions" && (
                   <PermissionsPage
@@ -916,6 +972,7 @@ export default function Home() {
                 {view === "memory" && (
                   <MemoryPage memory={memoryData} onForget={forgetFact} loading={memoryLoading} />
                 )}
+                {view === "capabilities" && <CapabilitiesPage enabled={ready} />}
                 {view === "integrations" && (
                   <IntegrationsPage
                     providers={providers} plugins={plugins} readiness={readiness}
@@ -937,10 +994,14 @@ export default function Home() {
                     diagnostics={voiceDiag}
                     loading={settingsLoading} busy={busy}
                     onSetMode={setMode} onSaveGroqKey={saveGroqKey} onRemoveGroqKey={removeGroqKey}
-                    onTestGroq={testGroq} onSetGroqModel={setGroqModel} onUpdate={updateSetting}
+                    onTestGroq={testGroq} onSetGroqModel={setGroqModel}
+                    onSetLocalModel={setLocalModel} onUpdate={updateSetting}
                     onTestSpeaker={testSpeaker} onTestMicrophone={testMicrophone}
                     onToggleEmergencyStop={toggleEmergencyStop}
                     onClearConversation={newConversation}
+                    onForgetAllMemory={forgetAllMemory}
+                    onNavigate={setView}
+                    section={settingsSection} onSection={setSettingsSection}
                     theme={theme} onTheme={setTheme}
                     reduceMotion={reduceMotion} onReduceMotion={setReduceMotion}
                   />

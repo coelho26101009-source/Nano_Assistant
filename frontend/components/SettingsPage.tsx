@@ -12,12 +12,33 @@ import { call } from "../lib/backend";
 import {
   retryShortcut, setAutoLaunch, setOverlayEnabled, useDesktopStatus,
 } from "../lib/desktop";
+import { AboutSection, MemorySection, PcControlSection } from "./SettingsSections";
 import {
   Badge, Button, ConfirmDialog, EmptyState, ErrorState, Field, MetricRow,
-  Panel, SecretField, SegmentedControl, StatusIndicator, Tabs, Toggle,
+  Panel, SecretField, SegmentedControl, StatusIndicator, Toggle,
 } from "./ui";
 
-type Section = "general" | "ai" | "voice" | "appearance" | "privacy" | "advanced";
+/**
+ * The seven Settings categories.
+ *
+ * "appearance" and "advanced" are gone as top-level categories, and neither
+ * lost anything: theme and motion are appearance-of-the-app and sit in Geral
+ * beside the other window behaviour, while the emergency stop, the logs and the
+ * diagnostics command are all statements about data and safety and sit in
+ * Privacidade. The result is that every category answers a question a user
+ * would actually ask, instead of "advanced" meaning "the rest".
+ */
+export type Section = "general" | "ai" | "voice" | "pccontrol" | "memory" | "privacy" | "about";
+
+const SECTIONS: { value: Section; label: string; hint: string }[] = [
+  { value: "general", label: "Geral", hint: "Arranque, janela e aparência" },
+  { value: "ai", label: "IA", hint: "Modo, provedores e modelos" },
+  { value: "voice", label: "Voz", hint: "Microfone, atalho e resposta falada" },
+  { value: "pccontrol", label: "PC Control", hint: "O que o Nano pode fazer no computador" },
+  { value: "memory", label: "Memória", hint: "O que o Nano guarda sobre ti" },
+  { value: "privacy", label: "Privacidade", hint: "Onde correm os teus dados" },
+  { value: "about", label: "Sobre", hint: "Versão e projeto" },
+];
 
 type WakeTest = {
   phrase: string;
@@ -213,8 +234,10 @@ function WakePhraseTester({ phrase }: { phrase: string }) {
 
 export default function SettingsPage({
   settings, providers, diagnostics, loading, busy, onSetMode, onSaveGroqKey, onRemoveGroqKey,
-  onTestGroq, onSetGroqModel, onUpdate, onTestSpeaker, onTestMicrophone,
-  onToggleEmergencyStop, onClearConversation, theme, onTheme, reduceMotion, onReduceMotion,
+  onTestGroq, onSetGroqModel, onSetLocalModel, onUpdate, onTestSpeaker, onTestMicrophone,
+  onToggleEmergencyStop, onClearConversation, onForgetAllMemory, onNavigate,
+  section, onSection,
+  theme, onTheme, reduceMotion, onReduceMotion,
 }: {
   settings: SettingsPayload | null;
   providers: ProviderPayload | null;
@@ -229,17 +252,24 @@ export default function SettingsPage({
   onRemoveGroqKey: () => void;
   onTestGroq: () => void;
   onSetGroqModel: (model: string) => void;
+  onSetLocalModel: (model: string) => void;
   onUpdate: (key: string, value: any) => void;
   onTestSpeaker: () => void;
   onTestMicrophone: () => void;
   onToggleEmergencyStop: (enabled: boolean) => void;
   onClearConversation: () => void;
+  onForgetAllMemory: () => void;
+  /** Jump to a top-level page (Permissões, Memória, Capacidades). */
+  onNavigate: (view: "permissions" | "memory" | "capabilities") => void;
+  /** The open category. Owned by the shell so the AI pill's "Abrir definições
+   *  de IA" can land directly on IA rather than on whatever was open last. */
+  section: Section;
+  onSection: (section: Section) => void;
   theme: "dark" | "light";
   onTheme: (theme: "dark" | "light") => void;
   reduceMotion: boolean;
   onReduceMotion: (value: boolean) => void;
 }) {
-  const [section, setSection] = useState<Section>("ai");
   const [confirmClear, setConfirmClear] = useState(false);
 
   if (loading && !settings) {
@@ -269,21 +299,35 @@ export default function SettingsPage({
   const groq = providers?.groq;
   const ollama = providers?.ollama;
 
+  const activeSection = SECTIONS.find((entry) => entry.value === section) ?? SECTIONS[0];
+
   return (
-    <div className="page__inner">
-      <Tabs<Section>
-        value={section} onChange={setSection}
-        tabs={[
-          { value: "ai", label: "Inteligência artificial" },
-          { value: "voice", label: "Voz" },
-          { value: "general", label: "Geral" },
-          { value: "appearance", label: "Aparência" },
-          { value: "privacy", label: "Privacidade e segurança" },
-          { value: "advanced", label: "Avançado" },
-        ]}
-      />
+    <div className="settings-layout">
+      {/* A rail rather than a tab strip. Seven categories do not fit on one row
+          at 940px, and a horizontally scrolling tab strip hides the categories
+          a first-time user most needs to discover. The rail collapses to a
+          scrollable chip row under the narrow breakpoint -- see globals.css. */}
+      <nav className="settings-rail" aria-label="Categorias de definições">
+        {SECTIONS.map((entry) => (
+          <button
+            key={entry.value}
+            type="button"
+            className="settings-rail__item"
+            aria-current={section === entry.value ? "page" : undefined}
+            onClick={() => onSection(entry.value)}
+          >
+            <span className="settings-rail__label">{entry.label}</span>
+            <span className="settings-rail__hint">{entry.hint}</span>
+          </button>
+        ))}
+      </nav>
 
       <div className="settings-body">
+        <header className="settings-body__head">
+          <h2 className="page-title" style={{ margin: 0 }}>{activeSection.label}</h2>
+          <p className="dim" style={{ fontSize: 12, margin: "2px 0 0" }}>{activeSection.hint}</p>
+        </header>
+
         {/* ── AI ───────────────────────────────────────────────────────── */}
         {section === "ai" && (
           <div className="stack">
@@ -376,8 +420,30 @@ export default function SettingsPage({
 
             <Panel title="Ollama · Local" action={<Badge tone="info">fallback</Badge>}>
               <MetricRow label="Estado" value={<StatusIndicator state={ollama?.state} />} />
-              <MetricRow label="Modelo" value={ollama?.model || "—"} />
               <MetricRow label="API" value={ollama?.url || "—"} />
+
+              {/* The list is what Ollama really reports as installed. When it
+                  is empty the select is not rendered at all: a dropdown that
+                  can only offer the current value is a fake control. */}
+              {ollama?.models?.length ? (
+                <>
+                  <div style={{ height: 10 }} />
+                  <Field label="Modelo local"
+                         hint="Apenas modelos já instalados. O Nano não descarrega modelos por ti.">
+                    <select className="select" value={ollama.model}
+                            onChange={(e) => onSetLocalModel(e.target.value)}
+                            disabled={busy}>
+                      {!ollama.models.includes(ollama.model) && (
+                        <option value={ollama.model}>{ollama.model} (não instalado)</option>
+                      )}
+                      {ollama.models.map((model) => <option key={model} value={model}>{model}</option>)}
+                    </select>
+                  </Field>
+                </>
+              ) : (
+                <MetricRow label="Modelo" value={ollama?.model || "—"} />
+              )}
+
               {ollama?.detail && <p className="dim" style={{ fontSize: 12, marginTop: 6 }}>{ollama.detail}</p>}
               <p className="dim" style={{ fontSize: 11, marginTop: 10 }}>
                 O Nano arranca o servidor Ollama se ainda não estiver a correr, mas nunca
@@ -551,18 +617,6 @@ export default function SettingsPage({
                 Só está disponível uma língua nesta versão.
               </p>
             </Panel>
-            <Panel title="Ambiente">
-              <MetricRow label="Versão" value={settings.runtime?.version ?? "—"} />
-              <MetricRow label="Python" value={settings.runtime?.python ?? "—"} />
-              <MetricRow label="Plataforma" value={settings.runtime?.platform ?? "—"} />
-              <MetricRow label="RAM total" value={`${settings.runtime?.ramTotalGb ?? "—"} GB`} />
-            </Panel>
-          </div>
-        )}
-
-        {/* ── APPEARANCE ───────────────────────────────────────────────── */}
-        {section === "appearance" && (
-          <div className="stack">
             <Panel title="Tema">
               <SegmentedControl<"dark" | "light">
                 label="Tema" value={theme} onChange={onTheme}
@@ -582,6 +636,29 @@ export default function SettingsPage({
             </Panel>
           </div>
         )}
+
+        {/* ── PC CONTROL ───────────────────────────────────────────────── */}
+        {section === "pccontrol" && (
+          <PcControlSection
+            settings={settings}
+            enabled
+            onOpenPermissions={() => onNavigate("permissions")}
+            onOpenCapabilities={() => onNavigate("capabilities")}
+          />
+        )}
+
+        {/* ── MEMÓRIA ──────────────────────────────────────────────────── */}
+        {section === "memory" && (
+          <MemorySection
+            settings={settings}
+            onUpdate={onUpdate}
+            onOpenMemory={() => onNavigate("memory")}
+            onForgetAll={onForgetAllMemory}
+          />
+        )}
+
+        {/* ── SOBRE ────────────────────────────────────────────────────── */}
+        {section === "about" && <AboutSection settings={settings} />}
 
         {/* ── PRIVACY ──────────────────────────────────────────────────── */}
         {section === "privacy" && (
@@ -632,12 +709,11 @@ export default function SettingsPage({
                 página Memória.
               </p>
             </Panel>
-          </div>
-        )}
 
-        {/* ── ADVANCED ─────────────────────────────────────────────────── */}
-        {section === "advanced" && (
-          <div className="stack">
+            {/* The former "Avançado" section is gone. Its three panels were all
+                statements about safety and data, so they live here with the rest
+                of that story rather than in a category named after its own
+                obscurity. */}
             <Panel title="Paragem de emergência">
               <div className="inline">
                 <StatusIndicator

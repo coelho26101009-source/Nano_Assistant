@@ -31,6 +31,8 @@ import psutil
 from dotenv import load_dotenv
 from core.app_paths import DATA_DIR, FRONTEND_DIR, PLUGINS_DIR, ROOT
 from core import data_migration
+from core import capability_catalogue
+from core import version as nano_version
 from core.brain import Brain
 from core.config import CONFIG_PATH, load_config
 from core.guardrails import GuardrailsEngine
@@ -345,8 +347,8 @@ def get_health_status() -> dict:
         db_ok, message_count = False, 0
     return {
         "ok": bool(FRONTEND_DIR.exists() and db_ok),
-        "version": "8.1.0",
-        "name": "Nano Assistant",
+        "version": nano_version.product(),
+        "name": nano_version.name(),
         "cloud": {"configured": cloud_configured(), "model": brain.groq_fast_model},
         "local": {
             "enabled": brain.local_enabled,
@@ -395,35 +397,84 @@ _PC_SNAPSHOT_SECTIONS = ("system", "volume", "storage", "network", "monitors",
                          "activeWindow", "windowCount", "applications")
 
 
-def _recent_pc_actions() -> list:
-    """The last few PC actions, read from the real permission audit trail.
+#: Every decision on a PC action the audit trail can carry, and what the
+#: Atividade page's category filters map to. Built from what the trail
+#: actually produces -- see log_decision's call sites in tool_execution.py and
+#: permission_manager.py -- rather than a classification nothing writes.
+#: "requested"/"granted"/"expired" are deliberately absent: those describe the
+#: permission-request LIFECYCLE (see Permissões), not something Nano DID.
+_PC_ACTIVITY_DECISIONS = frozenset({"executed", "allow_once", "deny", "failed"})
+_PC_ACTIVITY_CATEGORIES: dict[str, frozenset[str]] = {
+    "acoes": frozenset({"executed"}),
+    "permissoes": frozenset({"allow_once", "deny"}),
+    "erros": frozenset({"failed"}),
+}
 
-    Read from the trail rather than kept in a second list, so the page cannot
-    show an action that was never authorised and cannot miss one that was.
-    Clipboard and typed content never appear here because they were never
-    written to the trail in the first place -- their target is a digest.
+
+def _pc_activity_rows(limit: int, decisions: frozenset[str] | None = None) -> list:
+    """PC-scoped audit rows, newest first, mapped to human labels.
+
+    Shared by the short preview on Estado and the full history on Atividade,
+    so the two can never describe the same event two different ways.
+
+    Read from the permission audit trail rather than kept in a second list, so
+    a page can never show an action that was never authorised and can never
+    miss one that was. Clipboard and typed content never appear here because
+    they were never written to the trail in the first place -- their target is
+    a digest, not the content.
+
+    Scoped to ``pc.*`` capabilities only. Task lifecycle events belong to the
+    Task Engine and are Tarefas' own data, read from task_engine rather than
+    from here -- so this can never duplicate that page, by construction rather
+    than by a filter that could later drift.
     """
     try:
         entries = [entry for entry in permission_manager.get_audit_log()
                    if str(entry.get("action") or "").startswith("pc.")
-                   and entry.get("decision") in {"executed", "allow_once", "deny", "failed"}]
+                   and entry.get("decision") in _PC_ACTIVITY_DECISIONS]
     except Exception:
         logger.debug("could not read the PC action trail", exc_info=True)
         return []
 
-    recent = []
-    for entry in entries[-MAX_RECENT_PC_ACTIONS:][::-1]:
-        card = confirmation_text.describe(str(entry.get("action") or ""),
-                                          {"_pc_target": entry.get("target")})
-        recent.append({
+    if decisions is not None:
+        entries = [entry for entry in entries if entry.get("decision") in decisions]
+
+    rows = []
+    for entry in entries[-max(1, int(limit)):][::-1]:
+        capability = str(entry.get("action") or "")
+        card = confirmation_text.describe(capability, {"_pc_target": entry.get("target")})
+        rows.append({
             "action": card["action"],
             "target": card["target"],
-            "capability": entry.get("action"),
+            "capability": capability,
             "decision": entry.get("decision"),
             "risk": entry.get("risk"),
+            # A real classification, not a guess: PC Control V2's confirmation
+            # requirement is fixed per capability (see
+            # _APPROVAL_GATED_CAPABILITIES), so this is the same test the
+            # Ferramentas catalogue and the live executor both use.
+            "requiresConfirmation": permission_manager.is_approval_gated(capability),
             "at": entry.get("timestamp"),
         })
-    return recent
+    return rows
+
+
+def _recent_pc_actions() -> list:
+    """The last few PC actions, for the short preview on the Estado page."""
+    return _pc_activity_rows(MAX_RECENT_PC_ACTIONS)
+
+
+@eel.expose
+def get_pc_activity(category: str = "all", limit: int = 80) -> list:
+    """The full, filterable PC action history for the PC -> Atividade page.
+
+    ``category`` is one of "all", "acoes", "permissoes", "erros" -- the real
+    outcomes the audit trail distinguishes. An unrecognised category behaves
+    as "all" rather than raising, so a stale or malformed value from the UI
+    fails open to the safe (unfiltered) view instead of showing nothing.
+    """
+    decisions = _PC_ACTIVITY_CATEGORIES.get(str(category or "all").lower())
+    return _pc_activity_rows(min(200, max(1, int(limit))), decisions)
 
 
 @eel.expose
@@ -529,8 +580,9 @@ def get_runtime_info() -> dict:
     profile = choose_model(CONFIG)
     vm = psutil.virtual_memory()
     return {
-        "version": "8.1.0",
-        "name": "Nano Assistant",
+        "version": nano_version.product(),
+        "versionDisplay": nano_version.display(),
+        "name": nano_version.name(),
         "platform": sys.platform,
         "python": sys.version.split()[0],
         "ramTotalGb": round(vm.total / 1024**3, 1),
@@ -860,6 +912,59 @@ def set_groq_model(model: str) -> dict:
     return {"ok": True, "model": chosen, "providers": describe_providers()}
 
 
+@eel.expose
+def set_local_model(model: str) -> dict:
+    """Choose which installed Ollama model answers in LOCAL mode.
+
+    Validated against what is REALLY installed. `ollama_service.list_models`
+    reads /api/tags, which is read-only and loads nothing into RAM, so this
+    cannot be used to make the machine pull a model it does not have.
+
+    The live application is the point. `local_model` was already on the
+    settings allow-list and `apply_overlay` already read it at startup, so the
+    value persisted -- but nothing assigned `brain.ollama_model`, and the choice
+    silently did nothing until the next restart. A setting that claims to change
+    runtime behaviour has to change it now.
+    """
+    chosen = (model or "").strip()
+    if not chosen:
+        return {"ok": False, "error": "empty_model"}
+
+    base_url = brain.ollama_url.removesuffix("/api/chat")
+    if not ollama_service.api_available(base_url):
+        return {"ok": False, "error": "ollama_unavailable",
+                "detail": "O Ollama nao esta a responder; nao e possivel validar o modelo."}
+
+    installed = ollama_service.list_models(base_url)
+    if not ollama_service.model_installed(chosen, installed):
+        return {"ok": False, "error": "model_not_installed",
+                "detail": f"'{chosen}' nao esta instalado. Instalados: "
+                          f"{', '.join(installed) or 'nenhum'}."}
+
+    result = user_settings.set_value("local_model", chosen)
+    if not result.get("ok"):
+        return {"ok": False, "error": result.get("error", "write_failed")}
+
+    CONFIG.setdefault("local", {})["model"] = chosen
+    brain.ollama_model = chosen
+    # The cached snapshot is keyed on the configured models, so a stale entry
+    # would keep naming the previous one until the TTL expired.
+    brain.invalidate_provider_snapshot()
+    logger.info("Modelo local: %s", chosen)
+    return {"ok": True, "model": chosen, "providers": describe_providers()}
+
+
+@eel.expose
+def get_capability_catalogue() -> dict:
+    """What Nano can do, grouped for a person rather than for a caller.
+
+    Built from the live executor registry, so it cannot drift from what is
+    actually installed and actually permission-gated. See
+    core/capability_catalogue.py for why nothing here is declared a second time.
+    """
+    return capability_catalogue.build(tool_executor.registry)
+
+
 # ===========================================================================
 #  SETTINGS
 # ===========================================================================
@@ -947,6 +1052,15 @@ def get_settings() -> dict:
             "persistentAllowDisabled": True,
             "secretsEncrypted": secret_store.is_encrypted(),
         },
+        # Read from the Brain, not from the config file: these are the flags the
+        # running conversation actually consults, so the switch reflects the
+        # live behaviour rather than what was on disk at startup.
+        "memory": {
+            "factsEnabled": bool(brain.facts_enabled),
+            "ragEnabled": bool(brain.rag_enabled),
+            "ragSupported": False,
+            "ragNote": "A indexacao de documentos requer o chromadb, que nao esta instalado.",
+        },
         "stored": user_settings.all_settings(),
         "runtime": get_runtime_info(),
     }
@@ -993,6 +1107,12 @@ def update_setting(key: str, value) -> dict:
         setattr(brain, key, str(value))
         # The cached provider snapshot names the old model until it expires.
         brain.invalidate_provider_snapshot()
+    elif key == "memory_facts_enabled":
+        CONFIG.setdefault("memory", {})["facts_enabled"] = bool(value)
+        brain.facts_enabled = bool(value)
+    elif key == "memory_rag_enabled":
+        CONFIG.setdefault("memory", {})["rag_enabled"] = bool(value)
+        brain.rag_enabled = bool(value)
 
     return {"ok": True, "key": key, "value": value, "settings": get_settings()}
 
@@ -1293,6 +1413,34 @@ def forget_memory_fact(key: str) -> dict:
         return {"ok": bool(removed), "key": key, "memory": get_memory_overview()}
     except Exception as exc:
         return {"ok": False, "error": "delete_failed", "detail": str(exc)}
+
+
+@eel.expose
+def forget_all_memory_facts() -> dict:
+    """Delete every remembered fact. Confirmed in the UI before it gets here.
+
+    "Safely supported" means exactly this much: facts are a flat key/value
+    store that `forget_fact` already removes one at a time, so clearing them is
+    the same operation repeated and is fully reversible by Nano simply learning
+    them again. Conversation history is NOT touched -- that is
+    `clear_conversation`, a separate decision the user makes separately.
+    """
+    try:
+        keys = list(memory.get_facts().keys())
+    except Exception as exc:
+        return {"ok": False, "error": "read_failed", "detail": str(exc)}
+
+    removed = 0
+    for key in keys:
+        try:
+            if memory.forget_fact(key):
+                removed += 1
+        except Exception:
+            logger.warning("Nao foi possivel esquecer o facto '%s'", key)
+
+    logger.info("Memoria: %d facto(s) esquecido(s) de %d.", removed, len(keys))
+    return {"ok": removed == len(keys), "removed": removed, "total": len(keys),
+            "memory": get_memory_overview()}
 
 
 @eel.expose

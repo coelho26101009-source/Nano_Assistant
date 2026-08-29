@@ -5,7 +5,8 @@
  * rather than carrying inline styles, so a change to a button, a status colour
  * or a focus ring lands everywhere at once.
  */
-import React, { useCallback, useEffect, useId, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 /* ── Readiness vocabulary ─────────────────────────────────────────────────
  * The only states the UI may display. There is deliberately no "online"
@@ -566,4 +567,192 @@ export function elapsedSince(iso?: string): string | null {
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+/* ── Popover ──────────────────────────────────────────────────────────── */
+/**
+ * A menu anchored to the control that opens it.
+ *
+ * Built rather than borrowed because the three things that make a popover
+ * usable are the three things ad-hoc ones always miss, and all three are
+ * requirements here:
+ *
+ *   * Escape closes it and returns focus to the trigger, so a keyboard user is
+ *     never stranded inside a layer they cannot leave;
+ *   * a click anywhere outside closes it -- listened for on `pointerdown`, not
+ *     `click`, so the dismissal happens before the outside control acts;
+ *   * focus moves INTO the panel when it opens, so the first arrow key or Tab
+ *     lands somewhere predictable instead of back at the top of the document.
+ *
+ * The trigger keeps `aria-expanded`/`aria-haspopup`, and the panel is a
+ * `role="menu"` labelled by the trigger, so a screen reader announces the
+ * relationship rather than reading a floating list of orphan buttons.
+ */
+
+/**
+ * Screen-space coordinates for the panel, clamped inside the viewport.
+ *
+ * Anchored below the trigger with an 8px gap, right-edge-aligned by default.
+ * Two collisions are handled, both real at the 940x620 minimum window: not
+ * enough room below (flips above the trigger) and not enough room to the side
+ * (clamped inward with a 12px margin, rather than letting the panel spill past
+ * the edge of the Electron window). Nothing here assumes one screen size --
+ * both the trigger rect and the viewport are read fresh on every call.
+ */
+function popoverPosition(
+  trigger: DOMRect, panel: { width: number; height: number }, align: "start" | "end",
+): { top: number; left: number } {
+  const gap = 8;
+  const margin = 12;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+
+  let left = align === "end" ? trigger.right - panel.width : trigger.left;
+  left = Math.min(Math.max(left, margin), Math.max(margin, vw - panel.width - margin));
+
+  let top = trigger.bottom + gap;
+  if (top + panel.height > vh - margin) {
+    const above = trigger.top - gap - panel.height;
+    top = above >= margin ? above : Math.max(margin, vh - panel.height - margin);
+  }
+  return { top, left };
+}
+
+export function Popover({
+  open, onClose, trigger, children, label, align = "end",
+}: {
+  open: boolean;
+  onClose: () => void;
+  /** Rendered inline; receives the ref and the ARIA wiring. */
+  trigger: (props: {
+    ref: React.Ref<HTMLButtonElement>;
+    "aria-expanded": boolean;
+    "aria-haspopup": "menu";
+    id: string;
+  }) => React.ReactNode;
+  children: React.ReactNode;
+  label: string;
+  align?: "start" | "end";
+}) {
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const triggerId = useId();
+  // Hidden until the first layout pass has measured the panel and placed it;
+  // see the positioning effect below for why that never shows as a flash.
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      onClose();
+      // Returning focus is the half that is usually forgotten: without it the
+      // next Tab starts from the document top.
+      triggerRef.current?.focus();
+    };
+
+    // The panel is portaled to <body> (see below), so "outside" means outside
+    // BOTH the trigger and the portaled panel -- checking only the trigger's
+    // wrapper would treat every click inside the popover as an outside click
+    // and close it before its own onClick ever ran.
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (wrapRef.current?.contains(target)) return;
+      if (panelRef.current?.contains(target)) return;
+      onClose();
+    };
+
+    document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("pointerdown", onPointerDown, true);
+    };
+  }, [open, onClose]);
+
+  useEffect(() => {
+    if (!open) return;
+    // Move focus in on the next frame: the panel does not exist in the DOM
+    // until this render commits.
+    const frame = window.requestAnimationFrame(() => {
+      panelRef.current?.querySelector<HTMLElement>(
+        'button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+      )?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [open]);
+
+  /*
+   * POSITIONING, AND WHY IT IS COMPUTED IN JS RATHER THAN LEFT TO CSS.
+   *
+   * The panel used to be `position: absolute` inside `.popover-wrap`, a
+   * descendant of `.topbar`. `.topbar` carries `overflow: hidden` on purpose
+   * -- it is what keeps the travelling active-tab indicator's glow from
+   * bleeding past the bar's rounded corners -- and that clipped the popover
+   * too, since an ancestor's overflow:hidden clips EVERY descendant that
+   * paints outside its box, regardless of which element establishes the
+   * descendant's own positioning context. Combined with `.topbar` having its
+   * own `backdrop-filter`, the nested filters composited unpredictably in
+   * Chromium, which is what the human retest saw as the top navigation itself
+   * going dark.
+   *
+   * The fix is to never be a descendant of `.topbar` in the first place: the
+   * panel renders through a portal straight into <body>, `position: fixed`,
+   * placed from the trigger's real screen coordinates. That sidesteps the
+   * clipping and the compositing bug at once, and stays correct at any window
+   * size because the position is recomputed, never assumed.
+   *
+   * useLayoutEffect, not useEffect: it runs after the panel is in the DOM but
+   * before the browser paints, so the measure-then-place sequence below never
+   * shows a frame at the wrong (or default 0,0) position.
+   */
+  useLayoutEffect(() => {
+    if (!open) return;
+
+    const reposition = () => {
+      const triggerEl = triggerRef.current;
+      const panelEl = panelRef.current;
+      if (!triggerEl || !panelEl) return;
+      setPos(popoverPosition(triggerEl.getBoundingClientRect(),
+        { width: panelEl.offsetWidth, height: panelEl.offsetHeight }, align));
+    };
+
+    reposition();
+    // The Electron window is resizable, and this popover has to stay correct
+    // at every size the responsive validation targets -- not just the one it
+    // happened to open at.
+    window.addEventListener("resize", reposition);
+    return () => window.removeEventListener("resize", reposition);
+  }, [open, align]);
+
+  return (
+    <div className="popover-wrap" ref={wrapRef}>
+      {trigger({
+        ref: triggerRef,
+        "aria-expanded": open,
+        "aria-haspopup": "menu",
+        id: triggerId,
+      })}
+      {open && typeof document !== "undefined" && createPortal(
+        <div
+          ref={panelRef}
+          className="popover"
+          role="menu"
+          aria-labelledby={triggerId}
+          style={pos
+            ? { top: pos.top, left: pos.left, visibility: "visible" }
+            // Rendered once, off-screen-but-measurable, before the layout
+            // effect above has placed it. Never the frame the user sees.
+            : { top: 0, left: 0, visibility: "hidden" }}
+        >
+          <div className="popover__label">{label}</div>
+          {children}
+        </div>,
+        document.body,
+      )}
+    </div>
+  );
 }

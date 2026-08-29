@@ -946,7 +946,63 @@ kbd {
   width: 100%; max-width: min(1120px, 100%); min-width: 0; margin: 0 auto;
 }
 .page__inner--wide { max-width: min(1440px, 100%); }
-.settings-body { width: 100%; max-width: min(900px, 100%); min-width: 0; margin: var(--sp-5) auto 0; }
+/* ============================================================================
+   SETTINGS V2 — rail + body
+   Seven categories do not fit on one tab row at the 940px minimum window, and a
+   horizontally scrolling tab strip hides exactly the categories a first-time
+   user needs to discover. So the categories become a rail, and collapse to a
+   scrollable chip row only when the width genuinely cannot hold it.
+   ========================================================================== */
+.settings-layout {
+  display: grid;
+  grid-template-columns: minmax(180px, 216px) minmax(0, 1fr);
+  gap: var(--sp-5);
+  align-items: start;
+  width: 100%; max-width: min(1040px, 100%); min-width: 0;
+  margin: var(--sp-4) auto 0;
+}
+
+.settings-rail {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: var(--sp-2); min-width: 0;
+  border-radius: var(--r-lg); border: 1px solid var(--border);
+  background: var(--surface-1);
+  position: sticky; top: 0;
+}
+
+.settings-rail__item {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: var(--sp-2) var(--sp-3); min-width: 0;
+  border-radius: var(--r-md); border: 1px solid transparent;
+  background: transparent; color: var(--text-muted); text-align: left;
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
+}
+.settings-rail__item:hover { background: var(--surface-3); color: var(--text); }
+.settings-rail__item[aria-current="page"] {
+  background: var(--accent-wash); border-color: var(--border-accent);
+  color: var(--text);
+}
+.settings-rail__label { font-size: var(--fs-sm); font-weight: 600; }
+.settings-rail__hint {
+  font-size: 11px; color: var(--text-dim); line-height: 1.35;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.settings-rail__item[aria-current="page"] .settings-rail__hint { color: var(--text-muted); }
+
+.settings-body { width: 100%; min-width: 0; margin: 0; }
+.settings-body__head { margin-bottom: var(--sp-4); }
+
+/* Below this width the two columns stop fitting side by side without
+   squeezing the panels; the rail becomes a horizontal strip instead. */
+@media (max-width: 1100px) {
+  .settings-layout { grid-template-columns: minmax(0, 1fr); gap: var(--sp-4); }
+  .settings-rail {
+    flex-direction: row; position: static;
+    overflow-x: auto; scrollbar-width: thin;
+  }
+  .settings-rail__item { flex: none; }
+  .settings-rail__hint { display: none; }
+}
 
 /* ============================================================================
    CONVERSATION
@@ -1416,4 +1472,179 @@ kbd {
   .msg { margin-bottom: var(--sp-4); }
   .stage__footer { display: none; }
   .chat-hero { padding-top: var(--sp-4); padding-bottom: var(--sp-3); }
+}
+
+/* ============================================================================
+   POPOVER — the AI mode selector, and anything else anchored to a control
+   ========================================================================== */
+.popover-wrap { position: relative; display: inline-flex; min-width: 0; }
+
+/* Portaled to <body> (see ui.tsx) rather than laid out inside .popover-wrap:
+   .topbar, an ancestor of every trigger that opens one of these, carries its
+   own overflow:hidden and backdrop-filter -- deliberately, to keep the
+   travelling active-tab glow inside the bar -- and an absolutely-positioned
+   popover nested inside it was clipped by the first and composited badly
+   against the second. `top`/`left` are applied inline per instance from the
+   trigger's real screen position, computed in JS so the panel stays inside
+   the viewport at any window size instead of assuming one. */
+.popover {
+  position: fixed; z-index: 1150;
+  width: min(320px, calc(100vw - 32px));
+  /* The 940x620 minimum window is shorter than this panel's content at three
+     menu items plus the route note; without a ceiling and a scroll fallback
+     it would run off the bottom edge with no way to reach the lower items. */
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  padding: var(--sp-2);
+  border-radius: var(--r-lg); border: 1px solid var(--border-strong);
+  background: var(--surface-overlay);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  box-shadow: var(--shadow-lg);
+  animation: popover-in 140ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes popover-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to   { opacity: 1; transform: none; }
+}
+
+.popover__label {
+  padding: var(--sp-2) var(--sp-3) var(--sp-1);
+  font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--text-dim);
+}
+
+.popover__item {
+  display: flex; align-items: flex-start; gap: var(--sp-2);
+  width: 100%; padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md); border: 1px solid transparent;
+  background: transparent; color: var(--text); text-align: left;
+  transition: background var(--transition), border-color var(--transition);
+}
+.popover__item:hover:not(:disabled) { background: var(--surface-3); }
+.popover__item[aria-checked="true"] {
+  background: var(--accent-wash); border-color: var(--border-accent);
+}
+.popover__item:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.popover__item-check {
+  flex: none; width: 16px; height: 16px; margin-top: 2px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--accent-ink);
+}
+.popover__item-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.popover__item-label { font-size: var(--fs-sm); font-weight: 600; }
+.popover__item-hint { font-size: 11px; color: var(--text-dim); line-height: 1.45; }
+
+.popover__note {
+  margin: var(--sp-2) var(--sp-3) 0;
+  font-size: 11px; color: var(--text-dim); line-height: 1.5;
+}
+.popover__sep {
+  height: 1px; margin: var(--sp-2) var(--sp-1);
+  background: var(--border);
+}
+.popover__item--action .popover__item-label { color: var(--text-muted); font-weight: 500; }
+
+/* The pill, now that it opens a menu. */
+.status-pill--menu { cursor: pointer; padding-right: var(--sp-2); }
+.status-pill__caret {
+  flex: none; display: inline-flex; color: var(--text-dim);
+  transition: transform var(--transition);
+}
+.status-pill--menu[aria-expanded="true"] .status-pill__caret { transform: rotate(180deg); }
+.status-pill__tag {
+  flex: none; padding: 1px 6px; border-radius: var(--r-full);
+  background: var(--surface-4); color: var(--text-dim);
+  font-size: 10px; font-weight: 600; letter-spacing: 0.03em;
+}
+
+/* ============================================================================
+   CAPABILITY CATALOGUE — Ferramentas → Capacidades
+   ========================================================================== */
+.cap-filters { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+
+.chip {
+  padding: 5px var(--sp-3); border-radius: var(--r-full);
+  border: 1px solid var(--border); background: var(--surface-2);
+  color: var(--text-muted); font-size: var(--fs-sm);
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
+}
+.chip:hover { background: var(--surface-3); color: var(--text); }
+.chip[aria-pressed="true"] {
+  background: var(--accent-wash); border-color: var(--border-accent); color: var(--text);
+}
+
+.cap-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+
+.cap-item { padding: var(--sp-2) 0; border-top: 1px solid var(--border); min-width: 0; }
+.cap-item:first-child { border-top: none; }
+
+.cap-item__head { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+.cap-item__desc {
+  flex: 1; margin: 0; min-width: 0;
+  font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.5;
+}
+.cap-item__status {
+  flex: none; width: 6px; height: 6px; border-radius: var(--r-full);
+  background: var(--text-dim);
+}
+.cap-item__status[data-status="available"] { background: var(--st-ready); }
+.cap-item__status[data-status="confirm"]   { background: var(--accent); }
+.cap-item__status[data-status="unsupported"] { background: var(--text-dim); }
+
+.cap-item[data-status="unsupported"] .cap-item__desc { color: var(--text-dim); }
+
+.cap-item__alts {
+  margin: var(--sp-2) 0 0 var(--sp-4); padding: 0; list-style: none;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.cap-item__alts li { font-size: 11px; color: var(--text-dim); line-height: 1.45; }
+
+.cap-item__more { margin-top: var(--sp-2); margin-left: var(--sp-4); }
+.cap-item__more summary {
+  font-size: 11px; color: var(--text-dim); cursor: pointer;
+  list-style: none; width: fit-content;
+}
+.cap-item__more summary::-webkit-details-marker { display: none; }
+.cap-item__more summary::before { content: "▸ "; }
+.cap-item__more[open] summary::before { content: "▾ "; }
+.cap-item__more summary:hover { color: var(--text-muted); }
+.cap-item__more .kv { margin-top: var(--sp-2); }
+
+/* ============================================================================
+   SECURITY GUARANTEES — Definições → PC Control
+   Rendered with the weight of a setting and none of the affordance: these are
+   architecture properties, not preferences, and must never look switchable.
+   ========================================================================== */
+.guarantee-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
+
+.guarantee { display: flex; align-items: flex-start; gap: var(--sp-3); min-width: 0; }
+.guarantee__mark {
+  flex: none; width: 20px; height: 20px; margin-top: 1px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--r-full);
+  background: var(--accent-wash); border: 1px solid var(--border-accent);
+  color: var(--accent-ink);
+}
+.guarantee__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.guarantee__label { font-size: var(--fs-sm); font-weight: 600; color: var(--text); }
+.guarantee__detail { font-size: 12px; color: var(--text-dim); line-height: 1.55; }
+
+/* ============================================================================
+   ABOUT
+   ========================================================================== */
+.about-hero { display: flex; align-items: center; gap: var(--sp-4); min-width: 0; }
+.about-hero__mark {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 62px; height: 62px; border-radius: var(--r-lg);
+  background: var(--surface-3); border: 1px solid var(--border);
+}
+.about-hero__name { margin: 0; font-size: var(--fs-lg); font-weight: 650; letter-spacing: -0.01em; }
+.about-hero__version { margin: 2px 0 0; font-size: var(--fs-sm); color: var(--accent-ink); font-weight: 600; }
+
+@media (prefers-reduced-motion: reduce) {
+  .popover { animation: none; }
+  .status-pill__caret { transition: none; }
 }

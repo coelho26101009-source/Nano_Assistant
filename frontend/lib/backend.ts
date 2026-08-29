@@ -125,6 +125,29 @@ export type ActivityEvent = {
   timestamp: string;
 };
 
+/**
+ * One row of PC -> Atividade: a real, already-authorised action Nano took on
+ * this computer, read from the permission audit trail.
+ *
+ * Deliberately narrower than ActivityEvent above. This is scoped to `pc.*`
+ * capabilities only, so it can never show a task's lifecycle -- that is
+ * Tarefas' own data -- and every field is already redacted server-side:
+ * `target` never carries clipboard contents, typed text, or a raw argument
+ * blob, because those were never written to the audit trail in the first
+ * place.
+ */
+export type PcActivityEntry = {
+  action: string;
+  target: string;
+  capability: string;
+  decision: "executed" | "allow_once" | "deny" | "failed";
+  risk: string;
+  requiresConfirmation: boolean;
+  at: string;
+};
+
+export type PcActivityCategory = "all" | "acoes" | "permissoes" | "erros";
+
 export type CommandCenterPayload = {
   worker: { running: boolean; queue_size: number; poll_interval: number };
   system: Record<string, number>;
@@ -182,6 +205,16 @@ export type SettingsPayload = {
   security: {
     autonomyMode: string; emergencyStop: boolean;
     persistentAllowDisabled: boolean; secretsEncrypted: boolean;
+  };
+  /** Memory behaviour, read from the Brain rather than from the config file, so
+   *  the switch shows what the running conversation actually does. */
+  memory: {
+    factsEnabled: boolean;
+    ragEnabled: boolean;
+    /** False while chromadb is not installed. The UI HIDES the retrieval
+     *  toggle rather than rendering one that cannot do anything. */
+    ragSupported: boolean;
+    ragNote: string;
   };
   stored: Record<string, any>;
   runtime: Record<string, any>;

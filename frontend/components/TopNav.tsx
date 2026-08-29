@@ -21,14 +21,15 @@
  */
 import React, { useLayoutEffect, useRef, useState } from "react";
 
+import AiModeMenu, { type ProviderMode } from "./AiModeMenu";
 import { NanoLockup } from "./NanoLogo";
 import WindowControls from "./TitleBar";
-import { StatusIndicator } from "./ui";
+import type { ProviderPayload } from "../lib/backend";
 
 export type ViewId =
   | "chat" | "tasks" | "activity"
   | "permissions" | "agents" | "memory" | "integrations"
-  | "status" | "settings";
+  | "capabilities" | "status" | "settings";
 
 export type SectionId = "chat" | "tools" | "pc" | "memory" | "settings";
 
@@ -49,21 +50,27 @@ export const SECTIONS: SectionEntry[] = [
     views: [{ id: "chat", label: "Conversa", hint: "Fala com o Nano" }],
   },
   {
+    // FERRAMENTAS answers "what can this thing do for me?". It is a catalogue,
+    // not a control surface: the providers that used to lead this section are
+    // configuration and now live in Definições → IA, where they can be changed.
     section: "tools",
     label: "Ferramentas",
     views: [
-      { id: "integrations", label: "Provedores", hint: "Modelos, chaves e componentes" },
+      { id: "capabilities", label: "Capacidades", hint: "Tudo o que o Nano sabe fazer" },
+      { id: "integrations", label: "Componentes", hint: "Módulos instalados que fornecem capacidades" },
       { id: "agents", label: "Agentes", hint: "Agentes registados e o que sabem fazer" },
     ],
   },
   {
+    // PC is THIS COMPUTER — its state, what Nano may do to it, and what Nano
+    // has actually done. Not the generic capability list, which is Ferramentas.
     section: "pc",
     label: "PC",
     views: [
-      { id: "status", label: "Estado", hint: "Recursos e saúde do sistema" },
+      { id: "status", label: "Estado", hint: "Recursos e saúde desta máquina" },
+      { id: "permissions", label: "Permissões", hint: "O que o Nano pode fazer neste computador" },
+      { id: "activity", label: "Atividade", hint: "O que o Nano tem feito aqui" },
       { id: "tasks", label: "Tarefas", hint: "Trabalho em segundo plano" },
-      { id: "activity", label: "Atividade", hint: "O que o Nano tem feito" },
-      { id: "permissions", label: "Permissões", hint: "Autorizações e policies" },
     ],
   },
   {
@@ -117,7 +124,8 @@ const USER = "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 
  * said nothing, StatusIndicator renders UNKNOWN rather than a reassuring green.
  */
 export default function TopNav({
-  view, onView, counts, agentState, healthLabel, routeLabel,
+  view, onView, counts, agentState, healthLabel, providers, offline, busy,
+  onSetMode, onOpenAiSettings,
   pendingCount, profileName, isDesktop, railOpen, onToggleRail, showRailToggle,
   version,
 }: {
@@ -126,7 +134,12 @@ export default function TopNav({
   counts: NavCounts;
   agentState: string;
   healthLabel: string;
-  routeLabel: string;
+  /** The live provider payload. The pill renders from this and nothing else. */
+  providers: ProviderPayload | null;
+  offline: boolean;
+  busy: boolean;
+  onSetMode: (mode: ProviderMode) => void;
+  onOpenAiSettings: () => void;
   pendingCount: number;
   profileName: string | null;
   isDesktop: boolean;
@@ -230,16 +243,18 @@ export default function TopNav({
       <span className="topbar__spacer" />
 
       <div className="topbar__right">
-        {/* The live route and health, in one control that goes to the page
-            that explains it. Everything shown is measured by the backend. */}
-        <button
-          type="button" className="status-pill"
-          onClick={() => onView("status")}
-          title={`${healthLabel} — abrir o estado do sistema`}
-        >
-          <StatusIndicator state={agentState} label="" />
-          <span className="status-pill__text">{routeLabel}</span>
-        </button>
+        {/* The live route and health, and the fastest way to change it.
+            Everything shown is measured by the backend; choosing a mode goes
+            through the same set_provider_mode the Settings page uses. */}
+        <AiModeMenu
+          providers={providers}
+          agentState={agentState}
+          healthLabel={healthLabel}
+          offline={offline}
+          busy={busy}
+          onSetMode={onSetMode}
+          onOpenAiSettings={onOpenAiSettings}
+        />
 
         <button
           type="button" className="icon-btn bell"

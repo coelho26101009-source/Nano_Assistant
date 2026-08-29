@@ -1110,6 +1110,22 @@ class Brain:
         selected_model = self.ollama_model
         yield f"_thinking_:🧠 {reason + ' — ' if reason else ''}a usar {selected_model} local..."
         self.last_metadata["local_model"] = selected_model
+
+        # THE ANSWER IS COMING FROM HERE, SO SAY SO.
+        #
+        # `provider` and `model` were left naming the CLOUD route that had just
+        # failed, so the "Detalhes técnicos" panel reported "groq (fallback)"
+        # and "openai/gpt-oss-20b" for a reply that qwen3:8b had written. The
+        # fallback was visible, but the thing it fell back TO was not, and the
+        # two named fields were both wrong. What was ATTEMPTED is kept under its
+        # own keys rather than discarded -- the diagnostics need both halves.
+        attempted_provider = self.last_metadata.get("provider")
+        attempted_model = self.last_metadata.get("model")
+        if attempted_provider and attempted_provider != "ollama":
+            self.last_metadata["attempted_provider"] = attempted_provider
+            self.last_metadata["attempted_model"] = attempted_model
+        self.last_metadata["provider"] = "ollama"
+        self.last_metadata["model"] = selected_model
         # Local models are far weaker at ignoring irrelevant tools, and the
         # local context window is small, so the same scoped subset applies.
         tools = model_selection.select_tools(message, get_all_tools())

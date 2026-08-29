@@ -44,6 +44,10 @@ ALLOWED_KEYS: frozenset[str] = frozenset({
     "output_device_index",
     "theme",
     "reduce_motion",
+    # Memory behaviour. Both were config-file-only before Settings V2, so the
+    # Memoria panel could describe them but not change them.
+    "memory_facts_enabled",    # let Nano remember durable facts about the user
+    "memory_rag_enabled",      # let Nano consult indexed documents
 })
 
 
@@ -146,6 +150,12 @@ def apply_overlay(config: dict[str, Any]) -> dict[str, Any]:
             voice[key] = stored[key]
     if "voice_enabled" in stored:
         voice["enabled"] = stored["voice_enabled"]
+
+    memory_cfg = config.setdefault("memory", {})
+    if "memory_facts_enabled" in stored:
+        memory_cfg["facts_enabled"] = stored["memory_facts_enabled"]
+    if "memory_rag_enabled" in stored:
+        memory_cfg["rag_enabled"] = stored["memory_rag_enabled"]
     if "input_device_index" in stored:
         voice.setdefault("microphone", {})["device_index"] = stored["input_device_index"]
 

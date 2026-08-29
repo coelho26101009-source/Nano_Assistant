@@ -34,9 +34,13 @@ PAGES = FRONTEND / "pages"
 CSS = FRONTEND / "styles" / "globals.css"
 
 # Every view the sidebar can reach. The shell must handle all of them.
+# Every destination the shell can render. "capabilities" is Ferramentas ->
+# Capacidades, added in Settings V2: Ferramentas used to lead with the AI
+# providers, which are configuration and now live in Definicoes -> IA, so the
+# section leads with the capability catalogue instead.
 VIEWS = (
     "chat", "tasks", "activity", "permissions",
-    "agents", "memory", "integrations", "status", "settings",
+    "agents", "memory", "integrations", "capabilities", "status", "settings",
 )
 
 
