@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import inspect
-import os
 import subprocess
 import time
 from pathlib import Path
@@ -23,7 +22,7 @@ from typing import Any, Callable
 
 import httpx
 
-from core import plugin_loader
+from core import capabilities, plugin_loader
 from core.browser_agent import validate_public_http_url
 from core.execution_scope import (
     PathValidationError,
@@ -33,6 +32,7 @@ from core.execution_scope import (
     workspace_root,
 )
 from core.permission_manager import PermissionManager
+from core.policy_engine import RiskLevel
 from core.trust import TrustLevel, classify_external, is_untrusted_capability
 
 
@@ -77,35 +77,163 @@ _TOOL_THREADS = concurrent.futures.ThreadPoolExecutor(
 )
 
 
+#: A permission target is shown to a human and written to the audit log, so it
+#: is bounded like every other crossing value.
+MAX_TARGET_CHARS = 300
+
+
+def _digest(text: str) -> str:
+    """A short, stable fingerprint of content that must never be logged itself.
+
+    Typed text and clipboard writes bind their grant to WHAT is being written,
+    without the audit log or the permission target ever holding the content.
+    """
+    import hashlib
+
+    return hashlib.sha256(str(text).encode("utf-8")).hexdigest()[:8]
+
+
+def _window_target(args: dict) -> str:
+    window_id = args.get("window_id")
+    if window_id not in (None, ""):
+        return f"window:{window_id}"
+    query = str(args.get("query") or "").strip()
+    return f"window:{query}" if query else "window:*"
+
+
 def _pc_control_target(tool_name: str, args: dict) -> str | None:
     """A stable, human-readable target string for one PC-control call.
 
-    Returns None for non-PC tools, so nothing else in the registry is touched.
+    THIS IS WHAT MAKES A GRANT MEAN SOMETHING. PermissionManager keys a grant on
+    (capability, target); without a target every PC grant would key on "*", and
+    one ALLOW_ONCE for "close the Calculator" would authorise closing Discord.
+
+    Two rules the table below follows:
+
+    * A call with more than one target names ALL of them. `pc_file_move` binds
+      to source AND destination, so approving "move A into B" cannot be reused
+      to move A into C -- a different destination is a different grant.
+    * Content is never a target. Typed text and clipboard writes bind to a
+      DIGEST of the content, which is precise enough to distinguish two calls
+      and carries nothing that should not be in a log.
+
+    Returns None for non-PC tools, and for the PC tools whose real target is
+    already an argument the permission layer inspects (`path`, `url`) -- so
+    those keep binding to the fully-resolved value the executor produced.
     """
     if not str(tool_name).startswith("pc_"):
         return None
-    if tool_name == "pc_app_launch":
+
+    def clamp(value: str) -> str:
+        text = str(value)
+        return text if len(text) <= MAX_TARGET_CHARS else text[:MAX_TARGET_CHARS - 1] + "…"
+
+    # ---------------------------------------------------------------- apps
+    if tool_name in {"pc_app_launch", "pc_app_switch"}:
         value = str(args.get("app_id") or args.get("name") or "").strip()
-        return f"app:{value}" if value else "app:*"
+        return clamp(f"app:{value}" if value else "app:*")
+    if tool_name == "pc_app_list_running":
+        return "apps:running"
+
+    # -------------------------------------------------------------- windows
+    if tool_name in {"pc_window_batch_state", "pc_window_batch_close"}:
+        app = str(args.get("app") or "").strip()
+        state = str(args.get("state") or "").strip()
+        suffix = f":{state}" if state else ""
+        return clamp(f"windows:{app or '*'}{suffix}")
+    if tool_name == "pc_window_list":
+        return "windows:all"
     if tool_name.startswith("pc_window_"):
-        window_id = args.get("window_id")
-        if window_id not in (None, ""):
-            return f"window:{window_id}"
-        query = str(args.get("query") or "").strip()
-        return f"window:{query}" if query else "window:*"
+        return clamp(_window_target(args))
+
+    # ------------------------------------------------------- volume / media
+    if tool_name.startswith("pc_volume_"):
+        return f"volume:{tool_name.rsplit('_', 1)[-1]}"
+    if tool_name == "pc_media_control":
+        return clamp(f"media:{str(args.get('action') or '*').strip()}")
+
+    # -------------------------------------------------------------- display
+    if tool_name == "pc_display_info":
+        return "display:all"
+    if tool_name.startswith("pc_display_"):
+        monitor = args.get("monitor")
+        return f"display:{monitor if monitor not in (None, '') else 'default'}"
+
+    # ------------------------------------------------------------ clipboard
+    if tool_name == "pc_clipboard_write":
+        return f"clipboard:write:#{_digest(args.get('text') or '')}"
+    if tool_name.startswith("pc_clipboard_"):
+        return f"clipboard:{tool_name.rsplit('_', 1)[-1]}"
+
+    # ---------------------------------------------------------------- input
+    if tool_name == "pc_input_type_text":
+        return clamp(f"input:type:{_window_target(args)}:#{_digest(args.get('text') or '')}")
+    if tool_name == "pc_input_press_key":
+        key = str(args.get("key") or "*").strip().lower()
+        return clamp(f"input:key:{key}:{_window_target(args)}")
+    if tool_name == "pc_input_hotkey":
+        hotkey = str(args.get("hotkey") or "*").strip().lower()
+        aimed = (_window_target(args) if args.get("window_id") or args.get("query")
+                 else "desktop")
+        return clamp(f"input:hotkey:{hotkey}:{aimed}")
+    if tool_name == "pc_pointer_scroll":
+        return clamp(f"pointer:scroll:{_window_target(args)}")
+
+    # ---------------------------------------------------------------- files
     if tool_name in {"pc_folder_open", "pc_file_open"}:
         # A real `path` is already preferred by _resolve_target. A known-folder
         # NAME arrives as `folder` (see the handler for why) and still has to
         # bind the grant to something specific.
         if not str(args.get("path") or "").strip():
             folder = str(args.get("folder") or "").strip()
-            return f"folder:{folder}" if folder else None
+            return clamp(f"folder:{folder}") if folder else None
         return None
+    if tool_name in {"pc_folder_create", "pc_file_create_text"}:
+        parent = str(args.get("folder") or args.get("path") or "").strip()
+        name = str(args.get("name") or "").strip()
+        return clamp(f"create:{parent or '?'}/{name or '*'}")
+    if tool_name in {"pc_file_copy", "pc_file_move"}:
+        return clamp(f"file:{str(args.get('source') or '*')} -> "
+                     f"{str(args.get('destination') or '*')}")
+    if tool_name == "pc_file_rename":
+        return clamp(f"file:{str(args.get('source') or '*')} -> "
+                     f"{str(args.get('new_name') or '*')}")
+    if tool_name in {"pc_file_recycle", "pc_folder_recycle"}:
+        return clamp(f"recycle:{str(args.get('path') or '*')}")
     if tool_name in {"pc_app_search", "pc_file_search"}:
         query = str(args.get("query") or "").strip()
-        return f"query:{query}" if query else None
-    if tool_name.startswith("pc_volume_"):
-        return f"volume:{tool_name.rsplit('_', 1)[-1]}"
+        return clamp(f"query:{query}") if query else None
+
+    # ----------------------------------------------------- web and settings
+    if tool_name == "pc_web_open_url":
+        # `url` is already a target key the permission layer inspects, and it
+        # holds the value the central URL validation approved.
+        return None
+    if tool_name == "pc_web_search":
+        engine = str(args.get("engine") or "default").strip()
+        return clamp(f"search:{engine}:{str(args.get('query') or '*').strip()}")
+    if tool_name == "pc_settings_open":
+        return clamp(f"settings:{str(args.get('section') or '*').strip()}")
+
+    # --------------------------------------------------- system and session
+    if tool_name == "pc_system_info":
+        return "system:info"
+    if tool_name == "pc_network_status":
+        return "system:network"
+    if tool_name == "pc_storage_info":
+        return "system:storage"
+    if tool_name in {"pc_session_lock", "pc_session_logoff"}:
+        return f"session:{tool_name.rsplit('_', 1)[-1]}"
+    if tool_name.startswith("pc_power_"):
+        return f"power:{tool_name.rsplit('_', 1)[-1]}"
+
+    # --------------------------------------------------------------- screen
+    if tool_name == "pc_screenshot_capture":
+        mode = str(args.get("mode") or "desktop").strip().lower()
+        if mode == "window":
+            return clamp(f"screen:{_window_target(args)}")
+        return f"screen:{mode}"
+
     return tool_name
 
 
@@ -220,17 +348,20 @@ class ToolExecutor:
             capabilities=["filesystem.delete"],
             requires_confirmation=True,
         )
-        self.register_tool(
-            "shell.execute",
-            "Executa um comando de shell de forma controlada.",
-            {"type": "object", "properties": {"command": {"type": "string"}, "cwd": {"type": "string"}, "timeout": {"type": "integer"}}, "required": ["command"]},
-            handler=self._execute_shell,
-            risk="high",
-            timeout=30,
-            retry_policy=RetryPolicy.CONDITIONALLY_RETRYABLE,
-            capabilities=["shell.execute"],
-            requires_confirmation=True,
-        )
+        # THERE IS NO shell.execute TOOL, AND THERE MUST NOT BE ONE.
+        #
+        # Until the V2 checkpoint audit there was: it ran
+        # `subprocess.run(["cmd", "/c", command])` on a model-supplied string,
+        # gated by nothing but an approval dialog. It was never ADVERTISED to
+        # the model -- but Brain._run_tool dispatches whatever name the model
+        # emits, so invisibility was not de-authorisation, and a single
+        # confirmed call would have run arbitrary PowerShell. That is exactly
+        # the primitive plugins/god_mode.py was emptied out to remove, and its
+        # docstring's claim that no PowerShell call site remained in the repo
+        # was false while this registration stood.
+        #
+        # The capability is now declared unavailable in core/capabilities.py,
+        # blocked in PolicyEngine, and refused in _authorize below.
         self.register_tool(
             "project.run_tests",
             "Executa a suíte de testes do projeto atual com um runner suportado.",
@@ -347,6 +478,12 @@ class ToolExecutor:
         the execution context handed to the policy engine.
         """
         prepared = dict(args)
+        # `_pc_target` is the authoritative permission target, written below and
+        # read first by PermissionManager._resolve_target. Any value the MODEL
+        # supplied under that name is discarded here, before anything reads it,
+        # so a crafted argument cannot rebind a grant to a harmless-looking
+        # string while the call does something else.
+        prepared.pop("_pc_target", None)
         context: dict[str, Any] = {"tool": name}
         scopes: list[Scope] = []
         protected = False
@@ -370,18 +507,24 @@ class ToolExecutor:
                 raise ToolExecutionError(error or "invalid_url")
             context.setdefault("urls", []).append(value)
 
+        # TARGET BINDING FOR PC CONTROL.
+        #
+        # PermissionManager._resolve_target inspects a fixed list of argument
+        # names. A PC tool's real target lives in `name`, `app_id`, `window_id`,
+        # `query`, `source`+`destination` or a section enum, so without this the
+        # grant key would be (capability, "*") -- and an ALLOW_ONCE for "close
+        # the Calculator window" would silently authorise closing Discord.
+        #
+        # Computed AFTER path resolution above, so a file target binds to the
+        # fully-resolved absolute path rather than to whatever the model typed.
+        # Written to `_pc_target`, which _resolve_target reads FIRST: a
+        # two-target operation like file.move has to out-rank the single `path`
+        # key, or approving "move A into B" would also authorise moving A into
+        # C. `target` is set alongside it for the confirmation UI and for
+        # callers that predate the underscore key.
         pc_target = _pc_control_target(name, prepared)
         if pc_target is not None:
-            # TARGET BINDING FOR PC CONTROL.
-            #
-            # PermissionManager._resolve_target only inspects
-            # (path, target, url, command, cwd). A PC tool's real target lives
-            # in `name`, `app_id`, `window_id` or `query`, so without this the
-            # grant key would be (capability, "*") -- and an ALLOW_ONCE for
-            # "close the Calculator window" would silently authorise closing
-            # Discord. Normalising into `target` here makes the existing grant
-            # machinery bind to the actual thing, with no change to the
-            # permission layer and no effect on any other tool.
+            prepared["_pc_target"] = pc_target
             prepared["target"] = pc_target
             context["pc_target"] = pc_target
 
@@ -403,6 +546,26 @@ class ToolExecutor:
         When it returns ``ok=True`` and ``needs_confirmation=True`` the caller
         must obtain confirmation through the sync or async path before running.
         """
+        # A capability Nano does not have is refused before anything else --
+        # before the registry, the policy engine and every confirmation path.
+        # "unknown_tool" would be true but useless here: it reads as "you named
+        # it wrong", when the honest answer is that no such capability exists
+        # and no approval can produce one. Whoever called gets a sentence that
+        # says so, and never a dialog.
+        unsupported = capabilities.for_tool(name)
+        if unsupported is not None:
+            self.permission_manager.log_decision(
+                unsupported.id, "deny", risk=RiskLevel.CRITICAL, task_id=task_id,
+                reason=f"Capability is not implemented and never will be: {unsupported.id}.",
+                event_name="PermissionDenied",
+            )
+            return {"ok": False, "result": self._tool_result(
+                False, "unsupported_capability",
+                error=capabilities.describe(unsupported),
+                metadata={"tool": name, "task_id": task_id,
+                          "capability": unsupported.id, "unsupported": True},
+            )}
+
         tool = self.registry.get(name)
         if not tool:
             return {"ok": False, "result": self._tool_result(False, "unknown_tool", error=f"Tool desconhecida: {name}", metadata={"tool": name})}
@@ -724,41 +887,10 @@ class ToolExecutor:
             p.unlink()
         return {"path": str(p), "deleted": True}
 
-    def _classify_shell_command(self, command: str) -> str:
-        lower = (command or "").lower()
-        if any(token in lower for token in ("rm -rf", "rmdir /s", "del /s", "format c:", "net user", "reg delete", "shutdown", "taskkill /f", "bcdedit", "certutil -decode", "system32", "/s /q", "--delete")):
-            return "critical"
-        if any(token in lower for token in ("curl ", "wget ", "powershell -enc", "cmd /c", "whoami", "sc delete", "net start", "mklink", "copy ", "move ", "rename ", "del ", "attrib +h", "chown", "chmod 777")):
-            return "high"
-        return "medium"
-
-    def _execute_shell(self, args: dict) -> dict:
-        command = str(args.get("command") or "").strip()
-        if not command:
-            raise ToolExecutionError("command obrigatório")
-        cwd = args.get("cwd")
-        if cwd is not None:
-            cwd = str(self.resolve_tool_target(cwd, must_exist=True).path)
-        timeout = max(1, min(int(args.get("timeout") or 30), 180))
-        stdout_limit = min(int(args.get("stdout_limit") or 12000), 12000)
-        stderr_limit = min(int(args.get("stderr_limit") or 12000), 12000)
-        command_risk = self._classify_shell_command(command)
-
-        # subprocess.mswindows was a Python 2 attribute and does not exist in
-        # Python 3; every shell execution used to raise AttributeError here.
-        if os.name == "nt":
-            argv = ["cmd", "/c", command]
-        else:
-            argv = ["bash", "-lc", command]
-        completed = subprocess.run(argv, cwd=str(cwd) if cwd else None, capture_output=True, text=True, timeout=timeout)
-        return {
-            "command": command,
-            "risk": command_risk,
-            "returncode": completed.returncode,
-            "stdout": completed.stdout[:stdout_limit],
-            "stderr": completed.stderr[:stderr_limit],
-            "success": completed.returncode == 0,
-        }
+    # _classify_shell_command and _execute_shell were deleted with the
+    # shell.execute registration above. Nothing in this class builds a command
+    # line any more; _run_project_tests below is the only remaining subprocess
+    # call, and it chooses its argv from a closed allow-list with shell=False.
 
     def _run_project_tests(self, args: dict) -> dict:
         """Run a supported test runner inside the project. No shell, ever.

@@ -61,10 +61,14 @@
     border: 1px solid var(--border);
     border-radius: 22px;
     /* Depth, a whisper of the brand red around the edge, and a hairline of
-       light along the top: the same three layers as the panels in the shell. */
+       light along the top: the same three layers as the panels in the shell.
+       The red is deliberately a whisper — trimmed with the shell's ambient
+       wash so the overlay reads as a dark floating panel that happens to be
+       Nano's, not as a red light. The IDENTITY is carried by the mark, the
+       halo and the accent text; the panel behind them stays black. */
     box-shadow: 0 20px 46px -16px rgba(0, 0, 0, 0.85),
                 0 0 0 1px rgba(0, 0, 0, 0.4),
-                0 0 34px -18px rgba(244, 1, 1, 0.55),
+                0 0 26px -18px rgba(244, 1, 1, 0.34),
                 inset 0 1px 0 rgba(255, 240, 240, 0.06);
     backdrop-filter: blur(22px) saturate(125%);
     opacity: 0;
@@ -210,7 +214,7 @@
     border-color: rgba(255, 90, 84, 0.42);
     box-shadow: 0 20px 46px -16px rgba(0, 0, 0, 0.85),
                 0 0 0 1px rgba(0, 0, 0, 0.4),
-                0 0 30px -14px rgba(244, 1, 1, 0.5),
+                0 0 28px -16px rgba(244, 1, 1, 0.38),
                 inset 0 1px 0 rgba(255, 240, 240, 0.06);
   }
   #panel[data-state="error"] #label { color: var(--accent-hot); }

@@ -161,24 +161,38 @@ def test_every_plugin_tool_is_registered_under_the_executor(workspace, manager):
 
 
 def test_plugin_handlers_cannot_be_executed_without_the_authority(workspace, manager):
+    """A REAL, currently-registered plugin tool, called with no authority.
+
+    The subject used to be `system_files`, which has since been withdrawn --
+    at which point the test still passed while proving nothing, because
+    execute_tool checks the authority before it looks the handler up.
+    """
     from core.app_paths import PLUGINS_DIR
 
     plugin_loader.load_all_plugins(PLUGINS_DIR)
+    registered = {t["function"]["name"] for t in plugin_loader.get_all_tools()}
+    assert "pc_system_info" in registered, (
+        "test premise broken: the subject tool is no longer registered"
+    )
     with pytest.raises(plugin_loader.UnauthorizedExecution):
-        plugin_loader.execute_tool("system_files", {"operation": "read", "path": "inside.txt"})
+        plugin_loader.execute_tool("pc_system_info", {})
 
 
-def test_system_files_read_outside_workspace_is_refused(workspace, manager, tmp_path):
-    from core.app_paths import PLUGINS_DIR
+def test_reading_a_file_outside_the_workspace_is_refused(workspace, manager, tmp_path):
+    """Approval is required to read outside the workspace, and refusal stops it.
 
-    plugin_loader.load_all_plugins(PLUGINS_DIR)
+    This guarded `system_files(operation="read")` until that tool was withdrawn
+    in the PC Control V2 audit -- it could also CREATE a .bat anywhere it could
+    write. The contract it protected is the executor's, not that tool's, so it
+    is asserted here against the built-in reader that still exists.
+    """
     executor = _executor(manager, approve=False)
-    executor.register_plugin_tools()
     outside = tmp_path / "id_rsa"
     outside.write_text("PRIVATE KEY", encoding="utf-8")
-    result = executor.execute_tool("system_files", {"operation": "read", "path": str(outside)})
+    result = executor.execute_tool("filesystem.read_file", {"path": str(outside)})
     assert result["success"] is False
     assert result["status"] == "permission_denied"
+    assert "PRIVATE KEY" not in str(result)
 
 
 def test_browser_tool_rejects_internal_targets(workspace, manager):
@@ -216,11 +230,48 @@ def test_run_tests_uses_no_shell(workspace, manager):
     assert "shell=True" not in source
 
 
-def test_shell_execute_requires_approval(workspace, manager):
-    executor = _executor(manager, approve=False)
+def test_there_is_no_shell_tool_to_approve(workspace, manager):
+    """Not "approval required" -- not registered, and not runnable at all.
+
+    This test used to pass with a live `subprocess.run(["cmd", "/c", command])`
+    behind it, gated only by the approval it was asserting. Approving was
+    enough to run arbitrary PowerShell. So the assertion is now made against
+    the registry itself and against an executor that approves everything.
+    """
+    assert "shell.execute" not in ToolExecutor(permission_manager=manager).registry
+
+    executor = _executor(manager, approve=True)
     result = executor.execute_tool("shell.execute", {"command": "whoami", "timeout": 5})
     assert result["success"] is False
-    assert result["status"] == "permission_denied"
+    assert result["status"] == "unsupported_capability"
+    assert result["output"] is None
+
+
+def test_no_handler_in_the_executor_builds_a_command_line(workspace, manager):
+    """The generic-executor invariant, checked against behaviour not prose.
+
+    Every registered handler is offered an argument that would be a shell
+    injection if anything concatenated it into a command. Nothing may run.
+    """
+    import subprocess as _subprocess
+
+    executor = _executor(manager, approve=True)
+    calls: list[list[str]] = []
+    original = _subprocess.run
+
+    def _record(argv, *args, **kwargs):
+        calls.append(list(argv) if isinstance(argv, (list, tuple)) else [str(argv)])
+        raise AssertionError(f"a handler reached a subprocess: {argv!r}")
+
+    _subprocess.run = _record
+    try:
+        for name in sorted(executor.registry):
+            executor.execute_tool(name, {"command": "x & calc.exe", "path": "x & calc.exe"})
+    finally:
+        _subprocess.run = original
+
+    shells = [argv for argv in calls if argv and argv[0] in {"cmd", "bash", "sh", "powershell", "pwsh"}]
+    assert shells == [], f"a handler invoked a shell: {shells}"
 
 
 # --------------------------------------------------------- permission gating

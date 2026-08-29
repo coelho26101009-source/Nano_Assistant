@@ -10,7 +10,15 @@ argument the model can craft that reaches ShellExecuteExW with a path of its
 choosing, which is what stops `app.launch` from degenerating into "run this
 executable".
 
-Discovery is deliberately cheap: two Start Menu trees, never a disk scan.
+Discovery is deliberately cheap and never a disk scan. V2 reads three
+sources, all of them maintained by Windows itself: the two Start Menu
+trees, the registry's App Paths keys (how ordinary desktop software
+announces itself), and the Store execution aliases in
+%LOCALAPPDATA%\\Microsoft\\WindowsApps (how packaged apps like Spotify
+announce themselves, since they have no shortcut and no plain executable).
+Widening DISCOVERY is not widening what may be launched: every launch
+target still comes from the machine, and the model still contributes only a
+name to match against it.
 
 Alias handling is deliberately dull. "VS Code" -> "Visual Studio Code" is a
 fixed synonym; there is no phonetic matching and no edit-distance guessing,
@@ -22,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 import unicodedata
 from dataclasses import dataclass
@@ -32,9 +41,17 @@ from core.pc_control.results import MAX_APP_CANDIDATES, PCControlError
 
 logger = logging.getLogger("nano.pc_control.applications")
 
-#: Rebuilt at most this often. Start Menu contents change when software is
+#: Rebuilt at most this often. The sources change when software is
 #: installed, which is rare; scanning on every query would be wasteful.
 _CATALOGUE_TTL_SECONDS = 300.0
+
+#: A hard ceiling on each discovery source, so a machine with an unusual
+#: registry cannot turn catalogue building into an unbounded walk.
+_MAX_REGISTRY_ENTRIES = 400
+
+#: `python3.12`, `idle3`, `pip3` -- version-suffixed aliases for something
+#: already in the catalogue under its real name.
+_VERSION_SUFFIX = re.compile(r"[0-9]+(\.[0-9]+)*$")
 
 #: Windows inbox applications have no Start Menu shortcut on this machine
 #: (Calculator and Notepad are packaged apps), so they are declared here as a
@@ -120,6 +137,134 @@ def _start_menu_roots() -> list[tuple[Path, str]]:
     return roots
 
 
+
+# --------------------------------------------------------------------------
+#  V2 discovery sources
+#
+#  Both answer the same question the Start Menu answers -- "what is installed?"
+#  -- from data Windows maintains. The model contributes no path to either; it
+#  contributes a NAME which is matched against what was found.
+# --------------------------------------------------------------------------
+
+#: Substrings that mark a registered executable as plumbing rather than an
+#: application: the helpers, servers, installers and per-version aliases that
+#: would otherwise fill the catalogue with things nobody asks for by name.
+_NOT_AN_APPLICATION = (
+    "setup", "install", "uninstall", "update", "helper", "server", "host",
+    "service", "elevated", "crashpad", "reporter", "_cli", "shellext",
+    "packaging", "adminserver",
+)
+
+#: Exact names to drop. Two groups: interpreters and package managers that are
+#: not applications a person opens, and -- importantly -- the command
+#: interpreters. `cmd` and `powershell` are registered under App Paths, and
+#: `app.launch` is not the place to surface them: PC Control's whole premise is
+#: that there is no general command line, and a catalogue entry called
+#: "powershell" is the beginning of an argument that there is one.
+_NOT_AN_APPLICATION_EXACT = frozenset({
+    "cmd", "conhost", "regedit", "rundll32", "dllhost", "mshta", "wscript",
+    "cscript", "powershell", "pwsh", "bash", "sh", "wsl", "wt",
+    "pip", "python", "pythonw", "idle", "winget", "table30", "dfshim",
+    "cmmgr32", "fsquirt", "wabmig", "wab", "licensemanagershellext",
+})
+
+
+def _looks_like_an_application(stem: str) -> bool:
+    """Whether a registered executable name is something a person asks for.
+
+    Deliberately biased towards DROPPING entries. A missing application surfaces
+    as "não encontrei", which the user corrects in one sentence; a catalogue
+    full of `XboxPcAppCE` and `pip3.12` makes every ambiguous match worse and
+    every candidate list harder to read.
+    """
+    lowered = stem.casefold()
+    if lowered in _NOT_AN_APPLICATION_EXACT:
+        return False
+    if any(marker in lowered for marker in _NOT_AN_APPLICATION):
+        return False
+    if _VERSION_SUFFIX.search(lowered):
+        return False
+    return True
+
+
+def _app_paths_entries() -> list[AppEntry]:
+    """Applications that registered themselves under App Paths.
+
+    The LAUNCH TARGET is the registry KEY NAME (`chrome.exe`), not the path
+    stored beside it. ShellExecuteExW resolves App Paths keys itself, so Nano
+    hands Windows a name Windows already knows instead of re-typing a path. The
+    path is read only to confirm the software is really installed, and to tell
+    the user what the entry points at.
+    """
+    try:
+        import winreg
+    except ImportError:
+        return []
+
+    subkey = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths"
+    entries: list[AppEntry] = []
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(hive, subkey) as key:
+                count = winreg.QueryInfoKey(key)[0]
+                for index in range(min(count, _MAX_REGISTRY_ENTRIES)):
+                    try:
+                        name = winreg.EnumKey(key, index)
+                        with winreg.OpenKey(key, name) as entry:
+                            target, _kind = winreg.QueryValueEx(entry, "")
+                    except OSError:
+                        continue
+                    if not name.lower().endswith(".exe") or not target:
+                        continue
+                    stem = Path(name).stem
+                    if not _looks_like_an_application(stem):
+                        continue
+                    expanded = os.path.expandvars(str(target).strip('"'))
+                    try:
+                        if not Path(expanded).is_file():
+                            continue
+                    except OSError:
+                        continue
+                    entries.append(AppEntry(
+                        name=stem, launch_target=name, source="registered_app",
+                        resolved_executable=expanded))
+        except OSError:
+            logger.debug("App Paths hive unavailable", exc_info=True)
+    return entries
+
+
+def _store_alias_entries() -> list[AppEntry]:
+    """Microsoft Store applications, through their execution aliases.
+
+    A packaged (UWP) application has no Start Menu shortcut and no ordinary
+    executable, which is why V1 could not find Spotify. Windows publishes an
+    ALIAS for each one in %LOCALAPPDATA%\\Microsoft\\WindowsApps, and launching
+    that alias is the supported way to start the app without resolving an
+    AppUserModelID by hand. The alias is a real file this function found on
+    disk, so the rule holds: the catalogue supplies the target, the model
+    supplies only a name.
+    """
+    local = os.environ.get("LOCALAPPDATA")
+    if not local:
+        return []
+    folder = Path(local) / "Microsoft" / "WindowsApps"
+    try:
+        if not folder.is_dir():
+            return []
+        candidates = sorted(folder.glob("*.exe"))[:_MAX_REGISTRY_ENTRIES]
+    except OSError:
+        logger.debug("could not read the Store alias folder", exc_info=True)
+        return []
+
+    entries: list[AppEntry] = []
+    for alias in candidates:
+        if not _looks_like_an_application(alias.stem):
+            continue
+        entries.append(AppEntry(name=alias.stem, launch_target=str(alias),
+                                source="store_app", resolved_executable=str(alias)))
+    return entries
+
+
 def build_catalogue(force: bool = False) -> list[AppEntry]:
     """Enumerate installed applications. Bounded, cached, no disk scan."""
     global _catalogue, _catalogue_built_at
@@ -150,6 +295,16 @@ def build_catalogue(force: bool = False) -> list[AppEntry]:
                 continue
             seen.add(key)
             entries.append(AppEntry(name=name, launch_target=str(shortcut), source=source))
+
+    # Registered and packaged applications come last, so a Start Menu shortcut
+    # -- which carries the name the user actually sees, "Visual Studio Code"
+    # rather than "code" -- always wins the name it shares.
+    for discovered in (*_app_paths_entries(), *_store_alias_entries()):
+        key = _fold(discovered.name)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        entries.append(discovered)
 
     _catalogue = entries
     _catalogue_built_at = now
@@ -246,6 +401,71 @@ def running_process_names() -> set[str]:
     return names
 
 
+
+# --------------------------------------------------------------------------
+#  What is actually running
+# --------------------------------------------------------------------------
+
+#: Bound on the running-application list. This answers "what do I have open?",
+#: which is a handful of things -- never the process table.
+MAX_RUNNING_APPS = 30
+
+
+def running_applications() -> list[dict]:
+    """Applications the user would say are OPEN, i.e. ones with a window.
+
+    NOT the process list. A process table is hundreds of entries, most of them
+    services and helpers, and handing that to a model is both useless and a
+    small disclosure of everything installed. This walks the same window
+    enumeration `window.list` uses and groups it by process, so the answer is
+    "Discord, VS Code, Brave" rather than 300 lines.
+    """
+    from core.pc_control import windows as window_control
+
+    grouped: dict[str, dict] = {}
+    for window in window_control.list_windows():
+        process = (window.get("process") or "").lower()
+        if not process:
+            continue
+        entry = grouped.setdefault(process, {
+            "process": process,
+            "windows": 0,
+            "titles": [],
+            "focused": False,
+        })
+        entry["windows"] += 1
+        if len(entry["titles"]) < 3:
+            entry["titles"].append(window["title"])
+        entry["focused"] = entry["focused"] or bool(window.get("focused"))
+        if len(grouped) >= MAX_RUNNING_APPS:
+            break
+    return sorted(grouped.values(), key=lambda item: item["process"])
+
+
+def executable_names_for(entry: AppEntry) -> set[str]:
+    """The process names an entry could plausibly be running as.
+
+    Used to connect "Spotify" the catalogue entry to "spotify.exe" the running
+    process. Both the resolved executable and the entry's own name are offered,
+    because a Start Menu shortcut's display name and its executable often
+    differ ("Visual Studio Code" / "Code.exe").
+    """
+    names: set[str] = set()
+    if entry.resolved_executable:
+        names.add(Path(entry.resolved_executable).name.lower())
+    target = entry.launch_target
+    if target and not target.lower().endswith(".lnk"):
+        names.add(Path(target).name.lower())
+    else:
+        resolved = winapi.resolve_shortcut(target) if target else None
+        if resolved:
+            names.add(Path(resolved).name.lower())
+    folded = _fold(entry.name).replace(" ", "")
+    if folded:
+        names.add(f"{folded}.exe")
+    return {name for name in names if name.endswith(".exe")}
+
+
 def launch(entry: AppEntry) -> dict:
     """Start one catalogue entry and REPORT WHAT WINDOWS ACTUALLY DID.
 
@@ -282,5 +502,6 @@ def launch(entry: AppEntry) -> dict:
     }
 
 
-__all__ = ["AppEntry", "build_catalogue", "find_by_app_id", "launch", "resolve",
-           "running_process_names", "search"]
+__all__ = ["MAX_RUNNING_APPS", "AppEntry", "build_catalogue",
+           "executable_names_for", "find_by_app_id", "launch", "resolve",
+           "running_applications", "running_process_names", "search"]

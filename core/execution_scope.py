@@ -56,6 +56,77 @@ _PROTECTED_SUFFIXES = (".pem", ".key", ".pfx", ".p12", ".db", ".sqlite3")
 
 _PROTECTED_DIR_PARTS = frozenset({".git", ".ssh", ".aws", ".gnupg", ".config/gcloud"})
 
+# Directory NAMES that are sensitive wherever they appear in a path.
+_PROTECTED_DIRECTORY_NAMES = frozenset({
+    ".ssh", ".aws", ".gnupg", ".kube", ".azure", ".docker",
+    "$recycle.bin", "system volume information",
+})
+
+# Sub-trees of the user profile holding credentials, keys, or code Windows runs
+# on its own. Relative to the home directory, matched case-blind.
+#
+# Startup is here for a reason that is not obvious: no tool can create an
+# executable today, but a folder Windows runs at every login turns "create a
+# file" into "run this at every boot" the moment an extension policy is ever
+# relaxed. Making the LOCATION unreachable is cheaper than relying on the
+# extension check forever.
+_PROTECTED_PROFILE_SUBTREES = (
+    "AppData/Roaming/Microsoft/Crypto",
+    "AppData/Roaming/Microsoft/Protect",
+    "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup",
+    "AppData/Local/Google/Chrome/User Data",
+    "AppData/Local/Microsoft/Edge/User Data",
+    "AppData/Local/BraveSoftware",
+    "AppData/Roaming/Mozilla/Firefox/Profiles",
+    "AppData/Roaming/Opera Software",
+)
+
+
+def is_protected_location(resolved: Path) -> bool:
+    """Whether a resolved path is somewhere Nano must never write or remove.
+
+    THE SINGLE SOURCE OF TRUTH for this question. `core.pc_control.files`
+    consults it, and so does `_is_protected` below, so the central path
+    authority and the PC-control layer cannot disagree about what is off
+    limits -- which they did until PC Control V2, when only the PC layer knew
+    about Windows, Program Files and the browser profiles.
+
+    Covers: OS directories, Program Files, ProgramData, Nano's own application
+    and data directories, credential stores, browser profiles, the Startup
+    folder, and a bare drive root.
+    """
+    lowered = str(resolved).casefold()
+
+    for variable in ("SystemRoot", "ProgramFiles", "ProgramFiles(x86)", "ProgramData"):
+        root = os.environ.get(variable)
+        if root and lowered.startswith(str(Path(root)).casefold()):
+            return True
+
+    # Nano must not be able to rewrite or recycle itself.
+    for own in (DATA_DIR, ROOT):
+        try:
+            if lowered.startswith(str(Path(own).resolve()).casefold()):
+                return True
+        except OSError:
+            continue
+
+    # "recycle C:\" is never a request to honour.
+    if resolved.parent == resolved:
+        return True
+
+    if any(part.casefold() in _PROTECTED_DIRECTORY_NAMES for part in resolved.parts):
+        return True
+
+    try:
+        home = Path.home()
+    except (OSError, RuntimeError):
+        return False
+    for subtree in _PROTECTED_PROFILE_SUBTREES:
+        if lowered.startswith(str(home.joinpath(*subtree.split("/"))).casefold()):
+            return True
+    return False
+
+
 # Windows device names that must never be opened as files.
 _WINDOWS_RESERVED = frozenset({
     "con", "prn", "aux", "nul",
@@ -121,7 +192,7 @@ def _is_protected(resolved: Path) -> bool:
     lowered_parts = {part.lower() for part in resolved.parts}
     if lowered_parts & _PROTECTED_DIR_PARTS:
         return True
-    return False
+    return is_protected_location(resolved)
 
 
 def classify_path(resolved: Path) -> Scope:

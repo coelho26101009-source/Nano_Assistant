@@ -31,7 +31,7 @@ import {
 } from "../components/Pages";
 import { Button, ErrorState, ToastStack, stateLabel, useToasts } from "../components/ui";
 import {
-  ActivityEvent, CommandCenterPayload, POLL, ProviderPayload, ReadinessPayload,
+  ActivityEvent, CommandCenterPayload, PcSnapshot, POLL, ProviderPayload, ReadinessPayload,
   SettingsPayload, TaskCounts, TaskRow, VoiceDiagnostics,
   call, expose, useBridgeReady, useFetch, usePolled,
 } from "../lib/backend";
@@ -145,6 +145,11 @@ export default function Home() {
   const { data: memoryData, loading: memoryLoading, refresh: refreshMemory } =
     useFetch<any>("get_memory_overview", ready && view === "memory", []);
   const { data: agents } = useFetch<any[]>("get_agents_detail", ready && view === "agents", []);
+  /* Fetched when the PC page opens, and on demand. NOT polled: every line of
+     it is a real Windows call, and a timer would spend the machine's time
+     describing itself. */
+  const { data: pcSnapshot, loading: pcLoading, refresh: refreshPc } =
+    useFetch<PcSnapshot>("get_pc_snapshot", ready && view === "status", []);
   const { data: settings, loading: settingsLoading, refresh: refreshSettings } =
     useFetch<SettingsPayload>("get_settings", ready && view === "settings", []);
 
@@ -920,6 +925,8 @@ export default function Home() {
                 {view === "status" && (
                   <StatusPage readiness={readiness} providers={providers}
                               commandCenter={commandCenter} loading={ccLoading}
+                              pcSnapshot={pcSnapshot} pcLoading={pcLoading}
+                              onRefreshPc={refreshPc}
                               onToggleEmergencyStop={toggleEmergencyStop}
                               onOpenTask={openTask} onCancelTask={cancelTask}
                               onNavigate={setView} />

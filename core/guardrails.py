@@ -4,15 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import threading
 from typing import Awaitable, Callable
+
+from core import capabilities
 
 logger = logging.getLogger("helios.guardrails")
 
 SENSITIVE_TOOLS: dict[str, dict] = {
     "web_interact": {"check": lambda args: str(args.get("action", "")).lower() in {"click", "type"}, "message": "Vou interagir com uma página web e alterar o estado dela. Confirmas?"},
-    "system_run_powershell": {"check": lambda args: _requires_powershell_confirmation(args), "message": "Este comando PowerShell pode alterar o sistema. Confirmas a execução?"},
+    # system_run_powershell was here, with a rule that waved read-only cmdlets
+    # through unconfirmed and asked "Confirmas a execução?" for the rest. Both
+    # halves were wrong once the tool was withdrawn: there is nothing to wave
+    # through and nothing to confirm. Shell execution is now declared
+    # unavailable in core/capabilities.py and refused before this layer runs.
     "system_files": {"check": lambda args: str(args.get("operation", "")).lower() not in {"read", "list"}, "message": "Esta operação vai alterar ficheiros no computador. Confirmas?"},
     "system_wifi": {"check": lambda args: str(args.get("action", "")).lower() in {"connect", "disconnect"}, "message": "Vou alterar a ligação Wi-Fi do computador. Confirmas?"},
     "system_bluetooth": {"check": lambda _args: True, "message": "Vou alterar o estado do Bluetooth do computador. Confirmas?"},
@@ -35,27 +40,16 @@ ALWAYS_CONFIRM = {
     "system_kill_process",
 }
 
-_SAFE_POWERSHELL = (
-    r"^(get-date|whoami|hostname|ver|systeminfo|ipconfig(?:\s+/all)?|"
-    r"get-process(?:\s+[^|;&]+)?|get-service(?:\s+[^|;&]+)?|"
-    r"get-childitem(?:\s+[^|;&]+)?|dir(?:\s+[^|;&]+)?|get-location|pwd|"
-    r"echo(?:\s+[^|;&]+)?)$"
-)
+# _SAFE_POWERSHELL and _requires_powershell_confirmation were deleted with the
+# rule above. Between them they encoded an allow-list of "harmless" cmdlets --
+# Get-Process among them, the exact request that exposed this -- for a tool
+# that no longer exists. Nothing in this module classifies a command line now.
 
 
 def _is_form_submit(args: dict) -> bool:
     sel = str(args.get("selector") or "").lower()
     text = str(args.get("text") or "").lower()
     return any(d in sel or d in text for d in ("submit", "comprar", "pagar", "confirmar", "apagar", "eliminar", "deletar", "checkout"))
-
-
-def _requires_powershell_confirmation(args: dict) -> bool:
-    command = str(args.get("command") or "").strip().lower()
-    if not command:
-        return True
-    if any(token in command for token in (";", "&&", "||", "|", ">", "<", "`", "$", "{", "}", "-encodedcommand", "iex", "invoke-expression")):
-        return True
-    return re.fullmatch(_SAFE_POWERSHELL, command, flags=re.IGNORECASE) is None
 
 
 class GuardrailsEngine:
@@ -68,6 +62,13 @@ class GuardrailsEngine:
         self._confirm_callback = cb
 
     def requires_confirmation(self, tool_name: str, args: dict) -> bool:
+        # An unavailable capability is never confirmable. Brain refuses these
+        # before this layer is reached, so this is the second lock on the same
+        # door: any future caller that consults guardrails first is told there
+        # is nothing to ask about, rather than being handed a dialog whose Yes
+        # cannot deliver anything.
+        if capabilities.for_tool(tool_name) is not None:
+            return False
         if tool_name in ALWAYS_CONFIRM:
             return True
         rule = SENSITIVE_TOOLS.get(tool_name)

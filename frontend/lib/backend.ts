@@ -90,6 +90,35 @@ export type TaskCounts = {
   byStatus: Record<string, number>;
 };
 
+/**
+ * The PC page's read-only picture of the machine.
+ *
+ * Every section is nullable ON PURPOSE. The backend probes each one
+ * independently and reports null when it could not read it, so the UI can say
+ * "não consegui ler" instead of rendering a plausible zero. A volume of 0 and
+ * an unknown volume are different facts.
+ */
+export type PcSnapshot = {
+  platform: "windows" | "unsupported";
+  system: {
+    os: string; cpu?: string | null; cpu_percent: number;
+    ram_used_gb: number; ram_total_gb: number; ram_percent: number;
+    uptime_hours?: number; gpu?: string;
+  } | null;
+  volume: { level: number; muted: boolean } | null;
+  storage: { free_gb: number; total_gb: number; count: number } | null;
+  network: { connected: boolean | null; connection_type: string | null } | null;
+  monitors: { number: number; primary: boolean; width: number; height: number }[] | null;
+  activeWindow: { window_id: number; title: string; process: string | null; state: string } | null;
+  windowCount: number | null;
+  applications: { process: string; windows: number }[] | null;
+  recentActions: {
+    action: string; target: string; capability: string;
+    decision: string; risk: string; at: string;
+  }[];
+  unavailable?: Record<string, string>;
+};
+
 export type ActivityEvent = {
   event: string;
   payload: Record<string, any>;

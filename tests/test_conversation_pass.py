@@ -47,14 +47,36 @@ def _tools(*names):
 # PC Control V1 landed, "Abre o Spotify" started routing to the pc_* tools, and
 # a fixture that still listed only system_run_powershell/system_volume (both
 # withdrawn from the model) made the router look broken when it was correct.
+# The same happened again in the V2 audit, when system_files and
+# system_brightness were withdrawn and replaced by pc_file_* and pc_display_*.
 ALL_TOOLS = _tools(
-    "system_stats", "system_files", "system_brightness",
+    "system_stats",
     "web_search", "web_navigate_extract", "remember_fact", "list_facts",
     "calendar_add_event", "set_reminder", "iot_command", "organize_downloads",
-    "pc_app_search", "pc_app_launch", "pc_window_list", "pc_window_close",
-    "pc_volume_get", "pc_volume_set", "pc_system_info", "pc_folder_open",
-    "pc_file_search", "pc_screenshot_capture",
+    "pc_app_search", "pc_app_launch", "pc_app_switch", "pc_window_list",
+    "pc_window_close", "pc_window_snap", "pc_window_center",
+    "pc_volume_get", "pc_volume_set", "pc_system_info", "pc_network_status",
+    "pc_storage_info", "pc_settings_open", "pc_folder_open", "pc_file_search",
+    "pc_file_create_text", "pc_file_recycle", "pc_display_info",
+    "pc_display_set_brightness", "pc_input_type_text", "pc_clipboard_read",
+    "pc_web_open_url", "pc_power_shutdown", "pc_screenshot_capture",
 )
+
+
+def test_the_fixture_registry_only_names_tools_that_really_exist():
+    """The fixture drifting from the real surface is what made it misleading twice.
+
+    Both times, a withdrawn tool left in this list made `select_tools` look
+    broken while it was correct -- and, worse, hid the fact that the real
+    replacement was never being offered. Checked against the live plugin
+    registry so it cannot drift a third time.
+    """
+    from core import plugin_loader
+
+    plugin_loader.load_all_plugins()
+    real = {t["function"]["name"] for t in plugin_loader.get_all_tools()}
+    named = {t["function"]["name"] for t in ALL_TOOLS}
+    assert named <= real, f"the fixture names tools that do not exist: {sorted(named - real)}"
 
 
 # ---------------------------------------------------------------------------

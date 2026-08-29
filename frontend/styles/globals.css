@@ -586,8 +586,18 @@ kbd {
 :root[data-desktop="true"] .shell { -webkit-app-region: drag; }
 :root[data-desktop="true"] .app { -webkit-app-region: no-drag; }
 
-/* AMBIENT GLOW. Wide, dim red radials rising from the bottom corners, exactly
-   as in the approved reference.
+/* AMBIENT EMBER. A hint of warmth along the very bottom edge — nothing more.
+   The canvas is deep black and red is spent on meaning: the active nav
+   indicator, the selected conversation, focus rings, the send button, the
+   logo, permission emphasis, voice state.
+
+   This used to be three wide radials at 0.32/0.28/0.24 alpha covering roughly
+   the bottom half of the window, which read as a backlit gaming chassis rather
+   than as premium desktop software. The alphas are now ~0.06 and the radials
+   are half the height, so the wash is visible as a warm floor and invisible as
+   a colour cast — measured against `--bg-void` (#050303), the brightest pixel
+   this layer contributes is a little over one step of red.
+
    `inset: 0`, NOT a negative inset. A negative inset was measured adding 312 px
    to `.shell`'s scrollHeight at 1920x1080 — an absolutely positioned child
    still counts towards its ancestor's scrollable overflow even when it is
@@ -598,9 +608,9 @@ kbd {
   content: ""; position: absolute; inset: 0;
   z-index: -1; pointer-events: none;
   background:
-    radial-gradient(58% 52% at 4% 104%,  rgba(214, 12, 12, 0.32), transparent 70%),
-    radial-gradient(58% 52% at 96% 104%, rgba(214, 12, 12, 0.28), transparent 70%),
-    radial-gradient(90% 62% at 50% 128%, rgba(140, 8, 8, 0.24), transparent 72%);
+    radial-gradient(52% 26% at 50% 116%, rgba(214, 12, 12, 0.075), transparent 70%),
+    radial-gradient(30% 20% at 4% 110%,  rgba(214, 12, 12, 0.05),  transparent 68%),
+    radial-gradient(30% 20% at 96% 110%, rgba(214, 12, 12, 0.045), transparent 68%);
 }
 
 .app {

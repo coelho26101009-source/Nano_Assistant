@@ -38,7 +38,7 @@ A versão atual usa a interface **Ember**, uma experiência desktop em preto e v
 | **IA local** | Ollama com `qwen3:8b` |
 | **Failover** | Modo AUTO: Groq → Ollama em falhas transitórias/rate limit |
 | **Voz** | Hotkey global, STT local com faster-whisper e TTS |
-| **PC Control** | Apps, janelas, volume, pastas, ficheiros, sistema e screenshots |
+| **PC Control** | Apps, janelas, volume, brilho, teclado, ficheiros, web, definições, energia e capturas |
 | **Segurança** | PolicyEngine + PermissionManager + ToolExecutor + target binding |
 | **Memória** | Persistência local e contexto do utilizador |
 | **Extensibilidade** | Sistema de plugins/tools com autorização centralizada |
@@ -173,40 +173,64 @@ Documentação: [Voice](docs/VOICE.md) · [Speech Accuracy](docs/architecture/SP
 
 ---
 
-## PC Control V1
+## PC Control V2
 
-O Nano já consegue interagir com o Windows através de ferramentas estreitas e auditáveis.
+O Nano interage com o Windows através de **56 ferramentas estreitas e
+auditáveis**. A ideia é sempre a mesma: cobertura larga através de muitas
+capabilities pequenas, nunca através de um executor genérico.
 
 ### Aplicações e janelas
 
-- procurar aplicações instaladas
-- abrir aplicações conhecidas
-- listar janelas
-- focar, minimizar, maximizar e restaurar janelas
-- fechar janelas de forma graciosa
+- procurar e abrir aplicações instaladas — incluindo apps da Microsoft Store
+- mudar para uma aplicação já aberta, e listar o que está aberto
+- focar, minimizar, maximizar, restaurar e fechar janelas
+- mover, redimensionar, centrar e encostar janelas a metades e cantos
+- mandar uma janela para outro monitor, ou mantê-la sempre à frente
+- minimizar, restaurar ou fechar todas as janelas de uma aplicação
 
-### Sistema
+### Som, ecrã e teclado
 
-- consultar e alterar volume
-- mute / unmute
-- abrir pastas conhecidas
+- consultar e alterar volume, mute / unmute
+- reproduzir, pausar e saltar faixas
+- ler e alterar o brilho dos monitores que o suportam
+- escrever texto e usar atalhos numa janela indicada
+- ler, escrever e limpar a área de transferência
+
+### Ficheiros, web e sistema
+
+- abrir pastas conhecidas e documentos seguros
 - pesquisar ficheiros de forma limitada
-- abrir documentos seguros
-- consultar CPU, RAM, disco, GPU, bateria e uptime
-- capturar screenshots com confirmação
+- criar pastas e ficheiros de texto, copiar, mover e mudar nomes
+- enviar ficheiros e pastas para a **Reciclagem** (nunca apagar definitivamente)
+- abrir endereços e pesquisas no navegador predefinido
+- abrir secções das Definições do Windows
+- consultar CPU, RAM, disco, GPU, bateria, ligação e armazenamento
+- bloquear, suspender, reiniciar, desligar ou terminar sessão
+- capturar o ecrã, a janela ativa ou uma janela indicada
 
 Exemplos:
 
 ```text
 Abre a calculadora
-Minimiza a calculadora
+Mete a calculadora à esquerda
+Muda para o Discord
+Escreve "olá" no Bloco de Notas
 Qual é o volume atual?
-Abre a pasta Downloads
-Mostra as janelas abertas
+Baixa o brilho
+Abre as definições de som
+Abre o YouTube
+Cria uma pasta chamada Notas no Ambiente de Trabalho
 Como está a memória do computador?
 ```
 
-O PC Control V1 é **intencionalmente limitado**. Não existe uma tool genérica de PowerShell/CMD/shell exposta ao modelo, nem fallback para terminar processos à força.
+O PC Control é **intencionalmente estreito**. Não existe nenhuma tool genérica
+de PowerShell/CMD/shell exposta ao modelo, não há terminação de processos, não
+há eliminação permanente de ficheiros, e o Nano recusa escrever numa janela de
+consola — abrir um terminal e escrever nele seria uma shell montada a partir de
+duas ações inofensivas.
+
+Ações sensíveis pedem sempre autorização, e o cartão de confirmação mostra o
+que vai acontecer, a quê e com que alcance.
 
 Documentação: [PC Control](docs/architecture/PC_CONTROL.md)
 
@@ -350,6 +374,8 @@ Nano v1.0 ainda está em desenvolvimento ativo.
 - **Start with Windows** depende do fluxo de aplicação empacotada
 - browser automation ainda não faz parte do produto atual
 - PC Control é deliberadamente estreito e não oferece shell arbitrária
+- não há clique por coordenadas nem OCR: o Nano não vê o ecrã, e não finge ver
+- o brilho por software depende do monitor (DDC/CI); onde não existe, é reportado como tal
 - conversas antigas ainda são de leitura, sem threads completas independentes
 - anexos ainda estão marcados como “brevemente”
 - wake phrase permanece experimental/desativada por omissão
@@ -362,8 +388,8 @@ Nano v1.0 ainda está em desenvolvimento ativo.
 
 Próximas áreas de evolução, sem ordem rígida:
 
-- **PC Control V2** — mais aplicações e controlo do Windows mantendo capabilities estreitas
 - **Browser/Web** — pesquisa e automação web segura
+- **Vision / OCR** — ler o ecrã, com controlos de privacidade próprios
 - **Conversation Threads** — histórico real por thread e restauração de contexto
 - **Memory / RAG** — recuperação e contexto mais ricos
 - **Coding / GitHub** — workflows de desenvolvimento assistido

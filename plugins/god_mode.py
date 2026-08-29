@@ -1,209 +1,78 @@
+"""Nano plugin: withdrawn. Kept as the record of what used to be here.
+
+HISTORICALLY "God Mode": arbitrary PowerShell in natural language, plus a
+handful of system helpers built on the same `subprocess.run(["powershell",
+"-Command", <f-string>])` primitive. Every tool it declared has now been
+withdrawn from the model and every function that reached PowerShell has been
+deleted from this file. `get_tools()` returns nothing, so `plugin_loader`
+simply does not register the plugin.
+
+This file still exists because the reasons matter more than the code did, and
+several comments elsewhere point here.
+
+WHY EACH ONE WENT
+-----------------
+
+Withdrawn when PC Control V1 landed:
+
+* ``system_run_powershell`` handed the model a full command line. PC Control's
+  premise is that the model picks a TOOL and TYPED ARGUMENTS which reach a
+  Win32 call as values; a general PowerShell tool defeats every narrow tool
+  next to it, because anything refused elsewhere can be spelled out as a
+  script here.
+* ``system_wifi`` interpolated a model-supplied ``network_name`` straight into
+  a `netsh wlan connect name="{network_name}"` string, so a crafted network
+  name was command injection into that shell.
+* ``system_volume`` was superseded by ``pc_volume_*`` AND was broken: its
+  non-nircmd fallback allocated a buffer, copied bytes into it, changed
+  nothing, and reported success. A tool that reports a result it did not
+  produce is exactly what the real-result contract forbids.
+
+Withdrawn in the PC Control V2 audit:
+
+* ``system_bluetooth`` was a live command-injection sink. Its argument was
+  declared as a boolean, but nothing enforced that, and the value was rendered
+  into the script with ``str(enable).lower()`` -- so a string argument was
+  pasted verbatim into a PowerShell block the model could steer. It is
+  replaced by ``pc_settings_open(section="bluetooth")``, which opens the
+  Windows Settings page and lets the human make the change.
+* ``system_brightness`` built a WMI call as a PowerShell string. It is
+  replaced by ``pc_display_set_brightness`` / ``pc_display_change_brightness``,
+  which talk to the monitor through the documented Monitor Configuration API,
+  validate 0-100, re-read the panel afterwards, and report `unsupported`
+  honestly on hardware that has no software brightness.
+* ``system_files`` was the widest hole left. It could CREATE a file with any
+  extension anywhere the executor's path resolution allowed -- `.bat`, `.ps1`,
+  `.vbs` included -- which made "write a file" a way to author an executable
+  and turned the careful refusal in ``pc_file_open`` into a formality. Its
+  ``move`` was a bare ``Path.rename`` with no protected-path policy of its own
+  and no undo. It is replaced by the ``pc_file_*`` / ``pc_folder_*`` family,
+  where creation is limited to an allow-list of inert text extensions,
+  protected locations are refused, nothing is overwritten, and "delete" means
+  the Recycle Bin.
+
+Restoring any of them would mean re-adding both the declaration in
+``get_tools()`` and the entry in ``TOOL_HANDLERS`` -- and re-introducing a
+PowerShell call site that no longer exists anywhere in this repository's tool
+surface.
+
+THAT LAST SENTENCE WAS FALSE UNTIL THE V2 CHECKPOINT AUDIT. Emptying this file
+removed the PowerShell tools the model could SEE, but ``core/tool_execution.py``
+still registered ``shell.execute``, whose handler ran
+``subprocess.run(["cmd", "/c", <model string>])`` behind an approval dialog.
+``Brain._run_tool`` dispatches whatever tool name the model emits, so being
+unadvertised was never the same as being unreachable. That registration and its
+handler are now deleted, and the capability is declared unavailable in
+``core/capabilities.py``, blocked in ``PolicyEngine`` and refused before any
+confirmation. The sentence above is true now.
 """
-Nano Plugin: legacy system helpers (brightness, bluetooth, files).
 
-HISTORICALLY "God Mode": arbitrary PowerShell in natural language. The
-arbitrary-execution and Wi-Fi tools were withdrawn from the model when PC
-Control V1 landed -- see the note above TOOL_HANDLERS. Volume moved to
-plugins/pc_control.py, which talks to the audio endpoint directly instead of
-generating a script.
-"""
-
-import asyncio
-import logging
-import subprocess
-from pathlib import Path
-from typing import Any
-
-logger = logging.getLogger("helios.plugins.god_mode")
-
-
-def _run_ps(command: str, timeout: int = 15) -> dict:
-    """Executa PowerShell e devolve output."""
-    try:
-        result = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", command],
-            capture_output=True, text=True, timeout=timeout, encoding="utf-8",
-        )
-        return {
-            "stdout":     result.stdout.strip(),
-            "stderr":     result.stderr.strip(),
-            "returncode": result.returncode,
-            "success":    result.returncode == 0,
-        }
-    except subprocess.TimeoutExpired:
-        return {"error": "Timeout — o comando demorou demasiado."}
-    except Exception as exc:
-        return {"error": f"Falha ao executar PowerShell: {exc}"}
-
-
-def run_powershell(command: str) -> dict:
-    """Executa um comando PowerShell arbitrário."""
-    logger.info(f"PowerShell: {command[:100]}")
-    return _run_ps(command)
-
-
-def set_volume(level: int) -> dict:
-    """Define o volume do sistema (0-100)."""
-    level = max(0, min(100, level))
-    ps = f"""
-    $obj = New-Object -ComObject WScript.Shell
-    # Muda para o nível exacto usando nircmd se disponível
-    $nircmd = 'C:\\Program Files\\NirCmd\\nircmd.exe'
-    if (Test-Path $nircmd) {{
-        & $nircmd setsysvolume ([math]::Round({level} / 100 * 65535))
-    }} else {{
-        # Fallback: PowerShell puro (aproximado)
-        $vol = [math]::Round({level} / 100 * 65535)
-        [System.Runtime.InteropServices.Marshal]::Copy(
-            [System.BitConverter]::GetBytes($vol), 0,
-            [System.Runtime.InteropServices.Marshal]::AllocHGlobal(4), 4)
-    }}
-    Write-Output "Volume: {level}%"
-    """
-    return {**_run_ps(ps), "level": level}
-
-
-def set_brightness(level: int) -> dict:
-    """Define o brilho do ecrã (0-100). Requer WMI."""
-    level = max(0, min(100, level))
-    ps = f"(Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightnessMethods).WmiSetBrightness(1,{level})"
-    result = _run_ps(ps)
-    if result.get("success"):
-        result["message"] = f"Brilho definido para {level}%"
-    return result
-
-
-def toggle_bluetooth(enable: bool) -> dict:
-    """Liga ou desliga Bluetooth."""
-    action = "Enable" if enable else "Disable"
-    ps = f"""
-    $radio = [Windows.Devices.Radios.Radio,Windows.System.Devices,ContentType=WindowsRuntime]
-    $radios = [Windows.Devices.Radios.Radio]::GetRadiosAsync().GetAwaiter().GetResult()
-    foreach ($r in $radios) {{
-        if ($r.Kind -eq 'Bluetooth') {{
-            $state = if ({str(enable).lower()}) {{'On'}} else {{'Off'}}
-            $r.SetStateAsync($state).GetAwaiter().GetResult() | Out-Null
-            Write-Output "Bluetooth: $state"
-        }}
-    }}
-    """
-    return _run_ps(ps)
-
-
-def manage_wifi(action: str, network_name: str | None = None) -> dict:
-    """Gere redes Wi-Fi: listar, ligar, desligar."""
-    if action == "list":
-        return _run_ps("netsh wlan show profiles")
-    elif action == "connect" and network_name:
-        return _run_ps(f'netsh wlan connect name="{network_name}"')
-    elif action == "disconnect":
-        return _run_ps("netsh wlan disconnect")
-    elif action == "status":
-        return _run_ps("netsh wlan show interfaces")
-    return {"error": f"Acção Wi-Fi desconhecida: {action}"}
-
-
-def file_operations(operation: str, path: str,
-                    destination: str | None = None,
-                    content: str | None = None) -> dict:
-    """Operações de ficheiros: ler, listar, criar, copiar, mover."""
-    p = Path(path)
-
-    if operation == "read":
-        if not p.exists():
-            return {"error": f"Ficheiro não encontrado: {path}"}
-        try:
-            text = p.read_text(encoding="utf-8", errors="replace")
-            return {"content": text[:10000], "path": str(p), "size_kb": round(p.stat().st_size/1024, 1)}
-        except Exception as exc:
-            return {"error": str(exc)}
-
-    elif operation == "list":
-        if not p.exists():
-            return {"error": f"Pasta não encontrada: {path}"}
-        try:
-            items = [{"name": i.name, "type": "dir" if i.is_dir() else "file",
-                      "size_kb": round(i.stat().st_size/1024, 1) if i.is_file() else None}
-                     for i in sorted(p.iterdir())[:100]]
-            return {"path": str(p), "items": items, "count": len(items)}
-        except Exception as exc:
-            return {"error": str(exc)}
-
-    elif operation == "create" and content is not None:
-        try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(content, encoding="utf-8")
-            return {"success": True, "path": str(p)}
-        except Exception as exc:
-            return {"error": str(exc)}
-
-    elif operation == "copy" and destination:
-        import shutil
-        try:
-            shutil.copy2(str(p), destination)
-            return {"success": True, "from": str(p), "to": destination}
-        except Exception as exc:
-            return {"error": str(exc)}
-
-    elif operation == "move" and destination:
-        try:
-            p.rename(destination)
-            return {"success": True, "from": str(p), "to": destination}
-        except Exception as exc:
-            return {"error": str(exc)}
-
-    return {"error": f"Operação desconhecida: {operation}"}
+from __future__ import annotations
 
 
 def get_tools() -> list[dict]:
-    return [
-        {"type": "function", "function": {
-            "name": "system_brightness",
-            "description": "Define o brilho do ecrã (0-100). Funciona em monitores com suporte WMI.",
-            "parameters": {"type": "object", "required": ["level"], "properties": {
-                "level": {"type": "integer", "minimum": 0, "maximum": 100},
-            }},
-        }},
-        {"type": "function", "function": {
-            "name": "system_bluetooth",
-            "description": "Liga ou desliga o Bluetooth do sistema.",
-            "parameters": {"type": "object", "required": ["enable"], "properties": {
-                "enable": {"type": "boolean"},
-            }},
-        }},
-        {"type": "function", "function": {
-            "name": "system_files",
-            "description": "Operações de ficheiros: ler conteúdo, listar pasta, criar, copiar ou mover.",
-            "parameters": {"type": "object", "required": ["operation","path"], "properties": {
-                "operation":   {"type": "string", "enum": ["read","list","create","copy","move"]},
-                "path":        {"type": "string"},
-                "destination": {"type": "string"},
-                "content":     {"type": "string"},
-            }},
-        }},
-    ]
+    """No tools. See the module docstring for what was here and why it is not."""
+    return []
 
 
-# WITHDRAWN FROM THE MODEL, deliberately. The functions above still exist and
-# still work; they are simply no longer tools the model can call.
-#
-# * system_run_powershell handed the model a full command line. PC Control V1's
-#   security premise is that the model picks a TOOL and typed ARGUMENTS which
-#   reach a Win32 call as values -- a general PowerShell tool defeats every
-#   narrow tool next to it, because anything refused elsewhere can be spelled
-#   out as a script here.
-# * system_wifi interpolated `network_name` straight into a PowerShell string
-#   (`netsh wlan connect name="{network_name}"`), so a crafted network name was
-#   command injection into that shell.
-# * system_volume was superseded by pc_volume_* AND was broken: its non-nircmd
-#   fallback allocates a buffer, copies bytes into it, changes nothing, and
-#   reports success. A tool that reports a result it did not produce is exactly
-#   what the real-result contract forbids.
-#
-# Restoring any of these means re-adding both the declaration in get_tools()
-# and the entry here.
-TOOL_HANDLERS: dict = {
-    "system_brightness":     lambda a: set_brightness(**a),
-    "system_bluetooth":      lambda a: toggle_bluetooth(**a),
-    "system_files":          lambda a: file_operations(**a),
-}
+TOOL_HANDLERS: dict = {}

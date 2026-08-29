@@ -39,10 +39,13 @@ class DesktopAgent(SpecializedAgent):
     def __init__(self):
         super().__init__(
             "DesktopAgent",
-            capabilities=["filesystem.read", "filesystem.write", "filesystem.delete", "process.list", "process.start", "process.stop", "shell.execute", "system.cpu", "system.memory", "system.gpu", "desktop.screenshot"],
-            tools=["filesystem.read_file", "filesystem.write_file", "filesystem.delete_path", "shell.execute", "process.list", "process.start", "desktop.screenshot"],
+            # shell.execute is absent from both lists on purpose: Nano has no
+            # shell, so advertising one here described an agent that could not
+            # exist. See core/capabilities.py.
+            capabilities=["filesystem.read", "filesystem.write", "filesystem.delete", "process.list", "process.start", "process.stop", "system.cpu", "system.memory", "system.gpu", "desktop.screenshot"],
+            tools=["filesystem.read_file", "filesystem.write_file", "filesystem.delete_path", "process.list", "process.start", "desktop.screenshot"],
             supported_task_types=["desktop", "general", "project"],
-            description="Handles local filesystem, shell, and OS tasks with permission-controlled execution.",
+            description="Handles local filesystem and OS tasks with permission-controlled execution. No shell.",
         )
 
 

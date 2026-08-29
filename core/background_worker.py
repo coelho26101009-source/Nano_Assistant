@@ -144,7 +144,12 @@ class BackgroundTaskWorker:
             if path:
                 resolved_path = self._resolve_task_path(path)
                 return [{"tool": "filesystem.delete_path", "args": {"path": resolved_path}, "verification": {"type": "not_exists", "path": resolved_path}}]
-        return [{"tool": "shell.execute", "args": {"command": "pwd", "timeout": 10}, "verification": {"type": "exit_code", "expected": 0}}]
+        # No plan matched. This used to fall back to `shell.execute` running
+        # `pwd` -- a shell call standing in for "I could not work out what to
+        # do", on a capability Nano does not have at all. An unplannable task
+        # is now reported as unplannable: _run_task marks it failed with
+        # "Nenhuma ação executável foi identificada", which is the truth.
+        return []
 
     def _extract_target_path(self, text: str) -> str | None:
         lowered = text.lower()

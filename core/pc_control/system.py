@@ -94,4 +94,109 @@ def info() -> dict:
     return snapshot
 
 
-__all__ = ["info"]
+# --------------------------------------------------------------------------
+#  Network and storage
+#
+#  The same subtraction as `info()` above, applied to two areas where the
+#  identifying data is the DEFAULT output of every library. Deliberately absent
+#  here: MAC addresses, IPv4 and IPv6 addresses, gateways, DNS servers, the
+#  Wi-Fi network name, saved network profiles, and volume serial numbers. None
+#  of them help answer "tenho internet?" or "quanto disco me resta?", all of
+#  them are durable identifiers, and this output is exactly the sort of thing
+#  that ends up pasted into a chat log or sent to a cloud model.
+# --------------------------------------------------------------------------
+
+#: Bounds. A machine can have a surprising number of virtual adapters.
+MAX_INTERFACES = 8
+MAX_VOLUMES = 8
+
+
+def network_status() -> dict:
+    """Whether the machine is connected, and by what kind of link.
+
+    `InternetGetConnectedState` is a LOCAL query -- it reports what Windows
+    already believes about connectivity and sends no traffic to anybody, which
+    is why there is no "reachability probe" here quietly contacting a server on
+    the user's behalf. That also means it answers "is there a connection",
+    not "does the internet work"; the result says so rather than overclaiming.
+    """
+    import psutil
+
+    from core.pc_control import winapi
+
+    snapshot: dict = {"connected": None, "connection_type": None,
+                      "interfaces": [], "note": None}
+
+    if winapi.IS_WINDOWS:
+        try:
+            connected, flags = winapi.internet_connection()
+            kinds = []
+            if flags & winapi.INTERNET_CONNECTION_LAN:
+                kinds.append("cabo/rede local")
+            if flags & winapi.INTERNET_CONNECTION_MODEM:
+                kinds.append("modem")
+            if flags & winapi.INTERNET_CONNECTION_PROXY:
+                kinds.append("proxy")
+            snapshot["connected"] = connected
+            snapshot["connection_type"] = ", ".join(kinds) or None
+        except Exception:
+            logger.debug("connectivity query failed", exc_info=True)
+
+    try:
+        for name, stats in list(psutil.net_if_stats().items()):
+            if len(snapshot["interfaces"]) >= MAX_INTERFACES:
+                break
+            if "loopback" in name.lower():
+                continue
+            snapshot["interfaces"].append({
+                "name": name,
+                "up": bool(stats.isup),
+                "speed_mbps": int(stats.speed) or None,
+            })
+    except Exception:
+        logger.debug("interface enumeration failed", exc_info=True)
+
+    snapshot["note"] = ("Estado local da ligação, tal como o Windows o reporta. "
+                        "Não foi contactado nenhum servidor para o confirmar.")
+    return snapshot
+
+
+def storage_info() -> dict:
+    """Space on every fixed volume. No serial numbers, no volume identifiers."""
+    import psutil
+
+    volumes = []
+    total_bytes = used_bytes = 0
+    try:
+        partitions = psutil.disk_partitions(all=False)
+    except Exception:
+        logger.debug("partition enumeration failed", exc_info=True)
+        partitions = []
+
+    for partition in partitions[:MAX_VOLUMES]:
+        try:
+            usage = psutil.disk_usage(partition.mountpoint)
+        except OSError:
+            # A card reader with no card, or a disconnected network drive.
+            continue
+        total_bytes += usage.total
+        used_bytes += usage.used
+        volumes.append({
+            "drive": partition.device,
+            "filesystem": partition.fstype or None,
+            "total_gb": round(usage.total / (1024 ** 3), 1),
+            "used_gb": round(usage.used / (1024 ** 3), 1),
+            "free_gb": round(usage.free / (1024 ** 3), 1),
+            "percent_used": usage.percent,
+        })
+
+    return {
+        "volumes": volumes,
+        "count": len(volumes),
+        "total_gb": round(total_bytes / (1024 ** 3), 1),
+        "used_gb": round(used_bytes / (1024 ** 3), 1),
+        "free_gb": round((total_bytes - used_bytes) / (1024 ** 3), 1),
+    }
+
+
+__all__ = ["MAX_INTERFACES", "MAX_VOLUMES", "info", "network_status", "storage_info"]

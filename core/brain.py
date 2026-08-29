@@ -20,7 +20,7 @@ from core.guardrails import GuardrailsEngine
 from core.memory import MemoryEngine
 from core.errors import ToolExecutionError, GuardrailError
 from core.model_router import ModelRequest, ModelRouter, PrivacyLevel, TaskType
-from core import model_selection, provider_failures, provider_status, providers
+from core import capabilities, model_selection, provider_failures, provider_status, providers
 from core.trust import TRUST_BOUNDARY_SYSTEM_RULES, TrustLevel, wrap_untrusted
 
 logger = logging.getLogger("nano.brain")
@@ -383,11 +383,20 @@ class Brain:
         no tool is offered and no tool output exists in the history — that is,
         when there is no channel for external content to reach the model. They
         are never dropped to save tokens on a turn that can touch a tool.
+
+        The capability-awareness block is the counterweight to NANO_TOOL_RULES.
+        Those rules describe the approval pathway, which on its own taught the
+        model that anything systemic can be confirmed into existence -- hence
+        "Precisamos de confirmar... Pretende prosseguir?" for a PowerShell
+        request Nano has no way to serve. core.capabilities names what does not
+        exist, and only on turns that ask for it, so an ordinary "abre o
+        Spotify" pays nothing for it.
         """
         parts = [NANO_PERSONA]
         if with_tools or self._history_has_external_content():
             parts.append(NANO_TOOL_RULES)
             parts.append(TRUST_BOUNDARY_SYSTEM_RULES)
+        parts.append(capabilities.grounding_block(user_message))
         parts.append(self._facts_block())
         # Small talk never needs a document lookup, and the retrieval itself
         # costs a vector search on every "olá".
@@ -860,10 +869,60 @@ class Brain:
         except Exception:
             logger.exception("Falha ao sincronizar ferramentas de plugin")
 
-    @staticmethod
-    def _call_fingerprint(name: str, args: dict) -> str:
+    #: Arguments that name a place on disk. Windows paths are case-insensitive
+    #: and tolerate mixed separators, so two spellings of one file must produce
+    #: one ledger key -- otherwise a provider failover could recycle the same
+    #: file twice by writing it differently the second time.
+    _PATH_ARGUMENTS = frozenset({"path", "source", "destination", "dest", "src",
+                                 "cwd", "target_path", "roots"})
+
+    #: Arguments that are enums the handlers lower-case anyway. "Left" and
+    #: "left" are one call, and the ledger has to agree.
+    _ENUM_ARGUMENTS = frozenset({"key", "hotkey", "action", "section", "position",
+                                 "state", "direction", "mode", "engine", "app"})
+
+    @classmethod
+    def _canonical_arguments(cls, args: dict) -> dict:
+        """Normalise arguments so one EFFECT has exactly one ledger identity.
+
+        `(tool_name, arguments)` was enough for V1, whose arguments were mostly
+        window ids and integers. V2 added calls whose arguments can be spelled
+        several ways for the same effect -- a path written with forward slashes
+        and the same path written with backslashes and a different case are the
+        same file, `"Left"` and `"left"` are the same snap -- and the
+        duplicate-execution ledger keys on this string. Two
+        spellings would be two keys, which is precisely the hole the ledger
+        exists to close.
+
+        Deliberately shallow and boring: strip, case-fold the enums, normalise
+        the paths, drop the nulls. It must never merge two calls that would do
+        different things, so nothing here rewrites a value's meaning.
+        """
+        import os
+
+        canonical: dict = {}
+        for key, value in args.items():
+            if value is None:
+                # An absent argument and an explicit null reach the handler
+                # identically, so they must not be two different calls.
+                continue
+            if isinstance(value, str):
+                value = value.strip()
+                if key in cls._ENUM_ARGUMENTS:
+                    value = value.casefold()
+                elif key in cls._PATH_ARGUMENTS and value:
+                    try:
+                        value = os.path.normcase(os.path.normpath(value))
+                    except (TypeError, ValueError):
+                        pass
+            canonical[key] = value
+        return canonical
+
+    @classmethod
+    def _call_fingerprint(cls, name: str, args: dict) -> str:
         """A stable identity for "this exact tool call, with these arguments"."""
-        return json.dumps({"n": name, "a": args}, sort_keys=True, ensure_ascii=False)
+        return json.dumps({"n": str(name).strip(), "a": cls._canonical_arguments(args)},
+                          sort_keys=True, ensure_ascii=False)
 
     async def _run_tool(self, tool_call) -> dict:
         if isinstance(tool_call, dict):
@@ -892,6 +951,18 @@ class Brain:
             return {"ok": False, "cancelled": True, "message": "Execução indisponível: falta a autoridade central."}
 
         self._sync_plugin_tools(name)
+
+        # A capability Nano does not have is refused HERE, before guardrails,
+        # before the executor and therefore before any confirmation dialog.
+        # Order is the whole point: asking "Confirmas?" for a tool that cannot
+        # exist tells the person their Yes is what is missing, when in fact
+        # nothing they can do would make the call possible. The model gets the
+        # explanation back as the tool result, so it relays the truth instead
+        # of inventing an approval flow. See core/capabilities.py.
+        unsupported = capabilities.for_tool(name)
+        if unsupported is not None:
+            logger.warning("Tool %s refused: %s is not a Nano capability", name, unsupported.id)
+            return capabilities.refusal(unsupported, tool=name)
 
         # Guardrails stay as the human-readable layer in front of the policy
         # pipeline; the executor below re-checks everything independently.
@@ -973,6 +1044,52 @@ class Brain:
             return json.dumps(output, ensure_ascii=False)
         return str(output or "")
 
+    @staticmethod
+    def _ollama_tool_calls(calls) -> list[dict]:
+        """Re-shape OpenAI-format tool calls for Ollama's /api/chat.
+
+        THE TWO PROVIDERS DISAGREE ABOUT ONE FIELD. Groq speaks the OpenAI wire
+        format, where `function.arguments` is a JSON **string**; Ollama decodes
+        that field into a map and rejects a string outright:
+
+            HTTP 400 {"error":"Value looks like object, but can't find
+                      closing '}' symbol"}
+
+        Nano's history holds the Groq shape, because that is what has to go
+        back to Groq. So the conversion happens HERE, on the way out to the
+        local model, and the stored history is left alone.
+
+        The consequence of not doing this was not a visible error. The request
+        failed, the caller fell into the no-tools branch, and the local model
+        answered without any tools for the rest of the conversation -- so PC
+        Control simply stopped working after the first Groq tool call, and the
+        model filled the gap with plausible-sounding advice.
+
+        A call whose arguments cannot be parsed is DROPPED rather than sent as
+        `{}`: an empty argument map invites the local model to re-issue the call
+        with arguments of its own invention, and that is a second, different
+        call the per-turn ledger would not recognise as a repeat.
+        """
+        shaped: list[dict] = []
+        for call in calls or []:
+            function = (call or {}).get("function") if isinstance(call, dict) else None
+            if not isinstance(function, dict) or not function.get("name"):
+                continue
+            arguments = function.get("arguments")
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments or "{}")
+                except (json.JSONDecodeError, ValueError):
+                    logger.warning(
+                        "Dropping a tool call for the local model: its arguments "
+                        "are not valid JSON.")
+                    continue
+            if not isinstance(arguments, dict):
+                continue
+            shaped.append({"function": {"name": str(function["name"]),
+                                        "arguments": arguments}})
+        return shaped
+
     async def _ollama_fallback(self, message: str, reason: str = "",
                                system_prompt: str | None = None,
                                *, continue_turn: bool = False) -> AsyncIterator[str]:
@@ -1004,7 +1121,12 @@ class Brain:
             if r in ("user", "assistant", "tool"):
                 msg_obj = {"role": r, "content": m.get("content") or ""}
                 if m.get("tool_calls"):
-                    msg_obj["tool_calls"] = m["tool_calls"]
+                    # Converted, not copied: see _ollama_tool_calls. Copying the
+                    # Groq shape here is what made every local turn after a
+                    # cloud tool call fail with HTTP 400 and silently lose tools.
+                    shaped = self._ollama_tool_calls(m["tool_calls"])
+                    if shaped:
+                        msg_obj["tool_calls"] = shaped
                 local_messages.append(msg_obj)
 
         if not continue_turn and (not local_messages

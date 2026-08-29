@@ -182,7 +182,10 @@ def test_malicious_page_cannot_unlock_dotenv_or_shell(workspace, manager):
     classify_external(MALICIOUS_PAGE, source="https://evil.example")
 
     assert executor.execute_tool("filesystem.read_file", {"path": ".env"})["status"] == "permission_denied"
-    assert executor.execute_tool("shell.execute", {"command": "setup"})["status"] == "permission_denied"
+    # The shell the page is fishing for is not merely unapproved: it does not
+    # exist, so the injected instruction has nothing to unlock even in
+    # principle.
+    assert executor.execute_tool("shell.execute", {"command": "setup"})["status"] == "unsupported_capability"
 
 
 def test_executor_marks_external_output_as_untrusted(workspace, manager, monkeypatch):

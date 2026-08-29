@@ -23,11 +23,13 @@ _RISK_CRITICAL_TOKENS = frozenset({
     "delete", "format", "kill", "registry", "credential", "credentials",
     "secret", "secrets", "password", "payment", "purchase", "financial",
     "transaction", "destroy", "wipe",
+    "recycle", "shutdown", "restart", "logoff", "reboot",
 })
 _RISK_HIGH_TOKENS = frozenset({
     "write", "move", "copy", "install", "network", "wifi", "bluetooth",
     "volume", "brightness", "submit", "push", "reset", "shell", "powershell",
     "execute", "start", "system",
+    "close", "clipboard", "type",
 })
 _RISK_MEDIUM_TOKENS = frozenset({
     "git", "browser", "web", "file", "filesystem", "calendar", "reminder",
@@ -61,6 +63,12 @@ class PermissionDecision:
 
 
 # Capabilities that always require explicit confirmation per execution.
+#
+# The PC Control V2 entries are BELT AND BRACES. Each one already carries a
+# HIGH or CRITICAL risk in PolicyEngine's rule table, which is what actually
+# raises the prompt; listing them here too means the gate survives someone
+# relaxing a risk level, and it is what makes ToolExecutor mark the registry
+# entry `requires_confirmation` for the tools built from them.
 _APPROVAL_GATED_CAPABILITIES = frozenset({
     "filesystem.delete",
     "filesystem.write",
@@ -75,6 +83,27 @@ _APPROVAL_GATED_CAPABILITIES = frozenset({
     "browser.submit",
     "browser.interact",
     "system",
+    # --- PC Control V2 ---------------------------------------------------
+    "pc.window.close",
+    "pc.window.batch_close",
+    "pc.screen.capture",
+    "pc.clipboard.read",
+    "pc.clipboard.write",
+    "pc.clipboard.clear",
+    "pc.input.type",
+    "pc.input.key_destructive",
+    "pc.folder.create",
+    "pc.file.create",
+    "pc.file.copy",
+    "pc.file.move",
+    "pc.file.rename",
+    "pc.file.recycle",
+    "pc.folder.recycle",
+    "pc.session.lock",
+    "pc.power.sleep",
+    "pc.power.restart",
+    "pc.power.shutdown",
+    "pc.session.logoff",
 })
 
 # How long an approved-but-unconsumed ALLOW_ONCE grant stays valid.
@@ -92,13 +121,30 @@ _APPROVAL_GATED_CAPABILITIES = frozenset({
 ONCE_GRANT_TTL_SECONDS = 90.0
 
 # Critical capabilities: never allow persistent/autonomous bypass.
+#
+# Membership has one concrete consequence beyond the prompt: `resolve_permission`
+# REFUSES an ALLOW_FOR_TASK grant for these, so only ALLOW_ONCE can authorise
+# them. That is the rule "no task-level broad grant may silently allow a future
+# shutdown" -- approving one restart cannot become approving restarts for the
+# rest of the task, and the same holds for every recycle.
 _CRITICAL_CAPABILITIES = frozenset({
     "filesystem.delete",
     "process.kill",
     "git.destructive",
     "financial.transaction",
     "credential.write",
+    "pc.file.recycle",
+    "pc.folder.recycle",
+    "pc.power.restart",
+    "pc.power.shutdown",
+    "pc.session.logoff",
 })
+
+# Keys whose effect destroys the user's content rather than moving a cursor.
+# The source of truth is core.pc_control.keyboard.DESTRUCTIVE_KEYS; it is
+# duplicated here rather than imported so the security core never depends on
+# the Windows layer, and tests/test_pc_control_v2.py asserts the two agree.
+_DESTRUCTIVE_KEYS = frozenset({"delete", "backspace"})
 
 
 class PermissionManager:
@@ -141,7 +187,13 @@ class PermissionManager:
         return self._canonical_capability(capability) in _CRITICAL_CAPABILITIES
 
     def resolve_tool_capability(self, tool_name: str, args: dict | None = None) -> str:
-        """Map a plugin/tool name to the canonical policy capability."""
+        """Map a plugin/tool name to the canonical policy capability.
+
+        A few tools mean genuinely different things depending on one argument,
+        and collapsing them onto a single capability would gate the dangerous
+        case at the safe case's risk level. Pressing Right-Arrow and pressing
+        Delete are the same TOOL and are not the same ACTION.
+        """
         args = args or {}
         if tool_name == "system_files":
             operation = str(args.get("operation", "")).lower()
@@ -150,11 +202,24 @@ class PermissionManager:
             if operation in {"read", "list"}:
                 return "filesystem.read"
             return "filesystem.write"
+        if tool_name == "pc_input_press_key":
+            if str(args.get("key", "")).strip().lower() in _DESTRUCTIVE_KEYS:
+                return "pc.input.key_destructive"
+            return "pc.input.key"
         return self._canonical_capability(tool_name)
 
     def _resolve_target(self, args: dict | None) -> str | None:
+        """The thing a grant binds to, most specific first.
+
+        `_pc_target` leads because it is the only key that can describe an
+        action with more than one target -- a move has a source and a
+        destination, and binding to the source alone would let one approval
+        cover a different destination. It is written by ToolExecutor after
+        argument resolution and is stripped from anything the model sent, so it
+        cannot be forged.
+        """
         args = args or {}
-        for key in ("path", "target", "url", "command", "cwd"):
+        for key in ("_pc_target", "path", "target", "url", "command", "cwd"):
             value = args.get(key)
             if value not in (None, ""):
                 return str(value)
@@ -631,7 +696,12 @@ class PermissionManager:
         """
         import asyncio
 
-        result, prepared = self._confirmation_precheck(action_name, args, task_id)
+        # `context` carries the resolved execution scope. Dropping it here made
+        # the async path evaluate every call at an unresolved scope, so the two
+        # confirmation paths could reach different decisions for the same call
+        # -- and a task grant recorded under one scope was invisible to the
+        # other, silently re-prompting for something already approved.
+        result, prepared = self._confirmation_precheck(action_name, args, task_id, context)
         if result is not None:
             return result
 

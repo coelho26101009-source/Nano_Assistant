@@ -37,11 +37,27 @@ WINDOWS_ONLY = pytest.mark.skipif(
 )
 
 PC_TOOLS = (
-    "pc_app_search", "pc_app_launch", "pc_window_list", "pc_window_focus",
-    "pc_window_minimize", "pc_window_maximize", "pc_window_restore",
-    "pc_window_close", "pc_volume_get", "pc_volume_set", "pc_volume_change",
-    "pc_volume_mute", "pc_volume_unmute", "pc_folder_open", "pc_file_search",
-    "pc_file_open", "pc_system_info", "pc_screenshot_capture",
+    "pc_app_search", "pc_app_launch", "pc_app_switch", "pc_app_list_running",
+    "pc_window_list", "pc_window_focus", "pc_window_minimize",
+    "pc_window_maximize", "pc_window_restore", "pc_window_close",
+    "pc_window_move", "pc_window_resize", "pc_window_center", "pc_window_snap",
+    "pc_window_move_monitor", "pc_window_set_topmost",
+    "pc_window_batch_state", "pc_window_batch_close",
+    "pc_volume_get", "pc_volume_set", "pc_volume_change",
+    "pc_volume_mute", "pc_volume_unmute", "pc_media_control",
+    "pc_display_info", "pc_display_set_brightness", "pc_display_change_brightness",
+    "pc_clipboard_read", "pc_clipboard_write", "pc_clipboard_clear",
+    "pc_input_type_text", "pc_input_press_key", "pc_input_hotkey",
+    "pc_pointer_scroll",
+    "pc_folder_open", "pc_file_search", "pc_file_open",
+    "pc_folder_create", "pc_file_create_text",
+    "pc_file_copy", "pc_file_move", "pc_file_rename",
+    "pc_file_recycle", "pc_folder_recycle",
+    "pc_web_open_url", "pc_web_search", "pc_settings_open",
+    "pc_system_info", "pc_network_status", "pc_storage_info",
+    "pc_session_lock", "pc_power_sleep", "pc_power_restart",
+    "pc_power_shutdown", "pc_session_logoff",
+    "pc_screenshot_capture",
 )
 
 
@@ -610,21 +626,76 @@ def test_no_arbitrary_execution_tool_is_exposed_to_the_model():
         assert forbidden not in names, f"{forbidden} is exposed to the model"
 
 
-def test_pc_control_v1_ships_no_destructive_filesystem_tool():
+def test_pc_control_ships_no_permanent_delete_and_no_process_control():
+    """The property that survives V2, asserted from behaviour and the AST.
+
+    V1 could assert this by name -- there was simply no file-mutation tool at
+    all. V2 ships move, rename, copy and recycle, so a name list is no longer
+    the contract. The contract is that REMOVAL MEANS THE RECYCLE BIN and that
+    no process can be terminated: no `unlink`, no `rmdir`, no `rmtree`, no
+    `terminate`, anywhere in the package.
+    """
+    forbidden_calls = {"unlink", "rmdir", "rmtree", "remove", "removedirs",
+                       "terminate", "kill", "TerminateProcess"}
+    # ONE exemption, and it is narrow enough to state exactly: screen.cleanup
+    # deletes NANO'S OWN expired captures out of Nano's own data directory. It
+    # is not a tool, the model cannot reach it, and it is asserted below to
+    # look nowhere else. Every other occurrence anywhere in the package is a
+    # failure.
+    allowed = {("screen.py", "cleanup", "unlink")}
+    for source in _python_sources():
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        for function in ast.walk(tree):
+            if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for node in ast.walk(function):
+                if not isinstance(node, ast.Call):
+                    continue
+                called = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
+                if called not in forbidden_calls:
+                    continue
+                assert (source.name, function.name, called) in allowed, (
+                    f"{source.name}.{function.name} calls {called}(), which can "
+                    f"destroy the user's data permanently or stop a process"
+                )
+
+    # The exemption, proved rather than assumed: cleanup only ever enumerates
+    # Nano's own screenshot directory, so its unlink cannot reach a user file.
+    cleanup_source = ast.parse((PC_PACKAGE / "screen.py").read_text(encoding="utf-8"))
+    cleanup = next(node for node in ast.walk(cleanup_source)
+                   if isinstance(node, ast.FunctionDef) and node.name == "cleanup")
+    globs = [node for node in ast.walk(cleanup)
+             if isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "glob"]
+    assert globs, "screen.cleanup no longer enumerates by glob; re-check its scope"
+    for call in globs:
+        assert getattr(call.func.value, "id", None) == "SCREENSHOT_DIR", (
+            "screen.cleanup enumerates something other than SCREENSHOT_DIR"
+        )
+        assert call.args and getattr(call.args[0], "value", "").startswith("screenshot-"), (
+            "screen.cleanup no longer restricts itself to Nano's own captures"
+        )
+
     plugin_loader.load_all_plugins()
     names = {t["function"]["name"] for t in plugin_loader.get_all_tools()
              if t["function"]["name"].startswith("pc_")}
-    for forbidden in ("pc_file_delete", "pc_folder_delete", "pc_file_move",
-                      "pc_file_rename", "pc_file_write", "pc_process_kill",
-                      "pc_system_shutdown", "pc_registry_write"):
+    for forbidden in ("pc_file_delete", "pc_folder_delete", "pc_file_erase",
+                      "pc_process_kill", "pc_process_list", "pc_registry_write",
+                      "pc_service_control", "pc_install"):
         assert forbidden not in names
 
 
-def test_the_pc_tool_surface_is_exactly_the_declared_eighteen():
+def test_the_pc_tool_surface_is_exactly_the_declared_set():
+    """Every PC tool is declared here, and every name here is a real tool.
+
+    Pinning the exact SET rather than a count is what makes this a guard: a
+    tool added to plugins/pc_control.py without a line in PC_TOOLS fails, and
+    so does a name here that no longer exists.
+    """
     plugin_loader.load_all_plugins()
     names = {t["function"]["name"] for t in plugin_loader.get_all_tools()
              if t["function"]["name"].startswith("pc_")}
     assert names == set(PC_TOOLS)
+    assert len(PC_TOOLS) == len(set(PC_TOOLS)), "PC_TOOLS lists a name twice"
 
 
 # --------------------------------------------------------------------------
@@ -745,14 +816,34 @@ def test_the_full_calculator_lifecycle_through_the_executor(executor):
         pytest.skip("the Calculator window did not appear on this host")
 
     window_id = window["window_id"]
+    # The state BEFORE minimising is what restore has to return the window to.
+    # Asserting a fixed "normal" here assumed the Calculator was never left
+    # maximised by an earlier session, a user, or another test -- and when it
+    # was, this test failed while the code was correct.
+    state_before = window["state"]
+    if state_before == "minimized":
+        assert executor.execute_tool(
+            "pc_window_restore", {"window_id": window_id})["success"] is True
+        state_before = next(
+            w["state"] for w in executor.execute_tool("pc_window_list", {})["output"]["windows"]
+            if w["window_id"] == window_id)
     try:
         minimized = executor.execute_tool("pc_window_minimize", {"window_id": window_id})
         assert minimized["success"] is True
         assert minimized["output"]["status"] == "minimized"
 
         restored = executor.execute_tool("pc_window_restore", {"window_id": window_id})
-        assert restored["success"] is True
-        assert restored["output"]["status"] == "normal"
+        if state_before == "maximized":
+            # Windows restores a maximised window to maximised. `restore`
+            # reports state_unchanged because it asked for "normal" and got
+            # "maximized" -- an honest result, and the window IS back.
+            state_now = next(
+                w["state"] for w in executor.execute_tool("pc_window_list", {})["output"]["windows"]
+                if w["window_id"] == window_id)
+            assert state_now == "maximized", state_now
+        else:
+            assert restored["success"] is True
+            assert restored["output"]["status"] == "normal"
     finally:
         closed = executor.execute_tool("pc_window_close", {"window_id": window_id})
         assert closed["success"] is True

@@ -218,15 +218,35 @@ def post_close(hwnd: int) -> bool:
     return bool(_user32().PostMessageW(hwnd, WM_CLOSE, 0, 0))
 
 
-def screen_size() -> tuple[int, int]:
-    user32 = _user32()
+_dpi_awareness_set = False
+
+
+def ensure_dpi_awareness() -> None:
+    """Declare per-monitor DPI awareness once, before any geometry is read.
+
+    Without it Windows lies to the process about every coordinate on a scaled
+    display: GetWindowRect and GetMonitorInfo come back in virtualised pixels,
+    so a window "moved to the right half" lands somewhere else entirely. It is
+    process-wide and idempotent, so it is done once and then never again --
+    calling it repeatedly is harmless but the second call always fails, and a
+    failure here must not look like a problem.
+    """
+    global _dpi_awareness_set
+    if _dpi_awareness_set or not IS_WINDOWS:
+        return
     try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)      # PER_MONITOR_DPI_AWARE
     except Exception:
         try:
-            user32.SetProcessDPIAware()
+            ctypes.windll.user32.SetProcessDPIAware()
         except Exception:
-            pass
+            logger.debug("could not set DPI awareness", exc_info=True)
+    _dpi_awareness_set = True
+
+
+def screen_size() -> tuple[int, int]:
+    user32 = _user32()
+    ensure_dpi_awareness()
     return int(user32.GetSystemMetrics(0)), int(user32.GetSystemMetrics(1))
 
 
@@ -475,30 +495,781 @@ class AudioEndpoint:
             raise OSError("could not change the mute state")
 
 
+
+# ==========================================================================
+#  PC CONTROL V2 -- additional Win32 primitives
+#
+#  Everything below follows the same rule as everything above: a typed Win32
+#  call, never a command line. Each block is grouped by the DLL it talks to, so
+#  the whole surface Nano can actually reach is readable in one pass.
+# ==========================================================================
+
+# --------------------------------------------------------------------------
+#  user32 / monitors and window geometry
+# --------------------------------------------------------------------------
+
+MONITORINFOF_PRIMARY = 0x00000001
+
+HWND_TOPMOST = -1
+HWND_NOTOPMOST = -2
+
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
+
+WS_EX_TOPMOST = 0x00000008
+
+MONITOR_DEFAULTTONEAREST = 2
+
+
+class _MONITORINFOEXW(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("rcMonitor", wintypes.RECT),
+        ("rcWork", wintypes.RECT),
+        ("dwFlags", wintypes.DWORD),
+        ("szDevice", ctypes.c_wchar * 32),
+    ]
+
+
+def _rect_tuple(rect) -> tuple[int, int, int, int]:
+    return (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom))
+
+
+def window_rect(hwnd: int) -> tuple[int, int, int, int]:
+    """(left, top, right, bottom) in virtual-desktop coordinates."""
+    user32 = _user32()
+    ensure_dpi_awareness()
+    rect = wintypes.RECT()
+    if not user32.GetWindowRect(wintypes.HWND(hwnd), byref(rect)):
+        raise OSError("GetWindowRect failed")
+    return _rect_tuple(rect)
+
+
+def set_window_position(hwnd: int, x: int, y: int, width: int, height: int) -> bool:
+    """Move and size one window. The caller has already validated the geometry.
+
+    SWP_NOZORDER | SWP_NOACTIVATE on purpose: moving a window must not also
+    raise it above everything else or steal the user's keyboard focus.
+    """
+    user32 = _user32()
+    ensure_dpi_awareness()
+    return bool(user32.SetWindowPos(
+        wintypes.HWND(hwnd), None, int(x), int(y), int(width), int(height),
+        SWP_NOZORDER | SWP_NOACTIVATE,
+    ))
+
+
+def set_window_topmost(hwnd: int, topmost: bool) -> bool:
+    user32 = _user32()
+    insert_after = HWND_TOPMOST if topmost else HWND_NOTOPMOST
+    return bool(user32.SetWindowPos(
+        wintypes.HWND(hwnd), wintypes.HWND(insert_after), 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+    ))
+
+
+def is_window_topmost(hwnd: int) -> bool:
+    """Read the style back rather than trusting SetWindowPos's return value."""
+    return bool(window_ex_style(hwnd) & WS_EX_TOPMOST)
+
+
+def enum_monitors() -> list[dict]:
+    """Every physical display, with its full rect and its WORK AREA.
+
+    The work area excludes the taskbar, which is why snapping uses it: a window
+    snapped to the monitor rect sits partly underneath the taskbar.
+    """
+    user32 = _user32()
+    ensure_dpi_awareness()
+    found: list[dict] = []
+    proc = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HMONITOR, wintypes.HDC,
+                              POINTER(wintypes.RECT), wintypes.LPARAM)
+
+    def _thunk(handle, _hdc, _lprect, _lparam):
+        try:
+            info = _MONITORINFOEXW()
+            info.cbSize = ctypes.sizeof(_MONITORINFOEXW)
+            if user32.GetMonitorInfoW(handle, byref(info)):
+                found.append({
+                    "handle": int(handle),
+                    "device": str(info.szDevice),
+                    "bounds": _rect_tuple(info.rcMonitor),
+                    "work_area": _rect_tuple(info.rcWork),
+                    "primary": bool(int(info.dwFlags) & MONITORINFOF_PRIMARY),
+                })
+        except Exception:
+            logger.debug("monitor enumeration entry failed", exc_info=True)
+        return True
+
+    user32.EnumDisplayMonitors(None, None, proc(_thunk), 0)
+    return found
+
+
+def monitor_handle_for_window(hwnd: int) -> int:
+    user32 = _user32()
+    _configure_handle_signatures()
+    return int(user32.MonitorFromWindow(wintypes.HWND(hwnd),
+                                        MONITOR_DEFAULTTONEAREST) or 0)
+
+
+# --------------------------------------------------------------------------
+#  user32 / SendInput
+#
+#  THE INPUT SURFACE IS TYPED, NOT A STRING.
+#
+#  There is no function here that takes "a key sequence". Text is sent as
+#  UNICODE CHARACTERS (KEYEVENTF_UNICODE), which needs no scan-code table and
+#  cannot express a chord at all; a chord is sent by `press_chord`, which takes
+#  a virtual-key code plus modifier codes that the CALLER already checked
+#  against its own allow-list. A caller holding a key Nano does not support has
+#  nowhere to put it.
+# --------------------------------------------------------------------------
+
+INPUT_MOUSE = 0
+INPUT_KEYBOARD = 1
+
+KEYEVENTF_EXTENDEDKEY = 0x0001
+KEYEVENTF_KEYUP = 0x0002
+KEYEVENTF_UNICODE = 0x0004
+KEYEVENTF_SCANCODE = 0x0008
+
+MAPVK_VK_TO_VSC = 0
+
+#: Virtual keys that live on the extended part of the keyboard. Injected
+#: without KEYEVENTF_EXTENDEDKEY they arrive as their NUMPAD twins, which is a
+#: different key to any application that tells the two apart -- an arrow that
+#: moves nothing, a Delete that does not delete.
+_EXTENDED_KEYS = frozenset({
+    0x21, 0x22, 0x23, 0x24,          # PageUp, PageDown, End, Home
+    0x25, 0x26, 0x27, 0x28,          # Left, Up, Right, Down
+    0x2D, 0x2E,                      # Insert, Delete
+    0x5B, 0x5C,                      # Left/Right Win
+    0x90, 0xA3, 0xA5, 0x6F, 0x2C,    # NumLock, RCtrl, RAlt, Divide, PrintScreen
+})
+
+MOUSEEVENTF_WHEEL = 0x0800
+MOUSEEVENTF_HWHEEL = 0x1000
+WHEEL_DELTA = 120
+
+_ULONG_PTR = ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong
+
+
+class _KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        ("wVk", wintypes.WORD), ("wScan", wintypes.WORD),
+        ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD),
+        ("dwExtraInfo", _ULONG_PTR),
+    ]
+
+
+class _MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", ctypes.c_long), ("dy", ctypes.c_long),
+        ("mouseData", wintypes.DWORD), ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD), ("dwExtraInfo", _ULONG_PTR),
+    ]
+
+
+class _HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [("uMsg", wintypes.DWORD), ("wParamL", wintypes.WORD),
+                ("wParamH", wintypes.WORD)]
+
+
+class _INPUTUNION(ctypes.Union):
+    _fields_ = [("ki", _KEYBDINPUT), ("mi", _MOUSEINPUT), ("hi", _HARDWAREINPUT)]
+
+
+class _INPUT(ctypes.Structure):
+    _anonymous_ = ("u",)
+    _fields_ = [("type", wintypes.DWORD), ("u", _INPUTUNION)]
+
+
+def _send(events: list) -> int:
+    """Inject a batch of input events. Returns how many Windows accepted."""
+    user32 = _user32()
+    if not events:
+        return 0
+    array = (_INPUT * len(events))(*events)
+    return int(user32.SendInput(len(events), array, ctypes.sizeof(_INPUT)))
+
+
+def _utf16_units(character: str) -> list[int]:
+    encoded = character.encode("utf-16-le", "ignore")
+    return [int.from_bytes(encoded[i:i + 2], "little")
+            for i in range(0, len(encoded), 2)]
+
+
+def _key_event(vk: int, *, up: bool, unicode_char: int | None = None):
+    """One keyboard event, shaped the way a real keyboard would send it.
+
+    THE SCAN CODE IS NOT OPTIONAL. An event with `wScan = 0` is delivered and
+    accepted, and then ignored by any application that matches its accelerators
+    on the scan code rather than the virtual key -- which the XAML input stack
+    behind Notepad, Settings and the Store apps does. That failure is silent:
+    SendInput reports success because the event really was injected.
+
+    Unicode events are different and are left alone: KEYEVENTF_UNICODE carries
+    the character itself, and `wScan` is where the character goes.
+    """
+    event = _INPUT()
+    event.type = INPUT_KEYBOARD
+    flags = KEYEVENTF_KEYUP if up else 0
+    if unicode_char is not None:
+        event.ki = _KEYBDINPUT(0, unicode_char, flags | KEYEVENTF_UNICODE, 0, 0)
+        return event
+
+    code = int(vk)
+    if code in _EXTENDED_KEYS:
+        flags |= KEYEVENTF_EXTENDEDKEY
+    scan = 0
+    if IS_WINDOWS:
+        try:
+            scan = int(ctypes.windll.user32.MapVirtualKeyW(code, MAPVK_VK_TO_VSC) or 0)
+        except Exception:
+            logger.debug("could not map virtual key %s to a scan code", code, exc_info=True)
+    event.ki = _KEYBDINPUT(code, scan, flags, 0, 0)
+    return event
+
+
+def type_unicode(text: str) -> int:
+    """Send ``text`` to whatever holds keyboard focus, character by character.
+
+    KEYEVENTF_UNICODE sends the CHARACTER, not a key. That matters twice over:
+    accented Portuguese arrives correctly whatever the active layout is, and
+    there is no scan code anywhere for a caller to supply. Characters outside
+    the basic plane are sent as their two UTF-16 code units, which is what
+    Windows expects.
+
+    Returns how many events Windows accepted, so the caller can report a real
+    number rather than assuming the text landed.
+    """
+    _require_windows()
+    events = []
+    for character in text:
+        for unit in _utf16_units(character):
+            events.append(_key_event(0, up=False, unicode_char=unit))
+            events.append(_key_event(0, up=True, unicode_char=unit))
+    return _send(events)
+
+
+def press_chord(vk: int, modifiers: tuple = ()) -> int:
+    """Press ``modifiers`` + ``vk``, then release them in reverse order.
+
+    Both the key and the modifiers are integers the caller resolved from its
+    own allow-list. Nothing here parses a string into keystrokes.
+    """
+    _require_windows()
+    events = []
+    for modifier in modifiers:
+        events.append(_key_event(modifier, up=False))
+    events.append(_key_event(vk, up=False))
+    events.append(_key_event(vk, up=True))
+    for modifier in reversed(modifiers):
+        events.append(_key_event(modifier, up=True))
+    return _send(events)
+
+
+def scroll_wheel(clicks: int, horizontal: bool = False) -> int:
+    """Scroll the wheel wherever the pointer already is.
+
+    No coordinates: this cannot move the pointer and cannot click anything.
+    """
+    _require_windows()
+    event = _INPUT()
+    event.type = INPUT_MOUSE
+    delta = int(clicks) * WHEEL_DELTA
+    flags = MOUSEEVENTF_HWHEEL if horizontal else MOUSEEVENTF_WHEEL
+    event.mi = _MOUSEINPUT(0, 0, ctypes.c_uint32(delta).value, flags, 0, 0)
+    return _send([event])
+
+
+def cursor_position() -> tuple[int, int]:
+    user32 = _user32()
+    ensure_dpi_awareness()
+    point = wintypes.POINT()
+    if not user32.GetCursorPos(byref(point)):
+        raise OSError("GetCursorPos failed")
+    return int(point.x), int(point.y)
+
+
+# --------------------------------------------------------------------------
+#  user32 + kernel32 / clipboard
+# --------------------------------------------------------------------------
+
+CF_UNICODETEXT = 13
+GMEM_MOVEABLE = 0x0002
+
+_signatures_configured = False
+
+
+def _configure_handle_signatures() -> None:
+    """Declare the return types of every handle-returning call used here.
+
+    ctypes defaults an undeclared restype to `c_int`, which TRUNCATES a 64-bit
+    handle to 32 bits. The truncated value is still a plausible-looking number,
+    so the failure is not a type error -- it is an access violation the first
+    time the handle is dereferenced, which is exactly what GetClipboardData did
+    before this existed. Declared once, at first use.
+    """
+    global _signatures_configured
+    if _signatures_configured or not IS_WINDOWS:
+        return
+    user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+
+    user32.GetClipboardData.restype = wintypes.HANDLE
+    user32.GetClipboardData.argtypes = [wintypes.UINT]
+    user32.SetClipboardData.restype = wintypes.HANDLE
+    user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    user32.MonitorFromWindow.restype = wintypes.HMONITOR
+    user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+
+    kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalLock.restype = c_void_p
+    kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalUnlock.restype = wintypes.BOOL
+    kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalFree.restype = wintypes.HGLOBAL
+    kernel32.GlobalFree.argtypes = [wintypes.HGLOBAL]
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+
+    _signatures_configured = True
+
+
+def _open_clipboard(attempts: int = 8) -> bool:
+    """Take the clipboard, retrying briefly.
+
+    The clipboard is a single global resource and another process may hold it
+    for a few milliseconds. Retrying is the documented approach; failing on the
+    first refusal would make every clipboard tool flaky for no reason.
+    """
+    import time as _time
+
+    user32 = _user32()
+    for _ in range(max(1, attempts)):
+        if user32.OpenClipboard(None):
+            return True
+        _time.sleep(0.03)
+    return False
+
+
+def clipboard_read_text(limit: int) -> str | None:
+    """The clipboard's text, or None when it holds something that is not text.
+
+    No other format is touched. An image or a file list on the clipboard is
+    simply "not text" -- not something to describe, convert, or copy elsewhere.
+    """
+    _require_windows()
+    _configure_handle_signatures()
+    user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+    if not user32.IsClipboardFormatAvailable(CF_UNICODETEXT):
+        return None
+    if not _open_clipboard():
+        raise OSError("could not open the clipboard")
+    try:
+        handle = user32.GetClipboardData(CF_UNICODETEXT)
+        if not handle:
+            return None
+        pointer = kernel32.GlobalLock(handle)
+        if not pointer:
+            return None
+        try:
+            return ctypes.wstring_at(pointer)[:limit]
+        finally:
+            kernel32.GlobalUnlock(handle)
+    finally:
+        user32.CloseClipboard()
+
+
+def clipboard_write_text(text: str) -> bool:
+    _require_windows()
+    _configure_handle_signatures()
+    user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+    payload = str(text)
+    size = (len(payload) + 1) * ctypes.sizeof(ctypes.c_wchar)
+    handle = kernel32.GlobalAlloc(GMEM_MOVEABLE, size)
+    if not handle:
+        raise OSError("could not allocate clipboard memory")
+    pointer = kernel32.GlobalLock(handle)
+    if not pointer:
+        kernel32.GlobalFree(handle)
+        raise OSError("could not lock clipboard memory")
+    try:
+        ctypes.memmove(pointer, ctypes.create_unicode_buffer(payload), size)
+    finally:
+        kernel32.GlobalUnlock(handle)
+
+    if not _open_clipboard():
+        kernel32.GlobalFree(handle)
+        raise OSError("could not open the clipboard")
+    try:
+        user32.EmptyClipboard()
+        if not user32.SetClipboardData(CF_UNICODETEXT, handle):
+            kernel32.GlobalFree(handle)
+            return False
+        # Ownership of the block passes to the clipboard on success; freeing it
+        # here would leave the clipboard pointing at released memory.
+        return True
+    finally:
+        user32.CloseClipboard()
+
+
+def clipboard_clear() -> bool:
+    _require_windows()
+    _configure_handle_signatures()
+    user32 = ctypes.windll.user32
+    if not _open_clipboard():
+        raise OSError("could not open the clipboard")
+    try:
+        return bool(user32.EmptyClipboard())
+    finally:
+        user32.CloseClipboard()
+
+
+# --------------------------------------------------------------------------
+#  dxva2 / monitor brightness (the Monitor Configuration API)
+#
+#  WHY THIS AND NOT A GAMMA RAMP. SetDeviceGammaRamp is the trick usually found
+#  in "set brightness from Python" answers. It does not change brightness at
+#  all: it washes out the colours of everything on screen and leaves the
+#  panel's backlight exactly where it was. This is the documented Win32 API for
+#  the job, it reports the monitor's OWN minimum and maximum so nothing is
+#  assumed about the hardware, and on a display that does not implement DDC/CI
+#  it returns false -- which is reported as `unsupported` rather than papered
+#  over with a fake success.
+# --------------------------------------------------------------------------
+
+
+class _PHYSICAL_MONITOR(ctypes.Structure):
+    _fields_ = [("hPhysicalMonitor", wintypes.HANDLE),
+                ("szPhysicalMonitorDescription", ctypes.c_wchar * 128)]
+
+
+class _physical_monitors:
+    """The physical monitors behind one HMONITOR. Always destroyed again."""
+
+    def __init__(self, monitor_handle: int):
+        self._handle = monitor_handle
+        self._array = None
+        self._count = 0
+
+    def __enter__(self):
+        _require_windows()
+        dxva2 = ctypes.windll.dxva2
+        count = wintypes.DWORD()
+        if not dxva2.GetNumberOfPhysicalMonitorsFromHMONITOR(
+                wintypes.HMONITOR(self._handle), byref(count)) or count.value == 0:
+            raise OSError("no physical monitor behind this display")
+        array = (_PHYSICAL_MONITOR * count.value)()
+        if not dxva2.GetPhysicalMonitorsFromHMONITOR(
+                wintypes.HMONITOR(self._handle), count.value, array):
+            raise OSError("could not open the physical monitor")
+        self._array, self._count = array, count.value
+        return self
+
+    def __exit__(self, *_exc):
+        if self._array is not None:
+            try:
+                ctypes.windll.dxva2.DestroyPhysicalMonitors(self._count, self._array)
+            except Exception:
+                logger.debug("DestroyPhysicalMonitors failed", exc_info=True)
+        self._array = None
+        return False
+
+    @property
+    def first(self):
+        return self._array[0]
+
+    @property
+    def description(self) -> str:
+        return str(self._array[0].szPhysicalMonitorDescription)
+
+
+def monitor_brightness(monitor_handle: int) -> tuple[int, int, int] | None:
+    """(minimum, current, maximum) in the monitor's own units, or None."""
+    try:
+        with _physical_monitors(monitor_handle) as monitors:
+            low, current, high = wintypes.DWORD(), wintypes.DWORD(), wintypes.DWORD()
+            if not ctypes.windll.dxva2.GetMonitorBrightness(
+                    monitors.first.hPhysicalMonitor,
+                    byref(low), byref(current), byref(high)):
+                return None
+            return int(low.value), int(current.value), int(high.value)
+    except OSError:
+        return None
+    except Exception:
+        logger.debug("brightness read failed", exc_info=True)
+        return None
+
+
+def set_monitor_brightness(monitor_handle: int, value: int) -> bool:
+    try:
+        with _physical_monitors(monitor_handle) as monitors:
+            return bool(ctypes.windll.dxva2.SetMonitorBrightness(
+                monitors.first.hPhysicalMonitor, wintypes.DWORD(int(value))))
+    except OSError:
+        return False
+    except Exception:
+        logger.debug("brightness write failed", exc_info=True)
+        return False
+
+
+# --------------------------------------------------------------------------
+#  shell32 / the Recycle Bin
+#
+#  RECYCLING IS NOT DELETING. SHFileOperationW with FOF_ALLOWUNDO is the
+#  shell's own "send to Recycle Bin", so the user gets the file back from
+#  Explorer exactly as if they had pressed Delete themselves. FOF_WANTNUKEWARNING
+#  is set deliberately: when an item CANNOT be recycled -- too large for the
+#  bin, or on a volume with no bin -- Windows asks the user rather than
+#  silently destroying it. Nano never makes that call on their behalf, and
+#  there is no unlink() anywhere in PC Control to fall back to.
+# --------------------------------------------------------------------------
+
+FO_DELETE = 0x0003
+FOF_SILENT = 0x0004
+FOF_NOCONFIRMATION = 0x0010
+FOF_ALLOWUNDO = 0x0040
+FOF_NOERRORUI = 0x0400
+FOF_WANTNUKEWARNING = 0x4000
+
+
+class _SHFILEOPSTRUCTW(ctypes.Structure):
+    _fields_ = [
+        ("hwnd", wintypes.HWND),
+        ("wFunc", wintypes.UINT),
+        ("pFrom", wintypes.LPCWSTR),
+        ("pTo", wintypes.LPCWSTR),
+        ("fFlags", ctypes.c_ushort),
+        ("fAnyOperationsAborted", wintypes.BOOL),
+        ("hNameMappings", c_void_p),
+        ("lpszProgressTitle", wintypes.LPCWSTR),
+    ]
+
+
+class _SHQUERYRBINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD), ("i64Size", ctypes.c_int64),
+                ("i64NumItems", ctypes.c_int64)]
+
+
+def recycle_bin_items(root: str) -> int | None:
+    """How many items the Recycle Bin holds for a drive, or None if unreadable.
+
+    This is the VERIFICATION for a recycle: if the count did not go up, the
+    file did not land in the bin, whatever the operation's return code said.
+    """
+    _require_windows()
+    info = _SHQUERYRBINFO()
+    info.cbSize = ctypes.sizeof(_SHQUERYRBINFO)
+    if ctypes.windll.shell32.SHQueryRecycleBinW(ctypes.c_wchar_p(root), byref(info)) != 0:
+        return None
+    return int(info.i64NumItems)
+
+
+def shell_recycle(path: str) -> tuple[int, bool]:
+    """Send one path to the Recycle Bin. Returns (result_code, aborted)."""
+    _require_windows()
+    operation = _SHFILEOPSTRUCTW()
+    operation.hwnd = None
+    operation.wFunc = FO_DELETE
+    # pFrom is a DOUBLE-null-terminated list of names, not a plain string.
+    operation.pFrom = f"{path}\0\0"
+    operation.pTo = None
+    operation.fFlags = (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI
+                        | FOF_SILENT | FOF_WANTNUKEWARNING)
+    operation.fAnyOperationsAborted = 0
+    code = int(ctypes.windll.shell32.SHFileOperationW(byref(operation)))
+    return code, bool(operation.fAnyOperationsAborted)
+
+
+# --------------------------------------------------------------------------
+#  user32 / powrprof / advapi32 -- session and power
+#
+#  NOTHING HERE IS FORCED. ExitWindowsEx is called WITHOUT EWX_FORCE, so an
+#  application holding unsaved work can veto the shutdown and show its own
+#  dialog. Forcing would be a data-loss primitive, and PC Control does not own
+#  one. There is likewise no countdown and no scheduled variant: the action
+#  happens when the user has just approved it, or not at all.
+# --------------------------------------------------------------------------
+
+EWX_LOGOFF = 0x00000000
+EWX_SHUTDOWN = 0x00000001
+EWX_REBOOT = 0x00000002
+EWX_POWEROFF = 0x00000008
+
+SHTDN_REASON_MAJOR_OTHER = 0x00000000
+SHTDN_REASON_MINOR_OTHER = 0x00000000
+SHTDN_REASON_FLAG_PLANNED = 0x80000000
+
+TOKEN_ADJUST_PRIVILEGES = 0x0020
+TOKEN_QUERY = 0x0008
+SE_PRIVILEGE_ENABLED = 0x00000002
+ERROR_NOT_ALL_ASSIGNED = 1300
+
+
+class _LUID(ctypes.Structure):
+    _fields_ = [("LowPart", wintypes.DWORD), ("HighPart", ctypes.c_long)]
+
+
+class _LUID_AND_ATTRIBUTES(ctypes.Structure):
+    _fields_ = [("Luid", _LUID), ("Attributes", wintypes.DWORD)]
+
+
+class _TOKEN_PRIVILEGES(ctypes.Structure):
+    _fields_ = [("PrivilegeCount", wintypes.DWORD),
+                ("Privileges", _LUID_AND_ATTRIBUTES * 1)]
+
+
+def enable_shutdown_privilege() -> bool:
+    """Enable SeShutdownPrivilege on this process token.
+
+    ExitWindowsEx fails with ERROR_ACCESS_DENIED without it. Every interactive
+    user already HOLDS this privilege; enabling it grants nothing they did not
+    have, which is why it can be done here rather than being a separate
+    escalation step.
+    """
+    _require_windows()
+    _configure_handle_signatures()
+    advapi32, kernel32 = ctypes.windll.advapi32, ctypes.windll.kernel32
+    token = wintypes.HANDLE()
+    if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(),
+                                     TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
+                                     byref(token)):
+        return False
+    try:
+        luid = _LUID()
+        if not advapi32.LookupPrivilegeValueW(None, "SeShutdownPrivilege", byref(luid)):
+            return False
+        privileges = _TOKEN_PRIVILEGES()
+        privileges.PrivilegeCount = 1
+        privileges.Privileges[0].Luid = luid
+        privileges.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED
+        if not advapi32.AdjustTokenPrivileges(token, False, byref(privileges),
+                                              0, None, None):
+            return False
+        # AdjustTokenPrivileges reports success even when it changed nothing,
+        # so the real answer is in the last error.
+        return kernel32.GetLastError() != ERROR_NOT_ALL_ASSIGNED
+    finally:
+        kernel32.CloseHandle(token)
+
+
+def lock_workstation() -> bool:
+    return bool(_user32().LockWorkStation())
+
+
+def suspend_system() -> bool:
+    """Sleep. Never hibernate, never forced."""
+    _require_windows()
+    return bool(ctypes.windll.powrprof.SetSuspendState(0, 0, 0))
+
+
+def exit_windows(flags: int) -> bool:
+    """Log off, restart or shut down. The caller supplies a constant, not text."""
+    _require_windows()
+    enable_shutdown_privilege()
+    reason = (SHTDN_REASON_MAJOR_OTHER | SHTDN_REASON_MINOR_OTHER
+              | SHTDN_REASON_FLAG_PLANNED)
+    return bool(ctypes.windll.user32.ExitWindowsEx(
+        wintypes.UINT(int(flags)), wintypes.DWORD(reason)))
+
+
+# --------------------------------------------------------------------------
+#  wininet / connectivity
+# --------------------------------------------------------------------------
+
+INTERNET_CONNECTION_MODEM = 0x01
+INTERNET_CONNECTION_LAN = 0x02
+INTERNET_CONNECTION_PROXY = 0x04
+
+
+def internet_connection() -> tuple[bool, int]:
+    """(connected, flags). A local query -- it sends no traffic anywhere."""
+    _require_windows()
+    flags = wintypes.DWORD()
+    connected = bool(ctypes.windll.wininet.InternetGetConnectedState(byref(flags), 0))
+    return connected, int(flags.value)
+
+
+# --------------------------------------------------------------------------
+#  user32 / capturing a single window
+# --------------------------------------------------------------------------
+
+PW_RENDERFULLCONTENT = 0x00000002
+
+
+def print_window(hwnd: int, hdc: int) -> bool:
+    """Ask a window to render itself into a device context.
+
+    PW_RENDERFULLCONTENT captures modern (DirectComposition) windows that a
+    plain screen BitBlt would miss, and it works while the window is partly
+    covered. It is allowed to fail; the caller then falls back to copying the
+    window's rectangle off the screen, and says which one it used.
+    """
+    return bool(_user32().PrintWindow(wintypes.HWND(hwnd), wintypes.HDC(hdc),
+                                      PW_RENDERFULLCONTENT))
+
+
 __all__ = [
+    "CF_UNICODETEXT",
+    "EWX_LOGOFF",
+    "EWX_POWEROFF",
+    "EWX_REBOOT",
+    "EWX_SHUTDOWN",
+    "INTERNET_CONNECTION_LAN",
+    "INTERNET_CONNECTION_MODEM",
+    "INTERNET_CONNECTION_PROXY",
     "IS_WINDOWS",
     "SW_MAXIMIZE",
     "SW_MINIMIZE",
     "SW_RESTORE",
+    "WHEEL_DELTA",
+    "WS_EX_TOPMOST",
     "AudioEndpoint",
     "WindowsUnavailable",
+    "clipboard_clear",
+    "clipboard_read_text",
+    "clipboard_write_text",
+    "cursor_position",
+    "enable_shutdown_privilege",
+    "ensure_dpi_awareness",
+    "enum_monitors",
     "enum_top_level_windows",
+    "exit_windows",
     "focus_window",
     "foreground_window",
+    "internet_connection",
     "is_cloaked",
     "is_iconic",
     "is_window",
+    "is_window_topmost",
     "is_window_visible",
     "is_zoomed",
+    "lock_workstation",
+    "monitor_brightness",
+    "monitor_handle_for_window",
     "post_close",
+    "press_chord",
+    "print_window",
+    "recycle_bin_items",
     "resolve_shortcut",
     "screen_size",
+    "scroll_wheel",
+    "set_monitor_brightness",
+    "set_window_position",
+    "set_window_topmost",
     "shell_execute",
+    "shell_recycle",
     "show_window",
+    "suspend_system",
+    "type_unicode",
     "window_class",
     "window_ex_style",
     "window_owner",
     "window_pid",
     "window_placement_state",
+    "window_rect",
     "window_title",
 ]

@@ -43,6 +43,7 @@ from core import wake_phrase as wake_phrase_mod
 from core.wake_word import WakeWordEngine
 from core.errors import NanoError
 from core.events import EventBus
+from core import confirmation as confirmation_text
 from core.permission_manager import PermissionManager
 from core.task_engine import TaskEngine
 from core.context_engine import ContextEngine
@@ -182,41 +183,77 @@ def run_coro(coro, *, timeout: float | None = DEFAULT_COROUTINE_TIMEOUT):
     return future.result(timeout=timeout)
 
 def _permission_confirmation_message(action_name: str, args: dict) -> str:
-    target = args.get("path") or args.get("target") or args.get("url") or args.get("command")
-    if target:
-        return f"O Nano pretende executar '{action_name}' sobre '{target}'. Confirmas?"
-    return f"O Nano pretende executar '{action_name}'. Confirmas?"
+    """A sentence naming WHAT will happen and to WHAT.
+
+    This used to be "O Nano pretende executar 'pc.window.close' sobre
+    'window:786686'. Confirmas?" -- a capability the person has never heard of
+    and a handle that means nothing to them. See core/confirmation.py.
+    """
+    return confirmation_text.message(action_name, args or {})
 
 
 def _confirmation_meta(action_name: str, args: dict) -> dict:
-    """Argumentos mostrados ao humano, sem segredos.
+    """Everything the approval card renders. Structured, and without secrets.
 
-    O diálogo tem de mostrar o que está realmente a ser aprovado: aprovar
-    'alterar Wi-Fi' sem ver os argumentos não é consentimento informado.
+    The card shows ACTION / TARGET / SCOPE, plus the arguments themselves --
+    approving "escrever numa aplicação" without seeing the text is not informed
+    consent -- plus, where the size of the decision is not obvious from the
+    target alone, a preview: how many windows a batch close affects, how many
+    items are inside a folder being recycled.
+
+    Underscore-prefixed keys are internal (`_task_id`, `_pc_target`) and are
+    not shown as arguments; `_pc_target` is what the TARGET line is built from.
     """
     safe_args = {
         key: str(value)[:200]
         for key, value in (args or {}).items()
         if not key.startswith("_") and not re.search(r"secret|token|password|key|credential", key, re.I)
     }
-    return {"tool": action_name, "args": safe_args, "source": "permission_manager"}
+    card = confirmation_text.describe(action_name, args or {})
+    return {
+        "tool": action_name,
+        "args": safe_args,
+        "source": "permission_manager",
+        "action": card["action"],
+        "target": card["target"],
+        "scope": card["scope"],
+        "capability": card["capability"],
+        "preview": card["preview"],
+    }
 
 
 async def _permission_confirmation_async(action_name: str, args: dict) -> bool:
-    """Confirmação humana sem bloquear a loop que a pediu."""
-    message = _permission_confirmation_message(action_name, args or {})
+    """Confirmação humana sem bloquear a loop que a pediu.
+
+    The card is built OFF the loop: the preview for a batch action enumerates
+    windows, and that is a Win32 call which has no business running on the
+    shared event loop while the UI is waiting on it.
+    """
     try:
-        return bool(await guardrails.request_from_ui(message, _confirmation_meta(action_name, args)))
+        message, meta = await asyncio.to_thread(_confirmation_card, action_name, args or {})
+        return bool(await guardrails.request_from_ui(message, meta))
     except Exception:
         logger.exception("Falha na confirmação de permissão para '%s'", action_name)
         return False
 
 
+def _confirmation_card(action_name: str, args: dict) -> tuple[str, dict]:
+    """(message, meta) for one approval. Never raises: failing to describe an
+    action must never turn into failing to ask about it."""
+    try:
+        return (_permission_confirmation_message(action_name, args),
+                _confirmation_meta(action_name, args))
+    except Exception:
+        logger.exception("Falha a descrever a confirmação para '%s'", action_name)
+        return (f"O Nano pede autorização para '{action_name}'.",
+                {"tool": action_name, "args": {}, "source": "permission_manager"})
+
+
 def _permission_confirmation_callback(action_name: str, args: dict) -> bool:
     """Bridge síncrono usado pelo worker em background (nunca pela loop)."""
-    message = _permission_confirmation_message(action_name, args or {})
+    message, meta = _confirmation_card(action_name, args or {})
     try:
-        return bool(run_coro(guardrails.request_from_ui(message, _confirmation_meta(action_name, args)), timeout=90))
+        return bool(run_coro(guardrails.request_from_ui(message, meta), timeout=90))
     except LoopReentrancyError:
         logger.error("Confirmação síncrona pedida dentro da loop para '%s'; use o caminho assíncrono.", action_name)
         return False
@@ -346,6 +383,106 @@ def set_permission_policy(capability: str, decision: str, scope: str = "workspac
     if normalized_decision in {"allow_persistent", "allow"}:
         return {"ok": False, "error": "persistent_allow_disabled"}
     return {"ok": True, "policy": permission_manager.register_policy(capability, decision=decision, scope=scope, reason=reason or "User configured policy.")}
+
+#: How many recent PC actions the page shows. Small on purpose: this is a
+#: reassurance ("that really happened"), not an audit console. The full trail
+#: lives on the Atividade page.
+MAX_RECENT_PC_ACTIONS = 8
+
+#: Sections the snapshot reports. A section that cannot be read comes back as
+#: null, never as a plausible-looking default.
+_PC_SNAPSHOT_SECTIONS = ("system", "volume", "storage", "network", "monitors",
+                         "activeWindow", "windowCount", "applications")
+
+
+def _recent_pc_actions() -> list:
+    """The last few PC actions, read from the real permission audit trail.
+
+    Read from the trail rather than kept in a second list, so the page cannot
+    show an action that was never authorised and cannot miss one that was.
+    Clipboard and typed content never appear here because they were never
+    written to the trail in the first place -- their target is a digest.
+    """
+    try:
+        entries = [entry for entry in permission_manager.get_audit_log()
+                   if str(entry.get("action") or "").startswith("pc.")
+                   and entry.get("decision") in {"executed", "allow_once", "deny", "failed"}]
+    except Exception:
+        logger.debug("could not read the PC action trail", exc_info=True)
+        return []
+
+    recent = []
+    for entry in entries[-MAX_RECENT_PC_ACTIONS:][::-1]:
+        card = confirmation_text.describe(str(entry.get("action") or ""),
+                                          {"_pc_target": entry.get("target")})
+        recent.append({
+            "action": card["action"],
+            "target": card["target"],
+            "capability": entry.get("action"),
+            "decision": entry.get("decision"),
+            "risk": entry.get("risk"),
+            "at": entry.get("timestamp"),
+        })
+    return recent
+
+
+@eel.expose
+def get_pc_snapshot() -> dict:
+    """A read-only picture of the machine for the PC page.
+
+    FETCHED ON DEMAND, NOT POLLED. Every section here is a real Windows call --
+    enumerating monitors, opening the audio endpoint, reading the foreground
+    window -- and putting that on a timer would spend the machine's time
+    describing itself. The page asks when it opens and when the user refreshes.
+
+    NOTHING IS ASSUMED. Each section is probed independently, and one that
+    cannot be read comes back as null with the reason recorded under
+    `unavailable`. An unknown volume must LOOK unknown, not like silence.
+    """
+    from core.pc_control import applications, audio, geometry, system as pc_system, winapi
+    from core.pc_control import windows as pc_windows
+
+    snapshot: dict = {
+        "platform": "windows" if winapi.IS_WINDOWS else "unsupported",
+        "recentActions": _recent_pc_actions(),
+    }
+    for section in _PC_SNAPSHOT_SECTIONS:
+        snapshot[section] = None
+
+    if not winapi.IS_WINDOWS:
+        return snapshot
+
+    def probe(name, function):
+        try:
+            snapshot[name] = function()
+        except Exception as exc:
+            logger.debug("PC snapshot section %r unavailable", name, exc_info=True)
+            snapshot[name] = None
+            snapshot.setdefault("unavailable", {})[name] = type(exc).__name__
+
+    def _monitors():
+        return [{"number": monitor["number"], "primary": monitor["primary"],
+                 "width": monitor["width"], "height": monitor["height"]}
+                for monitor in geometry.monitors()]
+
+    def _windows_summary():
+        listed = pc_windows.list_windows()
+        active = next((w for w in listed if w.get("focused")), None)
+        snapshot["windowCount"] = len(listed)
+        return active
+
+    probe("system", pc_system.info)
+    probe("volume", audio.get_state)
+    probe("storage", pc_system.storage_info)
+    probe("network", pc_system.network_status)
+    probe("monitors", _monitors)
+    probe("activeWindow", _windows_summary)
+    probe("applications", lambda: [
+        {"process": app["process"], "windows": app["windows"]}
+        for app in applications.running_applications()[:12]
+    ])
+    return snapshot
+
 
 @eel.expose
 def set_autonomy_mode(mode: str) -> dict:

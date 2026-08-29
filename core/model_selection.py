@@ -145,13 +145,22 @@ _QUESTION_MARKERS = _EXPLANATORY_MARKERS + ("qual e", "quando", "onde")
 class ToolCategory(str, Enum):
     NONE = "NONE"
     PC = "PC"
-    # PC Control V1 is split into three narrow categories rather than piled
-    # into PC. Eighteen tool schemas is roughly 1400 prompt tokens, and the
-    # Groq tier here allows 8000 tokens per minute -- shipping window, volume
-    # and screenshot definitions on every "como esta a RAM?" would burn the
-    # budget on tools the request cannot use.
+    # PC Control is split into NARROW categories rather than piled into PC, and
+    # V2 made that split load-bearing rather than merely tidy. Fifty-six tool
+    # schemas is roughly 4500 prompt tokens; the Groq tier here allows 8000
+    # tokens per MINUTE, so shipping the whole PC surface on every "como esta a
+    # RAM?" would exhaust the budget on tools the request cannot use, and then
+    # rate-limit the next four messages.
+    #
+    # A message matching several categories gets the union, which is how
+    # "abre a calculadora e mete-a a direita" reaches both PC_APPS and
+    # PC_WINDOWS in one turn.
     PC_APPS = "PC_APPS"
+    PC_WINDOWS = "PC_WINDOWS"
     PC_AUDIO = "PC_AUDIO"
+    PC_DISPLAY = "PC_DISPLAY"
+    PC_INPUT = "PC_INPUT"
+    PC_POWER = "PC_POWER"
     PC_SCREEN = "PC_SCREEN"
     FILES = "FILES"
     BROWSER = "BROWSER"
@@ -164,33 +173,64 @@ class ToolCategory(str, Enum):
 # or exact name, so a plugin adding "web_foo" lands in BROWSER automatically.
 _CATEGORY_TOOLS: dict[ToolCategory, tuple[str, ...]] = {
     ToolCategory.PC: (
-        # system_run_powershell, system_volume and system_wifi were withdrawn
-        # from the model when PC Control V1 landed (see plugins/god_mode.py);
-        # they are deliberately absent here too.
-        "system_stats", "pc_system_info",
-        "system_brightness", "system_bluetooth",
+        # Every PowerShell-backed tool that used to live here was withdrawn --
+        # system_run_powershell, system_wifi, system_volume, system_brightness
+        # and system_bluetooth. See plugins/god_mode.py for what each one was
+        # and why it went; none of them has a replacement that builds a command
+        # line.
+        "system_stats", "pc_system_info", "pc_network_status", "pc_storage_info",
+        "pc_settings_open",
         "context_activate_mode", "context_list_modes",
         "monitor_status", "monitor_start", "monitor_stop",
         "clean_windows_cache",
     ),
     ToolCategory.PC_APPS: (
-        "pc_app_search", "pc_app_launch",
+        "pc_app_search", "pc_app_launch", "pc_app_switch", "pc_app_list_running",
         "pc_window_list", "pc_window_focus", "pc_window_minimize",
         "pc_window_maximize", "pc_window_restore", "pc_window_close",
+        "pc_window_batch_state", "pc_window_batch_close",
+    ),
+    # Placing a window is a different request from opening a program, and it
+    # needs pc_window_list in the same payload -- every geometry tool takes a
+    # window_id that only the listing can supply.
+    ToolCategory.PC_WINDOWS: (
+        "pc_window_list", "pc_window_move", "pc_window_resize",
+        "pc_window_center", "pc_window_snap", "pc_window_move_monitor",
+        "pc_window_set_topmost", "pc_display_info",
     ),
     ToolCategory.PC_AUDIO: (
         "pc_volume_get", "pc_volume_set", "pc_volume_change",
-        "pc_volume_mute", "pc_volume_unmute",
+        "pc_volume_mute", "pc_volume_unmute", "pc_media_control",
     ),
-    ToolCategory.PC_SCREEN: ("pc_screenshot_capture",),
+    ToolCategory.PC_DISPLAY: (
+        "pc_display_info", "pc_display_set_brightness",
+        "pc_display_change_brightness", "pc_settings_open",
+    ),
+    # Typing needs the window listing for the same reason geometry does: the
+    # input tools refuse to act without a named, strictly-resolved target.
+    ToolCategory.PC_INPUT: (
+        "pc_window_list",
+        "pc_input_type_text", "pc_input_press_key", "pc_input_hotkey",
+        "pc_pointer_scroll",
+        "pc_clipboard_read", "pc_clipboard_write", "pc_clipboard_clear",
+    ),
+    ToolCategory.PC_POWER: (
+        "pc_session_lock", "pc_power_sleep", "pc_power_restart",
+        "pc_power_shutdown", "pc_session_logoff",
+    ),
+    ToolCategory.PC_SCREEN: ("pc_screenshot_capture", "pc_window_list"),
     ToolCategory.FILES: (
-        "system_files", "organize_downloads", "rename_file_smart",
+        "organize_downloads", "rename_file_smart",
         "rag_index_pdf", "clean_windows_cache",
         "pc_file_search", "pc_file_open", "pc_folder_open",
+        "pc_folder_create", "pc_file_create_text",
+        "pc_file_copy", "pc_file_move", "pc_file_rename",
+        "pc_file_recycle", "pc_folder_recycle",
     ),
     ToolCategory.BROWSER: (
         "web_navigate_extract", "web_extract_prices", "web_search",
         "web_interact", "web_screenshot",
+        "pc_web_open_url", "pc_web_search",
     ),
     ToolCategory.MEMORY: (
         "remember_fact", "list_facts", "forget_fact",
@@ -212,7 +252,9 @@ _CATEGORY_KEYWORDS: dict[ToolCategory, tuple[str, ...]] = {
         "memoria ram", "disco", "bateria", "processos", "processo",
         "sistema", "pc", "computador", "temperatura", "desempenho",
         "limpa", "limpar", "cache", "modo", "uptime", "gpu", "placa grafica",
-        "shutdown", "restart",
+        "shutdown", "restart", "internet", "ligacao", "armazenamento",
+        "espaco", "definicoes", "configuracoes", "settings", "opcoes",
+        "painel de controlo",
         # The clock lives on the machine: without a tool the model can only
         # guess the time, which is exactly what produced wrong answers before.
         "horas", "hora", "data", "dia de hoje", "que dia", "time", "date",
@@ -225,16 +267,51 @@ _CATEGORY_KEYWORDS: dict[ToolCategory, tuple[str, ...]] = {
         "programa", "programas", "spotify", "discord", "chrome", "brave",
         "calculadora", "bloco de notas", "explorador", "steam",
         "visual studio code", "vs code",
+        "muda para", "mudar para", "troca para", "trocar para", "alterna",
+        "todas as janelas", "aberto", "abertas", "abertos",
         "open", "close", "run", "launch", "window", "windows", "minimize",
-        "maximize", "restore",
+        "maximize", "restore", "switch to", "running",
+    ),
+    ToolCategory.PC_WINDOWS: (
+        "esquerda", "direita", "canto", "centra", "centrar", "centro",
+        "metade", "monitor", "monitores", "segundo ecra", "outro ecra",
+        "sempre a frente", "sempre no topo", "por cima", "topo",
+        "redimensiona", "redimensionar", "tamanho da janela", "posicao",
+        "arruma", "arrumar", "lado a lado",
+        "left", "right", "center", "centre", "snap", "always on top",
+        "resize", "side by side",
     ),
     ToolCategory.PC_AUDIO: (
         "volume", "som", "audio", "silencio", "silenciar", "mute", "unmute",
         "aumenta o volume", "baixa o volume", "sem som", "mais alto",
         "mais baixo", "volume atual",
+        "musica", "reproduz", "reproduzir", "pausa", "pausar", "retoma",
+        "faixa", "proxima musica", "musica seguinte", "salta a musica",
+        "play", "pause", "skip", "next track", "previous track",
+    ),
+    ToolCategory.PC_DISPLAY: (
+        "brilho", "luminosidade", "escurece", "escurecer", "clareia",
+        "mais escuro", "mais claro", "brightness", "dim",
+    ),
+    ToolCategory.PC_INPUT: (
+        "escreve", "escrever", "digita", "digitar", "teclado", "tecla",
+        "teclas", "carrega em", "carregar em", "prime", "enter", "escape",
+        "copia", "copiar", "cola", "colar", "recorta", "recortar",
+        "seleciona tudo",
+        "selecionar tudo", "area de transferencia", "clipboard", "atalho",
+        "ctrl", "scroll", "desliza", "deslizar", "rola",
+        "type", "write", "press", "paste", "select all", "shortcut",
+    ),
+    ToolCategory.PC_POWER: (
+        "desliga o computador", "desligar o computador", "desliga o pc",
+        "reinicia", "reiniciar", "bloqueia", "bloquear", "tranca", "trancar",
+        "suspende", "suspender", "termina sessao", "terminar sessao",
+        "sair da sessao", "encerrar", "encerra",
+        "shutdown", "restart", "reboot", "lock", "sleep", "log off",
+        "sign out",
     ),
     ToolCategory.PC_SCREEN: (
-        "captura de ecra", "capturar o ecra", "screenshot", "print do ecra",
+        "captura", "capturar", "screenshot", "print do ecra",
         "print screen", "fotografia do ecra", "imagem do ecra",
     ),
     ToolCategory.FILES: (
@@ -243,11 +320,15 @@ _CATEGORY_KEYWORDS: dict[ToolCategory, tuple[str, ...]] = {
         "cria", "criar", "apaga", "apagar", "elimina", "eliminar", "renomeia",
         "renomear", "move", "mover", "copia", "copiar", "organiza", "organizar",
         "downloads", "ambiente de trabalho", "desktop", "pdf", "txt", "csv",
+        "reciclagem", "recicla", "reciclar", "lixo", "papeleira",
+        "nova pasta", "novo ficheiro",
         "file", "files", "folder", "directory", "save", "delete", "rename",
+        "recycle bin", "trash",
     ),
     ToolCategory.BROWSER: (
         "pesquisa", "pesquisar", "procura", "procurar", "busca", "buscar",
         "google", "internet", "web", "site", "website", "url", "link",
+        "youtube", "github", "abre o site", "no navegador", "browser",
         "noticia", "noticias", "preco", "precos", "artigo", "pagina",
         "navega", "navegar", "screenshot", "captura de ecra", "online",
         "search", "browse", "news", "price",
@@ -284,9 +365,11 @@ _CATEGORY_KEYWORDS: dict[ToolCategory, tuple[str, ...]] = {
 # bounded general set rather than the whole registry.
 # The bounded set an action request gets when it names no category at all.
 # system_run_powershell used to be here; it no longer exists as a tool, and a
-# general command line was never the right answer to "do something".
+# general command line was never the right answer to "do something". The file
+# entry is now the READ-ONLY search rather than the withdrawn system_files,
+# which could also create and move things.
 _AMBIGUOUS_FALLBACK = (
-    "system_stats", "pc_system_info", "system_files", "web_search",
+    "system_stats", "pc_system_info", "pc_file_search", "web_search",
 )
 
 # Verbs that mean "do something", used to tell an ACTION from a QUESTION.
@@ -301,6 +384,20 @@ _ACTION_VERBS = (
     "marca", "marcar", "agenda", "agendar", "lembra me", "lembrar",
     "manda", "mandar", "envia", "enviar", "mostra", "mostrar", "lista",
     "listar", "limpa", "limpar", "instala", "instalar", "descarrega",
+    # PC Control V2 verbs. Without these, "escreve ola no Bloco de Notas" and
+    # "centra a calculadora" were classified as QUESTION and answered with no
+    # tools at all -- the request looks like a statement unless the leading
+    # verb is recognised as an instruction.
+    "escreve", "escrever", "digita", "digitar", "carrega", "prime", "cola",
+    "colar", "seleciona", "selecionar", "centra", "centrar", "minimiza",
+    "minimizar", "maximiza", "maximizar", "restaura", "restaurar", "captura",
+    "capturar", "bloqueia", "bloquear", "tranca", "trancar", "suspende",
+    "suspender", "aumenta", "aumentar", "baixa", "baixar", "reduz", "reduzir",
+    "mete", "meter", "arruma", "arrumar", "encerra", "encerrar", "recicla",
+    "reciclar", "renomear", "silencia", "silenciar", "reproduz", "pausa",
+    "type", "write", "press", "paste", "capture", "lock", "move", "snap",
+    "center", "centre", "resize", "minimize", "maximize", "increase",
+    "decrease", "mute", "play",
     "open", "close", "run", "create", "delete", "save", "search", "send",
     "show", "list", "set", "turn",
 )

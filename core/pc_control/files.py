@@ -88,30 +88,32 @@ def known_folder(name: str) -> Path | None:
 
 
 def _protected(path: Path) -> bool:
-    """Whether a path is inside somewhere PC Control must not wander.
+    """Whether a path is somewhere PC Control must not wander.
 
-    Layered on top of core.execution_scope (which the executor already applies
-    to every `path` argument); this is the PC-control-specific view, covering
-    Windows internals and Nano's own data directory.
+    The location half of this question is answered by
+    `core.execution_scope.is_protected_location`, which is the single source of
+    truth and is also applied centrally to every `path` argument before a
+    handler runs. This wrapper adds the two things that are specific to being
+    called from a PC tool:
+
+    * an UNRESOLVABLE path is protected -- failing closed on a path we cannot
+      even name is the only safe answer, and it is the reason this is not just
+      a direct call;
+    * it is reachable for arguments that never go through central path
+      resolution, such as a known-folder NAME.
     """
-    from core.app_paths import DATA_DIR
+    from core.execution_scope import is_protected_location
 
     try:
         resolved = path.resolve()
     except OSError:
         return True
-    lowered = str(resolved).casefold()
+    return is_protected_location(resolved)
 
-    for root in (os.environ.get("SystemRoot"), os.environ.get("ProgramFiles"),
-                 os.environ.get("ProgramFiles(x86)"), os.environ.get("ProgramData")):
-        if root and lowered.startswith(str(Path(root)).casefold()):
-            return True
-    try:
-        if lowered.startswith(str(Path(DATA_DIR).resolve()).casefold()):
-            return True
-    except OSError:
-        pass
-    return any(part.casefold() in {".ssh", ".aws", ".gnupg"} for part in resolved.parts)
+
+#: The public name. `_protected` predates PC Control V2 and is kept as the
+#: internal spelling used inside this module.
+is_protected = _protected
 
 
 def resolve_folder(value: str) -> Path:
@@ -280,5 +282,6 @@ def open_file(value: str) -> dict:
 
 
 __all__ = ["DEFAULT_SEARCH_FOLDERS", "EXECUTABLE_EXTENSIONS", "MAX_SEARCH_DEPTH",
-           "MAX_SEARCH_SECONDS", "classify_file", "known_folder", "open_file",
-           "open_folder", "resolve_folder", "search_files"]
+           "MAX_SEARCH_SECONDS", "classify_file", "home", "is_protected",
+           "known_folder", "open_file", "open_folder", "resolve_folder",
+           "search_files"]

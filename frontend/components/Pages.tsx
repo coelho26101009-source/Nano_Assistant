@@ -9,7 +9,7 @@ import React, { useMemo, useState } from "react";
 import ContextPanels, { ActivityTimeline, eventLabel } from "./Inspector";
 import type { ViewId } from "./TopNav";
 import type {
-  ActivityEvent, CommandCenterPayload, ProviderPayload,
+  ActivityEvent, CommandCenterPayload, PcSnapshot, ProviderPayload,
   ReadinessPayload, TaskCounts, TaskRow,
 } from "../lib/backend";
 import {
@@ -223,7 +223,9 @@ const SCOPE_LABEL: Record<string, string> = {
 
 const CAPABILITY_VERB: Record<string, string> = {
   "filesystem.read": "Ler o ficheiro", "filesystem.write": "Escrever no ficheiro",
-  "filesystem.delete": "Apagar", "shell.execute": "Executar o comando",
+  // No "shell.execute" entry: Nano has no shell, so no permission request can
+  // ever carry that capability. See core/capabilities.py.
+  "filesystem.delete": "Apagar",
   "process.start": "Iniciar o processo", "process.kill": "Terminar o processo",
   "browser.read": "Abrir e ler", "browser.interact": "Interagir com a página",
   "browser.submit": "Submeter na página", "external.send": "Enviar para o exterior",
@@ -640,13 +642,124 @@ export function IntegrationsPage({
    ESTADO
    ====================================================================== */
 
+/**
+ * What Nano can currently see and do on this machine.
+ *
+ * Deliberately a SUMMARY, not an admin console. It answers the questions a
+ * person actually has before asking Nano to touch something -- how loud is it,
+ * what is in front, how many screens, what did Nano last do -- and it is
+ * fetched on demand rather than polled, because every line of it is a real
+ * Windows call.
+ *
+ * A section the backend could not read renders as "não consegui ler", never as
+ * a zero. An unknown volume and a muted machine are different facts.
+ */
+function PcStatusSection({ snapshot, loading, onRefresh }: {
+  snapshot: PcSnapshot | null;
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  const unknown = <span className="muted">não consegui ler</span>;
+
+  if (!loading && snapshot?.platform === "unsupported") {
+    return (
+      <>
+        <h2 className="page-title">Computador</h2>
+        <EmptyState title="O controlo de PC só funciona no Windows."
+                    hint="As outras funções do Nano continuam disponíveis." />
+      </>
+    );
+  }
+
+  return (
+    <>
+      <div className="inline" style={{ alignItems: "baseline" }}>
+        <h2 className="page-title" style={{ marginBottom: 0 }}>Computador</h2>
+        <span style={{ flex: 1 }} />
+        <Button onClick={onRefresh} disabled={loading}>
+          {loading ? "A ler…" : "Atualizar"}
+        </Button>
+      </div>
+
+      <div className="card" style={{ maxWidth: 560 }}>
+        <MetricRow
+          label="Volume"
+          value={snapshot?.volume
+            ? `${snapshot.volume.level}%${snapshot.volume.muted ? " (sem som)" : ""}`
+            : unknown}
+        />
+        <MetricRow
+          label="Janela em primeiro plano"
+          value={snapshot?.activeWindow?.title || unknown}
+        />
+        <MetricRow
+          label="Janelas abertas"
+          value={snapshot?.windowCount ?? unknown}
+        />
+        <MetricRow
+          label="Monitores"
+          value={snapshot?.monitors
+            ? snapshot.monitors.map((m) => `${m.width}×${m.height}${m.primary ? " (principal)" : ""}`).join(" · ")
+            : unknown}
+        />
+        <MetricRow
+          label="Ligação"
+          value={snapshot?.network
+            ? (snapshot.network.connected
+                ? `ligado${snapshot.network.connection_type ? ` (${snapshot.network.connection_type})` : ""}`
+                : "sem ligação")
+            : unknown}
+        />
+        <MetricRow
+          label="Espaço livre"
+          value={snapshot?.storage
+            ? `${snapshot.storage.free_gb} GB de ${snapshot.storage.total_gb} GB`
+            : unknown}
+        />
+      </div>
+
+      {snapshot?.applications && snapshot.applications.length > 0 && (
+        <div className="card" style={{ maxWidth: 560, marginTop: 12 }}>
+          <div className="cc-tile-label">Aplicações abertas</div>
+          <div className="inline" style={{ flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+            {snapshot.applications.map((app) => (
+              <ToolChip key={app.process} name={app.process} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      <h2 className="page-title">Ações recentes no computador</h2>
+      {snapshot && snapshot.recentActions.length === 0 ? (
+        <EmptyState title="O Nano ainda não fez nada no computador nesta sessão." />
+      ) : (
+        <div className="stack stack--tight">
+          {(snapshot?.recentActions ?? []).map((entry, index) => (
+            <div className="row-item" key={`${entry.at}-${index}`}>
+              <div className="row-item__main">
+                <div className="row-item__title">{entry.action}</div>
+                <div className="row-item__meta">{entry.target}</div>
+              </div>
+              <RiskBadge risk={entry.risk} />
+              <span className="row-item__meta">{formatTime(entry.at)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 export function StatusPage({
-  readiness, providers, commandCenter, loading, onToggleEmergencyStop,
-  onOpenTask, onCancelTask, onNavigate,
+  readiness, providers, commandCenter, pcSnapshot, pcLoading, onRefreshPc,
+  loading, onToggleEmergencyStop, onOpenTask, onCancelTask, onNavigate,
 }: {
   readiness: ReadinessPayload | null;
   providers: ProviderPayload | null;
   commandCenter: CommandCenterPayload | null;
+  pcSnapshot: PcSnapshot | null;
+  pcLoading: boolean;
+  onRefreshPc: () => void;
   loading: boolean;
   onToggleEmergencyStop: (enabled: boolean) => void;
   onOpenTask: (id: string) => void;
@@ -695,6 +808,8 @@ export function StatusPage({
           inspector's "Saúde do sistema" card. That card is now the single
           place, at the top of this page, and it carries the used/total figures
           the tiles used to add. */}
+
+      <PcStatusSection snapshot={pcSnapshot} loading={pcLoading} onRefresh={onRefreshPc} />
 
       <h2 className="page-title">Segurança</h2>
       <div className="card" style={{ maxWidth: 560 }}>

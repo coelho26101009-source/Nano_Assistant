@@ -230,10 +230,14 @@ def test_task_engine_status_summary_and_event_history_are_real(tmp_path):
 
 
 def test_permission_manager_persists_custom_policy_state(tmp_path):
+    # Written against shell.execute originally; that capability is now blocked
+    # outright and can no longer show the allow -> ask downgrade. process.start
+    # is the same shape (HIGH risk, APPROVAL_REQUIRED) and keeps the rule under
+    # test.
     manager = PermissionManager(policy_store_path=tmp_path / "permissions.json")
-    policy = manager.register_policy("shell.execute", decision="allow", scope="workspace", reason="Trusted local shell usage.")
+    policy = manager.register_policy("process.start", decision="allow", scope="workspace", reason="Trusted local process launch.")
     assert policy["decision"] == "approval_required"
-    assert manager.get_decision_for_action("shell.execute", {"command": "echo hello"}) == "ask"
+    assert manager.get_decision_for_action("process.start", {"path": "notepad.exe"}) == "ask"
     assert manager.list_policies()
 
 
@@ -291,9 +295,10 @@ def test_tool_executor_enforces_retry_policies_and_path_validation(tmp_path):
 
     danger = executor.execute_tool("shell.execute", {"command": "rm -rf /", "timeout": 1})
     assert danger["success"] is False
-    # verification_failed is reachable now that shell.execute actually runs:
-    # a non-zero return code is reported as a failure, never as success.
-    assert danger["status"] in {"permission_denied", "invalid_input", "failed", "verification_failed"}
+    # The comment here used to read "verification_failed is reachable now that
+    # shell.execute actually runs" -- which was the problem. It ran. There is
+    # no shell tool any more, so the only reachable status is the refusal.
+    assert danger["status"] == "unsupported_capability"
 
 
 def test_permission_manager_keeps_audit_log_for_user_decisions(tmp_path):

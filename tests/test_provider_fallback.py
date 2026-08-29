@@ -101,8 +101,28 @@ class FakeOllamaResponse:
         return self._payload
 
 
+class OllamaRejectedRequest(AssertionError):
+    """The real server would have answered 400 for this payload."""
+
+
 class FakeOllamaClient:
-    """Scripted local model speaking the real /api/chat response shape."""
+    """Scripted local model speaking the real /api/chat shape -- IN BOTH DIRECTIONS.
+
+    The response shape was always modelled here. The REQUEST shape was not, and
+    that gap hid a real bug for as long as it existed: Nano replayed Groq's
+    tool calls to Ollama verbatim, with `arguments` as a JSON string, and the
+    real server answers
+
+        400 {"error":"Value looks like object, but can't find closing '}' symbol"}
+
+    because it decodes that field into a Go map. Every local turn after a cloud
+    tool call therefore lost its tools, and this fake said nothing, because it
+    accepted anything.
+
+    A fake that is more permissive than the server it stands in for cannot fail
+    where the server does. So it validates now, on exactly the rule the real
+    server enforces.
+    """
 
     def __init__(self, script: list[dict]):
         self.script = list(script)
@@ -114,10 +134,26 @@ class FakeOllamaClient:
     async def __aexit__(self, *_exc):
         return False
 
+    @staticmethod
+    def _validate(payload: dict) -> None:
+        for message in payload.get("messages") or []:
+            for call in message.get("tool_calls") or []:
+                arguments = ((call or {}).get("function") or {}).get("arguments")
+                if isinstance(arguments, str):
+                    raise OllamaRejectedRequest(
+                        "Ollama would answer HTTP 400: tool_calls[].function."
+                        f"arguments must be an object, got the string {arguments!r}")
+                if arguments is not None and not isinstance(arguments, dict):
+                    raise OllamaRejectedRequest(
+                        "Ollama would answer HTTP 400: tool_calls[].function."
+                        f"arguments must be an object, got {type(arguments).__name__}")
+
     async def post(self, url, json=None, **_kwargs):
-        self.requests.append(json or {})
-        payload = self.script.pop(0) if self.script else {"message": {"content": "pronto"}}
-        return FakeOllamaResponse(payload)
+        payload = json or {}
+        self._validate(payload)
+        self.requests.append(payload)
+        body = self.script.pop(0) if self.script else {"message": {"content": "pronto"}}
+        return FakeOllamaResponse(body)
 
 
 def local_text(text: str) -> dict:
@@ -508,6 +544,70 @@ def test_a_tool_result_from_groq_is_handed_to_the_local_continuation(monkeypatch
     # And the user message was not replayed on top of it.
     assert len([m for m in sent if m.get("role") == "user"
                 and m.get("content") == "qual é o volume?"]) == 1
+
+
+def test_groq_tool_calls_are_reshaped_for_ollama_before_the_handoff(monkeypatch):
+    """The two providers disagree about one field, and it broke the whole handoff.
+
+    Groq speaks the OpenAI wire format, where `function.arguments` is a JSON
+    STRING. Ollama decodes that field into a Go map and answers
+
+        400 {"error":"Value looks like object, but can't find closing '}' symbol"}
+
+    Nano stored the Groq shape (correctly -- that is what goes back to Groq) and
+    replayed it verbatim to Ollama. Found by running the real thing: after Groq
+    had called any tool, every later local turn failed with that 400, fell into
+    the no-tools branch, and the local model answered with no tools at all --
+    so PC Control silently stopped working and the model filled the gap with
+    invented answers.
+
+    Asserted on the PAYLOAD rather than on the reply, because the payload is the
+    thing the real server rejects.
+    """
+    executor = RecordingExecutor(result={"success": True, "status": "completed",
+                                         "output": {"ok": True, "status": "launched"},
+                                         "metadata": {}})
+    brain = build_brain(
+        monkeypatch, mode="AUTO", tools=TOOL_SCHEMA, executor=executor,
+        groq_script=[[_Chunk(tool_calls=[("pc_app_launch", '{"name": "Calculadora"}')])],
+                     FakeGroqError(429, RATE_LIMIT_HEADERS)],
+        ollama_script=[local_text("A Calculadora foi aberta.")])
+
+    run(collect(brain, "abre a calculadora"))
+
+    sent = brain._fake_ollama.requests[0]["messages"]
+    calls = [call for message in sent for call in (message.get("tool_calls") or [])]
+    assert calls, "the tool call was dropped instead of being converted"
+    for call in calls:
+        arguments = call["function"]["arguments"]
+        assert isinstance(arguments, dict), (
+            f"Ollama needs an object; got {type(arguments).__name__}")
+    assert calls[0]["function"]["arguments"] == {"name": "Calculadora"}, (
+        "the arguments were not carried over faithfully")
+
+    # And the history Groq would see keeps the string form it requires.
+    stored = [message for message in brain.conversation if message.get("tool_calls")]
+    assert stored, "the assistant tool call left the history"
+    assert isinstance(stored[0]["tool_calls"][0]["function"]["arguments"], str), (
+        "the Groq-facing history was rewritten; it must keep the OpenAI shape")
+
+
+def test_an_unparseable_tool_call_is_dropped_rather_than_sent_empty(monkeypatch):
+    """`{}` would invite the local model to invent arguments of its own.
+
+    That would be a second, DIFFERENT call, which the per-turn ledger has no
+    reason to recognise as a repeat -- so the safe failure is to drop the call
+    and let the tool result speak for itself.
+    """
+    brain = build_brain(monkeypatch, mode="AUTO", tools=TOOL_SCHEMA,
+                        executor=RecordingExecutor(), groq_script=[[_Chunk("x")]])
+    shaped = brain._ollama_tool_calls([
+        {"function": {"name": "pc_app_launch", "arguments": "{not json"}},
+        {"function": {"name": "pc_volume_get", "arguments": "{}"}},
+        {"function": {"name": "", "arguments": "{}"}},
+        {"nonsense": True},
+    ])
+    assert shaped == [{"function": {"name": "pc_volume_get", "arguments": {}}}]
 
 
 def test_a_consequential_tool_never_executes_twice_across_a_fallback(monkeypatch):
