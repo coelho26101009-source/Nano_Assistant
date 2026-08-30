@@ -18,6 +18,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import eel as eel_module
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -393,7 +394,7 @@ def test_voice_phase_events_are_pushed_to_the_desktop_shell(main_module, monkeyp
             emitted.append((event, payload))
 
     monkeypatch.setattr(main_module, "_DESKTOP_BRIDGE", FakeBridge())
-    monkeypatch.setattr(main_module, "_notify_ui", lambda _call: None)
+    monkeypatch.setattr(main_module, "_notify_ui", lambda *_args: None)
 
     main_module._emit_voice_phase("COMMAND_LISTENING", "A ouvir comando…")
     main_module._emit_voice_phase("IDLE", "")
@@ -401,6 +402,42 @@ def test_voice_phase_events_are_pushed_to_the_desktop_shell(main_module, monkeyp
     assert emitted == [
         ("voice_phase", {"phase": "COMMAND_LISTENING", "detail": "A ouvir comando…"}),
         ("voice_phase", {"phase": "IDLE", "detail": ""}),
+    ]
+
+
+def test_a_missing_eel_renderer_callback_does_not_block_the_desktop_bridge(main_module, monkeypatch):
+    """Regression: a frontend build that exposes nothing must not also drop
+    the desktop-shell event.
+
+    Before this was fixed, `_emit_voice_phase` built its eel call as
+    `eel.on_voice_phase(...)` directly in the argument list of `_notify_ui`.
+    `eel.<name>` only exists once `eel.init()` has scanned a built frontend
+    and found a matching `eel.expose(...)` call in it -- exactly the state of
+    a clean checkout that has never run `npm run build`. On such a host the
+    attribute genuinely does not exist, the AttributeError happened before
+    `_notify_ui` was even entered, and `_emit_voice_phase` never reached its
+    `_desktop_emit(...)` call at all: the Electron overlay silently lost every
+    phase update. This does not monkeypatch `_notify_ui` away, so it exercises
+    the real lookup inside it against a real eel module with the attribute
+    genuinely absent.
+    """
+    monkeypatch.delattr(eel_module, "on_voice_phase", raising=False)
+
+    emitted: list[tuple[str, dict]] = []
+
+    class FakeBridge:
+        running = True
+        operations = ()
+
+        def emit(self, event, payload):
+            emitted.append((event, payload))
+
+    monkeypatch.setattr(main_module, "_DESKTOP_BRIDGE", FakeBridge())
+
+    main_module._emit_voice_phase("COMMAND_LISTENING", "A ouvir comando…")
+
+    assert emitted == [
+        ("voice_phase", {"phase": "COMMAND_LISTENING", "detail": "A ouvir comando…"}),
     ]
 
 

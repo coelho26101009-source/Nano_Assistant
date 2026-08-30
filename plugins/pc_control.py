@@ -58,6 +58,7 @@ from core.pc_control import (
     settings,
     system,
     web,
+    winapi,
     windows,
 )
 from core.pc_control.results import (
@@ -78,11 +79,25 @@ def _guard(operation: str, function, *args, **kwargs) -> dict:
     A PCControlError becomes its declared status. Anything else becomes a
     generic failure and the detail goes to the LOG, not to the model: stack
     traces are noise in a context window and can leak paths.
+
+    `winapi.WindowsUnavailable` gets its own status rather than falling into
+    that generic branch. Every `core/pc_control/*.py` entry point is supposed
+    to check `winapi.IS_WINDOWS` itself and raise a proper
+    `PCControlError("unsupported_platform", ...)` before ever touching a Win32
+    call -- but that is an easy check to forget in one of ~50 handlers, and
+    when it is, the raw `WindowsUnavailable` used to surface as an opaque
+    "internal_error" instead of the same intentional, structured
+    "unsupported_platform" every other Windows-only tool already reports off
+    Windows. This is a safety net for that one failure mode specifically, not
+    a general excuse to skip the per-module check -- it fixes how a missed
+    check is REPORTED, not whether the check should exist.
     """
     try:
         return function(*args, **kwargs)
     except PCControlError as exc:
         return from_error(exc)
+    except winapi.WindowsUnavailable:
+        return fail("unsupported_platform", "Esta ação só funciona no Windows.", operation=operation)
     except Exception as exc:
         logger.exception("PC control operation failed: %s", operation)
         return fail("internal_error",

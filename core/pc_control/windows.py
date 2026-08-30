@@ -125,6 +125,21 @@ def resolve_window(*, window_id: int | None = None, query: str | None = None,
             hwnd = int(window_id)
         except (TypeError, ValueError):
             raise PCControlError("invalid_input", "Identificador de janela inválido.") from None
+        if not winapi.IS_WINDOWS:
+            # The query branch below reaches winapi only through
+            # list_windows(), which already guards itself -- a test can
+            # exercise the ambiguity logic cross-platform by faking
+            # list_windows without touching real Win32 at all. This branch is
+            # different: it calls winapi.is_window() directly, so nothing
+            # upstream of it declares a platform check. Without this, a
+            # malformed-window_id call on a non-Windows host hit
+            # winapi.is_window() raw, which raises WindowsUnavailable rather
+            # than a PCControlError -- plugins/pc_control.py's guard has no
+            # declared status for that, so it fell through to a generic
+            # "internal_error" instead of the same intentional
+            # "unsupported_platform" every other window/monitor/audio tool
+            # already reports off Windows.
+            raise PCControlError("unsupported_platform", "O controlo de janelas só funciona no Windows.")
         if not winapi.is_window(hwnd):
             raise PCControlError("not_found", "Essa janela já não existe.")
         return describe(hwnd)

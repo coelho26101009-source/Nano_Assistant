@@ -1692,7 +1692,7 @@ def get_system_stats() -> dict:
 _NOOP_CALLBACK = lambda *_args: None
 
 
-def _notify_ui(call) -> None:
+def _notify_ui(name: str, *args) -> None:
     """Send a UI notification without waiting for the browser to answer.
 
     eel's `eel.fn(args)` already puts the message on the websocket; the usual
@@ -1701,34 +1701,51 @@ def _notify_ui(call) -> None:
     chunk stalled the shared event loop -- measured at up to 1.6 s of added
     latency on a single answer. Passing a callback makes eel return
     immediately, so the chunk is sent and the loop keeps running.
+
+    `eel.<name>` is not a fixed attribute of the eel module: it is created by
+    `eel.init()` only for JS function names it actually found exposed (via
+    `eel.expose(...)`) in the frontend build it scanned. A missing, stale, or
+    not-yet-built frontend -- exactly what a clean checkout with no `npm run
+    build` looks like -- means the attribute genuinely does not exist yet.
+    That is a normal, expected runtime state, not a programming error, so the
+    lookup itself has to be inside this guard rather than done by the caller:
+    building the eel call as an argument BEFORE calling this function would
+    raise AttributeError outside the try/except below and take the caller down
+    with it, which is exactly what used to happen to `_emit_voice_phase` and
+    would have skipped its `_desktop_emit` call too.
     """
     try:
-        call(_NOOP_CALLBACK)
+        js_function = getattr(eel, name)
+    except AttributeError:
+        logger.debug("UI notification skipped: eel.%s is not exposed by the current frontend build", name)
+        return
+    try:
+        js_function(*args)(_NOOP_CALLBACK)
     except Exception:
         logger.debug("UI notification failed", exc_info=True)
 
 
 def _emit_stream_start(msg_id: str, user_text: str | None = None):
-    _notify_ui(eel.on_stream_start(msg_id, user_text))
+    _notify_ui("on_stream_start", msg_id, user_text)
 
 def _emit_stream_status(msg_id: str, status: str):
-    _notify_ui(eel.on_stream_status(msg_id, status))
+    _notify_ui("on_stream_status", msg_id, status)
 
 def _emit_stream_chunk(msg_id: str, chunk: str):
-    _notify_ui(eel.on_stream_chunk(msg_id, chunk))
+    _notify_ui("on_stream_chunk", msg_id, chunk)
 
 def _emit_stream_end(msg_id: str, result: dict):
-    _notify_ui(eel.on_stream_end(msg_id, result))
+    _notify_ui("on_stream_end", msg_id, result)
 
 def _emit_stream_error(msg_id: str, code: str, detail: str = ""):
     """A model/provider failure, as distinct from the bridge being down."""
-    _notify_ui(eel.on_stream_error(msg_id, {"code": code, "detail": detail}))
+    _notify_ui("on_stream_error", msg_id, {"code": code, "detail": detail})
 
 def _emit_rate_limited(msg_id: str, info: dict):
     """Tell the UI it is rate-limited and for how long, never just 'Error'."""
     payload = dict(info or {})
     payload["message"] = providers.rate_limit_message(payload)
-    _notify_ui(eel.on_rate_limited(msg_id, payload))
+    _notify_ui("on_rate_limited", msg_id, payload)
 
 def _emit_voice_phase(phase: str, detail: str = ""):
     """Publish the current voice turn phase so the UI can narrate it.
@@ -1738,9 +1755,11 @@ def _emit_voice_phase(phase: str, detail: str = ""):
     from it. The overlay therefore shows the REAL phase of the real turn -- it
     never runs a timeline of its own -- and it keeps working when the main
     window (and with it the eel renderer) is hidden or has never been created.
+    The desktop sink must fire even when the eel sink cannot -- see
+    `_notify_ui`.
     """
     logger.info("voice_phase -> %s (%s)", phase, detail or "-")
-    _notify_ui(eel.on_voice_phase(phase, detail))
+    _notify_ui("on_voice_phase", phase, detail)
     _desktop_emit("voice_phase", {"phase": phase, "detail": detail})
 
 def _emit_voice_exchange(turn_id: str, user_text: str, assistant_text: str):
@@ -1750,14 +1769,11 @@ def _emit_voice_exchange(turn_id: str, user_text: str, assistant_text: str):
     user heard an answer that never appeared on screen. The turn id lets the
     UI insert it exactly once.
     """
-    _notify_ui(eel.on_voice_exchange(turn_id, user_text, assistant_text))
+    _notify_ui("on_voice_exchange", turn_id, user_text, assistant_text)
 
 def _emit_wake_detected(transcript: str = ""):
     """Best-effort UI notification. The chime is the guaranteed feedback."""
-    try:
-        _notify_ui(eel.on_wake_detected(transcript))
-    except Exception as exc:
-        logger.debug("UI não recebeu o evento de wake: %s", exc)
+    _notify_ui("on_wake_detected", transcript)
 
 def _on_wake_word():
     _emit_wake_detected()

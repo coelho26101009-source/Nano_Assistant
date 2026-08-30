@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from core import plugin_loader
-from core.pc_control import applications, audio, files, screen, windows
+from core.pc_control import applications, audio, files, screen, winapi, windows
 from core.pc_control import results as pc_results
 from core.pc_control.results import PCControlError
 from core.permission_manager import PermissionManager
@@ -35,6 +35,24 @@ WINDOWS_ONLY = pytest.mark.skipif(
     not __import__("core.pc_control.winapi", fromlist=["winapi"]).IS_WINDOWS,
     reason="PC control targets Windows",
 )
+
+
+def _pc_status(result: dict) -> str | None:
+    """The PCControlError status code a `ToolExecutor.execute_tool` result
+    actually carries, wherever it ended up.
+
+    A PC Control handler catches its own `PCControlError` (see `_guard` in
+    plugins/pc_control.py) and returns `{"ok": False, "status": ..., "error":
+    ..., "message": ...}` as its OUTPUT -- it never re-raises. ToolExecutor's
+    `_verify_execution` then sees that truthy `output["error"]` and marks the
+    call `verification_failed`, so the TOP-LEVEL `result["error"]` ends up as
+    the Portuguese sentence `"Verificação falhou: <status>"`, not the status
+    code itself. Checking the top-level `error` string for a status code (as
+    an earlier version of this fixture did) silently never matches anything;
+    the actual code always lives in `result["output"]["status"]`.
+    """
+    output = result.get("output")
+    return output.get("status") if isinstance(output, dict) else None
 
 PC_TOOLS = (
     "pc_app_search", "pc_app_launch", "pc_app_switch", "pc_app_list_running",
@@ -375,7 +393,22 @@ def test_file_search_caps_an_absurd_max_results(executor):
     assert len(result["output"].get("results", [])) <= pc_results.MAX_FILE_RESULTS
 
 
-def test_file_search_defaults_to_user_folders_never_the_whole_drive():
+def test_file_search_defaults_to_user_folders_never_the_whole_drive(tmp_path, monkeypatch):
+    """Cross-platform logic (Path, no Win32 call), tested hermetically.
+
+    `_search_roots` only includes a default folder that actually exists, so
+    asserting against the real ambient home directory is host-dependent: a
+    minimal CI account has no ~/Desktop, ~/Documents or ~/Downloads, which
+    made `roots` empty and failed the very first assertion -- not because the
+    security contract (never fall back to the whole drive) is Windows-only,
+    but because the test's fixture data was implicit, ambient state. Building
+    the three folders under a real temp HOME makes the contract itself
+    testable on any platform.
+    """
+    for name in files.DEFAULT_SEARCH_FOLDERS:
+        (tmp_path / name).mkdir()
+    monkeypatch.setattr(files, "home", lambda: tmp_path)
+
     roots = files._search_roots(None)
     assert roots, "no default search roots"
     for root in roots:
@@ -721,7 +754,7 @@ def test_volume_can_be_read_and_restored_exactly(executor):
     actually has audio, hosted or not.
     """
     before = executor.execute_tool("pc_volume_get", {})
-    if not before["success"] and str(before.get("error", "")).startswith("audio_unavailable"):
+    if _pc_status(before) == "audio_unavailable":
         pytest.skip("no default audio playback device is available on this host")
     assert before["success"] is True
     original_level = before["output"]["level"]
@@ -744,6 +777,35 @@ def test_volume_can_be_read_and_restored_exactly(executor):
     restored = executor.execute_tool("pc_volume_get", {})
     assert abs(restored["output"]["level"] - original_level) <= 1
     assert restored["output"]["muted"] is original_muted
+
+
+@WINDOWS_ONLY
+def test_the_audio_unavailable_skip_condition_matches_the_real_result_shape(executor, monkeypatch):
+    """Pins the exact shape `_pc_status` depends on.
+
+    A prior version of the skip check in the test above looked for
+    "audio_unavailable" at the TOP of the result's `error` string
+    (`result["error"]`) and never matched on a real hosted runner, because
+    `execute_tool` never puts it there: the handler catches its own
+    PCControlError and returns it as OUTPUT, which ToolExecutor then reports
+    as `status: "verification_failed"` with `error: "Verificação falhou:
+    audio_unavailable"` at the top level. The actual code always lives at
+    `result["output"]["status"]`. This forces the real failure through the
+    real executor -- no PCControlError is constructed by hand -- so a future
+    change to that wrapping breaks this test rather than silently breaking
+    the skip in test_volume_can_be_read_and_restored_exactly again.
+    """
+    def endpoint_unavailable(*_args, **_kwargs):
+        raise OSError("no default audio playback device")
+
+    monkeypatch.setattr(winapi, "AudioEndpoint", endpoint_unavailable)
+
+    result = executor.execute_tool("pc_volume_get", {})
+
+    assert result["success"] is False
+    assert result["status"] == "verification_failed"
+    assert result["output"]["status"] == "audio_unavailable"
+    assert _pc_status(result) == "audio_unavailable"
 
 
 @WINDOWS_ONLY

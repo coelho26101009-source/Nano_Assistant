@@ -544,8 +544,16 @@ def test_a_trailing_dot_is_refused_because_windows_would_erase_it():
     ".bat", ".cmd", ".ps1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".exe",
     ".com", ".msi", ".scr", ".reg", ".hta", ".lnk", ".html", ".svg", ".py",
 ])
+@WINDOWS_ONLY
 def test_creating_an_executable_or_scriptable_file_is_refused(executor, sandbox, extension):
-    """Audit item 13. File creation must never be a shell bypass."""
+    """Audit item 13. File creation must never be a shell bypass.
+
+    core/pc_control/fileops.py gates every mutating operation on Windows
+    before it does anything else (see `_require_windows`), so off Windows the
+    real, correct answer is "unsupported_platform", not "blocked" -- the
+    extension check never runs. That is not a gap: this module has no
+    non-Windows implementation to fall back to, and none is being added here.
+    """
     result = executor.execute_tool("pc_file_create_text", {
         "path": str(sandbox), "name": f"payload{extension}", "content": "echo hi"})
     assert result["success"] is False, extension
@@ -553,7 +561,11 @@ def test_creating_an_executable_or_scriptable_file_is_refused(executor, sandbox,
     assert not list(sandbox.iterdir()), "a file was created anyway"
 
 
+@WINDOWS_ONLY
 def test_copying_or_renaming_into_an_executable_extension_is_refused(executor, sandbox):
+    """See test_creating_an_executable_or_scriptable_file_is_refused: fileops
+    is Windows-only end to end, so off Windows this fails closed with
+    "unsupported_platform" before the extension check ever runs."""
     source = sandbox / "nota.txt"
     source.write_text("olá", encoding="utf-8")
     for tool, args in (
@@ -577,7 +589,9 @@ def test_a_text_file_may_only_use_an_inert_extension():
             fileops.validate_text_filename(bad)
 
 
+@WINDOWS_ONLY
 def test_nothing_is_ever_overwritten(executor, sandbox):
+    """Same reason as the two tests above: fileops has no non-Windows path."""
     existing = sandbox / "nota.txt"
     existing.write_text("original", encoding="utf-8")
     other = sandbox / "outra.txt"
@@ -595,7 +609,10 @@ def test_nothing_is_ever_overwritten(executor, sandbox):
     assert existing.read_text(encoding="utf-8") == "original"
 
 
+@WINDOWS_ONLY
 def test_created_file_content_is_bounded(executor, sandbox):
+    """Same reason as the file tests above: fileops is Windows-only, so the
+    size check never runs off Windows -- unsupported_platform fires first."""
     result = executor.execute_tool("pc_file_create_text", {
         "path": str(sandbox), "name": "grande.txt",
         "content": "x" * (fileops.MAX_TEXT_BYTES + 1)})
@@ -931,8 +948,18 @@ def test_a_provider_failover_never_repeats_a_v2_action(monkeypatch, name, args):
         f"{name} ran {len(executor.executions)} times: {executor.executions}")
 
 
+@WINDOWS_ONLY
 def test_the_ledger_treats_two_spellings_of_one_path_as_one_call(monkeypatch):
     """Audit item 20 with V2's wider argument shapes -- see PART V.
+
+    The ledger key normalises path arguments with `os.path.normcase`, which is
+    deliberately platform-dependent: it case-folds and unifies slashes on
+    Windows because NTFS treats "C:/Users/x" and "C:\\Users\\X" as the same
+    file, and is a no-op on POSIX because ext4 does not. "Two spellings, one
+    file" is a true statement about Windows and a false one about Linux, so
+    this test is only meaningful where the property it asserts is actually
+    true -- Windows is not standing in for "the test environment" here, it is
+    the platform the security property belongs to.
 
     `(tool_name, arguments)` was enough for V1's window ids. A path can be
     written several ways for the same file, and two spellings would be two
@@ -1163,7 +1190,11 @@ def test_an_unknown_snap_position_is_refused():
     assert excinfo.value.status == "invalid_input"
 
 
+@WINDOWS_ONLY
 def test_an_unknown_monitor_number_is_refused_with_the_real_count():
+    """geometry.monitors() itself is Windows-only (real EnumDisplayMonitors),
+    so off Windows resolve_monitor(99) correctly reports unsupported_platform
+    before it ever gets far enough to count real monitors."""
     with pytest.raises(PCControlError) as excinfo:
         geometry.resolve_monitor(99)
     assert excinfo.value.status == "not_found"

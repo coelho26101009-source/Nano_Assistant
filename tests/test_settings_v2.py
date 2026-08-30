@@ -661,9 +661,18 @@ def test_get_pc_activity_is_scoped_to_pc_capabilities_and_matches_categories(mai
     capability never leaks into Atividade, the category filters partition
     exactly the decisions the trail produced, and nothing is invented.
     """
+    from core.pc_control import windows
     from core.permission_manager import PermissionManager
     from core.plugin_loader import load_all_plugins
     from core.tool_execution import ToolExecutor
+
+    # pc_app_list_running's own handler is the only real Win32 touchpoint this
+    # test needs to avoid: it lists real windows to group them by process.
+    # This test is about get_pc_activity's filtering, not about Windows window
+    # enumeration, so the window source is faked and everything downstream --
+    # ToolExecutor, PermissionManager, the audit trail, get_pc_activity -- runs
+    # for real and unmodified, on any platform.
+    monkeypatch.setattr(windows, "list_windows", lambda **kw: [])
 
     manager = PermissionManager(confirmation_callback=lambda *a, **k: True)
     monkeypatch.setattr(main_module, "permission_manager", manager)
@@ -694,9 +703,21 @@ def test_get_pc_activity_is_scoped_to_pc_capabilities_and_matches_categories(mai
 def test_get_pc_activity_reports_confirmation_requirement_honestly(main_module, monkeypatch):
     """The real capability-level test the live executor and the Ferramentas
     catalogue both use for "requires confirmation" -- not a guess."""
+    from core.pc_control import screen, windows
     from core.permission_manager import PermissionManager
     from core.plugin_loader import load_all_plugins
     from core.tool_execution import ToolExecutor
+
+    # get_pc_activity only surfaces rows whose logged decision is "executed",
+    # "allow_once", "deny" or "failed" -- not "verification_failed", which is
+    # what a real Windows-only handler logs when it cannot even reach the
+    # hardware it needs. Off Windows, both calls below would otherwise vanish
+    # from the trail entirely and the row lookups two lines down would raise
+    # KeyError instead of testing the thing this test is actually about:
+    # whether requiresConfirmation reflects the real per-capability policy.
+    monkeypatch.setattr(windows, "list_windows", lambda **kw: [])
+    monkeypatch.setattr(screen, "capture", lambda mode, window=None: {
+        "subject": "ecrã", "path": "captura.png", "width": 1, "height": 1, "size_bytes": 0})
 
     manager = PermissionManager(confirmation_callback=lambda *a, **k: True)
     monkeypatch.setattr(main_module, "permission_manager", manager)
