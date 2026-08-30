@@ -620,8 +620,30 @@ def test_created_file_content_is_bounded(executor, sandbox):
     assert result["output"]["status"] == "invalid_input"
 
 
+@WINDOWS_ONLY
 def test_recycle_uses_the_recycle_bin_and_never_unlink(monkeypatch, sandbox):
-    """Audit item 33, proved by observing WHICH Windows call is made."""
+    """Audit item 33, proved by observing WHICH Windows call is made.
+
+    Forcing `winapi.IS_WINDOWS = True` and stubbing `shell_recycle` /
+    `recycle_bin_items` (as the two sibling tests below also do) is not
+    enough to make this one portable. `core.pc_control.fileops._recycle`
+    keys its whole verification on `path.drive` (`root = f"{path.drive}\\"
+    if path.drive else None`) to find which bin to count -- and `.drive` is
+    a Windows-only pathlib concept: `PurePosixPath.drive` is always `""`, no
+    matter what `winapi.IS_WINDOWS` says. On a real POSIX path that makes
+    `root` fall through to `None`, so the bin item count is never read at
+    all and `recycled` comes back `False` -- not because the shell refused,
+    but because the verification's own precondition cannot be true on this
+    platform. The sibling tests happen not to notice because neither of them
+    asserts `recycled is True`. This is a property of a real Windows path
+    object, not something a mock can stand in for, so the test belongs on
+    Windows. The platform-independent half of "audit item 33" -- that
+    nothing in this package ever calls a raw `unlink`/`rmdir`/`rmtree`
+    outside one proven-safe exemption -- is asserted separately by
+    `test_pc_control_ships_no_permanent_delete_and_no_process_control` in
+    test_pc_control.py, which is pure AST analysis and already runs on every
+    platform.
+    """
     victim = sandbox / "descartavel.txt"
     victim.write_text("adeus", encoding="utf-8")
     recycled: list[str] = []
