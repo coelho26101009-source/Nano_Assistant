@@ -1,0 +1,7 @@
+# cmd.exe parses .bat/.cmd files as a line-oriented format that misbehaves
+# around goto labels and IF blocks when a line ends in bare LF (see
+# tests/test_launcher.py). Force CRLF in the working tree on every platform,
+# including a Linux CI checkout, so the file cmd.exe actually reads always has
+# the line endings it requires -- independent of core.autocrlf.
+*.bat text eol=crlf
+*.cmd text eol=crlf

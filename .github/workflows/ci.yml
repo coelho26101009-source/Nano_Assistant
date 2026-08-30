@@ -31,11 +31,21 @@ jobs:
         # tests stop skipping and actually run. More Python versions would cost
         # minutes to defend a range Nano does not support -- the embedded
         # runtime is pinned to 3.12.
+        #
+        # Both entries run the SAME command below. The platform split is not
+        # done here with a marker expression or a separate job -- it lives in
+        # the tests themselves, as a `WINDOWS_ONLY = pytest.mark.skipif(not
+        # winapi.IS_WINDOWS, ...)` on each test that genuinely needs real
+        # Win32 behaviour (see tests/test_pc_control.py and
+        # tests/test_pc_control_v2.py). That keeps this file honest: nothing
+        # here silently excludes a security-sensitive test on either
+        # platform, and `-ra` below prints exactly what each OS actually
+        # skipped and why.
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: pip
@@ -56,9 +66,9 @@ jobs:
     name: Frontend typecheck and build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm
@@ -80,7 +90,7 @@ jobs:
       # this. Keeping it lets the Electron job below reuse it instead of
       # rebuilding, and proves the export really produced something.
       - name: Upload built frontend
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-out
           path: frontend/out
@@ -92,9 +102,9 @@ jobs:
     name: Electron tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm
@@ -119,9 +129,9 @@ jobs:
     name: Security static checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 

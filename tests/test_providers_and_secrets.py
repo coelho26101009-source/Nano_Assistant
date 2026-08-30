@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
 from pathlib import Path
 
@@ -73,16 +74,32 @@ def test_a_stored_secret_round_trips(isolated_store):
 
 
 def test_the_raw_secret_is_never_readable_on_disk(isolated_store):
-    """On Windows this is DPAPI; the plaintext must not appear in the file."""
+    """On Windows this is DPAPI; the plaintext must not appear in the file.
+
+    Off Windows there is no OS-backed encryption to fall back on, and
+    `secret_store` says so in its own docstring: it falls back to a plain
+    0600 file, "which is weaker but keeps the same interface". Asserting
+    ciphertext on every platform would make this test pass by accident on
+    Windows and lie about the guarantee everywhere else, so it checks the
+    real contract for whichever platform it runs on.
+    """
     secret = "gsk_plaintext_probe_value_9876"
     secret_store.set_secret(NAME, secret)
 
     raw = isolated_store.read_bytes()
-    assert secret.encode("utf-8") not in raw, "the API key is sitting in plaintext on disk"
     if secret_store.is_encrypted():
+        assert secret.encode("utf-8") not in raw, "the API key is sitting in plaintext on disk"
         # Not merely obfuscated: it must not parse back as the JSON we wrote.
         with pytest.raises(Exception):
             json.loads(raw.decode("utf-8"))
+    else:
+        # The documented fallback: plaintext JSON, protected only by file
+        # permissions. If this ever changes to no longer be true, plaintext
+        # showing up here again is meant to be caught, not silently accepted.
+        assert secret in json.loads(raw.decode("utf-8")).values()
+        if os.name != "nt":
+            mode = os.stat(isolated_store).st_mode & 0o777
+            assert mode == 0o600, f"fallback secret file must be 0600, was {oct(mode)}"
 
 
 def test_describe_reports_metadata_and_never_the_secret(isolated_store):

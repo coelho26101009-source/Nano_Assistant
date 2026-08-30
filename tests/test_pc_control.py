@@ -712,8 +712,17 @@ def test_app_search_finds_the_calculator_on_this_machine(executor):
 
 @WINDOWS_ONLY
 def test_volume_can_be_read_and_restored_exactly(executor):
-    """Mutates real audio, so the original level is restored in finally."""
+    """Mutates real audio, so the original level is restored in finally.
+
+    Skipped, not faked, when there is genuinely no default audio playback
+    device to read -- a hosted CI runner rather than a real machine. The
+    check is the real capability probe itself (the same call the tool makes),
+    not an "if CI" shortcut, so this still runs for real on any host that
+    actually has audio, hosted or not.
+    """
     before = executor.execute_tool("pc_volume_get", {})
+    if not before["success"] and str(before.get("error", "")).startswith("audio_unavailable"):
+        pytest.skip("no default audio playback device is available on this host")
     assert before["success"] is True
     original_level = before["output"]["level"]
     original_muted = before["output"]["muted"]
