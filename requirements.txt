@@ -1,4 +1,4 @@
-# HELIOS V8 core runtime — intentionally kept lightweight.
+# Nano core runtime — intentionally kept lightweight.
 eel>=0.18,<1
 Groq>=0.11,<1
 httpx>=0.27,<1

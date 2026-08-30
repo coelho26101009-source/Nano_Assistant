@@ -1,8 +1,8 @@
-"""Nano Assistant Logger — estruturado, colorido no terminal, ficheiro rotativo.
+"""Nano Assistant Logger — structured, colored in the terminal, rotating file.
 
-O log fica em logs/nano.log (pasta ignorada pelo Git) em vez da raiz do
-repositório, para que ficheiros gerados em runtime não poluam a árvore do
-projecto nem apareçam como alterações por commitar.
+The log lives in logs/nano.log (a folder ignored by Git) instead of the repo
+root, so that files generated at runtime do not pollute the project tree or
+show up as uncommitted changes.
 """
 
 import logging

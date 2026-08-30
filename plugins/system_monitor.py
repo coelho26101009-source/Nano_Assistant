@@ -1,10 +1,10 @@
 """
-H.E.L.I.O.S. Plugin: System Monitor
-Vigia CPU / RAM / disco em background e avisa proactivamente quando algo passa
-dos limites definidos em config/settings.yaml.
+Nano Plugin: System Monitor
+Watches CPU / RAM / disk in the background and proactively warns when
+something goes past the limits set in config/settings.yaml.
 
-Impacto mínimo: uma thread daemon que acorda a cada 60s (configurável) e usa
-apenas leituras do psutil.
+Minimal impact: a daemon thread that wakes up every 60s (configurable) and
+only takes psutil readings.
 """
 
 import asyncio

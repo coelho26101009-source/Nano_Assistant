@@ -725,13 +725,23 @@ class ToolExecutor:
         return result
 
     def _run_and_verify(self, name: str, auth: dict, task_id: str | None, runner) -> dict:
+        """Run a handler off-thread with a real timeout.
+
+        Submits to the shared ``_TOOL_THREADS`` pool rather than a per-call
+        ``ThreadPoolExecutor`` used as a context manager: that pool's
+        ``__exit__`` calls ``shutdown(wait=True)``, which blocks the caller --
+        here, the background worker's own thread -- until the timed-out
+        handler actually returns, defeating the timeout exactly the way the
+        async path's docstring describes and fixes. A handler with no internal
+        bound (a hung network call, a deadlock) would otherwise wedge the
+        worker forever instead of failing at ``timeout`` as declared.
+        """
         tool = auth["tool"]
         start = time.monotonic()
         timeout = float(tool.get("timeout") or 30)
+        future = _TOOL_THREADS.submit(runner, tool["handler"], auth["args"], timeout)
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(runner, tool["handler"], auth["args"], timeout)
-                output = future.result(timeout=timeout)
+            output = future.result(timeout=timeout)
         except concurrent.futures.TimeoutError:
             return self._failure(name, auth, task_id, start, "tool_timeout")
         except Exception as exc:

@@ -184,8 +184,14 @@ class DesktopBridge:
 
     def _pump(self) -> None:
         reader = self._reader
+        # Bounded at the read call itself, not just checked afterwards: an
+        # unbounded `readline()` would buffer an entire pathological line --
+        # gigabytes, with no newline -- before the length check below ever
+        # ran, which is exactly the unbounded allocation this bound exists to
+        # rule out.
+        read_line = lambda: reader.readline(MAX_LINE_BYTES + 1)
         try:
-            for raw in iter(reader.readline, ""):
+            for raw in iter(read_line, ""):
                 if self._stop.is_set():
                     break
                 if len(raw) > MAX_LINE_BYTES:

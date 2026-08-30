@@ -170,6 +170,30 @@ def test_the_per_tool_timeout_actually_fires(tmp_path):
     assert elapsed < 2.0, f"the timeout took {elapsed:.1f}s to fire, so it did not fire"
 
 
+def test_the_sync_per_tool_timeout_actually_fires(tmp_path):
+    """H1, sync path: ``execute_tool`` must not block on a hung handler.
+
+    ``background_worker.py`` calls the synchronous ``execute_tool``, not the
+    async variant. Before the fix, ``_run_and_verify`` ran the handler inside
+    a ``with ThreadPoolExecutor(...) as pool:`` block -- and that block's
+    ``__exit__`` calls ``shutdown(wait=True)``, which blocks the caller until
+    the timed-out handler actually finishes, even though ``future.result``
+    already raised ``TimeoutError``. A handler with no internal bound would
+    wedge the caller (in production, the background worker's own thread)
+    forever instead of failing at the declared timeout.
+    """
+    executor, _calls = _executor_with_slow_tool(tmp_path, seconds=5.0)
+    executor.registry["test.slow_sync"]["timeout"] = 0.3
+
+    started = time.monotonic()
+    result = executor.execute_tool("test.slow_sync", {})
+    elapsed = time.monotonic() - started
+
+    assert result["success"] is False
+    assert result["error"] == "tool_timeout", result
+    assert elapsed < 2.0, f"the sync timeout took {elapsed:.1f}s to fire, so it did not fire"
+
+
 def test_tool_handlers_do_not_run_on_the_shared_default_executor(tmp_path):
     """An orphaned tool worker must not delay unrelated asyncio.to_thread work.
 

@@ -318,14 +318,14 @@ def test_results_json_keeps_both_raw_and_normalized_transcripts():
 
 def test_report_markdown_has_a_summary_row_per_config():
     report = sb.render_report(_results_fixture())
-    assert "| Modelo | Config |" in report
+    assert "| Model | Config |" in report
     assert "tiny/cpu-int8" in report
     assert "base/cpu-int8" in report
 
 
 def test_report_marks_an_unavailable_model_without_losing_the_session():
     report = sb.render_report(_results_fixture())
-    assert "INDISPON" in report
+    assert "UNAVAILABLE" in report
     assert "no CUDA driver" in report
     # ...and the configurations that DID run are still fully reported.
     assert "tiny/cpu-int8" in report
@@ -341,7 +341,7 @@ def test_report_shows_the_wrong_words_and_the_missed_entity():
 def test_report_states_the_privacy_guarantees():
     report = sb.render_report(_results_fixture())
     assert "Groq" in report
-    assert "corrigida" in report          # no post-correction before scoring
+    assert "corrected" in report          # no post-correction before scoring
 
 
 # --------------------------------------------------------------------------
@@ -569,7 +569,7 @@ def test_a_failing_candidate_does_not_destroy_the_session(tmp_path, monkeypatch)
     report = sb.render_report(sb.build_results(
         session_id="s", started_at="a", finished_at="b",
         environment={}, capture={}, summaries=summaries))
-    assert "tiny/cpu-int8" in report and "INDISPON" in report
+    assert "tiny/cpu-int8" in report and "UNAVAILABLE" in report
 
 
 def test_a_hung_candidate_is_timed_out_and_the_session_continues(tmp_path, monkeypatch):

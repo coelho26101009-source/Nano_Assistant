@@ -1,6 +1,6 @@
 """
-H.E.L.I.O.S. Plugin: Smart Life
-IoT via webhooks REST + RAG sobre documentos locais (PDFs).
+Nano Plugin: Smart Life
+IoT via REST webhooks + RAG over local documents (PDFs).
 """
 
 import logging
@@ -172,7 +172,7 @@ def get_tools() -> list[dict]:
         }},
         {"type": "function", "function": {
             "name": "rag_index_pdf",
-            "description": "Indexa um PDF local para que o H.E.L.I.O.S. possa responder perguntas sobre ele.",
+            "description": "Indexa um PDF local para que o Nano possa responder perguntas sobre ele.",
             "parameters": {"type": "object", "required": ["file_path"], "properties": {
                 "file_path": {"type": "string", "description": "Caminho completo para o PDF"},
             }},

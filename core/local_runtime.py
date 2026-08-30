@@ -1,4 +1,4 @@
-"""Local-model detection, readiness and diagnostics for HELIOS."""
+"""Local-model detection, readiness and diagnostics for Nano."""
 from __future__ import annotations
 
 from dataclasses import dataclass

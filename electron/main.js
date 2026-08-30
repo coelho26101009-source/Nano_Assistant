@@ -474,7 +474,7 @@ function hardenWebContents(contents, origin) {
   contents.on('will-navigate', (event, url) => {
     if (!url.startsWith(`${origin}/`) && url !== origin) {
       event.preventDefault();
-      log('Navegação bloqueada:', url);
+      log('Navigation blocked:', url);
     }
   });
 
@@ -486,10 +486,10 @@ function hardenWebContents(contents, origin) {
       if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
         shell.openExternal(url).catch(() => {});
       } else {
-        log('Ligação externa recusada:', parsed.protocol);
+        log('External link refused:', parsed.protocol);
       }
     } catch (_) {
-      log('Ligação externa inválida recusada.');
+      log('Invalid external link refused.');
     }
     return { action: 'deny' };
   });

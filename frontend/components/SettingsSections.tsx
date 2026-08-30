@@ -245,7 +245,7 @@ export function AboutSection({ settings }: { settings: SettingsPayload }) {
       <Panel title="Projeto">
         <MetricRow
           label="Código"
-          value={<code className="mono">github.com/coelho26101009-source/HELIOS_V8</code>}
+          value={<code className="mono">github.com/coelho26101009-source/Nano_Assistant</code>}
         />
         <p className="dim" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>
           A documentação de arquitetura e a política de segurança acompanham o

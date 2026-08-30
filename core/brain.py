@@ -1,8 +1,8 @@
-"""Nano Assistant — motor de decisão, streaming e tool-calling.
+"""Nano Assistant — decision engine, streaming and tool-calling.
 
-Este módulo contém a classe ``Brain`` que gere a conversação entre o utilizador e o modelo
-de linguagem, suportando streaming em tempo real, tool-calling autónomo e fallback transparente
-para modelos locais (Ollama).
+This module contains the ``Brain`` class that manages the conversation between
+the user and the language model, supporting real-time streaming, autonomous
+tool-calling and transparent fallback to local models (Ollama).
 """
 
 from __future__ import annotations

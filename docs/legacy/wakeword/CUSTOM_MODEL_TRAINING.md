@@ -242,7 +242,7 @@ voice:
     enabled: true
     phrase: "Nano"
     provider: "openwakeword"
-    model_path: "C:/Users/coelh/Desktop/HELIOS_V8/models/wakeword/nano.onnx"
+    model_path: "models/wakeword/nano.onnx"
     threshold: 0.7
 ```
 
@@ -258,9 +258,9 @@ After export, validate that the model is real and loadable:
 
 The repo already contains a validation concept in:
 
-- [core/wake_word.py](C:/Users/coelh/Desktop/HELIOS_V8/core/wake_word.py)
-- [core/wake_word_test.py](C:/Users/coelh/Desktop/HELIOS_V8/core/wake_word_test.py)
-- [core/wake_word_test_file.py](C:/Users/coelh/Desktop/HELIOS_V8/core/wake_word_test_file.py)
+- [core/wake_word.py](../../../core/wake_word.py)
+- [core/wake_word_test.py](../../../core/wake_word_test.py)
+- [core/wake_word_test_file.py](../../../core/wake_word_test_file.py)
 
 The file-based test path is especially useful before live microphone testing:
 

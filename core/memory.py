@@ -1,4 +1,4 @@
-"""HELIOS memory: SQLite history, facts and lightweight local RAG."""
+"""Nano memory: SQLite history, facts and lightweight local RAG."""
 from __future__ import annotations
 
 import json

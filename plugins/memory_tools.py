@@ -1,7 +1,7 @@
 """
-H.E.L.I.O.S. Plugin: Memory Tools
-Permite ao cérebro gravar, consultar e apagar factos persistentes sobre o Simão
-e pesquisar em conversas antigas guardadas no SQLite.
+Nano Plugin: Memory Tools
+Lets the brain record, query and delete persistent facts about Simão,
+and search old conversations saved in SQLite.
 """
 
 import logging
@@ -16,31 +16,31 @@ logger = logging.getLogger("helios.plugins.memory_tools")
 
 
 def remember_fact(key: str, value: str) -> dict:
-    """Grava um facto duradouro sobre o Simão (nome, hábitos, preferências)."""
+    """Record a durable fact about Simão (name, habits, preferences)."""
     key = (key or "").strip()
     if not key:
         return {"error": "Preciso de uma chave para o facto (ex: 'nome', 'cidade')."}
     get_memory().set_fact(key, value)
-    logger.info(f"Facto gravado: {key} = {str(value)[:80]}")
+    logger.info(f"Fact recorded: {key} = {str(value)[:80]}")
     return {"success": True, "fact": {key: value},
             "message": f"Guardei que {key} = {value}."}
 
 
 def list_facts() -> dict:
-    """Lista todos os factos persistentes conhecidos sobre o Simão."""
+    """List all persistent facts known about Simão."""
     facts = get_memory().get_facts()
     return {"facts": facts, "count": len(facts)}
 
 
 def forget_fact(key: str) -> dict:
-    """Apaga um facto persistente."""
+    """Delete a persistent fact."""
     removed = get_memory().forget_fact(key or "")
     return {"success": removed,
             "message": f"Facto '{key}' apagado." if removed else f"Não tinha nada guardado em '{key}'."}
 
 
 def search_history(query: str, limit: int = 10) -> dict:
-    """Pesquisa por texto nas conversas anteriores."""
+    """Search previous conversations by text."""
     query = (query or "").strip()
     if not query:
         return {"error": "Preciso de um termo de pesquisa."}
@@ -77,7 +77,7 @@ def get_tools() -> list[dict]:
         }},
         {"type": "function", "function": {
             "name": "list_facts",
-            "description": "Lista tudo o que o H.E.L.I.O.S. sabe de forma persistente sobre o Simão.",
+            "description": "Lista tudo o que o Nano sabe de forma persistente sobre o Simão.",
             "parameters": {"type": "object", "properties": {}},
         }},
         {"type": "function", "function": {

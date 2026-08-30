@@ -1,6 +1,6 @@
 """
-H.E.L.I.O.S. Plugin: Ghost Organizer
-Renomeia downloads com IA, organiza ficheiros, limpa cache, monitoriza recursos.
+Nano Plugin: Ghost Organizer
+Renames downloads with AI, organizes files, clears cache, monitors resources.
 """
 
 import logging
@@ -18,7 +18,7 @@ logger = logging.getLogger("helios.plugins.ghost_organizer")
 
 DOWNLOADS_DIR = Path.home() / "Downloads"
 
-# Regras de organização automática: extensão → pasta destino
+# Automatic organization rules: extension -> destination folder
 ORGANIZE_RULES: dict[str, str] = {
     ".pdf":  "Documentos/PDFs",
     ".docx": "Documentos/Word",

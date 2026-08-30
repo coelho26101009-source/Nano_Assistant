@@ -1,4 +1,4 @@
-"""Central HELIOS configuration loader with safe defaults and caching."""
+"""Central Nano configuration loader with safe defaults and caching."""
 from __future__ import annotations
 
 import copy

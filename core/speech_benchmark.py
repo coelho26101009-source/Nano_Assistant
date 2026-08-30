@@ -626,11 +626,11 @@ def render_report(results: dict) -> str:
     lines: list[str] = []
     add = lines.append
 
-    add("# Nano — Benchmark de precisão de fala")
+    add("# Nano — Speech Accuracy Benchmark")
     add("")
-    add(f"- Sessão: `{results.get('session_id')}`")
-    add(f"- Início: {results.get('started_at')}")
-    add(f"- Fim: {results.get('finished_at')}")
+    add(f"- Session: `{results.get('session_id')}`")
+    add(f"- Started: {results.get('started_at')}")
+    add(f"- Finished: {results.get('finished_at')}")
 
     env = results.get("environment") or {}
     for key in ("platform", "python", "faster_whisper", "ctranslate2", "gpu", "cuda_devices"):
@@ -639,11 +639,11 @@ def render_report(results: dict) -> str:
 
     capture = results.get("capture") or {}
     add("")
-    add("## Captura")
+    add("## Capture")
     add("")
-    add("O áudio foi gravado UMA VEZ por frase, com o mesmo `AudioInputProvider`, "
-        "o mesmo dispositivo e o mesmo formato que o Nano usa em produção. "
-        "Todas as configurações abaixo foram avaliadas sobre exactamente os mesmos ficheiros.")
+    add("The audio was recorded ONCE per phrase, with the same `AudioInputProvider`, "
+        "the same device and the same format Nano uses in production. "
+        "All configurations below were evaluated on exactly the same files.")
     add("")
     for key in ("device_index", "device_name", "sample_rate", "channels",
                 "sample_width_bytes", "record_seconds", "phrases_recorded", "audio_dir"):
@@ -653,16 +653,16 @@ def render_report(results: dict) -> str:
     configs = results.get("configs") or []
 
     add("")
-    add("## Resumo")
+    add("## Summary")
     add("")
-    add("| Modelo | Config | WER | CER | Exacto | Entidades | Warm mediana | Warm p95 | "
-        "Cold load | 1a transcrição | RAM pico | VRAM pico | Device |")
+    add("| Model | Config | WER | CER | Exact | Entities | Warm median | Warm p95 | "
+        "Cold load | 1st transcription | RAM peak | VRAM peak | Device |")
     add("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for cfg in configs:
         acc = cfg.get("accuracy") or {}
         perf = cfg.get("performance") or {}
         if not cfg.get("available", True):
-            add(f"| {cfg.get('model')} | {cfg.get('label')} | INDISPONÍVEL | - | - | - | - | - "
+            add(f"| {cfg.get('model')} | {cfg.get('label')} | UNAVAILABLE | - | - | - | - | - "
                 f"| - | - | - | - | {cfg.get('error') or ''} |")
             continue
         add(
@@ -679,7 +679,7 @@ def render_report(results: dict) -> str:
         )
 
     add("")
-    add("## WER por categoria")
+    add("## WER by category")
     add("")
     categories = sorted({c for cfg in configs
                          for c in ((cfg.get("accuracy") or {}).get("category_wer") or {})})
@@ -694,7 +694,7 @@ def render_report(results: dict) -> str:
                 + " | ".join(_pct(per.get(c)) for c in categories) + " |")
 
     add("")
-    add("## Entidades críticas falhadas")
+    add("## Failed critical entities")
     add("")
     for cfg in configs:
         if not cfg.get("available", True):
@@ -706,25 +706,25 @@ def render_report(results: dict) -> str:
             if not kw.get("found")
         ]
         if not misses:
-            add(f"- **{cfg.get('label')}**: nenhuma falha de entidade.")
+            add(f"- **{cfg.get('label')}**: no entity misses.")
             continue
         add("")
         add(f"### {cfg.get('label')}")
         add("")
-        add("| Entidade | Frase | Esperado | Ouvido |")
+        add("| Entity | Phrase | Expected | Heard |")
         add("|---|---|---|---|")
         for keyword, phrase_id, expected, raw in misses:
-            add(f"| **{keyword}** | {phrase_id} | {expected} | `{raw or '(vazio)'}` |")
+            add(f"| **{keyword}** | {phrase_id} | {expected} | `{raw or '(empty)'}` |")
 
     add("")
-    add("## Erros por frase")
+    add("## Errors by phrase")
     add("")
-    add("Só aparecem as frases que NÃO ficaram exactamente correctas. "
-        "`[esperado -> ouvido]` marca cada palavra trocada.")
+    add("Only phrases that were NOT exactly correct appear here. "
+        "`[expected -> heard]` marks each swapped word.")
     for cfg in configs:
         if not cfg.get("available", True):
             add("")
-            add(f"### {cfg.get('label')} — INDISPONÍVEL")
+            add(f"### {cfg.get('label')} — UNAVAILABLE")
             add("")
             add("```")
             add(str(cfg.get("error")))
@@ -732,29 +732,29 @@ def render_report(results: dict) -> str:
             continue
         wrong = [p for p in cfg.get("phrases", []) if not p.get("exact")]
         add("")
-        add(f"### {cfg.get('label')} — {len(wrong)} de {len(cfg.get('phrases', []))} com erro")
+        add(f"### {cfg.get('label')} — {len(wrong)} of {len(cfg.get('phrases', []))} with errors")
         add("")
         if not wrong:
-            add("Todas as frases exactas.")
+            add("All phrases exact.")
             continue
         for p in wrong:
             add(f"- **{p['phrase_id']}** (WER {_pct(p['wer'])})")
-            add(f"  - esperado: `{p['expected_normalized']}`")
-            add(f"  - ouvido:   `{p['normalized'] or '(vazio)'}`")
-            add(f"  - bruto:    `{p['raw'] or '(vazio)'}`")
+            add(f"  - expected: `{p['expected_normalized']}`")
+            add(f"  - heard:    `{p['normalized'] or '(empty)'}`")
+            add(f"  - raw:      `{p['raw'] or '(empty)'}`")
             add(f"  - diff:     {p['diff']}")
             if p.get("error"):
-                add(f"  - ERRO: `{p['error']}`")
+                add(f"  - ERROR: `{p['error']}`")
 
     add("")
-    add("## Notas")
+    add("## Notes")
     add("")
-    add("- Nenhum áudio saiu desta máquina. O benchmark não contacta o Groq nem "
-        "qualquer outra API na nuvem, e não executa nenhum comando.")
-    add("- Nenhuma transcrição foi corrigida antes de ser pontuada: os números "
-        "acima são o que o Whisper realmente ouviu.")
-    add("- A normalização ignora maiúsculas, pontuação e espaços repetidos. "
-        "Os acentos são preservados.")
+    add("- No audio left this machine. The benchmark does not contact Groq or "
+        "any other cloud API, and does not execute any command.")
+    add("- No transcript was corrected before being scored: the numbers "
+        "above are what Whisper actually heard.")
+    add("- Normalization ignores case, punctuation and repeated spaces. "
+        "Accents are preserved.")
     add("")
     return "\n".join(lines)
 

@@ -1,8 +1,8 @@
 """
-H.E.L.I.O.S. Plugin: Reminders
-Lembretes e alarmes persistentes (SQLite) com um scheduler leve em thread daemon.
-Quando um lembrete vence, é enviada notificação para o telemóvel (webhook) e a
-mensagem é gravada na memória para o H.E.L.I.O.S. a poder referir depois.
+Nano Plugin: Reminders
+Persistent reminders and alarms (SQLite) with a lightweight scheduler on a
+daemon thread. When a reminder is due, a notification is sent to the phone
+(webhook) and the message is saved to memory so Nano can refer to it later.
 """
 
 import asyncio
@@ -27,7 +27,7 @@ _scheduler: threading.Thread | None = None
 _stop = threading.Event()
 
 
-# ─── Persistência ─────────────────────────────────────────────────────────────
+# ─── Persistence ──────────────────────────────────────────────────────────────
 
 def _conn():
     conn = get_memory().conn
@@ -194,7 +194,7 @@ def get_tools() -> list[dict]:
         {"type": "function", "function": {
             "name": "set_reminder",
             "description": (
-                "Cria um lembrete/alarme. O H.E.L.I.O.S. notifica quando chegar a hora, "
+                "Cria um lembrete/alarme. O Nano notifica quando chegar a hora, "
                 "mesmo com a janela fechada."
             ),
             "parameters": {"type": "object", "required": ["text", "when"], "properties": {
@@ -226,13 +226,12 @@ TOOL_HANDLERS: dict = {
     "cancel_reminder": lambda a: cancel_reminder(**a),
 }
 
-# Arranca com o H.E.L.I.O.S. para que lembretes criados noutras sessões disparem
+# Starts with Nano so reminders created in other sessions still fire.
 def start_background_services() -> bool:
-    """Arranca o scheduler. Chamado pelo bootstrap, nunca no import.
+    """Start the scheduler. Called by the bootstrap, never at import time.
 
-    Arrancar threads no import fazia com que qualquer `import` do plugin — um
-    teste, uma verificação de sintaxe — deixasse um scheduler a correr sem
-    forma de o parar.
+    Starting threads at import time meant that any `import` of the plugin —
+    a test, a syntax check — left a scheduler running with no way to stop it.
     """
     if not get_setting("reminders.enabled", True):
         return False

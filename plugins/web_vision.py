@@ -1,9 +1,9 @@
 """
-H.E.L.I.O.S. Plugin: Web Vision & Automation
-Playwright headless — navega, extrai, pesquisa, interage.
+Nano Plugin: Web Vision & Automation
+Headless Playwright -- navigates, extracts, searches, interacts.
 
-O browser é tratado como uma ferramenta de internet pública: URLs locais,
-private/link-local, file:// e outros esquemas não são aceites.
+The browser is treated as a public-internet-only tool: local URLs,
+private/link-local addresses, file:// and other schemes are not accepted.
 """
 
 import asyncio

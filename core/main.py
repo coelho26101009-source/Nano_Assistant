@@ -1,7 +1,7 @@
 """Nano Assistant — Main Entry Point.
 
-Servidor Eel/Python de orquestração para o Nano Assistant, suportando
-streaming bidirecional, execução de ferramentas, guardrails e modo de voz.
+Eel/Python orchestration server for Nano Assistant, supporting bidirectional
+streaming, tool execution, guardrails and voice mode.
 """
 from __future__ import annotations
 import argparse
@@ -165,11 +165,11 @@ def _get_or_create_loop() -> asyncio.AbstractEventLoop:
 
 
 def run_coro(coro, *, timeout: float | None = DEFAULT_COROUTINE_TIMEOUT):
-    """Executa uma corrotina na loop partilhada a partir de outra thread.
+    """Run a coroutine on the shared loop from another thread.
 
-    Chamar isto de dentro da própria loop agendaria trabalho na loop que
-    estamos a bloquear — o deadlock que travava todas as confirmações vindas
-    do chat. Passou a ser um erro explícito em vez de uma espera infinita.
+    Calling this from inside the loop itself would schedule work on the loop
+    we are blocking -- the deadlock that used to freeze every confirmation
+    coming from chat. It is now an explicit error instead of an infinite wait.
     """
     loop = _get_or_create_loop()
     try:
@@ -308,9 +308,9 @@ def get_last_response_meta() -> dict:
 def stop_voice():
     """Stop what is being spoken right now. Voice REMAINS available.
 
-    Esta é a única exposição Eel de 'stop_voice'. Uma segunda definição com o
-    mesmo nome fazia com que eel._expose falhasse no import e a aplicação nunca
-    arrancasse.
+    This is the only Eel exposure of 'stop_voice'. A second definition with
+    the same name made eel._expose fail at import time and the app would
+    never start.
 
     This used to call voice.stop(), the full teardown, which also stopped the
     wake detectors -- so pressing Stop once to interrupt a spoken reply
@@ -2125,16 +2125,17 @@ def _start_wake_phrase() -> None:
         else:
             logger.warning("Wake phrase not started: %s", status.get("error") or "setup required")
     except Exception:
-        logger.exception("Erro ao iniciar wake-phrase")
+        logger.exception("Error starting wake-phrase")
 
 @eel.expose
 def get_audio_devices():
-    """Lista dispositivos de áudio via PyAudio.
+    """List audio devices via PyAudio.
 
-    Usava 'sounddevice', que não é dependência do Nano e não está instalado —
-    o resultado era um ImportError a cada arranque e uma lista de dispositivos
-    sempre vazia nas definições. O PyAudio já é usado para capturar áudio, por
-    isso é a fonte correcta e os índices batem certo com os da captura.
+    Used to use 'sounddevice', which is not a Nano dependency and is not
+    installed -- the result was an ImportError on every startup and a
+    device list that was always empty in settings. PyAudio is already used
+    to capture audio, so it is the correct source and its indices line up
+    with the ones used for capture.
     """
     try:
         # Goes through AudioInputProvider so it shares the PortAudio lock and
@@ -2304,16 +2305,17 @@ def should_open_browser(mode: str) -> bool:
 
 
 def _open_browser_tab(port: int):
-    """Abre a UI no navegador. ÚNICO ponto do Nano que abre um navegador.
+    """Open the UI in the browser. The ONLY place in Nano that opens a browser.
 
-    Antes existiam DOIS caminhos a abrir o browser: este (via threading.Timer)
-    e o próprio eel.start(mode="default"), que também lança um navegador. Daí
-    os dois separadores do Chrome. Agora o eel arranca sempre com mode=None
-    (só serve HTTP) e esta função é a única responsável por abrir a janela.
+    There used to be TWO paths opening the browser: this one (via
+    threading.Timer) and eel.start(mode="default") itself, which also
+    launches a browser -- hence the two Chrome tabs. Now eel always starts
+    with mode=None (it only serves HTTP) and this function is the sole one
+    responsible for opening the window.
     """
     import webbrowser
     url = f"http://localhost:{port}/index.html"
-    logger.info("A abrir a UI do Nano em: %s", url)
+    logger.info("Opening the Nano UI at: %s", url)
     try:
         webbrowser.open_new(url)
     except Exception as exc:
@@ -2454,17 +2456,17 @@ def main():
     size = (int(ui_cfg.get("width", 1440)), int(ui_cfg.get("height", 900)))
     print(f"NANO_PORT={port}", flush=True)
 
-    # UI: existe UM ÚNICO mecanismo de arranque.
-    #   --mode electron -> o Electron já tem a sua janela; o Nano não abre nada.
-    #   qualquer outro  -> abrimos o navegador uma só vez, aqui.
-    # Em ambos os casos o eel arranca com mode=None, ou seja, apenas serve
-    # HTTP/websocket e NUNCA lança um navegador por sua conta.
+    # UI: there is a SINGLE startup mechanism.
+    #   --mode electron -> Electron already has its own window; Nano opens nothing.
+    #   any other mode  -> we open the browser exactly once, here.
+    # In both cases eel starts with mode=None, i.e. it only serves
+    # HTTP/websocket and NEVER launches a browser on its own.
     if should_open_browser(args.mode):
         threading.Timer(1.0, _open_browser_tab, args=(port,)).start()
         _report("UI", "READY", f"http://localhost:{port}")
     else:
         _report("UI", "READY", "electron window")
-        logger.info("Modo electron: a janela é do Electron; o Nano não abre navegador.")
+        logger.info("Electron mode: the window belongs to Electron; Nano does not open a browser.")
 
     print(flush=True)
     print("  Nano is running. Close this window to stop it.", flush=True)

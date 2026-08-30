@@ -226,6 +226,30 @@ def test_an_oversized_line_is_refused_unread():
         parent.close()
 
 
+def test_the_reader_is_never_asked_to_buffer_an_unbounded_line():
+    """The size bound must apply to the read call, not just to the result.
+
+    Before the fix, ``_pump`` used ``iter(reader.readline, "")`` -- calling
+    ``readline()`` with no argument -- so a line with no newline in it would
+    be buffered in full by the reader before the "too large" check ever ran.
+    The bound is only real if it is passed into ``readline`` itself.
+    """
+    calls = []
+
+    class RecordingReader:
+        def readline(self, size=-1):
+            calls.append(size)
+            return ""
+
+    DesktopBridge({}, reader=RecordingReader(), writer=io.StringIO()).start()
+    time.sleep(0.2)
+
+    assert calls, "the reader thread never called readline"
+    assert all(size == desktop_bridge.MAX_LINE_BYTES + 1 for size in calls), (
+        f"readline was called with an unbounded size: {calls}"
+    )
+
+
 def test_the_channel_does_not_start_without_an_input_stream():
     class Closed(io.StringIO):
         closed = True

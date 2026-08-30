@@ -1,7 +1,7 @@
 """
-H.E.L.I.O.S. Plugin: Calendar
-Calendário local em SQLite (sempre disponível, sem contas nem rede) com
-importação opcional de ficheiros .ics e leitura opcional do Google Calendar.
+Nano Plugin: Calendar
+Local calendar in SQLite (always available, no accounts or network needed)
+with optional .ics file import and optional Google Calendar reading.
 
 Google Calendar (opcional):
   pip install google-api-python-client google-auth-oauthlib

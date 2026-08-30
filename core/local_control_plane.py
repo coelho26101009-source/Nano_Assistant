@@ -105,13 +105,13 @@ def install_origin_guard(port: int, app: Any = None) -> Any:
         if is_origin_allowed(origin, port):
             return
         logger.warning(
-            "Ligação recusada ao canal de controlo local: origem %r não autorizada.",
-            origin or "<ausente>",
+            "Local control channel connection refused: origin %r not authorized.",
+            origin or "<missing>",
         )
         raise bottle.HTTPError(403, "forbidden_origin")
 
     target.add_hook("before_request", _guard)
-    logger.info("Canal de controlo local restrito à origem própria (porta %s).", port)
+    logger.info("Local control channel restricted to its own origin (port %s).", port)
     return _guard
 
 
