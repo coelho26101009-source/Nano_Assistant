@@ -280,24 +280,24 @@ Política técnica: [Security Policy](docs/SECURITY_POLICY.md)
 
 ```text
 ┌──────────────────────── Nano Desktop / Electron ────────────────────────┐
-│  Ember UI · Tray · Global Hotkey · Voice Overlay · Window Lifecycle   │
-└──────────────────────────────────┬─────────────────────────────────────┘
+│  Ember UI · Tray · Global Hotkey · Voice Overlay · Window Lifecycle     │
+└──────────────────────────────────┬──────────────────────────────────────┘
                                    │ parent/child control channel
                                    ▼
 ┌──────────────────────────── Python Backend ─────────────────────────────┐
-│                                                                       │
-│  Brain / Model Routing ── Groq                                       │
-│          │             └─ Ollama                                     │
-│          │                                                            │
-│          ├─ Memory / Context                                           │
-│          ├─ Task Engine                                                │
-│          ├─ VoiceRuntime                                               │
-│          │                                                             │
-│          └─ Policy → Permission → ToolExecutor                         │
-│                                      │                                │
-│                                      └─ Plugins / PC Control           │
-│                                                                       │
-└───────────────────────────────────────────────────────────────────────┘
+│                                                                         │
+│  Brain / Model Routing ── Groq                                          │
+│          │             └─ Ollama                                        │
+│          │                                                              │
+│          ├─ Memory / Context                                            │
+│          ├─ Task Engine                                                 │
+│          ├─ VoiceRuntime                                                │
+│          │                                                              │
+│          └─ Policy → Permission → ToolExecutor                          │
+│                                      │                                  │
+│                                      └─ Plugins / PC Control            │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 A shell Electron controla o ciclo de vida da aplicação e arranca o backend Python como processo filho. A execução de tools continua centralizada no backend; a UI não recebe uma ponte genérica para executar comandos no sistema.
