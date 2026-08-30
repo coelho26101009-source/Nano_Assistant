@@ -31,7 +31,7 @@ import psutil
 from dotenv import load_dotenv
 from core.app_paths import DATA_DIR, FRONTEND_DIR, PLUGINS_DIR, ROOT
 from core import data_migration
-from core import capability_catalogue
+from core import capability_catalogue, local_control_plane
 from core import version as nano_version
 from core.brain import Brain
 from core.config import CONFIG_PATH, load_config
@@ -2459,6 +2459,13 @@ def main():
     # server itself before showing a window: this is an announcement, not a
     # readiness claim.
     _desktop_emit("backend_started", {"port": port, "mode": str(args.mode).lower()})
+
+    # The control plane carries the whole approval surface -- confirm_action,
+    # resolve_permission, set_emergency_stop -- over a WebSocket that eel does
+    # not origin-check at all. Refuse upgrades that did not come from Nano's own
+    # page before the server starts accepting them. See
+    # core/local_control_plane.py for what this does and does not defend against.
+    local_control_plane.install_origin_guard(port)
 
     try:
         eel.start("index.html", mode=None, size=size, port=port, block=True)

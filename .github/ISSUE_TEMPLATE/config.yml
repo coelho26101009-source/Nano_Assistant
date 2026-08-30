@@ -1,0 +1,20 @@
+# Keep the blank-issue escape hatch closed so security reports cannot arrive as
+# an untemplated public issue by accident. Both templates state the private
+# channel; the links below give people who skipped them somewhere to go.
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/coelho26101009-source/Nano_Assistant/security/advisories/new
+    about: >-
+      Never file an exploitable issue publicly. This opens a private advisory
+      visible only to the maintainers. See SECURITY.md.
+  - name: Questions and general help
+    url: https://github.com/coelho26101009-source/Nano_Assistant/discussions
+    about: >-
+      Ask how something works, or whether a behaviour is intended. If
+      Discussions is not enabled yet, a bug report is fine.
+  - name: Contributing guide
+    url: https://github.com/coelho26101009-source/Nano_Assistant/blob/main/CONTRIBUTING.md
+    about: >-
+      Development setup, the testing requirements, and how to propose a new PC
+      Control capability safely.

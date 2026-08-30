@@ -1,11 +1,37 @@
-name: Build Nano Windows
+name: Build Nano Windows (manual)
+
+# PACKAGING IS NOT READY, AND THIS WORKFLOW IS MANUAL ON PURPOSE.
+#
+# It used to run on every push to main and to publish a GitHub Release on any
+# `v*` tag. Neither is appropriate yet:
+#
+#   * Nano has never had a public release. There is no signed installer, no
+#     update mechanism and no first-run onboarding, so an artifact produced here
+#     would look like a product and behave like a development build.
+#   * Building an installer on every push spends Windows runner minutes -- the
+#     most expensive kind -- to produce something nobody may download.
+#   * A release published from a tag is irreversible in practice. Until the
+#     release process in docs/RELEASING.md is agreed, nothing should be able to
+#     publish by accident.
+#
+# So the triggers are `workflow_dispatch` only. Ordinary CI lives in ci.yml.
+# The steps below are kept intact rather than deleted: they are the closest
+# thing to a working packaging pipeline this project has, and they are the
+# starting point for the packaging pass. See docs/RELEASING.md for the intended
+# end state.
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    tags:
-      - 'v*'
+    inputs:
+      publish_release:
+        description: >-
+          Publish a GitHub Release from this build. Leave false unless the
+          release checklist in docs/RELEASING.md has been completed.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -23,6 +49,7 @@ jobs:
     needs: test
     runs-on: windows-latest
     permissions:
+      # Write is required only by the optional publish step below.
       contents: write
     steps:
       - name: Checkout
@@ -132,8 +159,11 @@ jobs:
             electron/dist-electron/*.msi
           if-no-files-found: error
 
+      # Requires BOTH an explicit opt-in and a version tag. Publishing is
+      # also the only step that needs write access, so it carries its own
+      # permission rather than the whole workflow being granted it.
       - name: Publish GitHub release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: inputs.publish_release && startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |

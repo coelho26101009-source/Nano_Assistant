@@ -1,13 +1,18 @@
-"""Desktop agent primitives for Nano: filesystem, process and shell interactions.
+"""Desktop agent primitives for Nano: filesystem and read-only system state.
 
 This module intentionally keeps operations explicit and permission-aware. It wraps
 real local system operations but leaves enforcement to the central PermissionManager.
+
+It used to say "process and shell interactions" and it used to mean it -- see
+the note where `launch_process` and `kill_process` were removed. Nothing here
+spawns a process any more; reading system state uses psutil, and launching an
+application is `core/pc_control/applications.py`'s job, behind the permission
+pipeline.
 """
 from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -88,23 +93,23 @@ def list_processes() -> dict:
     return {"success": True, "items": sorted(items, key=lambda item: item["memory_mb"], reverse=True)[:25]}
 
 
-def launch_process(command: str, cwd: str | None = None) -> dict:
-    if not command or not command.strip():
-        return {"success": False, "error": "command_required"}
-    try:
-        result = subprocess.Popen(command, shell=True, cwd=str(cwd) if cwd else None)
-        return {"success": True, "pid": result.pid}
-    except Exception as exc:
-        return {"success": False, "error": str(exc)}
-
-
-def kill_process(pid: int) -> dict:
-    try:
-        proc = subprocess.Popen(["taskkill", "/PID", str(pid), "/F"], shell=True, capture_output=True, text=True)
-        out = proc.communicate(timeout=10)
-        return {"success": proc.returncode == 0, "stdout": out[0], "stderr": out[1], "pid": int(pid)}
-    except Exception as exc:
-        return {"success": False, "error": str(exc), "pid": int(pid)}
+# launch_process() and kill_process() were deleted by the public-release
+# security audit.
+#
+# `launch_process` was `subprocess.Popen(command, shell=True)` -- a general
+# command-line executor, the single primitive `core/capabilities.py` declares
+# Nano does not have and `PolicyEngine` blocks outright. `kill_process` force-
+# killed by PID through `taskkill /F`, which "process kill" is listed as
+# unsupported for in docs/architecture/PC_CONTROL.md.
+#
+# Neither was referenced anywhere: no tool declared them, no handler dispatched
+# to them, nothing imported them. That is exactly why they were worth removing
+# rather than leaving. Both `plugins/god_mode.py` and the `shell.execute` tool
+# in `core/tool_execution.py` were also unreachable-looking right up until they
+# were not, and dead code with `shell=True` in it is one careless wiring away
+# from being the next incident. Process launching that Nano genuinely needs
+# goes through `core/pc_control/applications.py`, which refuses interpreters and
+# never builds a command line.
 
 
 def desktop_snapshot() -> dict:

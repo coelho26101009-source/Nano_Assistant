@@ -350,6 +350,8 @@ function createMainWindow(port) {
   });
 
   const origin = `http://127.0.0.1:${port}`;
+  // Before the first load, so the very first response is already covered.
+  applyContentSecurityPolicy(mainWindow.webContents.session, port);
   mainWindow.loadURL(`${origin}/index.html`);
   hardenWebContents(mainWindow.webContents, origin);
 
@@ -401,6 +403,73 @@ function createMainWindow(port) {
  * link, a redirect or a script, and it may not open child windows: an external
  * URL is handed to the OS browser after validation, or refused.
  */
+/**
+ * The Content Security Policy for Nano's own window.
+ *
+ * WHY IT IS INJECTED AS A HEADER RATHER THAN A <meta> TAG. The page is built by
+ * Next.js and served by Python's Bottle; neither is a good place to own a
+ * security header for the desktop shell, and a <meta> CSP cannot express
+ * `frame-ancestors`. Setting it here means the policy holds for every response
+ * the window loads, whatever the backend chose to send.
+ *
+ * EVERY DIRECTIVE IS DERIVED FROM WHAT THE BUILT APP ACTUALLY LOADS, which was
+ * measured rather than assumed: the production bundle references no external
+ * origin at all -- no CDN, no web font, no analytics. Scripts are same-origin
+ * `<script src>` only (the one inline `<script id="__NEXT_DATA__">` is
+ * `type="application/json"`, which is data and never executed), so `script-src`
+ * needs no 'unsafe-inline' and no 'unsafe-eval'.
+ *
+ * The single concession is `style-src 'unsafe-inline'`: Next.js injects
+ * `<style>` elements and the components use React's `style={{...}}` prop
+ * throughout, which lands as an element style attribute. Removing it would mean
+ * rewriting the styling of the entire UI, and inline STYLE is a far weaker
+ * primitive than inline SCRIPT -- it cannot execute anything.
+ *
+ * `connect-src` names the loopback WebSocket explicitly. eel's channel is
+ * ws://, and while 'self' covers same-origin ws in current Chromium, saying it
+ * out loud costs nothing and does not depend on that behaviour holding.
+ */
+function contentSecurityPolicy(port) {
+  return [
+    "default-src 'none'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self'",
+    `connect-src 'self' ws://127.0.0.1:${port} ws://localhost:${port}`,
+    "media-src 'self'",
+    "worker-src 'self'",
+    // Nothing may embed Nano, and Nano embeds nothing.
+    "frame-src 'none'",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    // A <base> tag could re-point every relative URL on the page.
+    "base-uri 'none'",
+    // There is no form in Nano that should ever submit anywhere.
+    "form-action 'none'",
+  ].join('; ');
+}
+
+/**
+ * Apply the CSP to every response in a session.
+ *
+ * Deliberately REPLACES any policy the backend may have sent rather than
+ * appending: two CSP headers intersect, so a laxer one cannot widen this, but a
+ * stricter or malformed one from elsewhere could silently break the UI and
+ * leave the cause invisible. One owner, one policy.
+ */
+function applyContentSecurityPolicy(session, port) {
+  const policy = contentSecurityPolicy(port);
+  session.webRequest.onHeadersReceived((details, callback) => {
+    const headers = { ...details.responseHeaders };
+    for (const key of Object.keys(headers)) {
+      if (key.toLowerCase() === 'content-security-policy') delete headers[key];
+    }
+    headers['Content-Security-Policy'] = [policy];
+    callback({ responseHeaders: headers });
+  });
+}
+
 function hardenWebContents(contents, origin) {
   contents.on('will-navigate', (event, url) => {
     if (!url.startsWith(`${origin}/`) && url !== origin) {
@@ -1002,6 +1071,10 @@ app.on('will-quit', () => {
 // importantly -- the one data directory.
 module.exports = {
   ACTIVATION_ACCELERATOR, OVERLAY_SIZE, PY_INSTANCE_LOCK_PORT, backendEnv,
+  // The production Content Security Policy. Exported so electron/test/csp-check.js
+  // can verify the REAL policy against the REAL bundle rather than a copy of it
+  // that could drift from what ships.
+  contentSecurityPolicy,
   // Exercised by electron/test/overlay.test.js against a stubbed Electron, so
   // the overlay's independence from the main window is a tested property of
   // this file rather than a claim in a comment. Not part of any runtime API.

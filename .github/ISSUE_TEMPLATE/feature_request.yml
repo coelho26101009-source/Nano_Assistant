@@ -1,0 +1,82 @@
+name: Feature request
+description: Suggest a capability or a change to how Nano behaves.
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion.
+
+        **One thing worth knowing before you write.** Nano deliberately has **no
+        arbitrary shell, PowerShell, CMD, terminal or script execution**, and
+        will not gain one. It is an architectural decision, not a missing
+        feature: everything Nano does on the computer goes through a narrow tool
+        with typed arguments that never form a command line.
+
+        Requests of the shape "let Nano run a command for me" will be declined.
+        Requests of the shape "let Nano *do this specific thing*" are exactly
+        what this form is for — describe the outcome you want and it can usually
+        be built safely.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe the situation, not the implementation. What would you be doing when you reached for this?
+      placeholder: When I finish work I close the same six applications one by one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What should Nano do?
+      description: Ideally as a sentence you would actually say to it.
+      placeholder: '"Nano, wrap up" — closes my work applications, asking before each one.'
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which area does this belong to?
+      options:
+        - PC Control (apps, windows, files, audio, display)
+        - Voice
+        - Chat / conversation
+        - Memory
+        - Settings and configuration
+        - Interface
+        - Providers and models
+        - Something else
+    validations:
+      required: true
+
+  - type: dropdown
+    id: touches-system
+    attributes:
+      label: Would this change something on the computer?
+      description: Anything that closes, writes, deletes, captures the screen or touches the session needs a confirmation flow designed with it.
+      options:
+        - "No — it only reads or displays something"
+        - "Yes — it changes something"
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What do you do today instead?
+      description: Existing workarounds, or other tools that get this right.
+
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Acknowledgements
+      options:
+        - label: This does not require Nano to run arbitrary commands or scripts.
+          required: true
+        - label: I searched existing issues and did not find this one.
+          required: true

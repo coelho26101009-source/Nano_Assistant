@@ -343,7 +343,7 @@ export default function SettingsPage({
                 options={[
                   { value: "AUTO", label: "Automático", hint: "Groq primeiro, Ollama se falhar" },
                   { value: "CLOUD", label: "Cloud", hint: "Apenas Groq" },
-                  { value: "LOCAL", label: "Local", hint: "Apenas Ollama, nada sai do computador" },
+                  { value: "LOCAL", label: "Local", hint: "Apenas Ollama; o texto das mensagens não sai do computador" },
                 ]}
               />
               {providers?.route && (
@@ -669,7 +669,35 @@ export default function SettingsPage({
                 wake phrase acontecem <strong>sempre neste computador</strong>.
                 <br /><br />
                 No modo Automático ou Cloud, o texto das tuas mensagens é enviado ao Groq
-                para gerar a resposta. No modo Local, nada sai do computador.
+                para gerar a resposta. No modo Local, o texto das mensagens não sai
+                do computador.
+              </p>
+            </Panel>
+
+            {/* Stated separately and plainly because it is the one thing that
+                leaves the machine REGARDLESS of provider mode. Saying "no modo
+                Local nada sai do computador" without this would be false. */}
+            <Panel title="Resposta falada" action={<Badge tone="info">sai do computador</Badge>}>
+              <p className="muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
+                Quando o Nano lê uma resposta em voz alta, usa o serviço de voz da
+                Microsoft (<code>edge-tts</code>). O <strong>texto que vai ser lido</strong> é
+                enviado à Microsoft para gerar o áudio — <strong>em qualquer modo,
+                incluindo Local</strong>.
+              </p>
+              <div style={{ height: 8 }} />
+              <MetricRow
+                label="Estado"
+                value={
+                  <StatusIndicator
+                    state={voice.ttsEnabled ? "READY" : "DISABLED"}
+                    label={voice.ttsEnabled ? "ativa — o texto lido é enviado" : "desligada — nada é enviado"}
+                  />
+                }
+              />
+              <p className="dim" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>
+                Para que nada saia do computador, desliga a resposta falada em
+                Definições → Voz. A transcrição do que dizes (Whisper) continua a
+                ser feita localmente e nunca é enviada.
               </p>
             </Panel>
 

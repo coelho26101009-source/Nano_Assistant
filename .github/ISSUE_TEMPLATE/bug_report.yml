@@ -1,0 +1,114 @@
+name: Bug report
+description: Something in Nano does not work the way it should.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this.
+
+        **If this is a security vulnerability, stop here.** Do not file it
+        publicly — use the **Security** tab → **Report a vulnerability**. See
+        [SECURITY.md](../blob/main/SECURITY.md).
+
+        **Please do not paste API keys, your `.env`, raw log files, clipboard
+        contents, personal documents, or screenshots showing your desktop.** A
+        description is more useful than a capture of your machine, and a bug
+        report should never be the reason your credentials leak.
+
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Before filing
+      options:
+        - label: This is not a security vulnerability (those go to the Security tab).
+          required: true
+        - label: I searched existing issues and did not find this one.
+          required: true
+        - label: My report contains no API keys, secrets, or personal data.
+          required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+      placeholder: I asked Nano to centre a window and it reported success, but nothing moved.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence that shows the problem.
+      placeholder: |
+        1. Open Nano with NANO_DESKTOP.bat
+        2. Say / type "…"
+        3. Observe …
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Which AI mode were you in?
+      description: Shown in the pill at the top right. Nano routes to a different provider in each, and behaviour differs.
+      options:
+        - AUTO
+        - CLOUD
+        - LOCAL
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which area?
+      options:
+        - Chat / conversation
+        - Voice (hotkey, wake phrase, speech)
+        - PC Control (apps, windows, files, audio)
+        - Permissions and confirmations
+        - Settings
+        - Memory
+        - Interface / layout
+        - Startup / launcher
+        - Something else
+    validations:
+      required: true
+
+  - type: input
+    id: launcher
+    attributes:
+      label: How did you start Nano?
+      placeholder: NANO_DESKTOP.bat
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 Pro 24H2
+    validations:
+      required: true
+
+  - type: input
+    id: commit
+    attributes:
+      label: Commit or branch you are on
+      description: "`git rev-parse --short HEAD`"
+      placeholder: 9ca9011
+
+  - type: textarea
+    id: errors
+    attributes:
+      label: Relevant error messages
+      description: |
+        Quote only the lines that relate to this bug. `logs/nano.log` records your
+        activity, so please read what you are about to paste and redact anything
+        personal — file paths, window titles, message text.
+      render: text

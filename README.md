@@ -411,6 +411,27 @@ Próximas áreas de evolução, sem ordem rígida:
 | [Voice](docs/VOICE.md) | Runtime de voz, STT/TTS e wake |
 | [Design](docs/design/README.md) | Identidade e decisões visuais do Nano |
 
+### Projeto e comunidade
+
+| Documento | Conteúdo |
+|---|---|
+| [Privacidade](PRIVACY.md) | O que é guardado, onde, e o que sai do computador |
+| [Segurança](SECURITY.md) | Modelo de segurança e como reportar uma vulnerabilidade |
+| [Contribuir](CONTRIBUTING.md) | Setup, testes e como propor uma capacidade em segurança |
+| [Suporte](SUPPORT.md) | Onde colocar bugs, ideias, dúvidas e vulnerabilidades |
+| [Código de conduta](CODE_OF_CONDUCT.md) | Contributor Covenant 2.1 |
+| [Changelog](CHANGELOG.md) | O que mudou, por marco |
+| [Licenças de terceiros](THIRD_PARTY_NOTICES.md) | Dependências e respetivas licenças (rascunho) |
+| [Releasing](docs/RELEASING.md) | Versionamento e o processo de release futuro |
+| [Checklist de lançamento](docs/PUBLIC_RELEASE_CHECKLIST.md) | O que falta para uma beta pública |
+
+> **Licença:** Nano está licenciado sob a [Apache License 2.0](LICENSE). É uma
+> licença permissiva: permite reutilização, modificação e redistribuição,
+> incluindo em contexto comercial, e não obriga aplicações modificadas a serem
+> de código aberto. Isto não elimina as obrigações de dependências de terceiros
+> — ver [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), nomeadamente as
+> dependências LGPL.
+
 ---
 
 <p align="center">

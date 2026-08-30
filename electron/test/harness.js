@@ -114,7 +114,17 @@ function stubElectron(overrides = {}) {
           setWindowOpenHandler() {},
           setZoomFactor() {},
           setVisualZoomLevelLimits() { return Promise.resolve(); },
-          session: { setPermissionRequestHandler() {} },
+          // The stub models exactly the Electron surface main.js touches. The
+          // CSP is installed through session.webRequest.onHeadersReceived, so
+          // the stub has to offer it -- and it RECORDS the registered callback
+          // rather than swallowing it, so a test can invoke the real header
+          // rewriting and assert on the policy that comes out.
+          session: {
+            setPermissionRequestHandler() {},
+            webRequest: {
+              onHeadersReceived(handler) { self._headersReceived = handler; },
+            },
+          },
         };
         record.windows.push(this);
       }

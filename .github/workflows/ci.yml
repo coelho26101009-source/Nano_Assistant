@@ -1,0 +1,184 @@
+name: CI
+
+# Fast, cheap, and secret-free. Every check here runs on a fork's pull request
+# exactly as it runs on main, because none of it needs a credential: Nano's
+# tests never call Groq, never call Ollama, and never touch the real desktop.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege. Nothing in this workflow writes to the repository, so nothing
+# in it is granted write. A job that needs more should ask for it locally rather
+# than raising the default for everything.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------- backend
+  python:
+    name: Python tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Deliberately two entries, not a matrix of four. Ubuntu is the fast
+        # signal on every push; Windows is where the PC Control and desktop
+        # tests stop skipping and actually run. More Python versions would cost
+        # minutes to defend a range Nano does not support -- the embedded
+        # runtime is pinned to 3.12.
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-test.txt
+
+      - name: Run tests
+        # -ra surfaces the skip reasons, which is how a silently-skipped
+        # Windows suite gets noticed instead of reading as a pass.
+        run: python -m pytest -q -ra
+
+  # --------------------------------------------------------------- frontend
+  frontend:
+    name: Frontend typecheck and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+      - name: Production build
+        working-directory: frontend
+        run: npm run build
+
+      # The desktop harnesses (render-check, settings-drive, csp-check) consume
+      # this. Keeping it lets the Electron job below reuse it instead of
+      # rebuilding, and proves the export really produced something.
+      - name: Upload built frontend
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-out
+          path: frontend/out
+          retention-days: 1
+          if-no-files-found: error
+
+  # ---------------------------------------------------------- desktop shell
+  electron:
+    name: Electron tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: electron/package-lock.json
+
+      - name: Install dependencies
+        working-directory: electron
+        run: npm ci
+
+      # electron/test/run.js drives the real preload.js and main.js against a
+      # STUBBED Electron, so it needs no display, no GPU and no binary. The
+      # harnesses that do need real Chromium (render-check, settings-drive,
+      # csp-check) are deliberately not run here -- they are display-dependent
+      # and would be the flakiest thing in this file. They run locally, and are
+      # required before a release; see docs/RELEASING.md.
+      - name: Run Electron shell tests
+        working-directory: electron
+        run: npm test
+
+  # ------------------------------------------------------- static security
+  security:
+    name: Security static checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Nano's central invariant is that no model output reaches unrestricted
+      # OS execution. This project has shipped a violation of it three times, so
+      # the check is a first-class CI job rather than a lint rule someone can
+      # skip. It parses the AST -- comments and docstrings that DESCRIBE a
+      # removed hazard must not be mistaken for the hazard.
+      - name: No shell execution primitives
+        run: |
+          python - <<'PY'
+          import ast, pathlib, sys
+
+          offenders = []
+          banned_calls = {"system", "popen"}
+          for path in [*pathlib.Path("core").rglob("*.py"),
+                       *pathlib.Path("plugins").rglob("*.py")]:
+              if "__pycache__" in str(path):
+                  continue
+              # utf-8-sig: core/voice.py carries a BOM, and plain utf-8
+              # would make this gate fail on a SyntaxError rather than
+              # on a finding.
+              tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+              for node in ast.walk(tree):
+                  if not isinstance(node, ast.Call):
+                      continue
+                  for kw in node.keywords or []:
+                      if (kw.arg == "shell" and isinstance(kw.value, ast.Constant)
+                              and kw.value.value is True):
+                          offenders.append(f"{path}:{node.lineno}: shell=True")
+                  func = node.func
+                  if (isinstance(func, ast.Attribute) and func.attr in banned_calls
+                          and isinstance(func.value, ast.Name) and func.value.id == "os"):
+                      offenders.append(f"{path}:{node.lineno}: os.{func.attr}")
+                  if isinstance(func, ast.Name) and func.id in {"eval", "exec"}:
+                      offenders.append(f"{path}:{node.lineno}: {func.id}()")
+
+          if offenders:
+              print("Forbidden execution primitives found:")
+              for line in offenders:
+                  print("  " + line)
+              sys.exit(1)
+          print("No shell=True, os.system, os.popen, eval or exec in core/ or plugins/.")
+          PY
+
+      - name: Workflows request no unnecessary write permissions
+        run: |
+          python - <<'PY'
+          import pathlib, sys
+
+          bad = []
+          for path in pathlib.Path(".github/workflows").glob("*.y*ml"):
+              text = path.read_text(encoding="utf-8")
+              if "permissions:" not in text:
+                  bad.append(f"{path}: declares no permissions block")
+          if bad:
+              print("\n".join(bad))
+              sys.exit(1)
+          print("Every workflow declares an explicit permissions block.")
+          PY

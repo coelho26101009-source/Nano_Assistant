@@ -176,3 +176,59 @@ test('the activation accelerator is the documented one', () => {
   const { exports } = loadUnderStub('main.js');
   assert.strictEqual(exports.ACTIVATION_ACCELERATOR, 'CommandOrControl+Shift+Space');
 });
+
+/* ── Content Security Policy ────────────────────────────────────────────── */
+
+suite('content security policy');
+
+test('the main window installs a CSP on every response', () => {
+  const { exports, record } = loadUnderStub('main.js');
+  exports.__test.reset();
+  exports.__test.createMainWindow(4321);
+
+  const [window] = record.windows.filter((w) => !w.options.alwaysOnTop);
+  assert.ok(window, 'the main window was not created');
+
+  // Behavioural, not textual: invoke the handler main.js actually registered
+  // and inspect the headers it produces.
+  const handler = window._headersReceived;
+  assert.ok(typeof handler === 'function',
+    'main.js registered no onHeadersReceived handler, so no CSP is applied');
+
+  let result = null;
+  handler({ responseHeaders: { 'content-type': ['text/html'] } }, (r) => { result = r; });
+  const policy = (result.responseHeaders['Content-Security-Policy'] || [])[0];
+  assert.ok(policy, 'the response carried no Content-Security-Policy header');
+  assert.ok(policy.includes("default-src 'none'"), 'the policy does not deny by default');
+  assert.ok(policy.includes("script-src 'self'"), 'script-src is missing');
+  assert.ok(policy.includes('ws://127.0.0.1:4321'),
+    'the policy does not permit the local control-plane socket, so the UI would not connect');
+});
+
+test('a policy sent by the backend cannot widen or break the one we set', () => {
+  const { exports, record } = loadUnderStub('main.js');
+  exports.__test.reset();
+  exports.__test.createMainWindow(4321);
+  const window = record.windows.filter((w) => !w.options.alwaysOnTop)[0];
+
+  let result = null;
+  window._headersReceived(
+    { responseHeaders: { 'Content-Security-Policy': ["default-src *"] } },
+    (r) => { result = r; },
+  );
+
+  const values = Object.entries(result.responseHeaders)
+    .filter(([key]) => key.toLowerCase() === 'content-security-policy')
+    .map(([, value]) => value[0]);
+  assert.strictEqual(values.length, 1, 'two CSP headers would intersect unpredictably');
+  assert.ok(!values[0].includes('default-src *'), 'the backend policy survived');
+});
+
+test('script-src never permits inline or eval', () => {
+  const { exports } = loadUnderStub('main.js');
+  const policy = exports.contentSecurityPolicy(1234);
+  const scriptSrc = policy.split(';').find((part) => part.trim().startsWith('script-src'));
+  assert.ok(scriptSrc, 'script-src disappeared');
+  assert.ok(!scriptSrc.includes('unsafe-inline'), "script-src allows 'unsafe-inline'");
+  assert.ok(!scriptSrc.includes('unsafe-eval'), "script-src allows 'unsafe-eval'");
+});

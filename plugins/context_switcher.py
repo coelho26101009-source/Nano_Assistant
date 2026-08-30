@@ -1,142 +1,77 @@
+"""Nano plugin: withdrawn. Kept as the record of what used to be here.
+
+HISTORICALLY "Context Switcher": one command that activated a work "mode" from
+`config/modes/*.yaml` -- closing apps, opening apps, setting the volume and
+turning on Focus Assist. It exposed two tools to the model,
+``context_activate_mode`` and ``context_list_modes``.
+
+It was withdrawn by the public-release security audit. `get_tools()` returns
+nothing, so `plugin_loader` no longer registers it and the model can no longer
+reach it.
+
+WHY IT WENT
+-----------
+
+The handler contradicted, in four separate places, guarantees Nano makes
+elsewhere in this repository and states to the user in Definições -> PC Control:
+
+* ``subprocess.Popen([app_path], shell=True)`` on a path read from YAML. The
+  shipped `hacker.yaml` opened ``"wt"`` -- Windows Terminal -- which is
+  precisely one of the interpreters `core/pc_control/applications.py` refuses
+  to launch by name, alongside ``powershell``, ``pwsh``, ``bash`` and ``wsl``.
+  The refusal there was real; this was a way around it.
+* ``subprocess.run(["powershell", "-Command", ...])`` twice: once to nudge the
+  volume, once to write ``HKCU\\...\\quiethourssettings`` for Focus Assist.
+  `core/capabilities.py` declares shell execution UNAVAILABLE and
+  `PolicyEngine` blocks the capability outright; `docs/architecture/PC_CONTROL.md`
+  lists "arbitrary command/shell/PowerShell execution" and "registry edits"
+  under *Explicitly unsupported in V2*. All three statements were false while
+  this file shipped.
+* ``subprocess.run(["taskkill", "/F", "/IM", app])`` force-killed processes by
+  name. "process kill" is on the same unsupported list, and PC Control V2's own
+  window-closing path deliberately asks an application to close rather than
+  killing it.
+* ``_load_mode`` built its path as ``MODES_DIR / f"{mode_name}.yaml"`` from the
+  MODEL-SUPPLIED ``mode`` argument, with no containment check. ``mode`` of
+  ``"../../../../Windows/win"`` resolves outside ``config/modes`` entirely, so
+  the YAML driving all of the above did not have to be one of the three files
+  the project ships.
+
+The severity came from the combination. The capability had no entry in
+`PolicyEngine._aliases`, so it resolved as an unknown, LOW-risk capability and
+produced an ordinary APPROVAL_REQUIRED card reading like a harmless "activate
+work mode". One human "yes" to that prompt granted PowerShell, a registry
+write, force-kill and a terminal -- and the request could be prompted by
+untrusted content, since the trust-boundary rules stop external text from
+GRANTING permission but cannot stop it from SUGGESTING a tool call.
+
+HOW TO BRING THE FEATURE BACK SAFELY
+------------------------------------
+
+Work modes are a good idea; this implementation was the problem. A safe version
+composes the narrow PC Control V2 tools that already exist and already carry
+their own confirmation and target binding, rather than shelling out:
+
+* opening applications -> ``pc_app_launch`` (which refuses interpreters)
+* opening URLs         -> ``pc_web_open_url``
+* volume               -> ``pc_volume_set``
+* closing applications -> ``pc_window_batch_close`` (asks; never force-kills)
+* Focus Assist         -> ``pc_settings_open(section=...)``, letting the human
+                          make the change, exactly as ``system_bluetooth`` was
+                          replaced in the V2 audit
+
+That version would need the mode name resolved against a closed allow-list of
+files actually inside ``config/modes``, and a confirmation card that names every
+application it is about to close. None of that is implemented here: this file
+is a tombstone, not a staging area.
 """
-H.E.L.I.O.S. Plugin: Context Switcher
-Activa modos de trabalho com 1 comando.
-Config em config/modes/*.yaml
-"""
 
-import logging
-import subprocess
-import webbrowser
-from pathlib import Path
-from typing import Any
-
-import yaml
-
-logger = logging.getLogger("helios.plugins.context_switcher")
-
-MODES_DIR = Path(__file__).parent.parent / "config" / "modes"
-
-
-def _load_mode(mode_name: str) -> dict | None:
-    path = MODES_DIR / f"{mode_name}.yaml"
-    if not path.exists():
-        # Tenta por nome parcial
-        matches = list(MODES_DIR.glob(f"*{mode_name}*.yaml"))
-        if not matches:
-            return None
-        path = matches[0]
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
-
-def activate_mode(mode: str) -> dict:
-    """Activa um modo de trabalho predefinido."""
-    config = _load_mode(mode.lower())
-    if config is None:
-        available = [p.stem for p in MODES_DIR.glob("*.yaml")]
-        return {"error": f"Modo '{mode}' não encontrado. Disponíveis: {available}"}
-
-    results = []
-
-    # Fechar apps irrelevantes
-    for app in config.get("close_apps", []):
-        try:
-            subprocess.run(["taskkill", "/F", "/IM", app],
-                           capture_output=True, timeout=5)
-            results.append(f"✓ Fechei {app}")
-        except Exception:
-            results.append(f"⚠ Não consegui fechar {app}")
-
-    # Abrir apps
-    for app_path in config.get("open_apps", []):
-        try:
-            subprocess.Popen([app_path], shell=True)
-            results.append(f"✓ Abri {Path(app_path).name}")
-        except Exception as exc:
-            results.append(f"⚠ Falha ao abrir {app_path}: {exc}")
-
-    # Abrir URLs no browser
-    for url in config.get("open_urls", []):
-        try:
-            webbrowser.open(url)
-            results.append(f"✓ Abri {url}")
-        except Exception:
-            pass
-
-    # Volume
-    if "volume" in config:
-        try:
-            vol = max(0, min(100, int(config["volume"])))
-            subprocess.run(
-                ["powershell", "-Command",
-                 f"(New-Object -ComObject WScript.Shell).SendKeys([char]173);"
-                 f"$vol={vol};"
-                 # Usa nircmd se disponível, senão PowerShell básico
-                 ],
-                capture_output=True, timeout=5,
-            )
-            results.append(f"✓ Volume ajustado para {vol}%")
-        except Exception:
-            pass
-
-    # Não Incomodar (Focus Assist) — Windows 10/11
-    if config.get("focus_assist", False):
-        try:
-            subprocess.run(
-                ["powershell", "-Command",
-                 "Set-ItemProperty -Path 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\DefaultAccount\\Current\\default$windows.data.notifications.quiethourssettings\\windows.data.notifications.quiethourssettings' -Name Data -Type Binary -Value ([byte[]](0x02,0x00,0x00,0x00))"],
-                capture_output=True, timeout=10,
-            )
-            results.append("✓ Focus Assist activado")
-        except Exception:
-            results.append("⚠ Focus Assist: requer permissões de administrador")
-
-    return {
-        "mode":    config.get("name", mode),
-        "actions": results,
-        "message": config.get("message", f"Modo {mode} activado!"),
-    }
-
-
-def list_modes() -> dict:
-    """Lista todos os modos disponíveis."""
-    modes = []
-    for path in MODES_DIR.glob("*.yaml"):
-        try:
-            with open(path) as f:
-                data = yaml.safe_load(f)
-            modes.append({
-                "id":          path.stem,
-                "name":        data.get("name", path.stem),
-                "description": data.get("description", ""),
-            })
-        except Exception:
-            modes.append({"id": path.stem, "name": path.stem})
-    return {"modes": modes}
+from __future__ import annotations
 
 
 def get_tools() -> list[dict]:
-    return [
-        {"type": "function", "function": {
-            "name": "context_activate_mode",
-            "description": (
-                "Activa um modo de trabalho: fecha apps irrelevantes, abre as certas, "
-                "ajusta volume e activa Focus Assist. Modos: hacker, foco, relax, reuniao, etc."
-            ),
-            "parameters": {"type": "object", "required": ["mode"], "properties": {
-                "mode": {"type": "string",
-                         "description": "Nome do modo (ex: 'hacker', 'foco', 'relax')"},
-            }},
-        }},
-        {"type": "function", "function": {
-            "name": "context_list_modes",
-            "description": "Lista todos os modos de trabalho disponíveis.",
-            "parameters": {"type": "object", "properties": {}},
-        }},
-    ]
+    """No tools. See the module docstring for what was here and why it is not."""
+    return []
 
 
-TOOL_HANDLERS: dict = {
-    "context_activate_mode": lambda a: activate_mode(**a),
-    "context_list_modes":    lambda _: list_modes(),
-}
+TOOL_HANDLERS: dict = {}

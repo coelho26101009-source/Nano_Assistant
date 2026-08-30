@@ -40,7 +40,7 @@ export const MODES: { value: ProviderMode; label: string; hint: string }[] = [
   {
     value: "LOCAL",
     label: "Local",
-    hint: "Apenas Ollama. Nada sai do computador.",
+    hint: "Apenas Ollama. O texto das mensagens não sai do computador.",
   },
 ];
 
