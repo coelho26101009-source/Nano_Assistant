@@ -38,9 +38,16 @@ CSS = FRONTEND / "styles" / "globals.css"
 # Capacidades, added in Settings V2: Ferramentas used to lead with the AI
 # providers, which are configuration and now live in Definicoes -> IA, so the
 # section leads with the capability catalogue instead.
+# "knowledge" and "graph" joined in the threads + memory + Second Brain phase:
+# Memoria became a section with three views (Memorias, Second Brain, Grafo)
+# instead of one page. The contract this list guards is unchanged and still
+# enforced below -- every view is rendered by the shell, and every view is owned
+# by exactly one section -- so the expectation moves with the product while the
+# guarantees stay put.
 VIEWS = (
     "chat", "tasks", "activity", "permissions",
-    "agents", "memory", "integrations", "capabilities", "status", "settings",
+    "agents", "memory", "knowledge", "graph",
+    "integrations", "capabilities", "status", "settings",
 )
 
 

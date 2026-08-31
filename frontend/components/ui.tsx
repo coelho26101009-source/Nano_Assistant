@@ -418,9 +418,14 @@ export function ErrorState({
 function useFocusTrap(open: boolean, onClose: () => void) {
   const ref = useRef<HTMLDivElement>(null);
   const restoreTo = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
+  // Stable identity (no deps) so the effect below only reruns when `open`
+  // changes — not on every render of the caller, which happens on every
+  // keystroke in a form field inside the modal (see the modal-open effect).
   const onKeyDown = useCallback((event: KeyboardEvent) => {
-    if (event.key === "Escape") { onClose(); return; }
+    if (event.key === "Escape") { onCloseRef.current(); return; }
     if (event.key !== "Tab" || !ref.current) return;
     const focusables = ref.current.querySelectorAll<HTMLElement>(
       'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
@@ -430,7 +435,7 @@ function useFocusTrap(open: boolean, onClose: () => void) {
     const last = focusables[focusables.length - 1];
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-  }, [onClose]);
+  }, []);
 
   useEffect(() => {
     if (!open) return;

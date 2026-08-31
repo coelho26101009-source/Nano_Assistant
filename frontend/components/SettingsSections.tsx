@@ -143,6 +143,25 @@ export function MemorySection({
           checked={Boolean(memory?.factsEnabled)}
           onChange={(value) => onUpdate("memory_facts_enabled", value)}
         />
+        {/* TWO SWITCHES, BECAUSE THEY ARE TWO QUESTIONS.
+            The first is whether Nano may carry anything at all from one
+            conversation to the next. The second is whether it may decide by
+            itself what to carry -- with it off, "lembra-te que..." still works,
+            because that is the user asking rather than Nano guessing. */}
+        <Toggle
+          label="Memória entre conversas"
+          hint="Deixa o Nano usar numa conversa o que aprendeu noutra. Desligado, cada conversa fica isolada e o Second Brain deixa de contribuir."
+          checked={Boolean(memory?.longTermEnabled)}
+          onChange={(value) => onUpdate("memory_long_term_enabled", value)}
+        />
+        <Toggle
+          label="Sugerir memórias sozinho"
+          hint="O Nano propõe guardar algo que reparou. As sugestões não são usadas nas respostas enquanto não as aprovares em Memória. Dizer “lembra-te que…” funciona sempre."
+          checked={Boolean(memory?.captureEnabled)}
+          disabled={!memory?.longTermEnabled}
+          disabledReason="Precisa da memória entre conversas ligada."
+          onChange={(value) => onUpdate("memory_auto_capture", value)}
+        />
         {/* Document retrieval is not installed. It is HIDDEN rather than shown
             as a dead toggle -- an option that cannot do anything is worse than
             no option. */}
@@ -158,9 +177,16 @@ export function MemorySection({
 
       <Panel title="Gerir a memória">
         <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
-          O conteúdo guardado — ver, procurar e esquecer facto a facto — vive na
-          página <strong>Memória</strong>. Aqui só se decide o comportamento.
+          O conteúdo guardado — ver, procurar, editar e apagar — vive na secção
+          <strong> Memória</strong>, com as memórias, o Second Brain e o grafo.
+          Aqui só se decide o comportamento.
         </p>
+        {memory?.retrieval?.engine && (
+          <p className="dim" style={{ fontSize: 11, marginBottom: 12, lineHeight: 1.6 }}>
+            Pesquisa de memória: <strong>{memory.retrieval.engine}</strong>,
+            {" "}{memory.retrieval.entries} entradas indexadas neste computador.
+          </p>
+        )}
         <div className="inline">
           <Button size="sm" onClick={onOpenMemory}>Abrir a Memória</Button>
           <Button size="sm" variant="danger" onClick={() => setConfirmForget(true)}>

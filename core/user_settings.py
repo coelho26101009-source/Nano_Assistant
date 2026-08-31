@@ -48,6 +48,11 @@ ALLOWED_KEYS: frozenset[str] = frozenset({
     # Memoria panel could describe them but not change them.
     "memory_facts_enabled",    # let Nano remember durable facts about the user
     "memory_rag_enabled",      # let Nano consult indexed documents
+    # Threads + long-term memory + Second Brain. Two switches, because they are
+    # two different questions: whether Nano may carry anything between
+    # conversations at all, and whether it may decide by itself what to carry.
+    "memory_long_term_enabled",
+    "memory_auto_capture",
 })
 
 
@@ -156,6 +161,10 @@ def apply_overlay(config: dict[str, Any]) -> dict[str, Any]:
         memory_cfg["facts_enabled"] = stored["memory_facts_enabled"]
     if "memory_rag_enabled" in stored:
         memory_cfg["rag_enabled"] = stored["memory_rag_enabled"]
+    if "memory_long_term_enabled" in stored:
+        memory_cfg["long_term_enabled"] = stored["memory_long_term_enabled"]
+    if "memory_auto_capture" in stored:
+        memory_cfg["auto_capture"] = stored["memory_auto_capture"]
     if "input_device_index" in stored:
         voice.setdefault("microphone", {})["device_index"] = stored["input_device_index"]
 

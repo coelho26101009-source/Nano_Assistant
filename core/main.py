@@ -38,6 +38,9 @@ from core.config import CONFIG_PATH, load_config
 from core.guardrails import GuardrailsEngine
 from core.plugin_loader import load_all_plugins, list_plugins, start_plugin_services, stop_plugin_services
 from core.memory import get_memory
+from core.memory_stack import MemoryStack
+from core.knowledge_graph import NODE_TYPES, RELATIONS
+from core.long_term_memory import KINDS as MEMORY_KINDS
 from core.logger import setup_logger
 from core.local_runtime import choose_model, ollama_available, model_available
 from core.voice import VoiceEngine, VoiceRuntime
@@ -75,6 +78,23 @@ if DATA_MIGRATION.get("copied"):
 CONFIG = load_config()
 guardrails = GuardrailsEngine()
 memory = get_memory()
+
+# Conversation threads, long-term memory and the Second Brain, all in the same
+# helios.db the flat message log has always lived in. Constructing the stack
+# runs the versioned migration; it is idempotent, it never drops a row, and a
+# failure leaves `ready` False so chat keeps working with the legacy window
+# rather than refusing to start. See core/memory_stack.py.
+_MEMORY_CFG = CONFIG.get("memory", {}) or {}
+memory_stack = MemoryStack(
+    memory,
+    long_term_enabled=bool(_MEMORY_CFG.get("long_term_enabled", True)),
+    capture_enabled=bool(_MEMORY_CFG.get("auto_capture", True)),
+)
+if not memory_stack.ready:
+    logger.error("Memória avançada indisponível: %s", memory_stack.migration.get("error"))
+elif memory_stack.migration.get("applied"):
+    logger.info("Esquema de memória migrado: %s", memory_stack.migration["applied"])
+
 voice = VoiceEngine(CONFIG.get("voice", {}))
 # The key the user saved in Settings wins over anything in the environment.
 # secret_store.get_secret() already implements exactly this precedence (the
@@ -122,8 +142,11 @@ _PLUGIN_TOOLS_REGISTERED = tool_executor.register_plugin_tools()
 logger.info("Ferramentas de plugin sob a autoridade central: %d", _PLUGIN_TOOLS_REGISTERED)
 
 background_worker = BackgroundTaskWorker(task_engine=task_engine, event_bus=event_bus, context_engine=context_engine, memory=memory, tool_executor=tool_executor, permission_manager=permission_manager)
-brain = Brain(api_key=API_KEY, guardrails=guardrails, memory=memory, config=CONFIG, permission_manager=permission_manager, tool_executor=tool_executor)
-brain.load_history()
+brain = Brain(api_key=API_KEY, guardrails=guardrails, memory=memory, config=CONFIG, permission_manager=permission_manager, tool_executor=tool_executor, memory_stack=memory_stack)
+# Resume the thread the user was last in, rather than opening a blank one:
+# closing Nano mid-conversation and finding it gone is the behaviour threads
+# exist to remove.
+brain.load_history(memory_stack.ensure_active())
 voice_runtime = VoiceRuntime(
     voice,
     brain=brain,
@@ -624,8 +647,123 @@ def start_voice_session() -> dict:
 
 @eel.expose
 def get_conversation_history() -> list:
-    """Retorna as mensagens recentes da conversa."""
-    return memory.get_recent_messages(limit=50)
+    """Messages of the ACTIVE thread, oldest first.
+
+    Kept under its original name and shape because the shell, the desktop tests
+    and any older build all call it. It now answers with one thread instead of
+    the tail of a global log, which is the same thing on a fresh install and the
+    correct thing on every other.
+    """
+    if not memory_stack.ready:
+        return memory.get_recent_messages(limit=50)
+    thread_id = memory_stack.ensure_active()
+    if not thread_id:
+        return []
+    return memory_stack.conversations.messages(thread_id, limit=200)
+
+
+# ---------------------------------------------------------------- conversations
+#
+# NARROW, TYPED OPERATIONS ONLY.
+#
+# Every one of these takes named scalars and returns a shaped dict. There is no
+# endpoint that accepts SQL, a table name, a column list or a filter expression,
+# and there never may be: the renderer is the least trusted process in Nano, and
+# a generic query endpoint would hand it the database. The cost of the narrow
+# style is more functions; the benefit is that the set of things the UI can ask
+# for is finite and readable on one screen.
+
+
+@eel.expose
+def list_conversations(query: str = "", limit: int = 60,
+                       include_archived: bool = False) -> dict:
+    """Threads for the rail, most recently active first."""
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable", "conversations": [],
+                "activeId": None}
+    threads = memory_stack.conversations.list(
+        limit=int(limit), include_archived=bool(include_archived), query=str(query or ""))
+    return {"ok": True, "conversations": threads,
+            "activeId": memory_stack.active_conversation_id}
+
+
+@eel.expose
+def create_conversation(title: str = "") -> dict:
+    """Start a new thread and make it the one the Brain is holding."""
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    thread = memory_stack.new_conversation(title or None)
+    if thread is None:
+        return {"ok": False, "error": "create_failed"}
+    brain.switch_conversation(thread["id"])
+    logger.info("Conversa activa: %s (nova)", thread["id"])
+    return {"ok": True, "conversation": thread, "messages": []}
+
+
+@eel.expose
+def open_conversation(conversation_id: str) -> dict:
+    """Reopen a thread and REBUILD the model context from it.
+
+    This is the operation that makes an older conversation writable. The Brain's
+    window is rebuilt from this thread's messages and its summary, so the next
+    message is answered against the right history instead of against whatever
+    was most recent.
+    """
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    thread = memory_stack.open_conversation(conversation_id)
+    if thread is None:
+        return {"ok": False, "error": "unknown_conversation"}
+    loaded = brain.switch_conversation(thread["id"])
+    logger.info("Conversa activa: %s (%d mensagens no contexto)", thread["id"], loaded)
+    return {"ok": True, "conversation": thread,
+            "messages": memory_stack.conversations.messages(thread["id"], limit=200),
+            "summary": memory_stack.conversations.get_summary(thread["id"]),
+            "contextMessages": loaded}
+
+
+@eel.expose
+def rename_conversation(conversation_id: str, title: str) -> dict:
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    return memory_stack.conversations.rename(conversation_id, title)
+
+
+@eel.expose
+def delete_conversation(conversation_id: str) -> dict:
+    """Delete a thread and everything derived from it. Confirmed in the UI first.
+
+    Long-term memories that happened to originate here are deliberately kept --
+    they are separate, visible and separately deletable in Memoria. See
+    core/conversation_store.py.
+    """
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    was_active = memory_stack.active_conversation_id == conversation_id
+    result = memory_stack.delete_conversation(conversation_id)
+    if result.get("ok") and was_active:
+        brain.switch_conversation(memory_stack.ensure_active())
+    return result
+
+
+@eel.expose
+def get_conversation_context(conversation_id: str = "") -> dict:
+    """What memory would contribute to the next message in this thread.
+
+    Diagnostics for the user, not for the model: counts, token spend and the
+    thread summary, so "porque e que o Nano se lembrou disto?" has an answer.
+    """
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    thread_id = conversation_id or memory_stack.active_conversation_id or ""
+    if not thread_id:
+        return {"ok": False, "error": "unknown_conversation"}
+    return {
+        "ok": True,
+        "summary": memory_stack.conversations.get_summary(thread_id),
+        "facts": memory_stack.conversations.facts(thread_id, limit=20),
+        "messageCount": memory_stack.conversations.message_count(thread_id),
+    }
 
 @eel.expose
 def start_background_worker() -> dict:
@@ -1058,8 +1196,22 @@ def get_settings() -> dict:
         "memory": {
             "factsEnabled": bool(brain.facts_enabled),
             "ragEnabled": bool(brain.rag_enabled),
-            "ragSupported": False,
-            "ragNote": "A indexacao de documentos requer o chromadb, que nao esta instalado.",
+            # Retrieval IS supported: it is SQLite FTS5, in the same database,
+            # with no extra dependency. The old payload hardcoded False and
+            # blamed a missing chromadb, so the UI hid a working feature.
+            "ragSupported": bool(memory_stack.index.fts_available),
+            "ragNote": (
+                "A pesquisa de memoria usa o indice local SQLite FTS5 (BM25). "
+                "Nada e enviado para fora do computador."
+                if memory_stack.index.fts_available else
+                "O SQLite desta instalacao nao tem FTS5: a pesquisa usa "
+                "correspondencia textual simples."),
+            "longTermEnabled": bool(memory_stack.long_term_enabled),
+            "captureEnabled": bool(memory_stack.capture_enabled),
+            "ready": bool(memory_stack.ready),
+            "retrieval": memory_stack.index.stats(),
+            "stats": memory_stack.memories.stats() if memory_stack.ready else {},
+            "knowledge": memory_stack.knowledge.stats() if memory_stack.ready else {},
         },
         "stored": user_settings.all_settings(),
         "runtime": get_runtime_info(),
@@ -1113,6 +1265,15 @@ def update_setting(key: str, value) -> dict:
     elif key == "memory_rag_enabled":
         CONFIG.setdefault("memory", {})["rag_enabled"] = bool(value)
         brain.rag_enabled = bool(value)
+    elif key == "memory_long_term_enabled":
+        # Applied to the LIVE stack, not only to the stored file: turning
+        # long-term memory off has to stop it being written and read on the very
+        # next message, not after a restart.
+        CONFIG.setdefault("memory", {})["long_term_enabled"] = bool(value)
+        memory_stack.long_term_enabled = bool(value)
+    elif key == "memory_auto_capture":
+        CONFIG.setdefault("memory", {})["auto_capture"] = bool(value)
+        memory_stack.capture_enabled = bool(value)
 
     return {"ok": True, "key": key, "value": value, "settings": get_settings()}
 
@@ -1377,53 +1538,256 @@ def get_activity(kind: str = "all", limit: int = 80) -> list:
 
 @eel.expose
 def get_memory_overview() -> dict:
-    """Real memory contents for the Memory page."""
-    try:
-        facts = memory.get_facts()
-    except Exception as exc:
-        facts = {}
-        logger.warning("Falha ao ler factos: %s", exc)
+    """Everything the Memoria page renders: stats, counts and the real state.
+
+    Every number here is measured. `retrieval` in particular names the mechanism
+    that is actually running -- SQLite FTS5 with BM25, or the degraded textual
+    fallback -- rather than implying a capability Nano does not have. The old
+    payload claimed document indexing needed chromadb; that was never true. The
+    index is FTS5 and always has been, so the page reported a feature as missing
+    while it was working.
+    """
     try:
         profile = memory.get_user_profile()
     except Exception:
         profile = {}
     try:
-        message_count = memory.count_messages()
-    except Exception:
-        message_count = 0
+        facts = memory.get_facts()
+    except Exception as exc:
+        facts = {}
+        logger.warning("Falha ao ler factos: %s", exc)
 
+    overview = memory_stack.overview()
+    fts_available = bool(memory_stack.index.fts_available)
     return {
         "profile": profile,
+        # The legacy key/value facts, still stored and still readable. They are
+        # ALSO mirrored into `memories`; both are shown so nothing a previous
+        # version saved becomes invisible.
         "facts": [{"key": k, "value": str(v)[:400]} for k, v in facts.items()],
-        "messageCount": message_count,
+        "memories": memory_stack.memories.list(limit=200, status=None) if memory_stack.ready else [],
+        "kinds": list(MEMORY_KINDS),
+        "stats": overview.get("memories", {}),
+        "knowledge": overview.get("knowledge", {}),
+        "retrieval": overview.get("retrieval", {}),
+        "conversationCount": overview.get("conversations", 0),
+        "messageCount": overview.get("messages", 0),
+        "ready": overview.get("ready", False),
+        "migration": overview.get("migration", {}),
+        "longTermEnabled": overview.get("longTermEnabled", False),
+        "captureEnabled": overview.get("captureEnabled", False),
         "ragEnabled": bool(CONFIG.get("memory", {}).get("rag_enabled")),
         "documents": [],
-        "documentsSupported": False,
-        "documentsNote": "A indexação de documentos requer o chromadb, que não está instalado.",
+        "documentsSupported": fts_available,
+        "documentsNote": (
+            "A pesquisa usa o indice local SQLite FTS5. Nao ha indexacao de "
+            "ficheiros externos nesta versao."
+            if fts_available else
+            "O SQLite desta instalacao nao tem FTS5: a pesquisa usa "
+            "correspondencia textual simples."),
     }
 
 
 @eel.expose
+def list_memories(query: str = "", kind: str = "", status: str = "active",
+                  limit: int = 200) -> dict:
+    """The Memoria list, filtered. Search is over stored memories only."""
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable", "memories": []}
+    rows = memory_stack.memories.list(
+        limit=int(limit), kind=kind or None, status=(status or None),
+        query=str(query or ""))
+    return {"ok": True, "memories": rows, "stats": memory_stack.memories.stats(),
+            "kinds": list(MEMORY_KINDS)}
+
+
+@eel.expose
+def search_memories(query: str, limit: int = 10) -> dict:
+    """Relevance-ranked search across active memories."""
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable", "memories": []}
+    return {"ok": True, "memories": memory_stack.memories.search(query, limit=int(limit))}
+
+
+@eel.expose
+def create_memory(text: str, kind: str = "fact", importance: int = 3,
+                  tags: list | None = None) -> dict:
+    """Add a memory by hand from the Memoria page.
+
+    Marked origin="manual": the user typed it, so it is authoritative, and it
+    stays distinguishable from something Nano inferred. It passes the same
+    safety gate -- a pasted API key is refused here exactly as on the automatic
+    path.
+    """
+    return memory_stack.remember(text, kind=kind, origin="manual",
+                                 importance=int(importance), tags=tags or [])
+
+
+@eel.expose
+def update_memory(memory_id: str, text: str = None, kind: str = None,
+                  importance: int = None, pinned: bool = None,
+                  status: str = None, tags: list = None) -> dict:
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    return memory_stack.memories.update(
+        memory_id, text=text, kind=kind, importance=importance, pinned=pinned,
+        status=status, tags=tags)
+
+
+@eel.expose
+def delete_memory(memory_id: str) -> dict:
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    return memory_stack.forget(memory_id)
+
+
+@eel.expose
+def clear_memories() -> dict:
+    """Forget every long-term memory. Conversations are NOT touched."""
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    result = memory_stack.memories.clear()
+    result["memory"] = get_memory_overview()
+    return result
+
+
+# --------------------------------------------------------------- second brain
+
+
+@eel.expose
+def list_knowledge_nodes(query: str = "", node_type: str = "", tag: str = "",
+                         limit: int = 200) -> dict:
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable", "nodes": []}
+    nodes = memory_stack.knowledge.list_nodes(
+        limit=int(limit), node_type=node_type or None, query=str(query or ""),
+        tag=str(tag or ""))
+    return {"ok": True, "nodes": nodes, "stats": memory_stack.knowledge.stats(),
+            "types": list(NODE_TYPES), "relations": list(RELATIONS)}
+
+
+@eel.expose
+def get_knowledge_node(node_id: str) -> dict:
+    """One node with its connections, the memories behind it and its chats."""
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    node = memory_stack.knowledge.get_node(node_id)
+    if node is None:
+        return {"ok": False, "error": "unknown_node"}
+    links = memory_stack.knowledge.links_for(node_id)
+    memories = [row for row in
+                (memory_stack.memories.get(ref) for ref in links.get("memory", []))
+                if row]
+    conversations = [row for row in
+                     (memory_stack.conversations.get(ref) for ref in links.get("conversation", []))
+                     if row]
+    return {"ok": True, "node": node,
+            "edges": memory_stack.knowledge.edges_for(node_id),
+            "memories": memories, "conversations": conversations,
+            "types": list(NODE_TYPES), "relations": list(RELATIONS)}
+
+
+@eel.expose
+def create_knowledge_node(title: str, node_type: str = "topic", summary: str = "",
+                          body: str = "", tags: list = None) -> dict:
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    node = memory_stack.knowledge.upsert_node(
+        title, node_type=node_type, summary=summary, body=body, tags=tags or [],
+        origin="manual", bump=False)
+    if node is None:
+        return {"ok": False, "error": "invalid_node"}
+    return {"ok": True, "node": node}
+
+
+@eel.expose
+def update_knowledge_node(node_id: str, title: str = None, node_type: str = None,
+                          summary: str = None, body: str = None, tags: list = None,
+                          pinned: bool = None) -> dict:
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    return memory_stack.knowledge.update_node(
+        node_id, title=title, node_type=node_type, summary=summary, body=body,
+        tags=tags, pinned=pinned)
+
+
+@eel.expose
+def delete_knowledge_node(node_id: str) -> dict:
+    """Delete a node. Every edge and link that pointed at it goes with it."""
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    return memory_stack.knowledge.delete_node(node_id)
+
+
+@eel.expose
+def link_knowledge_nodes(source_id: str, target_id: str,
+                         relation: str = "related_to") -> dict:
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    return memory_stack.knowledge.link(source_id, target_id, relation=relation)
+
+
+@eel.expose
+def unlink_knowledge_nodes(source_id: str, target_id: str, relation: str = "") -> dict:
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    return memory_stack.knowledge.unlink(source_id, target_id, relation or None)
+
+
+@eel.expose
+def get_knowledge_graph(node_type: str = "", focus_id: str = "",
+                        limit: int = 160) -> dict:
+    """A bounded slice of the graph, ready to draw.
+
+    Bounded on the server rather than trusting the client to ask for a sane
+    number: the renderer is where a runaway request becomes an unusable window,
+    so the ceiling belongs next to the query.
+    """
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable", "nodes": [], "edges": []}
+    graph = memory_stack.knowledge.graph(
+        limit=int(limit), node_type=node_type or None, focus_id=focus_id or None)
+    graph["ok"] = True
+    graph["types"] = list(NODE_TYPES)
+    return graph
+
+
+@eel.expose
 def forget_memory_fact(key: str) -> dict:
-    """Delete one remembered fact. Confirmed in the UI before it gets here."""
+    """Delete one legacy key/value fact. Confirmed in the UI before it gets here.
+
+    Kept for the facts written by `remember_fact` and by older builds. The
+    mirrored long-term memory is removed with it, so "esquecer" does not leave
+    the same sentence alive in the other store where the user cannot see the
+    connection.
+    """
     if not key:
         return {"ok": False, "error": "missing_key"}
     try:
         removed = memory.forget_fact(key)
-        return {"ok": bool(removed), "key": key, "memory": get_memory_overview()}
     except Exception as exc:
         return {"ok": False, "error": "delete_failed", "detail": str(exc)}
+    if memory_stack.ready:
+        for row in memory_stack.memories.list(limit=300, status=None):
+            if str(row.get("legacyKey") or "").strip().lower() == str(key).strip().lower():
+                memory_stack.forget(row["id"])
+    return {"ok": bool(removed), "key": key, "memory": get_memory_overview()}
 
 
 @eel.expose
 def forget_all_memory_facts() -> dict:
-    """Delete every remembered fact. Confirmed in the UI before it gets here.
+    """Forget everything Nano knows about the user. Confirmed in the UI first.
 
-    "Safely supported" means exactly this much: facts are a flat key/value
-    store that `forget_fact` already removes one at a time, so clearing them is
-    the same operation repeated and is fully reversible by Nano simply learning
-    them again. Conversation history is NOT touched -- that is
-    `clear_conversation`, a separate decision the user makes separately.
+    This clears BOTH stores -- the legacy key/value facts and the long-term
+    memories -- because to the person clicking it they are one thing, and
+    clearing only half would leave Nano still quoting facts the user believes
+    they deleted.
+
+    Conversation history is NOT touched. That is a separate decision with its
+    own control: a user who wants Nano to stop knowing their preferences does
+    not necessarily want yesterday's chat destroyed. The Second Brain is left
+    standing for the same reason -- its nodes are deleted individually or
+    through their own "apagar tudo".
     """
     try:
         keys = list(memory.get_facts().keys())
@@ -1438,9 +1802,15 @@ def forget_all_memory_facts() -> dict:
         except Exception:
             logger.warning("Nao foi possivel esquecer o facto '%s'", key)
 
-    logger.info("Memoria: %d facto(s) esquecido(s) de %d.", removed, len(keys))
+    memories_removed = 0
+    if memory_stack.ready:
+        result = memory_stack.memories.clear()
+        memories_removed = int(result.get("removed", 0))
+
+    logger.info("Memoria limpa: %d facto(s) de %d, %d memoria(s).",
+                removed, len(keys), memories_removed)
     return {"ok": removed == len(keys), "removed": removed, "total": len(keys),
-            "memory": get_memory_overview()}
+            "memoriesRemoved": memories_removed, "memory": get_memory_overview()}
 
 
 @eel.expose
@@ -1635,9 +2005,22 @@ def orchestrate_request(user_text: str, metadata: dict | None = None) -> dict:
 
 @eel.expose
 def clear_conversation() -> dict:
-    """Limpa o histórico em memória da conversa ativa."""
+    """Start a fresh thread. The previous one is kept and stays in the rail.
+
+    "Nova conversa" used to mean "forget the in-memory window", because there
+    was nothing else it could mean: the log was flat and the old messages stayed
+    in it, indistinguishable from the new ones. It now opens a real new thread,
+    so the previous conversation remains openable, renameable and searchable
+    instead of being silently merged into whatever comes next.
+    """
     brain.reset_conversation()
-    return {"ok": True}
+    if not memory_stack.ready:
+        return {"ok": True, "conversation": None}
+    thread = memory_stack.new_conversation()
+    if thread is None:
+        return {"ok": True, "conversation": None}
+    brain.switch_conversation(thread["id"])
+    return {"ok": True, "conversation": thread}
 
 @eel.expose
 def get_loaded_plugins() -> dict:
@@ -1763,12 +2146,25 @@ def _emit_voice_phase(phase: str, detail: str = ""):
     _desktop_emit("voice_phase", {"phase": phase, "detail": detail})
 
 def _emit_voice_exchange(turn_id: str, user_text: str, assistant_text: str):
-    """Show a completed spoken turn in the conversation.
+    """Record and show a completed spoken turn.
 
     A voice turn does not go through _process_message, so without this the
     user heard an answer that never appeared on screen. The turn id lets the
     UI insert it exactly once.
+
+    It is also the only place a spoken turn can be PERSISTED. Before threads,
+    voice exchanges were never written to the database at all: Nano answered,
+    the words were spoken, and nothing survived -- so a conversation held out
+    loud could not be continued by typing, reopened after a restart, or
+    searched. Storing here puts both modalities in the same thread, which is
+    what "the same conversation" has to mean.
     """
+    if memory_stack.ready:
+        try:
+            memory_stack.record_user_message(user_text, metadata={"source": "voice"})
+            memory_stack.record_assistant_message(assistant_text, metadata={"source": "voice"})
+        except Exception:
+            logger.exception("Falha a guardar o turno de voz")
     _notify_ui("on_voice_exchange", turn_id, user_text, assistant_text)
 
 def _emit_wake_detected(transcript: str = ""):
@@ -2190,7 +2586,16 @@ async def _process_message(user_text: str, msg_id: str | None = None,
     if not msg_id:
         msg_id = uuid.uuid4().hex
     try:
-        memory.save_message("user", user_text)
+        # ONE funnel for persistence. The stack writes into the active thread,
+        # keeps the retrieval index in step, and defers summarisation and memory
+        # extraction to its own worker so none of it sits between Enter and the
+        # first token. memory.save_message stays as the fallback for a database
+        # that failed to migrate -- losing the log entirely would be worse than
+        # losing threads.
+        if memory_stack.ready:
+            memory_stack.record_user_message(user_text)
+        else:
+            memory.save_message("user", user_text)
         _emit_stream_start(msg_id, user_text)
         full_response, status_updates = "", []
         rate_limit: dict | None = None
@@ -2213,7 +2618,10 @@ async def _process_message(user_text: str, msg_id: str | None = None,
             # of red text inside the answer.
             _emit_rate_limited(msg_id, rate_limit)
         full_response = full_response.strip() or "Desculpa Simão, não consegui gerar uma resposta."
-        memory.save_message("assistant", full_response)
+        if memory_stack.ready:
+            memory_stack.record_assistant_message(full_response)
+        else:
+            memory.save_message("assistant", full_response)
         result = {
             "msg_id": msg_id, "text": full_response, "status": status_updates, "ok": True,
             # Safe diagnostics only: provider, model, tier, token counts and
@@ -2329,6 +2737,14 @@ def shutdown() -> None:
     except Exception:
         logger.exception("Falha ao parar o worker")
     try:
+        # Let deferred summarisation and memory extraction finish before the
+        # process goes away, then stop the worker. Bounded: a slow job must not
+        # hold the window open.
+        memory_stack.drain(timeout=3.0)
+        memory_stack.stop()
+    except Exception:
+        logger.exception("Falha ao parar a memoria")
+    try:
         stop_plugin_services()
     except Exception:
         logger.exception("Falha ao parar serviços de plugins")
@@ -2389,6 +2805,16 @@ def main():
 
     _report("Python", "OK", f"{sys.version.split()[0]}")
     _report("Config", "OK" if CONFIG_PATH.exists() else "DEFAULTS", str(CONFIG_PATH.name))
+
+    # The measured state of the memory database, never an assumed one. A failed
+    # migration says so here rather than being discovered when a thread will not
+    # open.
+    if memory_stack.ready:
+        _report("Memory", "READY",
+                f"schema v{memory_stack.migration.get('to')}, "
+                f"{memory_stack.index.stats().get('mode')}")
+    else:
+        _report("Memory", "DEGRADED", str(memory_stack.migration.get("error"))[:60])
 
     background_worker.start()
     _report("Backend", "READY" if background_worker.status().get("running") else "ERROR")

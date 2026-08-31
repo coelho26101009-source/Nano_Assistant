@@ -27,7 +27,7 @@ import TopNav, { SECTIONS, ViewId, sectionEntry, sectionOf, viewEntry } from "..
 import NanoLogo from "../components/NanoLogo";
 import { Composer, Conversation, Message, ToolEvent } from "../components/Conversation";
 import {
-  ActivityPage, AgentsPage, IntegrationsPage, MemoryPage,
+  ActivityPage, AgentsPage, IntegrationsPage,
   PermissionsPage, StatusPage, TaskScope, TasksPage, pcActivityMatches,
 } from "../components/Pages";
 import { Button, ErrorState, ToastStack, stateLabel, useToasts } from "../components/ui";
@@ -37,9 +37,11 @@ import {
   SettingsPayload, TaskCounts, TaskRow, VoiceDiagnostics,
   call, expose, useBridgeReady, useFetch, usePolled,
 } from "../lib/backend";
-import {
-  HistoryMessage, Session, recordSessionBreak, splitSessions,
-} from "../lib/conversations";
+import { MemoriesPage, GraphPage, KnowledgePage, NodeDetailModal } from "../components/MemoryPages";
+import { Thread, ThreadMessage } from "../lib/conversations";
+import type {
+  KnowledgeGraphPayload, KnowledgeNode, MemoryOverview,
+} from "../lib/memory";
 import { useIsDesktop } from "../lib/desktop";
 // The product version comes from version.json, which core/version.py and the
 // Electron main process read too. It used to be a literal here, which is how
@@ -109,17 +111,22 @@ export default function Home() {
   const [rateLimit, setRateLimit] = useState<{ message: string; waitSeconds: number } | null>(null);
   const [voicePhase, setVoicePhase] = useState<{ phase: string; detail: string } | null>(null);
 
-  /* ── Conversation list ──────────────────────────────────────────────────
-   * `history` is the stored message log; the rail derives conversations from
-   * it. `reading` is set only while the user is looking at an older one, which
-   * is read-only because the Brain's context holds the live conversation and
-   * nothing else. */
-  const [history, setHistory] = useState<HistoryMessage[] | null>(null);
-  const [sessionBreaks, setSessionBreaks] = useState<number[]>([]);
-  const [reading, setReading] = useState<Session | null>(null);
+  /* ── Conversation threads ───────────────────────────────────────────────
+   * `threads` is the real list from the backend and `activeThreadId` is the one
+   * the Brain currently holds. There is no `reading` state any more: every
+   * thread is writable, because opening one rebuilds the model's context from
+   * it. That was the single biggest limitation of the derived-session model. */
+  const [threads, setThreads] = useState<Thread[] | null>(null);
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [chatQuery, setChatQuery] = useState("");
   const [profileName, setProfileName] = useState<string | null>(null);
   const [messageCount, setMessageCount] = useState<number | null>(null);
+  const [memoryReady, setMemoryReady] = useState(true);
+
+  /* ── Memória / Second Brain ─────────────────────────────────────────── */
+  const [nodeDetail, setNodeDetail] = useState<any | null>(null);
+  const [nodeOpen, setNodeOpen] = useState(false);
+  const [graphType, setGraphType] = useState("");
 
   /* ── Dialogs ────────────────────────────────────────────────────────── */
   const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
@@ -155,8 +162,18 @@ export default function Home() {
      already returns a small bounded set. */
   const { data: pcActivity, loading: pcActivityLoading, refresh: refreshActivity } =
     useFetch<PcActivityEntry[]>("get_pc_activity", ready && view === "activity", [], "all", 100);
+  /* Memória is three views over two payloads. The overview is fetched for any
+     of them (the retrieval footer and the stats are shared); the node list and
+     the graph slice are fetched only by the view that draws them, because both
+     are bounded server-side reads that nothing else needs. */
+  const inMemorySection = view === "memory" || view === "knowledge" || view === "graph";
   const { data: memoryData, loading: memoryLoading, refresh: refreshMemory } =
-    useFetch<any>("get_memory_overview", ready && view === "memory", []);
+    useFetch<MemoryOverview>("get_memory_overview", ready && inMemorySection, [view]);
+  const { data: knowledgeData, loading: knowledgeLoading, refresh: refreshKnowledge } =
+    useFetch<any>("list_knowledge_nodes", ready && view === "knowledge", []);
+  const { data: graphData, loading: graphLoading, refresh: refreshGraph } =
+    useFetch<KnowledgeGraphPayload>("get_knowledge_graph", ready && view === "graph",
+      [graphType], graphType, "", 160);
   const { data: agents } = useFetch<any[]>("get_agents_detail", ready && view === "agents", []);
   /* Fetched when the PC page opens, and on demand. NOT polled: every line of
      it is a real Windows call, and a timer would spend the machine's time
@@ -189,12 +206,30 @@ export default function Home() {
     document.documentElement.style.setProperty("--transition", reduceMotion ? "0ms" : "140ms cubic-bezier(0.4, 0, 0.2, 1)");
   }, [reduceMotion]);
 
-  /* ── The stored conversation log ────────────────────────────────────────
-   * Re-read after anything that appends to it, so the rail is never a stale
-   * picture of what is on disk. */
-  const reloadHistory = useCallback(async () => {
-    const stored = await call<HistoryMessage[]>("get_conversation_history");
-    if (stored) setHistory(stored);
+  /* ── The thread list ────────────────────────────────────────────────────
+   * Re-read after anything that appends to a thread, so the rail is never a
+   * stale picture of what is on disk. It is a bounded, indexed query over the
+   * conversations table -- title, timestamps and counts, never message bodies. */
+  const reloadThreads = useCallback(async () => {
+    const payload = await call<any>("list_conversations", "", 60, false);
+    if (!payload) return;
+    if (payload.ok === false) { setMemoryReady(false); setThreads([]); return; }
+    setMemoryReady(true);
+    setThreads(payload.conversations ?? []);
+    if (payload.activeId) setActiveThreadId(payload.activeId);
+    setMessageCount(
+      (payload.conversations ?? []).reduce(
+        (total: number, thread: Thread) => total + (thread.messageCount ?? 0), 0));
+  }, []);
+
+  /** Render one thread's stored messages into the chat view. */
+  const showThreadMessages = useCallback((rows: ThreadMessage[] | null | undefined) => {
+    setMessages((rows ?? []).map((row) => ({
+      id: `stored:${row.id}`,
+      role: row.role === "user" ? "user" : "assistant",
+      content: row.content,
+      timestamp: new Date(row.timestamp),
+    })));
   }, []);
 
   /* ── Streaming events ───────────────────────────────────────────────── */
@@ -295,7 +330,7 @@ export default function Home() {
       refreshCC();
       refreshCounts();
       // The turn is on disk now, so the rail can see it.
-      reloadHistory();
+      reloadThreads();
     }, "on_stream_end");
 
     // A provider/model failure. Distinct from the bridge being unreachable:
@@ -348,30 +383,23 @@ export default function Home() {
           { id: turnId, role: "assistant", content: assistantText, timestamp: new Date() },
         ];
       });
-      reloadHistory();
+      // A spoken turn is persisted into the same thread as a typed one, so the
+      // rail has to be re-read here too.
+      reloadThreads();
     }, "on_voice_exchange");
 
-    call<HistoryMessage[]>("get_conversation_history").then((stored) => {
-      if (!stored?.length) { setHistory([]); return; }
-      setHistory(stored);
-      // The live conversation is the tail of the log: exactly the messages the
-      // Brain still holds in its context window.
-      const live = splitSessions(stored)[0];
-      if (!live) return;
-      setMessages(live.messages.map((m, index) => ({
-        id: `stored:${m.timestamp}:${index}`,
-        role: m.role === "user" ? "user" : "assistant",
-        content: m.content,
-        timestamp: new Date(m.timestamp),
-      })));
-    });
+    // The thread list, and the messages of whichever thread the backend
+    // resumed. The backend picks that thread (the most recently active one) so
+    // the shell and the Brain cannot disagree about which conversation is open.
+    reloadThreads();
+    call<ThreadMessage[]>("get_conversation_history").then(showThreadMessages);
 
     // The user's own name, if the backend actually knows one. There is no
     // fallback initials: an invented "PA" in the corner would be a claim about
     // the user that nothing measured.
     call<any>("get_memory_overview").then((overview) => {
       if (!overview) return;
-      setMessageCount(typeof overview.messageCount === "number" ? overview.messageCount : null);
+      setMemoryReady(overview.ready !== false);
       const profile = overview.profile ?? {};
       const raw = profile.name ?? profile.nome ?? profile.user_name;
       const value = raw && typeof raw === "object" ? raw.value : raw;
@@ -380,7 +408,7 @@ export default function Home() {
 
     call<Record<string, string[]>>("get_loaded_plugins").then((v) => v && setPlugins(v));
     call<any[]>("list_permission_policies").then((v) => v && setPolicies(v));
-  }, [ready, notify, refreshCC, refreshCounts, reloadHistory]);
+  }, [ready, notify, refreshCC, refreshCounts, reloadThreads, showThreadMessages]);
 
   /* ── Rate-limit countdown ───────────────────────────────────────────── */
   // The wait comes from Groq's own retry-after header, so the banner clears
@@ -398,7 +426,7 @@ export default function Home() {
   /* ── Actions ────────────────────────────────────────────────────────── */
   const sendMessage = useCallback((override?: string) => {
     const text = (override ?? input).trim();
-    if (!text || thinking || !ready || reading) return;
+    if (!text || thinking || !ready) return;
     const msgId = crypto.randomUUID();
     // The user bubble's id is derived from the turn id, so on_stream_start can
     // recognise that this turn's message is already on screen and never append
@@ -432,7 +460,7 @@ export default function Home() {
             tools: (m.tools ?? []).map((t) => t.state === "running" ? { ...t, state: "ok" as const } : t) }
         : m));
     });
-  }, [input, thinking, ready, reading, notify]);
+  }, [input, thinking, ready, notify]);
 
   const stopWork = useCallback(() => {
     call("stop_voice");
@@ -446,7 +474,7 @@ export default function Home() {
   }, [commandCenter, notify, refreshCC, refreshCounts]);
 
   const startVoice = useCallback(() => {
-    if (!ready || thinking || reading) return;
+    if (!ready || thinking) return;
     if (readiness && readiness.voice.state !== "READY") {
       notify(`Voz: ${stateLabel(readiness.voice.state)}`, "error");
       return;
@@ -466,7 +494,7 @@ export default function Home() {
     setListening(true);
     setThinking(true);
     setStatus("A ouvir…");
-  }, [ready, thinking, reading, readiness, notify]);
+  }, [ready, thinking, readiness, notify]);
 
   const cancelVoice = useCallback(() => {
     call("stop_voice");
@@ -479,28 +507,65 @@ export default function Home() {
   /**
    * Start a new conversation.
    *
-   * The moment is remembered for this session: the Brain forgets its context
-   * immediately, but the stored log has no idea a boundary happened, and
-   * without the mark a fresh conversation started minutes after the last one
-   * would fold straight back into it in the rail. See lib/conversations.ts for
-   * why it is not persisted across reloads.
+   * This creates a REAL thread on the backend and makes the Brain hold it. The
+   * previous conversation is not lost or merged: it keeps its row in the rail,
+   * it can be reopened, and answering in it later continues it properly. Under
+   * the derived-session model this button could only forget the in-memory
+   * window and hope the timestamps would separate the two afterwards.
    */
   const newConversation = useCallback(() => {
-    call("clear_conversation").then(() => {
-      setSessionBreaks((prev) => recordSessionBreak(prev));
+    call<any>("create_conversation", "").then((result) => {
       setMessages([]);
       setInput("");
-      setReading(null);
       setView("chat");
+      if (result?.conversation) setActiveThreadId(result.conversation.id);
+      reloadThreads();
       notify("Nova conversa");
     });
-  }, [notify]);
+  }, [notify, reloadThreads]);
+
+  /** Open a thread and rebuild the model context from it.
+   *
+   * This is the operation that used to be impossible. Older conversations
+   * opened read-only because the Brain held one rolling window over a flat log;
+   * open_conversation rebuilds that window from the chosen thread, so the next
+   * message is answered against the right history.
+   */
+  const openThread = useCallback((thread: Thread) => {
+    if (thread.id === activeThreadId) { setView("chat"); return; }
+    call<any>("open_conversation", thread.id).then((result) => {
+      if (!result?.ok) { notify("Não foi possível abrir a conversa", "error"); return; }
+      setActiveThreadId(result.conversation.id);
+      showThreadMessages(result.messages);
+      setInput("");
+      setView("chat");
+      if (narrow) setRailOpen(false);
+    });
+  }, [activeThreadId, notify, showThreadMessages, narrow]);
+
+  const renameThread = useCallback((thread: Thread, title: string) => {
+    call<any>("rename_conversation", thread.id, title).then((result) => {
+      if (result?.ok) { reloadThreads(); notify("Conversa renomeada"); }
+      else notify("Não foi possível mudar o nome", "error");
+    });
+  }, [notify, reloadThreads]);
+
+  const deleteThread = useCallback((thread: Thread) => {
+    call<any>("delete_conversation", thread.id).then((result) => {
+      if (!result?.ok) { notify("Não foi possível apagar", "error"); return; }
+      notify(`Conversa apagada (${result.messages} mensagens)`);
+      if (thread.id === activeThreadId) {
+        // The backend has already moved the Brain to another thread; ask it
+        // which one rather than guessing, so the two never disagree about
+        // which conversation is open.
+        call<ThreadMessage[]>("get_conversation_history").then(showThreadMessages);
+      }
+      reloadThreads();
+    });
+  }, [activeThreadId, notify, reloadThreads, showThreadMessages]);
 
   const copyConversation = useCallback(async () => {
-    const source = reading
-      ? reading.messages.map((m) => ({ role: m.role, content: m.content }))
-      : messages.map((m) => ({ role: m.role, content: m.content }));
-    const text = source
+    const text = messages
       .filter((m) => m.content.trim())
       .map((m) => `${m.role === "user" ? "Você" : "Nano"}: ${m.content}`)
       .join("\n\n");
@@ -511,7 +576,7 @@ export default function Home() {
     } catch {
       notify("A área de transferência está bloqueada", "error");
     }
-  }, [reading, messages, notify]);
+  }, [messages, notify]);
 
   const openTask = useCallback((taskId: string) => {
     call<any>("get_task_detail", taskId).then((result) => {
@@ -561,13 +626,6 @@ export default function Home() {
       if (result?.ok) setPluginCode(result); else notify("Não foi possível ler o componente", "error");
     });
   }, [notify]);
-
-  const forgetFact = useCallback((key: string) => {
-    call<any>("forget_memory_fact", key).then((result) => {
-      notify(result?.ok ? "Facto esquecido" : "Não foi possível esquecer", result?.ok ? "success" : "error");
-      refreshMemory();
-    });
-  }, [notify, refreshMemory]);
 
   /* ── Provider actions ───────────────────────────────────────────────── */
   const setMode = useCallback((mode: "AUTO" | "CLOUD" | "LOCAL") => {
@@ -675,24 +733,81 @@ export default function Home() {
   const sectionDef = sectionEntry(section);
   const meta = viewEntry(view);
 
-  const sessions = useMemo(
-    () => splitSessions(history, sessionBreaks),
-    [history, sessionBreaks],
+  /** The thread currently on screen, from the real list. */
+  const activeThread = useMemo(
+    () => (threads ?? []).find((thread) => thread.id === activeThreadId) ?? null,
+    [threads, activeThreadId],
   );
-  /* The live conversation is the newest stored one, and only while the shell
-     actually holds it. Straight after "Nova conversa" there are no messages
-     yet, so nothing is live and the rail highlights nothing. */
-  const liveSessionId = messages.length > 0 ? (sessions[0]?.id ?? null) : null;
 
-  /** Open a conversation from the rail. The live one is also how you get back. */
-  const openSession = useCallback((session: Session) => {
-    setReading((current) => {
-      if (session.id === liveSessionId) return null;
-      return current?.id === session.id ? null : session;
+  /* ── Memória actions ────────────────────────────────────────────────── */
+  const openNode = useCallback((nodeId: string) => {
+    call<any>("get_knowledge_node", nodeId).then((result) => {
+      if (result?.ok) { setNodeDetail(result); setNodeOpen(true); }
+      else notify("Nó não encontrado", "error");
     });
-    setView("chat");
-    if (narrow) setRailOpen(false);
-  }, [liveSessionId, narrow]);
+  }, [notify]);
+
+  const createMemory = useCallback((text: string, kind: string, importance: number) => {
+    call<any>("create_memory", text, kind, importance, []).then((result) => {
+      if (result?.ok) { notify("Memória guardada", "success"); refreshMemory(); }
+      // A refusal is reported with its REASON. "Não guardei" alone would leave
+      // the user guessing; "parece conter api_key" tells them what to change.
+      else notify(result?.detail ?? "Não foi possível guardar essa memória", "error");
+    });
+  }, [notify, refreshMemory]);
+
+  const updateMemory = useCallback((id: string, patch: Record<string, any>) => {
+    call<any>("update_memory", id, patch.text ?? null, patch.kind ?? null,
+      patch.importance ?? null, patch.pinned ?? null, patch.status ?? null,
+      patch.tags ?? null).then((result) => {
+      if (result?.ok) refreshMemory();
+      else notify(result?.detail ?? "Não foi possível atualizar", "error");
+    });
+  }, [notify, refreshMemory]);
+
+  const deleteMemory = useCallback((id: string) => {
+    call<any>("delete_memory", id).then((result) => {
+      notify(result?.ok ? "Memória apagada" : "Não foi possível apagar",
+             result?.ok ? "success" : "error");
+      refreshMemory();
+    });
+  }, [notify, refreshMemory]);
+
+  const clearMemories = useCallback(() => {
+    call<any>("clear_memories").then((result) => {
+      notify(result?.ok ? `${result.removed} memória(s) apagada(s)` : "Falhou",
+             result?.ok ? "success" : "error");
+      refreshMemory();
+    });
+  }, [notify, refreshMemory]);
+
+  const createNode = useCallback((title: string, type: string, summary: string) => {
+    call<any>("create_knowledge_node", title, type, summary, "", []).then((result) => {
+      if (result?.ok) { notify("Nó criado", "success"); refreshKnowledge(); refreshGraph(); }
+      else notify("Não foi possível criar o nó", "error");
+    });
+  }, [notify, refreshKnowledge, refreshGraph]);
+
+  const updateNode = useCallback((id: string, patch: Record<string, any>) => {
+    call<any>("update_knowledge_node", id, patch.title ?? null, patch.node_type ?? null,
+      patch.summary ?? null, patch.body ?? null, patch.tags ?? null,
+      patch.pinned ?? null).then((result) => {
+      if (result?.ok) { refreshKnowledge(); openNode(id); }
+      else notify(result?.detail ?? "Não foi possível atualizar o nó", "error");
+    });
+  }, [notify, refreshKnowledge, openNode]);
+
+  const deleteNode = useCallback((id: string) => {
+    call<any>("delete_knowledge_node", id).then((result) => {
+      if (result?.ok) {
+        notify(`Nó apagado (${result.edges} ligações)`, "success");
+        setNodeOpen(false);
+        setNodeDetail(null);
+        refreshKnowledge();
+        refreshGraph();
+      } else notify("Não foi possível apagar o nó", "error");
+    });
+  }, [notify, refreshKnowledge, refreshGraph]);
 
   const navCounts = useMemo(() => ({
     tasks: counts?.badge ?? 0,
@@ -772,35 +887,14 @@ export default function Home() {
   const railDocked = isChat && !narrow;
   const railVisible = isChat && (railDocked || railOpen);
 
-  /** The messages actually on screen: the live conversation, or the one being read. */
-  const shownMessages: Message[] = useMemo(() => {
-    if (!reading) return messages;
-    return reading.messages.map((m, index) => ({
-      id: `read:${reading.id}:${index}`,
-      role: m.role === "user" ? "user" : "assistant",
-      content: m.content,
-      timestamp: new Date(m.timestamp),
-    }));
-  }, [reading, messages]);
+  /* Every thread is writable now, so there is exactly one set of messages on
+     screen and no read-only mode to explain. `readOnlyReason` is gone with it. */
+  const chatTitle = activeThread?.title
+    ?? (messages.length ? "Conversa" : "Nova conversa");
 
-  /* The Brain's context window holds the live conversation only, so a message
-     typed while reading an older one would be answered against the wrong
-     history. Saying so is better than letting the user find out. */
-  const readOnlyReason = reading
-    ? "Volta à conversa atual para escrever."
-    : undefined;
-
-  const chatTitle = reading
-    ? reading.title
-    : messages.length
-      ? (sessions[0]?.title ?? "Conversa")
-      : "Nova conversa";
-
-  const chatSubtitle = reading
-    ? `${reading.messages.length} mensagens · arquivada`
-    : messages.length
-      ? (activityLabel || `${messages.length} mensagens`)
-      : "Escreve, ou diz “Ei Nano”";
+  const chatSubtitle = messages.length
+    ? (activityLabel || `${messages.length} mensagens`)
+    : "Escreve, ou diz “Ei Nano”";
 
   return (
     <>
@@ -836,17 +930,19 @@ export default function Home() {
         <div className="app" data-rail={railDocked ? "true" : "false"}>
           {railVisible && (
             <Rail
-              sessions={sessions}
-              liveId={liveSessionId}
-              openId={reading ? reading.id : liveSessionId}
+              threads={threads ?? []}
+              activeId={activeThreadId}
               query={chatQuery} onQuery={setChatQuery}
               onNew={newConversation}
-              onOpen={openSession}
-              loading={history === null}
+              onOpen={openThread}
+              onRename={renameThread}
+              onDelete={deleteThread}
+              loading={threads === null}
               messageCount={messageCount}
               onOpenMemory={() => setView("memory")}
               drawer={railDocked ? "docked" : "open"}
               onCloseDrawer={() => setRailOpen(false)}
+              unavailable={!memoryReady}
             />
           )}
           {railVisible && !railDocked && (
@@ -866,9 +962,6 @@ export default function Home() {
                   </span>
                   <span className="stage__spacer" />
                   <span className="stage__actions">
-                    {reading && (
-                      <Button size="sm" onClick={() => setReading(null)}>Voltar à conversa atual</Button>
-                    )}
                     <Button variant="ghost" size="sm" onClick={copyConversation}
                             title="Copiar a conversa para a área de transferência">
                       Copiar
@@ -926,7 +1019,7 @@ export default function Home() {
 
             {view === "chat" && (
               <>
-                <Conversation messages={shownMessages} status={activityLabel} thinking={thinking && !reading} />
+                <Conversation messages={messages} status={activityLabel} thinking={thinking} />
                 <Composer
                   value={input} onChange={setInput}
                   onSend={() => sendMessage()} onStop={stopWork}
@@ -937,7 +1030,6 @@ export default function Home() {
                   listening={listening}
                   suggestions={suggestions}
                   onSuggestion={(text) => sendMessage(text)}
-                  readOnlyReason={readOnlyReason}
                 />
                 <p className="stage__footer">
                   O Nano pode cometer erros. Ações sensíveis pedem sempre a tua autorização.
@@ -970,7 +1062,33 @@ export default function Home() {
                 )}
                 {view === "agents" && <AgentsPage agents={agents} />}
                 {view === "memory" && (
-                  <MemoryPage memory={memoryData} onForget={forgetFact} loading={memoryLoading} />
+                  <MemoriesPage
+                    overview={memoryData} loading={memoryLoading}
+                    onCreate={createMemory} onUpdate={updateMemory}
+                    onDelete={deleteMemory} onClearAll={clearMemories}
+                    onOpenSettings={() => openSettingsSection("memory")}
+                  />
+                )}
+                {view === "knowledge" && (
+                  <KnowledgePage
+                    nodes={knowledgeData?.nodes ?? null}
+                    types={knowledgeData?.types ?? []}
+                    stats={knowledgeData?.stats ?? null}
+                    loading={knowledgeLoading}
+                    onOpenNode={openNode}
+                    onCreate={createNode}
+                    overview={memoryData}
+                  />
+                )}
+                {view === "graph" && (
+                  <GraphPage
+                    graph={graphData}
+                    types={graphData?.types ?? []}
+                    loading={graphLoading}
+                    onOpenNode={openNode}
+                    onRefresh={setGraphType}
+                    overview={memoryData}
+                  />
                 )}
                 {view === "capabilities" && <CapabilitiesPage enabled={ready} />}
                 {view === "integrations" && (
@@ -1022,6 +1140,14 @@ export default function Home() {
           onCancel={() => { call("confirm_action", confirmReq.requestId, false); setConfirmReq(null); }}
         />
       )}
+
+      <NodeDetailModal
+        detail={nodeDetail} open={nodeOpen}
+        onClose={() => setNodeOpen(false)}
+        onOpenNode={openNode}
+        onDelete={deleteNode}
+        onUpdate={updateNode}
+      />
 
       <TaskDetailModal
         visible={taskDetailOpen} task={taskDetail} events={taskDetailEvents}

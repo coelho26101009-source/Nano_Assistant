@@ -1644,6 +1644,288 @@ kbd {
 .about-hero__name { margin: 0; font-size: var(--fs-lg); font-weight: 650; letter-spacing: -0.01em; }
 .about-hero__version { margin: 2px 0 0; font-size: var(--fs-sm); color: var(--accent-ink); font-weight: 600; }
 
+/* ============================================================================
+   CONVERSATION ROW ACTIONS
+   Every rail row is now a real thread that can be renamed and deleted. The
+   menu is hidden until the row is hovered or focused: a rail is a list you
+   scan, and a permanently visible control on every line turns scanning into
+   reading. It stays visible for keyboard users the moment it takes focus.
+   ========================================================================== */
+.chat-item-row { position: relative; display: flex; align-items: center; }
+.chat-item-row .chat-item { padding-right: 30px; }
+.chat-item__menu {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  width: 24px; height: 24px; display: grid; place-items: center;
+  border-radius: var(--r-sm); border: 1px solid transparent;
+  color: var(--text-dim); background: transparent;
+  opacity: 0; transition: opacity var(--transition), background var(--transition);
+}
+.chat-item-row:hover .chat-item__menu,
+.chat-item-row:focus-within .chat-item__menu { opacity: 1; }
+.chat-item__menu:hover { background: var(--surface-3); color: var(--text); }
+.chat-item__menu:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.popover__item--danger .popover__item-label { color: var(--st-error); }
+
+/* ============================================================================
+   MEMÓRIA — shared furniture
+   ========================================================================== */
+.memory-head {
+  display: flex; align-items: center; gap: var(--sp-3);
+  flex-wrap: wrap; margin-bottom: var(--sp-4);
+}
+.memory-head__stats { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.stat-chip {
+  display: inline-flex; align-items: baseline; gap: 5px;
+  padding: 5px var(--sp-3); border-radius: var(--r-full);
+  background: var(--surface-2); border: 1px solid var(--border);
+  font-size: var(--fs-xs); color: var(--text-dim); white-space: nowrap;
+}
+.stat-chip strong {
+  font-size: var(--fs-md); font-weight: 650; color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.memory-toolbar {
+  display: flex; align-items: center; gap: var(--sp-3);
+  flex-wrap: wrap; margin-bottom: var(--sp-4);
+}
+.memory-note { font-size: var(--fs-sm); line-height: 1.6; margin: 0 0 var(--sp-3); }
+.memory-footnote {
+  font-size: 11px; line-height: 1.6; margin-top: var(--sp-6);
+  padding-top: var(--sp-3); border-top: 1px solid var(--border);
+}
+
+.search--inline { min-width: 180px; max-width: 280px; flex: 1 1 180px; }
+
+.input--select { height: 34px; padding: 0 var(--sp-3); min-width: 150px; cursor: pointer; }
+.input--area { min-height: 72px; padding: var(--sp-3); line-height: 1.6; resize: vertical; font: inherit; }
+
+/* A statement of fact about the current configuration, not an error. */
+.notice {
+  display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap;
+  padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md);
+  border: 1px solid var(--border); background: var(--surface-2);
+  font-size: var(--fs-sm); line-height: 1.6; color: var(--text-muted);
+  margin-bottom: var(--sp-4);
+}
+.notice strong { color: var(--text); }
+.notice--warn { border-color: rgba(224, 163, 58, 0.35); background: rgba(224, 163, 58, 0.07); }
+
+/* ============================================================================
+   MEMÓRIAS — the list
+   ========================================================================== */
+.memory-card {
+  display: flex; align-items: flex-start; gap: var(--sp-4);
+  padding: var(--sp-4); border-radius: var(--r-lg);
+  background: var(--surface-2); border: 1px solid var(--border);
+  transition: border-color var(--transition), background var(--transition);
+}
+.memory-card:hover { border-color: var(--border-strong); background: var(--surface-3); }
+.memory-card__main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.memory-card__text {
+  margin: 0; font-size: var(--fs-md); line-height: 1.6; color: var(--text);
+  overflow-wrap: anywhere;
+}
+.memory-card__meta {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: 11px; color: var(--text-dim);
+}
+.memory-card__actions { display: flex; align-items: center; gap: 6px; flex: none; flex-wrap: wrap; }
+
+/* PROVENANCE, SHOWN RATHER THAN IMPLIED.
+   The colour carries the meaning: what the user asked for is red (Nano's own
+   accent, the strongest signal), what the user typed is neutral, and what Nano
+   merely inferred is amber and reads as a suggestion until promoted. */
+.origin-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 7px; border-radius: var(--r-full);
+  font-size: 10px; letter-spacing: 0.02em; white-space: nowrap;
+  border: 1px solid var(--border); background: var(--surface-3); color: var(--text-dim);
+}
+.origin-chip--explicit { border-color: var(--border-accent); color: var(--accent-ink); background: var(--accent-faint); }
+.origin-chip--manual { border-color: var(--border-strong); color: var(--text-muted); }
+.origin-chip--inferred,
+.origin-chip--candidate {
+  border-color: rgba(224, 163, 58, 0.4); color: var(--st-waiting);
+  background: rgba(224, 163, 58, 0.08);
+}
+.origin-chip--pinned { border-color: var(--border-accent); color: var(--accent-ink); }
+
+.tag-chip {
+  padding: 2px 7px; border-radius: var(--r-full); font-size: 10px;
+  background: var(--surface-4); color: var(--text-dim); white-space: nowrap;
+}
+
+.btn.is-active { border-color: var(--border-accent); color: var(--accent-ink); background: var(--accent-faint); }
+
+.memory-danger {
+  display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap;
+  margin-top: var(--sp-8); padding-top: var(--sp-4);
+  border-top: 1px solid var(--border);
+}
+
+/* ============================================================================
+   SECOND BRAIN — the node list
+   ========================================================================== */
+.node-grid {
+  display: grid; gap: var(--sp-3);
+  grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr));
+}
+.node-card {
+  display: flex; flex-direction: column; gap: var(--sp-2); align-items: flex-start;
+  padding: var(--sp-4); border-radius: var(--r-lg); text-align: left;
+  background: var(--surface-2); border: 1px solid var(--border);
+  transition: border-color var(--transition), background var(--transition), transform var(--transition);
+  min-width: 0;
+}
+.node-card:hover {
+  border-color: var(--border-accent); background: var(--surface-3);
+  transform: translateY(-1px);
+}
+.node-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.node-card__type {
+  padding: 2px 8px; border-radius: var(--r-full); font-size: 10px;
+  letter-spacing: 0.04em; text-transform: uppercase;
+  background: var(--surface-4); color: var(--text-dim); border: 1px solid var(--border);
+}
+.node-card__title {
+  font-size: var(--fs-md); font-weight: 640; color: var(--text);
+  overflow-wrap: anywhere;
+}
+.node-card__summary {
+  font-size: var(--fs-sm); line-height: 1.55; color: var(--text-muted);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.node-card__foot {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: 10px; color: var(--text-dim); margin-top: auto;
+}
+
+/* NODE TYPES.
+   Hue separates a device from a person at a glance, but every one stays inside
+   the Ember palette: warm reds, ambers and greys. No cyan, no teal, and no
+   rainbow -- a categorical scale that leaves the brand behind stops looking
+   like Nano. */
+.node-type--device    { border-color: rgba(255, 90, 84, 0.35);  color: #FF8A84; }
+.node-type--software  { border-color: rgba(224, 163, 58, 0.35); color: #E8B45C; }
+.node-type--project   { border-color: rgba(244, 1, 1, 0.40);    color: var(--accent-ink); }
+.node-type--person    { border-color: rgba(200, 142, 138, 0.4); color: #D6A9A5; }
+.node-type--game      { border-color: rgba(255, 138, 76, 0.35); color: #FF9E68; }
+.node-type--decision  { border-color: rgba(63, 214, 140, 0.28); color: #7FD8AC; }
+.node-type--goal      { border-color: rgba(240, 163, 43, 0.35); color: #F0B45C; }
+.node-type--topic,
+.node-type--note,
+.node-type--preference { border-color: var(--border-strong); color: var(--text-muted); }
+
+/* ============================================================================
+   NODE DETAIL
+   ========================================================================== */
+.node-detail { display: flex; flex-direction: column; gap: var(--sp-5); }
+.node-detail__head { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.node-detail__section { display: flex; flex-direction: column; gap: var(--sp-2); }
+.node-detail__body { margin: 0; font-size: var(--fs-md); line-height: 1.65; color: var(--text-muted); }
+.node-detail__list {
+  margin: 0; padding-left: var(--sp-5); display: flex; flex-direction: column; gap: 6px;
+  font-size: var(--fs-sm); line-height: 1.6; color: var(--text-muted);
+}
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.link-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px var(--sp-3); border-radius: var(--r-full);
+  background: var(--surface-3); border: 1px solid var(--border);
+  font-size: var(--fs-sm); color: var(--text);
+  transition: border-color var(--transition), background var(--transition);
+}
+.link-chip:hover { border-color: var(--border-accent); background: var(--surface-4); }
+.link-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.link-chip__relation { font-size: 10px; color: var(--text-dim); }
+
+/* ============================================================================
+   GRAPH
+   Drawn as SVG with a deterministic layout computed in the component. There is
+   no graph library and no animation loop: the same nodes draw the same way
+   every time, which is what makes the picture learnable.
+   ========================================================================== */
+.graph-page { display: flex; flex-direction: column; min-height: 0; }
+.graph-canvas {
+  position: relative; border-radius: var(--r-lg);
+  border: 1px solid var(--border); background: var(--bg-sunken);
+  overflow: hidden; min-height: 380px; height: min(62vh, 640px);
+}
+.graph-svg { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+.graph-svg:active { cursor: grabbing; }
+
+.graph-edge {
+  stroke: rgba(255, 236, 236, 0.14); fill: none;
+  transition: stroke var(--transition), opacity var(--transition);
+}
+.graph-edge.is-dim { opacity: 0.15; }
+
+.graph-node { cursor: pointer; transition: opacity var(--transition); }
+.graph-node.is-dim { opacity: 0.22; }
+.graph-node__dot {
+  fill: var(--surface-4); stroke: var(--border-strong); stroke-width: 1.5;
+  transition: fill var(--transition), stroke var(--transition), filter var(--transition);
+}
+.graph-node:hover .graph-node__dot { stroke: var(--accent-hover); }
+.graph-node.is-selected .graph-node__dot {
+  fill: var(--accent-deep); stroke: var(--accent-hover); stroke-width: 2.5;
+}
+.graph-node:focus-visible { outline: none; }
+.graph-node:focus-visible .graph-node__dot { stroke: var(--accent); stroke-width: 3; }
+.graph-node__label {
+  fill: var(--text-muted); font-size: 13px; text-anchor: middle;
+  paint-order: stroke; stroke: var(--bg-sunken); stroke-width: 3px;
+  pointer-events: none; font-family: var(--font-ui);
+}
+.graph-node.is-selected .graph-node__label { fill: var(--text); font-weight: 600; }
+
+.graph-node[data-type="device"]   .graph-node__dot { stroke: rgba(255, 90, 84, 0.55); }
+.graph-node[data-type="software"] .graph-node__dot { stroke: rgba(224, 163, 58, 0.55); }
+.graph-node[data-type="project"]  .graph-node__dot { stroke: rgba(244, 1, 1, 0.6); }
+.graph-node[data-type="person"]   .graph-node__dot { stroke: rgba(200, 142, 138, 0.6); }
+.graph-node[data-type="game"]     .graph-node__dot { stroke: rgba(255, 138, 76, 0.55); }
+.graph-node[data-type="decision"] .graph-node__dot { stroke: rgba(63, 214, 140, 0.45); }
+
+.graph-legend {
+  position: absolute; left: var(--sp-3); bottom: var(--sp-3);
+  display: flex; flex-wrap: wrap; gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md);
+  background: var(--surface-overlay); border: 1px solid var(--border);
+  backdrop-filter: var(--blur-chip); pointer-events: none;
+  font-size: 10px; color: var(--text-dim);
+}
+.graph-legend__item { display: inline-flex; align-items: center; gap: 5px; }
+.graph-legend__dot {
+  width: 8px; height: 8px; border-radius: var(--r-full);
+  background: var(--surface-4); border: 1.5px solid currentColor;
+}
+
+.graph-selected {
+  position: absolute; right: var(--sp-3); top: var(--sp-3);
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md);
+  background: var(--surface-overlay); border: 1px solid var(--border-accent);
+  backdrop-filter: var(--blur-chip); font-size: var(--fs-sm); color: var(--text);
+  max-width: min(320px, 50%);
+}
+.graph-selected strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.graph-foot { padding-top: var(--sp-3); font-size: 11px; line-height: 1.6; }
+
+@media (max-width: 780px) {
+  .memory-card { flex-direction: column; gap: var(--sp-3); }
+  .memory-card__actions { width: 100%; }
+  .graph-canvas { height: 60vh; min-height: 300px; }
+  .graph-legend { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .node-card:hover { transform: none; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .popover { animation: none; }
   .status-pill__caret { transition: none; }

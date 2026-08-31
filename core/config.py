@@ -169,6 +169,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "rag_enabled": True,
         "rag_results": 3,
         "rag_max_chars": 1500,
+        # Cross-conversation memory. `long_term_enabled` is the master switch:
+        # off, nothing is written to or read from the long-term store, and the
+        # Second Brain stops contributing context too. `auto_capture` governs
+        # only INFERRED memories -- an explicit "lembra-te que..." is the user
+        # asking and is always honoured while the master switch is on.
+        "long_term_enabled": True,
+        "auto_capture": True,
     },
 }
 

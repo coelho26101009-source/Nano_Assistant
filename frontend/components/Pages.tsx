@@ -464,124 +464,12 @@ export function AgentsPage({ agents }: { agents: any[] | null }) {
 }
 
 /* ========================================================================
-   MEMÓRIA
+   MEMÓRIA moved out of this file.
+   The single Memória page became a three-view section (Memórias, Second Brain,
+   Grafo) with its own module, components/MemoryPages.tsx. The profile panel and
+   its two helpers went with it; nothing here rendered them any more, and a dead
+   component is a component that rots.
    ====================================================================== */
-
-/** The stored value of a profile entry, whether or not it is wrapped. */
-function profileValue(entry: any): string {
-  const raw = entry && typeof entry === "object" && "value" in entry ? entry.value : entry;
-  if (raw === null || raw === undefined) return "—";
-  return typeof raw === "object" ? JSON.stringify(raw) : String(raw);
-}
-
-/** Where the entry came from, when the backend recorded it. */
-function profileSource(entry: any): string {
-  return entry && typeof entry === "object" && typeof entry.source === "string" ? entry.source : "";
-}
-
-export function MemoryPage({
-  memory, onForget, loading,
-}: {
-  memory: any | null;
-  onForget: (key: string) => void;
-  loading: boolean;
-}) {
-  const [query, setQuery] = useState("");
-  const [confirmKey, setConfirmKey] = useState<string | null>(null);
-
-  const facts = useMemo(() => {
-    const all = memory?.facts ?? [];
-    const needle = query.trim().toLowerCase();
-    if (!needle) return all;
-    return all.filter((f: any) => f.key.toLowerCase().includes(needle) || String(f.value).toLowerCase().includes(needle));
-  }, [memory, query]);
-
-  if (loading && !memory) return <div className="page__inner"><EmptyState title="A carregar memória…" /></div>;
-
-  const profileEntries = Object.entries(memory?.profile ?? {});
-
-  return (
-    <div className="page__inner">
-      <h2 className="page-title">Perfil</h2>
-      {profileEntries.length === 0 ? (
-        <EmptyState title="Sem perfil guardado" hint="O Nano guarda aqui preferências duradouras que aprender sobre ti." />
-      ) : (
-        <div className="card">
-          <dl className="kv">
-            {profileEntries.map(([key, value]) => (
-              <React.Fragment key={key}>
-                <dt>{key}</dt>
-                {/* memory.remember_preference stores each entry as
-                    {value, source, updated_at}. Dumping that object rendered
-                    literal JSON in the user's face; show the value, and let the
-                    provenance sit quietly beside it. */}
-                <dd>
-                  <span className="mono">{profileValue(value)}</span>
-                  {profileSource(value) && (
-                    <span className="dim" style={{ marginLeft: 8, fontSize: 11 }}>
-                      · {profileSource(value)}
-                    </span>
-                  )}
-                </dd>
-              </React.Fragment>
-            ))}
-          </dl>
-        </div>
-      )}
-
-      <div className="inline" style={{ justifyContent: "space-between", margin: "24px 0 12px" }}>
-        <h2 className="page-title" style={{ margin: 0 }}>
-          Factos guardados <Badge tone="neutral">{memory?.facts?.length ?? 0}</Badge>
-        </h2>
-        <input className="input" style={{ width: 220 }} placeholder="Procurar na memória…"
-               value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Procurar na memória" />
-      </div>
-
-      {facts.length === 0 ? (
-        <EmptyState title="Nada guardado" hint="Diz ao Nano para se lembrar de alguma coisa e aparece aqui." />
-      ) : (
-        <div className="stack stack--tight">
-          {facts.map((fact: any) => (
-            <div className="row-item" key={fact.key}>
-              <div className="row-item__main">
-                <div className="row-item__title mono">{fact.key}</div>
-                <div className="row-item__meta">{fact.value}</div>
-              </div>
-              <Button size="sm" variant="danger" onClick={() => setConfirmKey(fact.key)}>Esquecer</Button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <h2 className="page-title">Documentos (RAG)</h2>
-      {memory?.documentsSupported ? (
-        <EmptyState title="Sem documentos indexados" />
-      ) : (
-        <div className="card">
-          <StatusIndicator state="SETUP_REQUIRED" label="Indexação de documentos indisponível" />
-          <p className="dim" style={{ fontSize: 12, marginTop: 8 }}>{memory?.documentsNote}</p>
-        </div>
-      )}
-
-      <h2 className="page-title">Conversa</h2>
-      <div className="card">
-        <MetricRow label="Mensagens guardadas" value={memory?.messageCount ?? 0} />
-        <p className="dim" style={{ fontSize: 12, marginTop: 8 }}>
-          O histórico fica apenas neste computador, numa base de dados local.
-        </p>
-      </div>
-
-      <ConfirmDialog
-        open={Boolean(confirmKey)} danger
-        title="Esquecer este facto?"
-        confirmLabel="Esquecer"
-        message={<>O Nano vai deixar de saber <strong>{confirmKey}</strong>. Isto não pode ser desfeito.</>}
-        onConfirm={() => { if (confirmKey) onForget(confirmKey); setConfirmKey(null); }}
-        onCancel={() => setConfirmKey(null)}
-      />
-    </div>
-  );
-}
 
 /* ========================================================================
    INTEGRAÇÕES

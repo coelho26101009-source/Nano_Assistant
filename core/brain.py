@@ -67,6 +67,12 @@ Regras de ferramentas:
 # prompt and the hardening tests assert the trust boundary is present in it.
 SYSTEM_PROMPT = NANO_PERSONA + NANO_TOOL_RULES + TRUST_BOUNDARY_SYSTEM_RULES
 
+def _truncate(text: str, max_chars: int) -> str:
+    """Cap one message's contribution to the history window."""
+    value = str(text or "")
+    return value if len(value) <= max_chars else value[:max_chars] + " […]"
+
+
 def _ollama_chat_url(url: str) -> str:
     url = url.rstrip("/")
     return url if url.endswith("/api/chat") else f"{url}/api/chat"
@@ -161,7 +167,7 @@ def _simulated_groq_failure() -> None:
 
 
 class Brain:
-    def __init__(self, api_key: str, guardrails: GuardrailsEngine, memory: MemoryEngine, config: dict | None = None, permission_manager: Any | None = None, tool_executor: Any | None = None):
+    def __init__(self, api_key: str, guardrails: GuardrailsEngine, memory: MemoryEngine, config: dict | None = None, permission_manager: Any | None = None, tool_executor: Any | None = None, memory_stack: Any | None = None):
         cfg = config if config is not None else load_config()
         mem_cfg, local_cfg = cfg.get("memory") or {}, cfg.get("local") or {}
         self.groq_enabled = bool(api_key.strip())
@@ -170,6 +176,13 @@ class Brain:
         # 30-46 second freezes. Nano handles 429 itself and surfaces it.
         self.client = AsyncGroq(api_key=api_key, max_retries=0) if self.groq_enabled else None
         self.guardrails, self.memory = guardrails, memory
+        # The threads / long-term-memory / Second Brain stack. Optional: the
+        # Brain answers perfectly well without it (with the legacy flat history),
+        # which is what keeps a migration failure from being a chat outage.
+        self.memory_stack = memory_stack
+        # Diagnostics for the last composed context: counts, ids and token
+        # spend. Never any recalled text -- this ends up in last_metadata.
+        self.last_context_meta: dict[str, Any] = {}
         self.permission_manager = permission_manager
         # The Brain never runs a tool itself. Every call is delegated to the
         # central execution authority, which owns policy, permission, scope
@@ -263,17 +276,39 @@ class Brain:
         """
         provider_status.CACHE.invalidate()
 
-    def load_history(self) -> int:
-        """Seed the conversation from the database, already inside budget.
+    def load_history(self, conversation_id: str | None = None) -> int:
+        """Seed the conversation from ONE thread, already inside budget.
 
-        get_context_window applies its own character window; trimming here as
-        well means the very first message of a session pays the same bounded
-        prompt as every later one, instead of carrying a boot-time backlog.
+        With the memory stack this reads the tail of a specific conversation,
+        which is what makes reopening an old thread a real continuation rather
+        than a read-only view: the model receives that thread's recent turns,
+        its summary and its retrievable history, and nothing from any other.
+
+        Without the stack it falls back to the legacy flat window. Either way
+        the result is trimmed here, so the first message of a session pays the
+        same bounded prompt as every later one instead of carrying a boot-time
+        backlog.
         """
+        self.conversation = []
         try:
-            self.conversation = list(self.memory.get_context_window(self.history_messages, self.max_history_chars))
+            if self.memory_stack is not None and getattr(self.memory_stack, "ready", False):
+                thread_id = conversation_id or self.memory_stack.ensure_active()
+                rows = self.memory_stack.recent_messages(thread_id,
+                                                         limit=self.history_messages)
+                self.conversation = [
+                    {"role": row["role"],
+                     "content": _truncate(row["content"], self.max_history_chars // 4)}
+                    for row in rows
+                    if row.get("role") in ("user", "assistant") and (row.get("content") or "").strip()
+                ]
+                while self.conversation and self.conversation[0]["role"] != "user":
+                    self.conversation.pop(0)
+            else:
+                self.conversation = list(self.memory.get_context_window(
+                    self.history_messages, self.max_history_chars))
         except Exception as exc:
             logger.error("Falha ao carregar histórico: %s", exc)
+            self.conversation = []
             return 0
         self._trim_conversation()
         return len(self.conversation)
@@ -337,7 +372,14 @@ class Brain:
                 total -= self._estimate_tokens(orphan)
 
     def _facts_block(self) -> str:
-        if not self.facts_enabled:
+        """The LEGACY persistent-facts block. Only used without the memory stack.
+
+        It dumps every stored fact into every prompt, which is unbounded and was
+        the reason a long-lived install slowly paid more per turn. The composer
+        replaces it with a relevance-scored, budgeted selection, so when the
+        stack is live this contributes nothing and the two never both fire.
+        """
+        if not self.facts_enabled or self.memory_stack is not None:
             return ""
         try:
             facts = self.memory.get_facts()
@@ -345,6 +387,36 @@ class Brain:
             logger.exception("Falha ao ler factos persistentes")
             return ""
         return "\n\nMemória persistente relevante:\n" + "\n".join(f"- {k}: {v}" for k, v in facts.items()) if facts else ""
+
+    async def _memory_context_block(self, user_message: str) -> str:
+        """Everything recalled for this turn, assembled by the ContextComposer.
+
+        Runs OFF the event loop: composing reads SQLite and runs a full-text
+        search, and eel serves the whole UI bridge from one cooperative hub, so
+        a blocking read here would freeze the interface rather than merely slow
+        the answer.
+
+        A failure returns an empty string. Losing recall degrades the answer;
+        raising here would lose the answer entirely.
+        """
+        if self.memory_stack is None or not self.facts_enabled:
+            self.last_context_meta = {}
+            return ""
+        # The verbatim window is handed over so retrieval can EXCLUDE it: a turn
+        # that is already three lines further down the prompt must not be paid
+        # for twice.
+        recent = [{"role": m.get("role"), "content": m.get("content") or ""}
+                  for m in self.conversation if m.get("role") in ("user", "assistant")]
+        try:
+            context = await asyncio.to_thread(
+                self.memory_stack.compose, user_message, recent_messages=recent)
+        except Exception:
+            logger.exception("Falha a compor o contexto de memória")
+            self.last_context_meta = {"error": "compose_failed"}
+            return ""
+        self.last_context_meta = context.as_metadata()
+        rendered = context.render()
+        return f"\n\n{rendered}" if rendered else ""
 
     async def _rag_block(self, user_message: str) -> str:
         if not self.rag_enabled or len(user_message.strip()) < 8:
@@ -398,8 +470,13 @@ class Brain:
             parts.append(TRUST_BOUNDARY_SYSTEM_RULES)
         parts.append(capabilities.grounding_block(user_message))
         parts.append(self._facts_block())
-        # Small talk never needs a document lookup, and the retrieval itself
-        # costs a vector search on every "olá".
+        # The recalled context: thread summary, relevant older turns of THIS
+        # conversation, long-term memories and the knowledge they belong to.
+        # Included on every turn, small talk included, because "e o meu PC?"
+        # classifies as small talk and is exactly the case that needs it. The
+        # composer's own budget is what keeps that affordable.
+        parts.append(await self._memory_context_block(user_message))
+        # A document lookup is a different question and stays off small talk.
         if task != model_selection.TaskClass.SMALL_TALK.value:
             parts.append(await self._rag_block(user_message))
         return "".join(part for part in parts if part)
@@ -430,6 +507,21 @@ class Brain:
 
     def reset_conversation(self):
         self.conversation.clear()
+        self.last_context_meta = {}
+
+    def switch_conversation(self, conversation_id: str | None) -> int:
+        """Point the Brain at a different thread and rebuild its window from it.
+
+        This is what makes an older conversation writable again. Before threads
+        existed the Brain held one rolling window over a flat log, so reopening
+        an old chat could only ever be read-only — answering in it would have
+        answered against the newest conversation's context.
+        """
+        self.conversation.clear()
+        self.last_context_meta = {}
+        if self.memory_stack is not None and conversation_id:
+            self.memory_stack.open_conversation(conversation_id)
+        return self.load_history(conversation_id)
 
     # ------------------------------------------------------------------ routing
 
@@ -623,6 +715,11 @@ class Brain:
             "tools_offered": len(tools), "tools_available": len(all_tools),
             "max_tokens": max_tokens, "fallback_used": False,
         }
+        # What memory contributed to THIS turn: counts, ids and token spend.
+        # Assembled by the composer and already free of recalled text, so it is
+        # safe for the technical-details panel and for the log.
+        if self.last_context_meta:
+            self.last_metadata["memory"] = dict(self.last_context_meta)
 
         if route.get("provider") == "ollama":
             self.last_provider_used = "ollama"

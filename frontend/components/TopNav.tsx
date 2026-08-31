@@ -28,7 +28,7 @@ import type { ProviderPayload } from "../lib/backend";
 
 export type ViewId =
   | "chat" | "tasks" | "activity"
-  | "permissions" | "agents" | "memory" | "integrations"
+  | "permissions" | "agents" | "memory" | "knowledge" | "graph" | "integrations"
   | "capabilities" | "status" | "settings";
 
 export type SectionId = "chat" | "tools" | "pc" | "memory" | "settings";
@@ -74,9 +74,21 @@ export const SECTIONS: SectionEntry[] = [
     ],
   },
   {
+    // MEMÓRIA is what Nano remembers and what it knows. Three views, because
+    // they answer three different questions: what do you remember about me,
+    // what do you know about my world, and how is it connected?
+    //
+    // Privacidade is deliberately NOT a fourth view here. The switches that
+    // govern memory are settings, they live with every other setting in
+    // Definições → Memória and Definições → Privacidade, and duplicating them
+    // would create two places to change one thing.
     section: "memory",
     label: "Memória",
-    views: [{ id: "memory", label: "Memória", hint: "O que o Nano sabe sobre ti" }],
+    views: [
+      { id: "memory", label: "Memórias", hint: "O que o Nano sabe sobre ti" },
+      { id: "knowledge", label: "Second Brain", hint: "Pessoas, projetos e coisas que o Nano conhece" },
+      { id: "graph", label: "Grafo", hint: "Como tudo se liga" },
+    ],
   },
   {
     section: "settings",

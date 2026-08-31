@@ -211,10 +211,20 @@ export type SettingsPayload = {
   memory: {
     factsEnabled: boolean;
     ragEnabled: boolean;
-    /** False while chromadb is not installed. The UI HIDES the retrieval
-     *  toggle rather than rendering one that cannot do anything. */
+    /** Whether the SQLite build has FTS5. False means retrieval has degraded to
+     *  simple text matching -- the UI says which, and never claims the better
+     *  one. It used to be hardcoded false with a note blaming a missing
+     *  chromadb, which hid a feature that had always worked. */
     ragSupported: boolean;
     ragNote: string;
+    /** Whether anything may be carried between conversations at all. */
+    longTermEnabled: boolean;
+    /** Whether Nano may PROPOSE memories on its own. */
+    captureEnabled: boolean;
+    ready: boolean;
+    retrieval: { mode: string; engine: string; entries: number; byKind: Record<string, number> };
+    stats: Record<string, any>;
+    knowledge: Record<string, any>;
   };
   stored: Record<string, any>;
   runtime: Record<string, any>;

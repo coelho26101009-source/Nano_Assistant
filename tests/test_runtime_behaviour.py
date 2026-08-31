@@ -284,18 +284,39 @@ class RecordingBridge:
 
 @pytest.fixture()
 def message_pipeline(monkeypatch, tmp_path):
-    """core.main's _process_message, wired to a stub brain and a fake bridge."""
+    """core.main's _process_message, wired to a stub brain, a fake bridge and a
+    throwaway memory database."""
     import core.main as main
 
     bridge = RecordingBridge()
     monkeypatch.setattr(main, "eel", bridge)
 
-    saved: list[tuple[str, str]] = []
-    monkeypatch.setattr(main.memory, "save_message",
-                        lambda role, content, *a, **k: saved.append((role, content)))
+    # A REAL memory stack over a THROWAWAY database.
+    #
+    # Persistence moved from memory.save_message to the memory stack when
+    # conversation threads landed, so spying on save_message would now watch a
+    # code path the turn no longer takes and pass whatever happened. Pointing
+    # the stack at tmp_path lets the test assert the stronger thing instead:
+    # that after the turn the conversation actually CONTAINS both messages, in
+    # order, exactly once. It also keeps the test out of the user's real
+    # helios.db, which a stack on the default path would write into.
+    import core.memory as memory_module
+    from core.memory import MemoryEngine
+    from core.memory_stack import MemoryStack
+
+    monkeypatch.setattr(memory_module, "DB_PATH", tmp_path / "helios.db")
+    engine = MemoryEngine()
+    stack = MemoryStack(engine, background=False)
+    monkeypatch.setattr(main, "memory_stack", stack)
+    thread = stack.new_conversation()
+
     # Never speak during a test.
     monkeypatch.setattr(main, "_should_speak", lambda source: False)
-    return main, bridge, saved
+    try:
+        yield main, bridge, stack, thread["id"]
+    finally:
+        stack.stop()
+        engine.close()
 
 
 def test_a_typed_turn_emits_start_then_chunks_then_end(message_pipeline, monkeypatch):
@@ -304,7 +325,7 @@ def test_a_typed_turn_emits_start_then_chunks_then_end(message_pipeline, monkeyp
     send_message returns an ACK and the answer arrives on the stream. This is
     the contract three separate source-string tests describe; this one runs it.
     """
-    main, bridge, saved = message_pipeline
+    main, bridge, stack, thread_id = message_pipeline
     monkeypatch.setattr(main, "brain", StubBrain(["Olá", "! ", "Como ", "estás?"]))
 
     result = asyncio.run(main._process_message("Olá", msg_id="turn-1"))
@@ -322,8 +343,13 @@ def test_a_typed_turn_emits_start_then_chunks_then_end(message_pipeline, monkeyp
     streamed = "".join(args[1] for args in bridge.payloads("on_stream_chunk"))
     assert streamed == "Olá! Como estás?"
 
-    # Both sides of the turn are persisted exactly once.
-    assert saved == [("user", "Olá"), ("assistant", "Olá! Como estás?")]
+    # Both sides of the turn are persisted exactly once, in order, in the
+    # thread the turn belonged to. Read back from the database rather than from
+    # a call spy: what matters is that the conversation can be reopened and
+    # found intact, not that a particular function was called.
+    stored = stack.conversations.messages(thread_id, limit=50)
+    assert [(row["role"], row["content"]) for row in stored] == [
+        ("user", "Olá"), ("assistant", "Olá! Como estás?")]
 
     # The final payload carries safe diagnostics and no credential.
     final = bridge.payloads("on_stream_end")[0][1]
@@ -333,7 +359,7 @@ def test_a_typed_turn_emits_start_then_chunks_then_end(message_pipeline, monkeyp
 
 def test_thinking_updates_arrive_as_status_not_as_answer_text(message_pipeline, monkeypatch):
     """A _thinking_ marker is a status line; it must never land in the answer."""
-    main, bridge, _saved = message_pipeline
+    main, bridge, _stack, _thread_id = message_pipeline
     monkeypatch.setattr(main, "brain",
                         StubBrain(["pronto"], status="⚙️ system_stats..."))
 
@@ -347,7 +373,7 @@ def test_thinking_updates_arrive_as_status_not_as_answer_text(message_pipeline, 
 
 def test_the_ui_stays_responsive_while_a_turn_streams(message_pipeline, monkeypatch):
     """A streaming turn must not monopolise the loop the bridge runs on."""
-    main, bridge, _saved = message_pipeline
+    main, bridge, _stack, _thread_id = message_pipeline
     monkeypatch.setattr(main, "brain", StubBrain(["a", "b", "c", "d", "e"], delay=0.05))
 
     async def scenario():
@@ -366,7 +392,7 @@ def test_a_failing_turn_reports_an_error_and_still_closes_the_stream(message_pip
 
     A stream that starts and never ends leaves the UI spinning forever.
     """
-    main, bridge, _saved = message_pipeline
+    main, bridge, _stack, _thread_id = message_pipeline
 
     class ExplodingBrain(StubBrain):
         async def chat(self, message, stream=True):
