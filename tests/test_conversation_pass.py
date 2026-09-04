@@ -1041,14 +1041,53 @@ def test_node_modules_are_never_walked(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_the_trust_boundary_survives_whenever_tools_are_reachable():
-    """Dropping the rules is a token saving only when no tool can be called."""
-    source = (ROOT / "core" / "brain.py").read_text(encoding="utf-8")
-    body = source.split("async def _build_system_prompt(")[1].split("\n    def ")[0]
-    assert "TRUST_BOUNDARY_SYSTEM_RULES" in body
-    assert "with_tools" in body and "_history_has_external_content" in body, (
-        "the trust boundary must be kept whenever tools are offered or tool "
-        "output already exists in the conversation"
-    )
+    """Dropping the rules is a token saving only when no tool can be called.
+
+    This used to read ``_build_system_prompt``'s SOURCE and look for the name
+    ``TRUST_BOUNDARY_SYSTEM_RULES`` inside it. That assertion measured where
+    the code lived rather than what it produced: it broke when the head of the
+    prompt moved into ``brain.base_system_sections`` -- a refactor that changed
+    no behaviour at all -- and, worse, it would have passed a version that
+    imported the constant and never appended it.
+
+    So the prompt is built and read instead. All three branches of the rule are
+    covered, which the source scan never was.
+    """
+    from core.brain import Brain, base_system_sections
+    from core.guardrails import GuardrailsEngine
+    from core.memory import MemoryEngine
+    from core.trust import TRUST_BOUNDARY_SYSTEM_RULES
+
+    def brain():
+        return Brain("", GuardrailsEngine(), MemoryEngine(), {"ollama_enabled": False})
+
+    offered = asyncio.run(brain()._build_system_prompt("ola", with_tools=True))
+    assert TRUST_BOUNDARY_SYSTEM_RULES in offered, (
+        "the trust boundary must be kept whenever tools are offered")
+
+    # No tool this turn, but a tool result already sits in the conversation:
+    # untrusted external content has reached the model, so the rules stay.
+    after_tool_output = brain()
+    after_tool_output.conversation.extend([
+        {"role": "assistant", "content": "",
+         "tool_calls": [{"id": "1", "type": "function",
+                         "function": {"name": "pc_system_info", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "1", "content": "RAM 61%"},
+    ])
+    assert TRUST_BOUNDARY_SYSTEM_RULES in asyncio.run(
+        after_tool_output._build_system_prompt("ola", with_tools=False)), (
+        "the trust boundary must be kept once tool output exists in the history")
+
+    # Only when NEITHER channel exists may it be dropped. Without this the two
+    # assertions above would also pass against a prompt that never drops
+    # anything, and the test would prove nothing about the condition itself.
+    assert TRUST_BOUNDARY_SYSTEM_RULES not in asyncio.run(
+        brain()._build_system_prompt("ola", with_tools=False))
+
+    # And the shared assembler agrees, so the provider benchmark that reuses it
+    # measures the same rule; see tests/test_benchmark_prompt_parity.py.
+    assert TRUST_BOUNDARY_SYSTEM_RULES in "".join(
+        base_system_sections("ola", with_tools=True))
 
 
 def test_the_saved_key_wins_over_a_stale_env_key():
