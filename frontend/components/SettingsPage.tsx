@@ -7,7 +7,9 @@
  * the user never has to open .env.
  */
 import React, { useState } from "react";
-import type { ProviderPayload, SettingsPayload, VoiceDiagnostics } from "../lib/backend";
+import type {
+  CloudProviderKey, ProviderInfo, ProviderPayload, SettingsPayload, VoiceDiagnostics,
+} from "../lib/backend";
 import { call } from "../lib/backend";
 import {
   retryShortcut, setAutoLaunch, setOverlayEnabled, useDesktopStatus,
@@ -232,9 +234,170 @@ function WakePhraseTester({ phrase }: { phrase: string }) {
   );
 }
 
+/**
+ * A provider's state in one short phrase, for the preferred-provider control.
+ *
+ * Only what the backend reported. There is no optimistic default: an unknown
+ * state says so instead of implying the provider is fine.
+ */
+function cloudStateHint(info?: ProviderInfo): string {
+  if (!info) return "Estado desconhecido";
+  if (info.temporarily_limited) return "Limite temporário atingido";
+  switch (info.state) {
+    case "READY": return "Configurado";
+    case "SETUP_REQUIRED": return "Falta a chave";
+    case "MODEL_UNAVAILABLE": return "Modelo indisponível";
+    case "ERROR": return "Chave recusada";
+    case "UNAVAILABLE": return "Sem ligação";
+    case "DISABLED": return "Não usado neste modo";
+    default: return info.state;
+  }
+}
+
+/**
+ * What the selected model can and cannot do, from the account's own metadata.
+ *
+ * Rendered only when the provider actually published a record for it. Nano
+ * never guesses a capability: telling somebody a model supports tool calling
+ * when it does not is how "abre o Spotify" becomes a paragraph of advice.
+ */
+function modelCapabilityNote(info: ProviderInfo | undefined, model: string) {
+  const record = info?.records?.find((entry) => entry.id === model);
+  if (!record) return null;
+  const facts: string[] = [];
+  if (record.tool_calling === false) facts.push("não suporta chamadas de ferramentas (sem PC Control)");
+  if (record.thinking) facts.push("suporta raciocínio configurável");
+  if (record.input_tokens) facts.push(`contexto até ${record.input_tokens.toLocaleString("pt-PT")} tokens`);
+  if (!facts.length) return null;
+  return (
+    <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>
+      {record.display_name}: {facts.join(" · ")}.
+    </p>
+  );
+}
+
+/**
+ * Per-provider presentation. ONLY what cannot be derived from the payload.
+ *
+ * The title, the state and the model list all come from the backend, so this
+ * holds the two things it cannot know: what a key for this vendor looks like,
+ * and the one-line reminder of what the provider is for. A provider missing
+ * from here still renders -- with the name the backend reported -- because a
+ * provider the UI cannot show is a provider the user cannot configure.
+ */
+const CLOUD_PRESENTATION: Record<string, { title: string; placeholder: string }> = {
+  google: { title: "Google · Gemini", placeholder: "AIza..." },
+  groq: { title: "Groq · Cloud", placeholder: "gsk_..." },
+  mistral: { title: "Mistral · Cloud", placeholder: "Chave de API do Mistral" },
+};
+
+/**
+ * One cloud provider: state, key, and the two model tiers.
+ *
+ * ONE component for every cloud provider rather than one panel each. The
+ * Google and Groq panels used to be near-identical copies, and they had
+ * already drifted -- Google's model select wrote through the validating
+ * endpoint while Groq's wrote the setting directly, so a Groq model that did
+ * not exist on the account could be stored and then 404 on every message.
+ * Rendering all of them from the payload removes the place that drift lives,
+ * and the next provider is an entry in CLOUD_PRESENTATION.
+ */
+function CloudProviderPanel({
+  providerKey, info, preferred, busy, secretsEncrypted,
+  onSaveKey, onRemoveKey, onTest, onSetModel,
+}: {
+  providerKey: CloudProviderKey;
+  info?: ProviderInfo;
+  preferred: string;
+  busy: boolean;
+  secretsEncrypted: boolean;
+  onSaveKey: (provider: CloudProviderKey, key: string) => Promise<void>;
+  onRemoveKey: (provider: CloudProviderKey) => void;
+  onTest: (provider: CloudProviderKey) => void;
+  onSetModel: (provider: CloudProviderKey, model: string, tier: "fast" | "complex") => void;
+}) {
+  const presentation = CLOUD_PRESENTATION[providerKey];
+  const title = presentation?.title ?? info?.name ?? providerKey;
+  const models = info?.models ?? [];
+
+  const tierSelect = (tier: "fast" | "complex") => {
+    const current = (tier === "complex" ? info?.tiers?.complex : info?.tiers?.fast) ?? info?.model ?? "";
+    return (
+      <select className="select" value={current}
+              onChange={(e) => onSetModel(providerKey, e.target.value, tier)}
+              disabled={busy}>
+        {/* A configured model the account does not have is SHOWN, and shown as
+            missing. Hiding it would make the select silently display someone
+            else's choice. */}
+        {!models.includes(current) && (
+          <option value={current}>{current || "—"} (indisponível)</option>
+        )}
+        {models.map((model) => <option key={model} value={model}>{model}</option>)}
+      </select>
+    );
+  };
+
+  return (
+    <Panel
+      title={title}
+      action={<Badge tone={preferred === providerKey ? "accent" : "neutral"}>
+        {preferred === providerKey ? "preferido" : "cloud"}
+      </Badge>}
+    >
+      <MetricRow label="Estado" value={<StatusIndicator state={info?.state} />} />
+      {info?.detail && <p className="dim" style={{ fontSize: 12 }}>{info.detail}</p>}
+
+      <div style={{ height: 8 }} />
+      <SecretField
+        label="Chave de API"
+        masked={info?.secret.masked ?? ""}
+        configured={Boolean(info?.secret.configured)}
+        onSave={(key) => onSaveKey(providerKey, key)}
+        onRemove={() => onRemoveKey(providerKey)}
+        onTest={() => onTest(providerKey)}
+        placeholder={presentation?.placeholder ?? "Chave de API"}
+        hint={
+          secretsEncrypted
+            ? "Guardada encriptada pelo Windows (DPAPI). Nunca é enviada para o navegador nem escrita em ficheiros do projeto."
+            : "Guardada localmente com permissões restritas. Nunca é enviada para o navegador."
+        }
+      />
+
+      {/* The list is what the ACCOUNT reported, never a table in this file: a
+          menu that can offer a model the account does not have is a 404 on
+          every message. With no list there is no select at all, because a
+          dropdown that can only offer its current value is a fake control. */}
+      {models.length ? (
+        <>
+          <div style={{ height: 12 }} />
+          {/* Two tiers. Conversation must never pay for the big model, so they
+              are configured -- and shown -- separately. */}
+          <Field label="Modelo de conversa"
+                 hint="Usado em conversa normal e em voz. Deve ser o mais rápido.">
+            {tierSelect("fast")}
+          </Field>
+          <div style={{ height: 8 }} />
+          <Field label="Modelo complexo"
+                 hint="Só para análise, código e raciocínio. Nunca por a mensagem ser comprida.">
+            {tierSelect("complex")}
+          </Field>
+          {info?.tiers_ok && info.tiers_ok.complex === false && (
+            <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>
+              O modelo complexo configurado não existe nesta conta; os pedidos
+              complexos usam o modelo de conversa.
+            </p>
+          )}
+          {modelCapabilityNote(info, info?.tiers?.fast ?? info?.model ?? "")}
+        </>
+      ) : null}
+    </Panel>
+  );
+}
+
 export default function SettingsPage({
-  settings, providers, diagnostics, loading, busy, onSetMode, onSaveGroqKey, onRemoveGroqKey,
-  onTestGroq, onSetGroqModel, onSetLocalModel, onUpdate, onTestSpeaker, onTestMicrophone,
+  settings, providers, diagnostics, loading, busy, onSetMode, onSetPreferredCloud,
+  onSaveCloudKey, onRemoveCloudKey, onTestCloud, onSetCloudModel,
+  onSetLocalModel, onUpdate, onTestSpeaker, onTestMicrophone,
   onToggleEmergencyStop, onClearConversation, onForgetAllMemory, onNavigate,
   section, onSection,
   theme, onTheme, reduceMotion, onReduceMotion,
@@ -248,10 +411,14 @@ export default function SettingsPage({
   loading: boolean;
   busy: boolean;
   onSetMode: (mode: "AUTO" | "CLOUD" | "LOCAL") => void;
-  onSaveGroqKey: (key: string) => Promise<void>;
-  onRemoveGroqKey: () => void;
-  onTestGroq: () => void;
-  onSetGroqModel: (model: string) => void;
+  onSetPreferredCloud: (provider: CloudProviderKey) => void;
+  /* One set of handlers for EVERY cloud provider, taking the provider as an
+     argument. Three copies of the same four callbacks is how the Google and
+     Groq flows drifted apart in the first place. */
+  onSaveCloudKey: (provider: CloudProviderKey, key: string) => Promise<void>;
+  onRemoveCloudKey: (provider: CloudProviderKey) => void;
+  onTestCloud: (provider: CloudProviderKey) => void;
+  onSetCloudModel: (provider: CloudProviderKey, model: string, tier: "fast" | "complex") => void;
   onSetLocalModel: (model: string) => void;
   onUpdate: (key: string, value: any) => void;
   onTestSpeaker: () => void;
@@ -296,8 +463,9 @@ export default function SettingsPage({
     lastTranscript: diagnostics?.lastTranscript ?? settings.voice.lastTranscript,
     recentTranscripts: diagnostics?.recentTranscripts ?? settings.voice.recentTranscripts,
   };
-  const groq = providers?.groq;
   const ollama = providers?.ollama;
+  const preferred = providers?.preferredCloud ?? "groq";
+  const cloudKeys = providers?.cloudProviders ?? [];
 
   const activeSection = SECTIONS.find((entry) => entry.value === section) ?? SECTIONS[0];
 
@@ -333,7 +501,7 @@ export default function SettingsPage({
           <div className="stack">
             <Panel title="Modo">
               <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
-                O Groq é o cérebro normal do Nano: é rápido e não consome RAM local.
+                A cloud é o cérebro normal do Nano: é rápida e não consome RAM local.
                 O Ollama fica como alternativa local e de privacidade.
               </p>
               <SegmentedControl<"AUTO" | "CLOUD" | "LOCAL">
@@ -341,11 +509,34 @@ export default function SettingsPage({
                 value={(providers?.mode ?? "AUTO") as any}
                 onChange={onSetMode}
                 options={[
-                  { value: "AUTO", label: "Automático", hint: "Groq primeiro, Ollama se falhar" },
-                  { value: "CLOUD", label: "Cloud", hint: "Apenas Groq" },
+                  { value: "AUTO", label: "Automático", hint: "Provedor preferido, depois o outro, depois o Ollama" },
+                  { value: "CLOUD", label: "Cloud", hint: "Apenas o provedor cloud escolhido" },
                   { value: "LOCAL", label: "Local", hint: "Apenas Ollama; o texto das mensagens não sai do computador" },
                 ]}
               />
+
+              {/* MODE and PROVIDER are two different questions, so they are two
+                  different controls. Choosing Google does not leave Local mode,
+                  and choosing Local does not forget which provider is preferred. */}
+              {cloudKeys.length > 1 && (
+                <>
+                  <div style={{ height: 14 }} />
+                  <SegmentedControl<CloudProviderKey>
+                    label="Provedor preferido"
+                    value={preferred as CloudProviderKey}
+                    onChange={onSetPreferredCloud}
+                    options={cloudKeys.map((key) => ({
+                      value: key,
+                      // The NAME the backend reported, not a table here: a
+                      // label kept in the renderer is a label that goes stale
+                      // the day a provider is added.
+                      label: providers?.[key]?.name ?? key,
+                      hint: cloudStateHint(providers?.[key]),
+                    }))}
+                  />
+                </>
+              )}
+
               {providers?.route && (
                 <div className="tl-meta" style={{ whiteSpace: "normal", marginTop: 10 }}>
                   {providers.route.reason}
@@ -353,70 +544,23 @@ export default function SettingsPage({
               )}
             </Panel>
 
-            <Panel
-              title="Groq · Cloud"
-              action={<Badge tone="accent">principal</Badge>}
-            >
-              <MetricRow label="Estado" value={<StatusIndicator state={groq?.state} />} />
-              {groq?.detail && <p className="dim" style={{ fontSize: 12 }}>{groq.detail}</p>}
-
-              <div style={{ height: 8 }} />
-              <SecretField
-                label="Chave de API"
-                masked={groq?.secret.masked ?? ""}
-                configured={Boolean(groq?.secret.configured)}
-                onSave={onSaveGroqKey}
-                onRemove={onRemoveGroqKey}
-                onTest={onTestGroq}
-                placeholder="gsk_..."
-                hint={
-                  settings.security.secretsEncrypted
-                    ? "Guardada encriptada pelo Windows (DPAPI). Nunca é enviada para o navegador nem escrita em ficheiros do projeto."
-                    : "Guardada localmente com permissões restritas. Nunca é enviada para o navegador."
-                }
+            {/* Every cloud provider the BACKEND says exists, in its order.
+                A provider added server-side appears here without a frontend
+                change, which is the point of rendering from the payload. */}
+            {cloudKeys.map((key) => (
+              <CloudProviderPanel
+                key={key}
+                providerKey={key}
+                info={providers?.[key]}
+                preferred={preferred}
+                busy={busy}
+                secretsEncrypted={settings.security.secretsEncrypted}
+                onSaveKey={onSaveCloudKey}
+                onRemoveKey={onRemoveCloudKey}
+                onTest={onTestCloud}
+                onSetModel={onSetCloudModel}
               />
-
-              {groq?.models?.length ? (
-                <>
-                  <div style={{ height: 12 }} />
-                  {/* Two tiers. Conversation must never pay for the big model,
-                      so they are configured (and shown) separately. */}
-                  <Field label="Modelo de conversa"
-                         hint="Usado em conversa normal e em voz. Deve ser o mais rápido.">
-                    <select className="select" value={groq.tiers?.fast ?? groq.model}
-                            onChange={(e) => onUpdate("groq_fast_model", e.target.value)}
-                            disabled={busy}>
-                      {!groq.models.includes(groq.tiers?.fast ?? groq.model) && (
-                        <option value={groq.tiers?.fast ?? groq.model}>
-                          {groq.tiers?.fast ?? groq.model} (indisponível)
-                        </option>
-                      )}
-                      {groq.models.map((model) => <option key={model} value={model}>{model}</option>)}
-                    </select>
-                  </Field>
-                  <div style={{ height: 8 }} />
-                  <Field label="Modelo complexo"
-                         hint="Só para análise, código e raciocínio. Nunca por a mensagem ser comprida.">
-                    <select className="select" value={groq.tiers?.complex ?? groq.model}
-                            onChange={(e) => onUpdate("groq_complex_model", e.target.value)}
-                            disabled={busy}>
-                      {!groq.models.includes(groq.tiers?.complex ?? groq.model) && (
-                        <option value={groq.tiers?.complex ?? groq.model}>
-                          {groq.tiers?.complex ?? groq.model} (indisponível)
-                        </option>
-                      )}
-                      {groq.models.map((model) => <option key={model} value={model}>{model}</option>)}
-                    </select>
-                  </Field>
-                  {groq.tiers_ok && groq.tiers_ok.complex === false && (
-                    <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>
-                      O modelo complexo configurado não existe nesta conta; os pedidos
-                      complexos usam o modelo de conversa.
-                    </p>
-                  )}
-                </>
-              ) : null}
-            </Panel>
+            ))}
 
             <Panel title="Ollama · Local" action={<Badge tone="info">fallback</Badge>}>
               <MetricRow label="Estado" value={<StatusIndicator state={ollama?.state} />} />

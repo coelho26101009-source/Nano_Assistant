@@ -1073,22 +1073,83 @@ kbd {
 .msg:hover .msg__actions, .msg__actions:focus-within { opacity: 1; }
 
 /* Per-response diagnostics. Collapsed by default: useful when debugging a slow
-   or misrouted answer, invisible during normal conversation. */
+   or misrouted answer, invisible during normal conversation.
+
+   IT IS A BUTTON, NOT A <summary>. The old disclosure was a bare text line with
+   a "›" character for a caret: no hover surface, no focus ring, and nothing
+   that read as clickable, which is exactly how human testing described it. It
+   now has its own quiet chip that fills in on hover, focus and open — enough
+   affordance to be found, small enough that it never competes with the answer
+   above it. Red is the accent, never the resting state. */
 .msg__meta { margin-top: var(--sp-2); min-width: 0; }
-.msg__meta > summary {
-  cursor: pointer; font-size: var(--fs-xs); color: var(--text-dim);
-  list-style: none; padding: 2px 0; user-select: none;
+.msg__meta-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px 3px 6px; border-radius: var(--r-full);
+  border: 1px solid transparent; background: transparent;
+  color: var(--text-dim); font-size: var(--fs-xs); font-family: inherit;
+  cursor: pointer; user-select: none;
+  transition: color var(--transition), background var(--transition),
+              border-color var(--transition);
 }
-.msg__meta > summary:hover { color: var(--text-muted); }
-.msg__meta > summary::-webkit-details-marker { display: none; }
-.msg__meta > summary::before { content: "› "; display: inline-block; }
-.msg__meta[open] > summary::before { content: "⌄ "; }
+.msg__meta-toggle:hover {
+  color: var(--text); background: rgba(255, 240, 240, 0.05);
+  border-color: var(--border);
+}
+/* THE SURFACE ON :focus, THE RING ON :focus-visible, and the split is
+   deliberate. The chip is small and quiet, so a focused-but-not-keyboard state
+   still has to be legible — that is the surface. The ring is reserved for
+   keyboard navigation, where an outline is the convention and a mouse user
+   would find it noise. */
+.msg__meta-toggle:focus {
+  color: var(--text); background: rgba(255, 240, 240, 0.055);
+  border-color: var(--border); outline: none;
+}
+.msg__meta-toggle:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.msg__meta-toggle[aria-expanded="true"] {
+  color: var(--text); background: rgba(255, 240, 240, 0.055);
+  border-color: var(--border);
+}
+.msg__meta-caret {
+  display: inline-grid; place-items: center; color: var(--text-dim);
+  transform: rotate(-90deg); transition: transform var(--transition), color var(--transition);
+}
+.msg__meta-toggle:hover .msg__meta-caret,
+.msg__meta-toggle[aria-expanded="true"] .msg__meta-caret { color: var(--accent-hover); }
+.msg__meta-toggle[aria-expanded="true"] .msg__meta-caret { transform: rotate(0deg); }
+/* The one place red appears here: a turn that changed provider is the fact
+   this panel exists to surface. */
+.msg__meta-tag {
+  font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 1px 6px; border-radius: var(--r-full);
+  background: rgba(176, 18, 20, 0.20); color: var(--accent-hover);
+  border: 1px solid rgba(255, 90, 84, 0.22);
+}
+.msg__meta-panel { margin-top: var(--sp-2); }
 .msg__meta .kv {
-  margin-top: var(--sp-2); padding: var(--sp-3);
+  padding: var(--sp-3);
   background: var(--bg-sunken); border: 1px solid var(--border);
   border-radius: var(--r-md); font-size: var(--fs-xs);
 }
 .msg__meta .kv dd { font-family: var(--font-mono); }
+
+/* The failover chain, drawn only when a turn actually crossed providers. */
+.meta-chain {
+  list-style: none; margin: var(--sp-2) 0 0; padding: var(--sp-2) var(--sp-3);
+  background: var(--bg-sunken); border: 1px solid var(--border);
+  border-radius: var(--r-md); font-size: var(--fs-xs);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.meta-chain__step {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  color: var(--text-dim);
+}
+.meta-chain__step.is-ok { color: var(--text-muted); }
+.meta-chain__provider { color: var(--text); font-weight: 600; }
+.meta-chain__model { font-family: var(--font-mono); font-size: 10.5px; }
+.meta-chain__outcome { margin-left: auto; }
+.meta-chain__step.is-ok .meta-chain__outcome { color: var(--st-ready); }
 
 .msg__body { font-size: var(--fs-md); line-height: 1.7; color: var(--text); overflow-wrap: anywhere; min-width: 0; }
 .msg__body p { margin: 0 0 var(--sp-3); }

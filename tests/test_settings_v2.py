@@ -555,10 +555,37 @@ def test_the_fallback_names_the_model_that_actually_answered():
 
 
 def test_the_conversation_panel_can_show_both_halves():
-    """The UI reads provider/model, so the corrected values reach the user."""
+    """The UI reads provider AND model, so the corrected values reach the user.
+
+    BOTH halves, which is what the name promised and what this test did not
+    previously check: it asserted `provider` and `fallback_used` and never
+    `model`, so a panel that named the right provider beside the wrong model
+    would have passed. The fix in `_ollama_fallback` corrects two fields and
+    the point of it is lost if only one is displayed.
+
+    Matched as `meta.provider` rather than `message.meta.provider`. The
+    receiver is an implementation detail -- the panel is its own component now
+    and reads a `meta` prop -- while "the panel reads these three fields" is
+    the contract.
+
+    MATCHED ROW BY ROW, because anything looser is close to vacuous here.
+    `meta.provider` also appears in the failover row ("Google Gemini → Groq"),
+    which lives in the same key-value list -- so a panel that had lost its
+    Provedor VALUE entirely still contained the string, and both a file-wide
+    and a list-wide check passed while the row rendered an em dash. Pairing
+    each label with its own definition is the only version of this that fails
+    when the row does.
+
+    The rendered result is asserted the same way, on real DOM, in
+    tests/test_chat_ui_contract.py.
+    """
     code = _strip_comments(_read(FRONTEND / "components" / "Conversation.tsx"))
-    assert "message.meta.provider" in code
-    assert "fallback_used" in code
+    for label, field in (("Provedor", "meta.provider"), ("Modelo", "meta.model")):
+        row = re.search(rf"<dt>{label}</dt>\s*<dd>(.*?)</dd>", code, re.S)
+        assert row, f"the technical-details panel has no {label} row"
+        assert field in row.group(1), (
+            f"the {label} row does not read {field}: {row.group(1).strip()[:80]}")
+    assert "meta.fallback_used" in code, "the panel never reads meta.fallback_used"
 
 
 # ── Behavioural: the real bundle, driven in Electron's Chromium ──────────

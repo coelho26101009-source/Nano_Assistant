@@ -23,35 +23,83 @@ export type SecretInfo = {
   encrypted: boolean;
 };
 
+/** Every provider Nano can route to. Matches core.providers.ProviderId. */
+export type ProviderKey = "google" | "groq" | "mistral" | "ollama";
+
+/** The cloud providers only — the ones a preference can point at. */
+export type CloudProviderKey = "google" | "groq" | "mistral";
+
+/** One model as the ACCOUNT reports it. Discovered, never hardcoded.
+ *  Fields a given provider does not publish are simply absent, and the UI
+ *  renders nothing for them rather than guessing a capability. */
+export type ModelRecord = {
+  id: string;
+  display_name: string;
+  description?: string;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  streaming?: boolean;
+  tool_calling?: boolean;
+  thinking?: boolean;
+  vision?: boolean;
+  deprecated?: boolean;
+};
+
 export type ProviderInfo = {
-  id: "groq" | "ollama";
+  id: ProviderKey;
   name: string;
   kind: "cloud" | "local";
-  role: "primary" | "fallback";
+  role: string;
   state: string;
   model: string;
   models: string[];
+  /** Cloud providers that publish per-model metadata (Google and Mistral). */
+  records?: ModelRecord[];
   secret: SecretInfo;
   detail: string;
   url?: string;
-  /** Groq only: the conversation model and the complex-work model. */
+  /** Cloud only: the conversation model and the complex-work model. */
   tiers?: { fast: string; complex: string };
-  /** Groq only: whether each configured tier actually exists on the account. */
+  /** Cloud only: whether each configured tier actually exists on the account. */
   tiers_ok?: { fast: boolean; complex: boolean };
+  /** Live circuit-breaker state, read from memory rather than re-probed. */
+  temporarily_limited?: boolean;
+  retry_in_seconds?: number | null;
+};
+
+export type CooldownInfo = {
+  provider: string;
+  temporarily_limited: boolean;
+  retry_in_seconds: number | null;
+  consecutive_failures: number;
+  failure_type?: string;
 };
 
 export type ProviderPayload = {
   mode: "AUTO" | "CLOUD" | "LOCAL";
   modes: string[];
+  /** WHICH cloud provider AUTO/CLOUD use first. Mode and provider are separate
+   *  questions, and this is the single canonical answer to the second one —
+   *  the header pill and Settings both render it rather than keeping copies. */
+  preferredCloud: CloudProviderKey;
+  cloudProviders: CloudProviderKey[];
+  google: ProviderInfo;
   groq: ProviderInfo;
+  mistral: ProviderInfo;
   ollama: ProviderInfo;
+  /** The Groq breaker, kept for panels that already read it. */
+  cooldown?: CooldownInfo;
+  cooldowns?: Record<string, CooldownInfo>;
   route: {
-    provider: "groq" | "ollama" | "none";
+    provider: ProviderKey | "none";
     model: string;
     usable: boolean;
     fallback: boolean;
     mode: string;
     reason: string;
+    /** Other cloud providers that were ready when the decision was made, in
+     *  the order this turn would try them. */
+    alternatives?: CloudProviderKey[];
   };
 };
 

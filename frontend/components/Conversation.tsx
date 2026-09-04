@@ -21,7 +21,27 @@ export type ToolEvent = {
   detail?: string;
 };
 
-/** Safe per-response diagnostics. Never contains prompts, arguments or keys. */
+/** One provider this turn asked, and what came back. See core/response_meta.py. */
+export type ProviderAttempt = {
+  provider: string;
+  model?: string;
+  /** "ok", or one of the reason categories below. */
+  outcome?: string;
+};
+
+/**
+ * Safe per-response diagnostics. Never contains prompts, arguments or keys.
+ *
+ * THIS DESCRIBES ONE MESSAGE, NOT THE CURRENT SETTINGS. The top-bar pill reads
+ * `providers.route`, which answers "who would reply if you asked right now".
+ * These fields answer "who DID reply to this one", and the two disagree
+ * legitimately — after a failover, and after the user changes model between
+ * turns. Rendering the live route here would rewrite history, so nothing in
+ * this panel may come from anywhere but the message's own metadata.
+ *
+ * Shaped by an allow-list in Python, which is also what the row on disk holds,
+ * so a reopened thread shows exactly the same panel.
+ */
 export interface ResponseMeta {
   provider?: string;
   model?: string;
@@ -29,12 +49,68 @@ export interface ResponseMeta {
   tier?: string;
   task?: string;
   fallback_used?: boolean;
+  /** The provider that was asked FIRST, when it is not the one that answered. */
+  fallback_from?: string;
+  /** Machine-readable category from core/response_meta.REASON_CATEGORIES. */
+  fallback_reason?: string;
+  /** Every hop this turn made, in order. */
+  provider_attempts?: ProviderAttempt[];
+  attempted_provider?: string;
+  attempted_model?: string;
+  local_model?: string;
+  retry_in_seconds?: number;
   tools_offered?: number;
   tools_available?: number;
   prompt_tokens?: number;
   completion_tokens?: number;
   time_to_first_token_ms?: number;
   total_latency_ms?: number;
+}
+
+/** Provider ids as a person says them. Unknown ids print as they arrived. */
+const PROVIDER_LABEL: Record<string, string> = {
+  google: "Google Gemini",
+  groq: "Groq",
+  mistral: "Mistral",
+  ollama: "Ollama (local)",
+};
+
+export function providerName(id?: string): string {
+  const key = String(id ?? "").trim().toLowerCase();
+  if (!key) return "—";
+  return PROVIDER_LABEL[key] ?? key;
+}
+
+/**
+ * Why a turn did not go to the provider the user picked, in one plain sentence.
+ *
+ * The backend sends a category, never a provider's own error string: "UNAVAILABLE
+ * This model is currently experiencing high demand" is a raw backend exception
+ * and does not belong on screen. The sentences live here because they are UI
+ * copy; the vocabulary lives in Python because routing decides it.
+ */
+const REASON_TEXT: Record<string, string> = {
+  rate_limit: "limite temporário atingido",
+  timeout: "demorou demasiado a responder",
+  unavailable: "não foi possível contactar",
+  provider_error: "o serviço do provedor falhou",
+  auth: "a chave de API foi recusada",
+  bad_request: "o pedido foi recusado",
+  model_unavailable: "o modelo não está disponível nesta conta",
+  cooldown: "em pausa após uma falha recente",
+  setup_required: "falta configurar a chave ou o modelo",
+  cancelled: "o pedido foi cancelado",
+  no_cloud_available: "nenhum provedor cloud estava disponível",
+  cloud_mode: "modo Cloud: sem recurso ao modelo local",
+  partial_answer: "a resposta foi interrompida a meio",
+  routing_bug: "erro de encaminhamento interno",
+  other: "motivo não classificado",
+};
+
+export function reasonText(reason?: string): string {
+  const key = String(reason ?? "").trim();
+  if (!key) return "";
+  return REASON_TEXT[key] ?? key;
 }
 
 export interface Message {
@@ -235,6 +311,120 @@ function ToolCard({ event }: { event: ToolEvent }) {
   );
 }
 
+/* ── Technical details ────────────────────────────────────────────────── */
+
+const CHEVRON = "m6 9 6 6 6-6";
+
+/**
+ * The per-message diagnostics disclosure.
+ *
+ * WHY IT IS NOT A `<details>` ANY MORE. The native element gave a summary with
+ * a text-glyph caret, no hover surface and no focus ring worth the name — a
+ * control that read as a caption. It is now a real button with `aria-expanded`
+ * pointing at the region it opens, which is what a screen reader needs and what
+ * lets the caret rotate instead of being swapped for a different character.
+ *
+ * It stays SMALL on purpose. This is secondary information sitting under an
+ * answer; a full-width button would compete with the thing the user came to
+ * read. The affordance comes from a hairline surface that only fills in on
+ * hover, focus and open — not from size.
+ */
+function TechnicalDetails({ meta, id }: { meta: ResponseMeta; id: string }) {
+  const [open, setOpen] = useState(false);
+  const panelId = `meta-${id}`;
+
+  const attempts = meta.provider_attempts ?? [];
+  // Only worth drawing when the turn actually crossed a provider. One hop is
+  // already stated by "Provedor" above it, and repeating it as a chain would be
+  // a diagram of nothing.
+  const crossed = attempts.length > 1;
+  const reason = reasonText(meta.fallback_reason);
+  const fellBack = Boolean(meta.fallback_used);
+  const from = meta.fallback_from ?? meta.attempted_provider;
+
+  return (
+    <div className="msg__meta">
+      <button
+        type="button"
+        className="msg__meta-toggle"
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="msg__meta-caret" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d={CHEVRON} />
+          </svg>
+        </span>
+        <span>Detalhes técnicos</span>
+        {fellBack && <span className="msg__meta-tag">fallback</span>}
+      </button>
+
+      <div id={panelId} className="msg__meta-panel" hidden={!open}>
+        <dl className="kv">
+          <dt>Provedor</dt>
+          <dd>
+            {providerName(meta.provider)}
+            {fellBack ? " · fallback" : ""}
+          </dd>
+          <dt>Modelo</dt><dd>{meta.model}</dd>
+          <dt>Modo</dt><dd>{[meta.mode, meta.tier].filter(Boolean).join(" · ")}</dd>
+          {fellBack && from && (
+            <>
+              <dt>Origem</dt>
+              <dd>{providerName(from)} → {providerName(meta.provider)}</dd>
+            </>
+          )}
+          {reason && (
+            <>
+              <dt>Motivo</dt>
+              <dd>
+                {reason}
+                {meta.retry_in_seconds ? ` · ~${Math.round(meta.retry_in_seconds)} s` : ""}
+              </dd>
+            </>
+          )}
+          <dt>Pedido</dt><dd>{meta.task}</dd>
+          <dt>Ferramentas</dt>
+          <dd>{meta.tools_offered ?? 0} de {meta.tools_available ?? 0}</dd>
+          {meta.prompt_tokens != null && (
+            <>
+              <dt>Tokens</dt>
+              <dd>{meta.prompt_tokens} entrada · {meta.completion_tokens ?? 0} saída</dd>
+            </>
+          )}
+          {meta.time_to_first_token_ms != null && (
+            <>
+              <dt>1.º token</dt><dd>{meta.time_to_first_token_ms} ms</dd>
+            </>
+          )}
+          {meta.total_latency_ms != null && (
+            <>
+              <dt>Total</dt><dd>{meta.total_latency_ms} ms</dd>
+            </>
+          )}
+        </dl>
+
+        {crossed && (
+          <ol className="meta-chain" aria-label="Provedores tentados nesta resposta">
+            {attempts.map((attempt, index) => (
+              <li key={`${attempt.provider}-${index}`}
+                  className={`meta-chain__step${attempt.outcome === "ok" ? " is-ok" : ""}`}>
+                <span className="meta-chain__provider">{providerName(attempt.provider)}</span>
+                {attempt.model && <span className="meta-chain__model">{attempt.model}</span>}
+                <span className="meta-chain__outcome">
+                  {attempt.outcome === "ok" ? "respondeu" : reasonText(attempt.outcome) || "sem resposta"}
+                </span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ── Messages ─────────────────────────────────────────────────────────── */
 
 function MessageBubble({ message }: { message: Message }) {
@@ -292,39 +482,10 @@ function MessageBubble({ message }: { message: Message }) {
         </div>
 
         {/* Technical details, collapsed by default so normal chat stays clean.
-            Safe metadata only: provider, model, tokens and latency. */}
+            Safe metadata only: provider, model, tokens and latency — and it is
+            THIS message's, including for a message loaded from an older thread. */}
         {!isUser && !message.streaming && message.meta?.model && (
-          <details className="msg__meta">
-            <summary>Detalhes técnicos</summary>
-            <dl className="kv">
-              <dt>Provedor</dt>
-              <dd>
-                {message.meta.provider}
-                {message.meta.fallback_used ? " (fallback)" : ""}
-              </dd>
-              <dt>Modelo</dt><dd>{message.meta.model}</dd>
-              <dt>Modo</dt><dd>{message.meta.mode} · {message.meta.tier}</dd>
-              <dt>Pedido</dt><dd>{message.meta.task}</dd>
-              <dt>Ferramentas</dt>
-              <dd>{message.meta.tools_offered ?? 0} de {message.meta.tools_available ?? 0}</dd>
-              {message.meta.prompt_tokens != null && (
-                <>
-                  <dt>Tokens</dt>
-                  <dd>{message.meta.prompt_tokens} entrada · {message.meta.completion_tokens ?? 0} saída</dd>
-                </>
-              )}
-              {message.meta.time_to_first_token_ms != null && (
-                <>
-                  <dt>1.º token</dt><dd>{message.meta.time_to_first_token_ms} ms</dd>
-                </>
-              )}
-              {message.meta.total_latency_ms != null && (
-                <>
-                  <dt>Total</dt><dd>{message.meta.total_latency_ms} ms</dd>
-                </>
-              )}
-            </dl>
-          </details>
+          <TechnicalDetails meta={message.meta} id={message.id} />
         )}
       </div>
     </article>

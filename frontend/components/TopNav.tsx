@@ -24,7 +24,7 @@ import React, { useLayoutEffect, useRef, useState } from "react";
 import AiModeMenu, { type ProviderMode } from "./AiModeMenu";
 import { NanoLockup } from "./NanoLogo";
 import WindowControls from "./TitleBar";
-import type { ProviderPayload } from "../lib/backend";
+import type { CloudProviderKey, ProviderPayload } from "../lib/backend";
 
 export type ViewId =
   | "chat" | "tasks" | "activity"
@@ -137,7 +137,7 @@ const USER = "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 
  */
 export default function TopNav({
   view, onView, counts, agentState, healthLabel, providers, offline, busy,
-  onSetMode, onOpenAiSettings,
+  onSetMode, onSetPreferredCloud, onSetCloudModel, onOpenAiSettings,
   pendingCount, profileName, isDesktop, railOpen, onToggleRail, showRailToggle,
   version,
 }: {
@@ -151,6 +151,8 @@ export default function TopNav({
   offline: boolean;
   busy: boolean;
   onSetMode: (mode: ProviderMode) => void;
+  onSetPreferredCloud: (provider: CloudProviderKey) => void;
+  onSetCloudModel: (provider: CloudProviderKey, model: string) => void;
   onOpenAiSettings: () => void;
   pendingCount: number;
   profileName: string | null;
@@ -265,6 +267,8 @@ export default function TopNav({
           offline={offline}
           busy={busy}
           onSetMode={onSetMode}
+          onSetPreferredCloud={onSetPreferredCloud}
+          onSetCloudModel={onSetCloudModel}
           onOpenAiSettings={onOpenAiSettings}
         />
 

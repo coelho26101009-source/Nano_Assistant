@@ -32,7 +32,7 @@ import {
 } from "../components/Pages";
 import { Button, ErrorState, ToastStack, stateLabel, useToasts } from "../components/ui";
 import {
-  CommandCenterPayload, PcActivityCategory, PcActivityEntry, PcSnapshot,
+  CloudProviderKey, CommandCenterPayload, PcActivityCategory, PcActivityEntry, PcSnapshot,
   POLL, ProviderPayload, ReadinessPayload,
   SettingsPayload, TaskCounts, TaskRow, VoiceDiagnostics,
   call, expose, useBridgeReady, useFetch, usePolled,
@@ -108,7 +108,8 @@ export default function Home() {
   const [listening, setListening] = useState(false);
   // Rate limiting is a temporary, self-clearing state with a known wait, not
   // an error message. Kept separate so the UI can count it down.
-  const [rateLimit, setRateLimit] = useState<{ message: string; waitSeconds: number } | null>(null);
+  const [rateLimit, setRateLimit] =
+    useState<{ message: string; waitSeconds: number; provider: string } | null>(null);
   const [voicePhase, setVoicePhase] = useState<{ phase: string; detail: string } | null>(null);
 
   /* ── Conversation threads ───────────────────────────────────────────────
@@ -222,13 +223,20 @@ export default function Home() {
         (total: number, thread: Thread) => total + (thread.messageCount ?? 0), 0));
   }, []);
 
-  /** Render one thread's stored messages into the chat view. */
+  /** Render one thread's stored messages into the chat view.
+   *
+   * `row.meta` is what the backend recorded about the provider that produced
+   * THAT message, months ago if need be. It is carried through verbatim so a
+   * reopened conversation shows the same technical details it showed live —
+   * rather than nothing, which is what happened while the column was written
+   * and never read. */
   const showThreadMessages = useCallback((rows: ThreadMessage[] | null | undefined) => {
     setMessages((rows ?? []).map((row) => ({
       id: `stored:${row.id}`,
       role: row.role === "user" ? "user" : "assistant",
       content: row.content,
       timestamp: new Date(row.timestamp),
+      meta: row.meta,
     })));
   }, []);
 
@@ -348,10 +356,17 @@ export default function Home() {
     // Rate limiting is a state with a known wait, not a generic error.
     expose((_msgId: string, info: any) => {
       const wait = Math.max(1, Math.round(Number(info?.wait_seconds ?? 0)));
-      setRateLimit({ message: info?.message ?? "Limite temporário atingido.", waitSeconds: wait });
+      // The provider comes WITH the numbers, so the banner names the account
+      // whose quota actually ran out instead of always saying "Groq".
+      setRateLimit({
+        message: info?.message ?? "Limite temporário atingido.",
+        waitSeconds: wait,
+        provider: providers?.[info?.provider as CloudProviderKey]?.name
+          ?? String(info?.provider ?? "Cloud"),
+      });
       setStatus("");
       setThinking(false);
-      notify(info?.message ?? "Limite temporário da Groq atingido.", "default");
+      notify(info?.message ?? "Limite temporário atingido.", "default");
     }, "on_rate_limited");
 
     // Which phase of a voice turn we are in, so the UI can narrate it.
@@ -637,14 +652,6 @@ export default function Home() {
     });
   }, [notify, refreshProviders, refreshSettings, refreshReadiness]);
 
-  const saveGroqKey = useCallback(async (key: string) => {
-    setBusy(true);
-    const result = await call<any>("set_groq_api_key", key);
-    setBusy(false);
-    if (result?.ok) { notify("Chave validada e guardada", "success"); refreshProviders(); refreshSettings(); refreshReadiness(); }
-    else notify(result?.detail ?? "Chave recusada", "error");
-  }, [notify, refreshProviders, refreshSettings, refreshReadiness]);
-
   const setLocalModel = useCallback((model: string) => {
     setBusy(true);
     call<any>("set_local_model", model).then((result) => {
@@ -671,28 +678,66 @@ export default function Home() {
     setView("settings");
   }, []);
 
-  const removeGroqKey = useCallback(() => {
-    call<any>("remove_groq_api_key").then(() => {
+  /* ── Cloud providers ─────────────────────────────────────────────────
+     ONE set of handlers, taking the provider as an argument, for Google, Groq
+     and Mistral alike. There used to be one copy per vendor and they had
+     already drifted: the Groq model select wrote the setting directly while
+     Google's went through the endpoint that validates the id against the
+     account. Adding a third copy would have tripled a known defect.
+
+     The key is sent ONCE, validated by the backend and stored encrypted.
+     Nothing here ever reads a key back — the UI only ever receives a mask and
+     a boolean. */
+  const providerLabel = useCallback(
+    (provider: CloudProviderKey) => providers?.[provider]?.name ?? provider,
+    [providers]);
+
+  const saveCloudKey = useCallback(async (provider: CloudProviderKey, key: string) => {
+    setBusy(true);
+    const result = await call<any>("set_cloud_api_key", provider, key);
+    setBusy(false);
+    if (result?.ok) { notify("Chave validada e guardada", "success"); refreshProviders(); refreshSettings(); refreshReadiness(); }
+    else notify(result?.detail ?? "Chave recusada", "error");
+  }, [notify, refreshProviders, refreshSettings, refreshReadiness]);
+
+  const removeCloudKey = useCallback((provider: CloudProviderKey) => {
+    call<any>("remove_cloud_api_key", provider).then(() => {
       notify("Chave removida"); refreshProviders(); refreshSettings(); refreshReadiness();
     });
   }, [notify, refreshProviders, refreshSettings, refreshReadiness]);
 
-  const testGroq = useCallback(() => {
+  const testCloud = useCallback((provider: CloudProviderKey) => {
     setBusy(true);
-    call<any>("test_groq_connection").then((result) => {
+    call<any>("test_cloud_connection", provider).then((result) => {
       setBusy(false);
       notify(result?.detail ?? "Sem resposta", result?.ok ? "success" : "error");
     });
   }, [notify]);
 
-  const setGroqModel = useCallback((model: string) => {
+  const setCloudModelTier = useCallback(
+    (provider: CloudProviderKey, model: string, tier: "fast" | "complex" = "fast") => {
+      setBusy(true);
+      call<any>("set_cloud_model", provider, model, tier).then((result) => {
+        setBusy(false);
+        if (result?.ok) { notify(`Modelo: ${model}`, "success"); refreshProviders(); refreshSettings(); }
+        else notify(result?.detail ?? "Modelo indisponível", "error");
+      });
+    }, [notify, refreshProviders, refreshSettings]);
+
+  const setPreferredCloud = useCallback((provider: CloudProviderKey) => {
     setBusy(true);
-    call<any>("set_groq_model", model).then((result) => {
+    call<any>("set_preferred_cloud_provider", provider).then((result) => {
       setBusy(false);
-      if (result?.ok) { notify(`Modelo: ${model}`, "success"); refreshProviders(); refreshSettings(); }
-      else notify(result?.detail ?? "Modelo indisponível", "error");
+      if (result?.ok) { notify(`Provedor: ${providerLabel(provider)}`, "success"); refreshProviders(); refreshSettings(); refreshReadiness(); }
+      else notify(result?.detail ?? "Não foi possível mudar de provedor", "error");
     });
-  }, [notify, refreshProviders, refreshSettings]);
+  }, [notify, providerLabel, refreshProviders, refreshSettings, refreshReadiness]);
+
+  /** The pill's model switcher. It writes through the SAME endpoint Settings
+   *  uses, so there is exactly one authority for the stored choice. */
+  const setCloudModel = useCallback((provider: CloudProviderKey, model: string) => {
+    setCloudModelTier(provider, model, "fast");
+  }, [setCloudModelTier]);
 
   const updateSetting = useCallback((key: string, value: any) => {
     call<any>("update_setting", key, value).then((result) => {
@@ -816,7 +861,7 @@ export default function Home() {
 
   const healthLabel = useMemo(() => {
     if (gaveUp) return "Motor offline";
-    if (rateLimit) return `Groq: espera ~${rateLimit.waitSeconds}s`;
+    if (rateLimit) return `${rateLimit.provider}: espera ~${rateLimit.waitSeconds}s`;
     if (readiness?.emergencyStop) return "Execução bloqueada";
     if (pendingCount > 0) return `${pendingCount} por autorizar`;
     if (providers?.route?.usable === false) return "Sem provedor de IA";
@@ -832,7 +877,12 @@ export default function Home() {
     const route = providers?.route;
     if (!route) return "A ligar…";
     if (!route.usable) return "Sem provedor";
-    const name = route.provider === "groq" ? "Groq" : route.provider === "ollama" ? "Local" : "—";
+    // The provider's own name, from the payload. This read "Groq", "Local" or
+    // an em dash, so every Gemini turn was labelled "—" in the top bar -- and
+    // a third provider would have been too.
+    const name = route.provider === "ollama"
+      ? "Local"
+      : (providers?.[route.provider as CloudProviderKey]?.name ?? "—");
     return route.fallback ? `${name} · fallback` : `${name} · ${route.mode}`;
   }, [providers, gaveUp]);
 
@@ -917,6 +967,8 @@ export default function Home() {
           offline={gaveUp}
           busy={busy}
           onSetMode={setMode}
+          onSetPreferredCloud={setPreferredCloud}
+          onSetCloudModel={setCloudModel}
           onOpenAiSettings={() => openSettingsSection("ai")}
           pendingCount={pendingCount}
           profileName={profileName}
@@ -1111,8 +1163,9 @@ export default function Home() {
                     settings={settings} providers={providers}
                     diagnostics={voiceDiag}
                     loading={settingsLoading} busy={busy}
-                    onSetMode={setMode} onSaveGroqKey={saveGroqKey} onRemoveGroqKey={removeGroqKey}
-                    onTestGroq={testGroq} onSetGroqModel={setGroqModel}
+                    onSetMode={setMode} onSetPreferredCloud={setPreferredCloud}
+                    onSaveCloudKey={saveCloudKey} onRemoveCloudKey={removeCloudKey}
+                    onTestCloud={testCloud} onSetCloudModel={setCloudModelTier}
                     onSetLocalModel={setLocalModel} onUpdate={updateSetting}
                     onTestSpeaker={testSpeaker} onTestMicrophone={testMicrophone}
                     onToggleEmergencyStop={toggleEmergencyStop}

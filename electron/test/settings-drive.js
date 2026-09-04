@@ -96,10 +96,32 @@ app.whenReady().then(async () => {
 
   /* ---- a scripted backend, speaking the real payload shapes ------------- */
   let MODE = 'AUTO';
+  let PREFERRED = 'groq';
+  let GOOGLE_FAST = 'gemini-stub-fast';
+  /* The list the UI renders from. Every provider-shaped assertion below is
+     derived from it, so adding the next provider to the backend is one entry
+     here rather than a hunt for hardcoded counts. */
+  const CLOUD_PROVIDERS = ['google', 'groq', 'mistral'];
   const providersPayload = () => {
     const local = MODE === 'LOCAL';
     return {
       mode: MODE, modes: ['AUTO', 'CLOUD', 'LOCAL'],
+      preferredCloud: PREFERRED,
+      cloudProviders: CLOUD_PROVIDERS,
+      /* Three cloud providers, because that is what the backend now returns.
+         The ids here are stub placeholders on purpose: the real ones are
+         discovered from the account, and hardcoding a real id in a fixture is
+         how a test starts asserting a vendor's catalogue instead of Nano's
+         behaviour. */
+      google: {
+        id: 'google', name: 'Google', kind: 'cloud', role: 'cloud',
+        state: local ? 'DISABLED' : 'READY',
+        model: GOOGLE_FAST, models: [GOOGLE_FAST, 'gemini-stub-lite'], records: [],
+        secret: { configured: true, masked: 'AIz…wxyz', source: 'encrypted_store', encrypted: true },
+        tiers: { fast: GOOGLE_FAST, complex: GOOGLE_FAST },
+        tiers_ok: { fast: true, complex: true },
+        detail: local ? 'Modo Local: o Google não é contactado.' : 'Google pronto.',
+      },
       groq: {
         id: 'groq', name: 'Groq', kind: 'cloud', role: 'primary',
         state: local ? 'DISABLED' : 'READY',
@@ -109,6 +131,16 @@ app.whenReady().then(async () => {
         tiers_ok: { fast: true, complex: true },
         detail: local ? 'Modo Local: o Groq não é contactado.' : 'Groq pronto.',
       },
+      mistral: {
+        id: 'mistral', name: 'Mistral', kind: 'cloud', role: 'cloud',
+        state: local ? 'DISABLED' : 'READY',
+        model: 'mistral-stub-fast', models: ['mistral-stub-fast', 'mistral-stub-small'],
+        records: [],
+        secret: { configured: true, masked: 'abc…wxyz', source: 'encrypted_store', encrypted: true },
+        tiers: { fast: 'mistral-stub-fast', complex: 'mistral-stub-small' },
+        tiers_ok: { fast: true, complex: true },
+        detail: local ? 'Modo Local: o Mistral não é contactado.' : 'Mistral pronto.',
+      },
       ollama: {
         id: 'ollama', name: 'Ollama', kind: 'local', role: 'fallback',
         state: MODE === 'CLOUD' ? 'DISABLED' : 'READY',
@@ -116,11 +148,14 @@ app.whenReady().then(async () => {
         secret: { configured: true, masked: '', source: 'none', encrypted: false },
         detail: 'Ollama disponível com qwen3:8b.', url: 'http://127.0.0.1:11434',
       },
+      cooldowns: Object.fromEntries(CLOUD_PROVIDERS.map((id) => [id,
+        { provider: id, temporarily_limited: false, retry_in_seconds: null, consecutive_failures: 0 }])),
       route: {
-        provider: local ? 'ollama' : 'groq',
-        model: local ? 'qwen3:8b' : 'openai/gpt-oss-20b',
+        provider: local ? 'ollama' : PREFERRED,
+        model: local ? 'qwen3:8b' : (PREFERRED === 'google' ? GOOGLE_FAST : 'openai/gpt-oss-20b'),
         usable: true, fallback: false, mode: MODE,
-        reason: local ? 'Modo Local: apenas o Ollama é usado.' : 'Groq disponível.',
+        alternatives: local ? [] : CLOUD_PROVIDERS.filter((id) => id !== PREFERRED),
+        reason: local ? 'Modo Local: apenas o Ollama é usado.' : 'Cloud disponível.',
       },
     };
   };
@@ -158,6 +193,17 @@ app.whenReady().then(async () => {
     get_settings: () => settingsPayload(),
     get_capability_catalogue: () => catalogue,
     set_provider_mode: (mode) => { MODE = mode; return { ok: true, mode, providers: providersPayload() }; },
+    set_preferred_cloud_provider: (provider) => {
+      PREFERRED = provider;
+      return { ok: true, provider, providers: providersPayload() };
+    },
+    set_cloud_model: (provider, model) => {
+      if (provider === 'google') GOOGLE_FAST = model;
+      return { ok: true, model, tier: 'fast', providers: providersPayload() };
+    },
+    set_cloud_api_key: (_provider, _key) => ({ ok: true, detail: 'ok', providers: providersPayload() }),
+    remove_cloud_api_key: (_provider) => ({ ok: true, providers: providersPayload() }),
+    test_cloud_connection: (_provider) => ({ ok: true, detail: 'Ligação estabelecida.', models: [] }),
     get_memory_overview: () => ({ profile: {}, facts: [{ key: 'cidade', value: 'Lisboa' }],
                                   messageCount: 3, ragEnabled: false, documents: [],
                                   documentsSupported: false, documentsNote: '' }),
@@ -252,7 +298,23 @@ app.whenReady().then(async () => {
   pill.click();
   await sleep(350);
   ok('clicking the pill opens a popover', !!q('.popover[role="menu"]'));
-  ok('the popover offers all three modes', qa('.popover [role="menuitemradio"]').length === 3);
+  /* Scoped to the MODE group. Counting every radio in the popover used to
+     mean "the three modes"; it stopped meaning that the moment the menu grew a
+     provider group and a model group, and would have drifted again with the
+     next one. */
+  ok('the popover offers all three modes',
+     qa('.popover [role="menuitemradio"][data-group="mode"]').length === 3,
+     String(qa('.popover [role="menuitemradio"][data-group="mode"]').length));
+  ok('the popover offers every cloud provider the backend named',
+     qa('.popover [role="menuitemradio"][data-group="provider"]').length === CLOUD_PROVIDERS.length,
+     qa('.popover [role="menuitemradio"][data-group="provider"]')
+       .map((el) => el.querySelector('.popover__item-label')?.textContent).join(', '));
+  ok('the popover offers the preferred provider\'s real models',
+     qa('.popover [role="menuitemradio"][data-group="model"]').length === 2,
+     qa('.popover [role="menuitemradio"][data-group="model"]')
+       .map((el) => el.querySelector('.popover__item-label')?.textContent).join(', '));
+  ok('exactly one provider is marked as preferred',
+     qa('.popover [role="menuitemradio"][data-group="provider"][aria-checked="true"]').length === 1);
   ok('the active mode is marked',
      q('.popover [role="menuitemradio"][aria-checked="true"]')?.textContent?.includes('Automático'));
 
@@ -337,6 +399,20 @@ app.whenReady().then(async () => {
   ok('the pill deep-links into Settings', !!q('.settings-layout'));
   const openCategory = q('.settings-rail__item[aria-current="page"]')?.textContent || '';
   ok('it lands on the IA category', openCategory.includes('IA'), openCategory.trim());
+
+  /* Every cloud provider the backend named gets its own panel, with its own
+     key field and its own two model tiers. The Google and Groq panels used to
+     be hand-written near-copies; they are now one component rendered from the
+     payload, so this is the check that the loop really produced them all --
+     in the REAL production bundle, not in a unit test's idea of it. */
+  const cloudPanelTitles = qa('.panel-head__title').map((el) => el.textContent.trim());
+  ok('IA shows one panel per cloud provider named by the backend',
+     CLOUD_PROVIDERS.every((id) => cloudPanelTitles.some(
+       (title) => title.toLowerCase().includes(id === 'google' ? 'google' : id))),
+     cloudPanelTitles.join(' | '));
+  ok('every cloud panel offers a conversation model and a complex model',
+     qa('.settings-body .panel select.select').length >= CLOUD_PROVIDERS.length * 2,
+     String(qa('.settings-body .panel select.select').length));
   const segActive = qa('.settings-layout .segmented__option')
     .find((el) => el.getAttribute('aria-pressed') === 'true');
   ok('Settings shows the same mode the pill does',

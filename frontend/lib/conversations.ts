@@ -23,14 +23,21 @@
  * log into real threads during migration — so the conversations a user already
  * recognises come across with their titles and their order intact.
  */
+import type { ResponseMeta } from "../components/Conversation";
 
-/** A stored message, as core/conversation_store.messages returns it. */
+/** A stored message, as core/conversation_store.messages returns it.
+ *
+ * `meta` is present on assistant rows that recorded which provider answered.
+ * It is the SAME shape the live stream sends, because both are produced by
+ * `core/response_meta.for_message` — so the technical-details panel does not
+ * have to know whether it is looking at a live turn or a reopened one. */
 export type ThreadMessage = {
   id: number;
   role: string;
   content: string;
   timestamp: string;
   trust?: string;
+  meta?: ResponseMeta;
 };
 
 /** A conversation thread, as core/conversation_store returns it. */
