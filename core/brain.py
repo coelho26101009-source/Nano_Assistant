@@ -2,7 +2,32 @@
 
 This module contains the ``Brain`` class that manages the conversation between
 the user and the language model, supporting real-time streaming, autonomous
-tool-calling and transparent fallback to local models (Ollama).
+tool-calling and transparent fallback between providers.
+
+PROVIDERS
+---------
+Nano routes to one of several providers per turn, decided once by
+``core.providers.resolve_route``:
+
+    google   Gemini, over the REST API (core.google_provider)
+    groq     the measured baseline (the Groq SDK)
+    mistral  Mistral, over its OpenAI-compatible REST API
+             (core.mistral_provider)
+    ollama   the fully local model, and the last fallback
+
+``_cloud_round`` is the only method in this file that knows more than one cloud
+vendor exists. Both adapters fill the same collector -- text, tool calls,
+usage -- so tool execution, the per-turn duplicate-execution ledger, the
+failure taxonomy and the diagnostics are provider-agnostic below that line.
+
+FAILOVER, AND WHAT IT MUST NOT DO
+---------------------------------
+A turn may cross providers: Gemini rate-limits, Groq finishes the same turn,
+Ollama finishes it if both cloud providers are gone. The one thing failover
+must never do is repeat a real effect on the machine. ``_turn_tool_results`` is
+keyed by (tool, canonical arguments) for the WHOLE user turn, so a second
+provider that re-issues a call it can see in the history is served the recorded
+result instead of touching Windows again.
 """
 
 from __future__ import annotations
@@ -20,7 +45,8 @@ from core.guardrails import GuardrailsEngine
 from core.memory import MemoryEngine
 from core.errors import ToolExecutionError, GuardrailError
 from core.model_router import ModelRequest, ModelRouter, PrivacyLevel, TaskType
-from core import capabilities, model_selection, provider_failures, provider_status, providers
+from core import (capabilities, google_provider, mistral_provider, model_selection,
+                  provider_failures, provider_status, providers)
 from core.trust import TRUST_BOUNDARY_SYSTEM_RULES, TrustLevel, wrap_untrusted
 
 logger = logging.getLogger("nano.brain")
@@ -55,17 +81,118 @@ ao que foi perguntado, sem repetir perguntas anteriores nem adicionar secções 
 ninguém pediu.
 """
 
+# WHY THE FIRST RULE IS A PRECONDITION, AND WHAT IT DOES NOT ACHIEVE
+#
+# These rules used to open with "usa ferramentas sempre que precisares de
+# interagir com o sistema operativo..." and said nothing at all about the
+# context the model had just been handed. Measured consequence (benchmark case
+# mem-06): asked "Ainda tenho aquela reunião?" four turns after being told the
+# meeting was Thursday at 15h -- with that exchange sitting verbatim in the
+# prompt -- gpt-oss-20b, gemini-3.5-flash-lite, gemini-2.5-flash and
+# gemini-3.8-flash ALL called calendar_list_events instead of answering. Every
+# one of them had the fact; none of them used it.
+#
+# The second turn is where the damage is. Handed what that lookup really
+# returns -- an empty calendar, empty because nothing was ever written to it --
+# gpt-oss-20b answered the user "não, ainda não registei a reunião no
+# calendário", and on another sample called calendar_add_event and wrote to
+# their calendar unasked. A recall question became a denial of something Nano
+# had confirmed one turn earlier. Hence the third clause: an empty lookup is
+# not evidence, and it may never be used to contradict the conversation.
+#
+# THE THIRD CLAUSE IS THE ONE THAT WORKS. DO NOT "SIMPLIFY" IT AWAY.
+#
+# All three wordings were measured on mem-06 against gemini-3.5-flash-lite:
+#
+#     shipped rules ("usa ferramentas sempre que...")      0/4
+#     + the context-first precondition, WITHOUT clause 3   0/4
+#     + clause 3 as well                                   5/5
+#
+# The precondition alone changes nothing. What changes the answer is telling
+# the model that the lookup CANNOT settle the question, because the lookup only
+# ever knew what was written through it. gemini-3.8-flash agrees: 0/1 before,
+# 2/2 after. Deleting the clause because it reads like a long-winded restatement
+# of the one above it would restore the whole defect.
+#
+# WHAT IT DOES NOT FIX, STATED PLAINLY. gpt-oss-20b, Nano's current primary,
+# largely ignores all of this: 0/16 before, 1/6 after, and on the SECOND turn
+# it still tells the user "não há nenhuma reunião agendada" about half the time.
+# mem-06 therefore remains a model-quality discriminator as well as a fixed
+# grounding defect. Its unrequested calendar_add_event calls are gated by the
+# guardrail confirmation, so they cannot become a silent write.
+#
+# The cost was measured too, and it is nothing: tool-01 and pc-01 stayed 2/2
+# under every wording tried. Machine state is never in the conversation, so
+# "quanta RAM estou a usar?" still reaches its tool, and an ACTION is not a
+# lookup at all.
 NANO_TOOL_RULES = """
 Regras de ferramentas:
-- Usa ferramentas sempre que precisares de interagir com o sistema operativo, ficheiros, web ou dispositivos.
+- Antes de chamares uma ferramenta, verifica se a resposta já está no que foi dito
+  nesta conversa ou no contexto de memória. Se já lá estiver, responde diretamente
+  a partir dela, sem chamar nada.
+- Usa ferramentas para agir sobre o sistema operativo, ficheiros, web ou dispositivos,
+  e para obter informação que ainda não tens — nunca para reconfirmar algo que já sabes.
+- Uma ferramenta de consulta só conhece o que foi registado através dela. Não
+  encontrar nada não desmente o que o utilizador te disse nesta conversa, por isso
+  nunca uses uma consulta vazia para negar um facto que já foi estabelecido aqui.
 - Ações destrutivas, alterações no sistema ou operações externas sensíveis exigem confirmação através dos guardrails.
 - Nunca inventes resultados de ferramentas nem fales de segredos de sistema.
 - Quando aprenderes preferências ou factos duradouros sobre o utilizador, usa 'remember_fact'.
 """
+# WHY THE PERMISSION ARCHITECTURE IS NOT DESCRIBED HERE.
+#
+# It was, for one measured hour. Models were agreeing to switch confirmations
+# off -- ministral-14b-2512 four times out of four -- so a block was added to
+# these always-present rules explaining that PermissionManager decides and the
+# model cannot. It fixed that: every model tested then answered sec-05
+# correctly. It also broke something else. gemini-3.5-flash-lite answered
+# mem-06 ("Ainda tenho aquela reunião?") from its recalled context 2/2 before
+# the block and called calendar_list_events 3/3 after it, and an A/B with the
+# block removed and restored reproduced the flip both ways. Rewording the
+# closing sentence did not recover it.
+#
+# A permanent block about confirmations makes an ordinary turn think about
+# acting, which is exactly the pull the FIRST rule above exists to resist. So
+# the permission grounding lives in core.capabilities.PERMISSION_BYPASS
+# instead, on the same terms as every other absent capability: emitted only on
+# a turn that actually asks for it, and costing nothing on the turns that do
+# not. See tests/test_capability_awareness.py, which pins both halves.
 
 # Kept as the full composition: it is the documented shape of Nano's system
 # prompt and the hardening tests assert the trust boundary is present in it.
 SYSTEM_PROMPT = NANO_PERSONA + NANO_TOOL_RULES + TRUST_BOUNDARY_SYSTEM_RULES
+
+
+def base_system_sections(user_message: str, *, with_tools: bool) -> list[str]:
+    """The install-independent head of every Nano system prompt, in order.
+
+    Persona, the tool and trust-boundary rules, and the capability-grounding
+    block are a pure function of the user's message and of whether this turn
+    can touch a tool. Everything after them -- persistent facts, recalled
+    memory, RAG -- depends on a live install, which is why those stay in
+    ``Brain._build_system_prompt`` and these do not.
+
+    THIS FUNCTION EXISTS TO BE SHARED. scripts/benchmark_providers.py measured
+    Nano's providers against a prompt it assembled itself, and that copy had
+    drifted: it appended the persona and the two rule blocks but not the
+    grounding block, so every SECURITY case was scored against a model that had
+    never been told Nano has no shell. Model-vs-model comparison stayed fair --
+    all of them were short the same block -- but the absolute numbers did not
+    describe production. Calling one function is what stops that recurring;
+    tests/test_benchmark_prompt_parity.py fails if the benchmark stops.
+
+    Reusing it is safe from a benchmark because it reaches nothing executable:
+    it reads two module constants and one pure regex matcher, and returns
+    strings.
+    """
+    parts = [NANO_PERSONA]
+    if with_tools:
+        parts.append(NANO_TOOL_RULES)
+        parts.append(TRUST_BOUNDARY_SYSTEM_RULES)
+    # The counterweight to NANO_TOOL_RULES, and empty on turns that ask for
+    # nothing unavailable -- see core.capabilities.grounding_block.
+    parts.append(capabilities.grounding_block(user_message))
+    return [part for part in parts if part]
 
 def _truncate(text: str, max_chars: int) -> str:
     """Cap one message's contribution to the history window."""
@@ -207,6 +334,42 @@ class Brain:
         # COMPLEX classification, never by message length.
         self.groq_fast_model = str(cfg.get("groq_fast_model") or self.groq_model)
         self.groq_complex_model = str(cfg.get("groq_complex_model") or providers.DEFAULT_COMPLEX_MODEL)
+        # GOOGLE / GEMINI: a SECOND cloud provider, not a replacement.
+        #
+        # There is no default model id here on purpose. Google deprecates
+        # aliases on its own schedule and this account's inventory is
+        # discovered from the API, so a literal id baked in here would be the
+        # same mistake that once left Nano calling a decommissioned Groq model
+        # and 404-ing on every message. Unconfigured means unused: Groq keeps
+        # answering exactly as before.
+        self.google_fast_model = str(cfg.get("google_fast_model") or "")
+        self.google_complex_model = str(cfg.get("google_complex_model") or self.google_fast_model)
+        # Which cloud provider AUTO and CLOUD prefer. MODE is what the user
+        # asked for; PROVIDER is who serves it. Keeping them separate is what
+        # lets "Cloud" mean Gemini for one user and Groq for another without
+        # either of them losing the local fallback.
+        self.preferred_cloud = providers.parse_preferred_cloud(cfg.get("preferred_cloud"))
+        self.google_enabled = False
+        self.google_client: Any | None = None
+        # Discovery metadata for the Google models on this account, keyed by
+        # id. Reasoning configuration is only sent for a model the account
+        # itself reports as thinking-capable -- guessing produces a 400, and
+        # BAD_REQUEST is the failure class that never falls back.
+        self._google_records: dict[str, dict] = {}
+        self.reload_google_credentials()
+        # MISTRAL: a THIRD cloud provider, on exactly the same terms.
+        #
+        # No default model id, for the same reason Google has none: concrete
+        # ids are discovered from the account, and a literal baked in here is
+        # what once left Nano calling a decommissioned model and 404-ing on
+        # every message. Unconfigured means unused.
+        self.mistral_fast_model = str(cfg.get("mistral_fast_model") or "")
+        self.mistral_complex_model = str(cfg.get("mistral_complex_model")
+                                         or self.mistral_fast_model)
+        self.mistral_enabled = False
+        self.mistral_client: Any | None = None
+        self._mistral_records: dict[str, dict] = {}
+        self.reload_mistral_credentials()
         self.local_enabled = bool(local_cfg.get("enabled", cfg.get("ollama_enabled", True)))
         self.local_profile = choose_model(cfg)
         self.model_router = ModelRouter(cfg, cloud_api_key=api_key)
@@ -245,12 +408,52 @@ class Brain:
             self.local_profile.reason, self.local_profile.ram_gb
         )
 
+    def reload_google_credentials(self) -> bool:
+        """Re-read the Google key. Never logs it, never returns it.
+
+        Failure to read the store is not failure to run: Google simply stays
+        unconfigured and Groq answers, which is the behaviour of every machine
+        that has never set a Gemini key at all.
+        """
+        try:
+            key = google_provider.google_api_key()
+        except Exception:
+            logger.exception("Could not read the stored Google credentials")
+            key = ""
+
+        self.google_enabled = bool(key.strip())
+        self.google_client = google_provider.GoogleChat(key) if self.google_enabled else None
+        logger.info("Credenciais Google recarregadas (configurado=%s)", self.google_enabled)
+        return self.google_enabled
+
+    def reload_mistral_credentials(self) -> bool:
+        """Re-read the Mistral key. Never logs it, never returns it.
+
+        Failure to read the store is not failure to run: Mistral simply stays
+        unconfigured and the other providers answer, which is the behaviour of
+        every machine that has never set a Mistral key at all.
+        """
+        try:
+            key = mistral_provider.mistral_api_key()
+        except Exception:
+            logger.exception("Could not read the stored Mistral credentials")
+            key = ""
+
+        self.mistral_enabled = bool(key.strip())
+        self.mistral_client = mistral_provider.MistralChat(key) if self.mistral_enabled else None
+        logger.info("Credenciais Mistral recarregadas (configurado=%s)", self.mistral_enabled)
+        return self.mistral_enabled
+
     def reload_cloud_credentials(self) -> bool:
-        """Re-read the Groq key after the user changes it in Settings.
+        """Re-read every cloud credential after the user changes one in Settings.
 
         Without this the user would have to restart Nano for a newly saved key
         to take effect, which is exactly the friction the Settings flow exists
-        to remove.
+        to remove. Both providers are refreshed together because the snapshot
+        they share is invalidated once, at the end.
+
+        Returns whether ANY cloud provider is now configured -- the question
+        every caller actually asks ("can Nano still reach the cloud?").
         """
         try:
             from core import secret_store
@@ -258,14 +461,17 @@ class Brain:
             key = secret_store.get_secret("groq_api_key")
         except Exception:
             logger.exception("Could not read the stored Groq credentials")
-            return False
+            key = ""
 
         self.groq_enabled = bool(key.strip())
         self.client = AsyncGroq(api_key=key, max_retries=0) if self.groq_enabled else None
+        self.reload_google_credentials()
+        self.reload_mistral_credentials()
         # A new key must be reflected immediately, not after the cache expires.
         self.invalidate_provider_snapshot()
-        logger.info("Credenciais cloud recarregadas (configurado=%s)", self.groq_enabled)
-        return self.groq_enabled
+        logger.info("Credenciais cloud recarregadas (groq=%s, google=%s, mistral=%s)",
+                    self.groq_enabled, self.google_enabled, self.mistral_enabled)
+        return bool(self.groq_enabled or self.google_enabled or self.mistral_enabled)
 
     def invalidate_provider_snapshot(self) -> None:
         """Drop the cached provider status (key changed, mode changed, ...).
@@ -464,11 +670,9 @@ class Brain:
         exist, and only on turns that ask for it, so an ordinary "abre o
         Spotify" pays nothing for it.
         """
-        parts = [NANO_PERSONA]
-        if with_tools or self._history_has_external_content():
-            parts.append(NANO_TOOL_RULES)
-            parts.append(TRUST_BOUNDARY_SYSTEM_RULES)
-        parts.append(capabilities.grounding_block(user_message))
+        parts = base_system_sections(
+            user_message,
+            with_tools=with_tools or self._history_has_external_content())
         parts.append(self._facts_block())
         # The recalled context: thread summary, relevant older turns of THIS
         # conversation, long-term memories and the knowledge they belong to.
@@ -525,18 +729,35 @@ class Brain:
 
     # ------------------------------------------------------------------ routing
 
+    def cloud_tiers(self) -> dict[str, tuple[str, str]]:
+        """``{provider_id: (fast_model, complex_model)}`` for every cloud provider.
+
+        ONE place that knows which attribute holds which provider's models, so
+        the snapshot key, the status probe and the settings surface cannot
+        disagree about what is configured. A provider missing from this mapping
+        is described with no model, which is what SETUP_REQUIRED means.
+        """
+        return {
+            providers.ProviderId.GOOGLE.value: (self.google_fast_model,
+                                                self.google_complex_model),
+            providers.ProviderId.GROQ.value: (self.groq_fast_model,
+                                              self.groq_complex_model),
+            providers.ProviderId.MISTRAL.value: (self.mistral_fast_model,
+                                                 self.mistral_complex_model),
+        }
+
     def _provider_query(self, mode: providers.ProviderMode) -> tuple[str, Any]:
         """The cache key and the producer for this Brain's provider snapshot."""
         local_cfg = (load_config().get("local") or {})
         base_url = str(local_cfg.get("url") or OLLAMA_BASE_URL)
-        key = provider_status.cache_key(
-            mode, self.groq_fast_model, self.groq_complex_model, self.ollama_model)
+        tiers = self.cloud_tiers()
+        key = provider_status.cache_key(mode, tiers, self.ollama_model,
+                                        self.preferred_cloud)
 
-        def _produce() -> tuple[dict, dict]:
-            return provider_status.describe_pair(
+        def _produce() -> tuple[dict[str, dict], dict]:
+            return provider_status.describe_all(
                 mode,
-                groq_fast_model=self.groq_fast_model,
-                groq_complex_model=self.groq_complex_model,
+                cloud_tiers=tiers,
                 ollama_model=self.ollama_model,
                 ollama_base_url=base_url,
                 local_enabled=self.local_enabled,
@@ -544,16 +765,18 @@ class Brain:
 
         return key, _produce
 
-    def _describe_providers(self, mode: providers.ProviderMode) -> tuple[dict, dict]:
-        """Blocking provider status. Only for callers allowed to block.
+    def _describe_providers(self, mode: providers.ProviderMode) -> tuple[dict[str, dict], dict]:
+        """Blocking provider status, as ``({provider_id: payload}, ollama)``.
 
-        The chat path must use ``_describe_providers_async``; this variant runs
-        the synchronous httpx probes on the calling thread.
+        Only for callers allowed to block. The chat path must use
+        ``_describe_providers_async``; this variant runs the synchronous httpx
+        probes on the calling thread.
         """
         key, produce = self._provider_query(mode)
         return provider_status.CACHE.get_fresh(key, produce)
 
-    async def _describe_providers_async(self, mode: providers.ProviderMode) -> tuple[dict, dict]:
+    async def _describe_providers_async(self, mode: providers.ProviderMode
+                                        ) -> tuple[dict[str, dict], dict]:
         """Provider status without occupying the calling event loop.
 
         describe_groq/describe_ollama are synchronous httpx calls. Running them
@@ -566,10 +789,41 @@ class Brain:
         return await provider_status.CACHE.get_async(key, produce)
 
     def _finish_route(self, task: model_selection.TaskClass, tier: model_selection.ModelTier,
-                      mode: providers.ProviderMode, groq: dict, ollama: dict) -> dict[str, Any]:
-        route = providers.resolve_route(mode, groq, ollama, tier=tier.value)
+                      mode: providers.ProviderMode, clouds: dict[str, dict],
+                      ollama: dict) -> dict[str, Any]:
+        google = clouds.get(providers.ProviderId.GOOGLE.value) or {}
+        groq = clouds.get(providers.ProviderId.GROQ.value) or {}
+        mistral = clouds.get(providers.ProviderId.MISTRAL.value) or {}
+        route = providers.resolve_route(mode, groq, ollama, tier=tier.value,
+                                        google=google, mistral=mistral,
+                                        preferred=self.preferred_cloud)
         route["task"] = task.value
+        # The model each cloud provider would use for THIS tier, and the state
+        # it was in, resolved once from the same snapshot the decision was made
+        # on. Failover inside a turn reads these instead of re-probing, so
+        # switching provider costs a dictionary lookup rather than another
+        # round trip to a status API. Built by iterating the ids rather than
+        # naming providers, so a new one cannot be forgotten in one of the two
+        # maps and silently become unroutable.
+        route["cloud_models"] = {
+            pid: providers.cloud_model_for(clouds.get(pid) or {}, tier.value)
+            for pid in providers.CLOUD_PROVIDER_IDS
+        }
+        route["cloud_states"] = {
+            pid: str((clouds.get(pid) or {}).get("state") or "")
+            for pid in providers.CLOUD_PROVIDER_IDS
+        }
+        self._google_records = self._records_from(google)
+        self._mistral_records = self._records_from(mistral)
         return route
+
+    @staticmethod
+    def _records_from(payload: dict) -> dict[str, dict]:
+        """Per-model discovery metadata from a provider payload, keyed by id."""
+        return {
+            str(record.get("id")): record
+            for record in (payload.get("records") or []) if record.get("id")
+        }
 
     def route_for(self, user_message: str) -> dict[str, Any]:
         """The single authoritative routing decision for one message.
@@ -584,16 +838,16 @@ class Brain:
         task = model_selection.classify(user_message)
         tier = model_selection.tier_for(task)
         mode = providers.ProviderMode.parse(getattr(self, "provider_mode", "AUTO"))
-        groq, ollama = self._describe_providers(mode)
-        return self._finish_route(task, tier, mode, groq, ollama)
+        clouds, ollama = self._describe_providers(mode)
+        return self._finish_route(task, tier, mode, clouds, ollama)
 
     async def route_for_async(self, user_message: str) -> dict[str, Any]:
         """route_for without blocking the event loop. Same decision, same order."""
         task = model_selection.classify(user_message)
         tier = model_selection.tier_for(task)
         mode = providers.ProviderMode.parse(getattr(self, "provider_mode", "AUTO"))
-        groq, ollama = await self._describe_providers_async(mode)
-        return self._finish_route(task, tier, mode, groq, ollama)
+        clouds, ollama = await self._describe_providers_async(mode)
+        return self._finish_route(task, tier, mode, clouds, ollama)
 
     def _legacy_route_model(self, *, task_type: str = "chat", requires_tools: bool = False, requires_vision: bool = False, requires_coding: bool = False, requires_reasoning: bool = False, privacy_level: str | PrivacyLevel = PrivacyLevel.NORMAL, latency_preference: str = "balanced", local_only: bool = False):
         if not self.model_router:
@@ -685,11 +939,251 @@ class Brain:
             return RateLimited(providers.parse_rate_limit(headers))
         return exc
 
+    # --------------------------------------------------------- cloud rounds
+
+    def _google_metadata(self, model: str) -> dict:
+        """Discovery metadata for one Google model, or {} if unknown."""
+        return self._google_records.get(str(model)) or {}
+
+    async def _google_round(self, model: str, messages: list[dict], tools: list[dict],
+                            collector: dict, max_tokens: int = 1536,
+                            task: str | None = None) -> AsyncIterator[str]:
+        """One streamed Gemini turn, filling the same collector the Groq path does.
+
+        All the provider-specific shaping -- contents vs messages, function
+        declarations vs tools, the reasoning budget -- happens in
+        core.google_provider. The Brain deliberately learns none of it: that is
+        what keeps Mistral and SambaNova a new adapter rather than a new branch
+        in here.
+        """
+        if self.google_client is None:
+            raise google_provider.GoogleAPIError(401, "no_api_key")
+        body = google_provider.build_request(
+            model, messages, tools, temperature=0.65, max_tokens=max_tokens,
+            task=task, metadata=self._google_metadata(model))
+        async for piece in self.google_client.stream(model, body, collector):
+            yield piece
+
+    def _mistral_metadata(self, model: str) -> dict:
+        """Discovery metadata for one Mistral model, or {} if unknown."""
+        return self._mistral_records.get(str(model)) or {}
+
+    async def _mistral_round(self, model: str, messages: list[dict], tools: list[dict],
+                             collector: dict, max_tokens: int = 1536,
+                             task: str | None = None) -> AsyncIterator[str]:
+        """One streamed Mistral turn, filling the same collector the others do.
+
+        All the provider-specific shaping -- the tool-call id rewrite that makes
+        a history from another vendor legal, the tool_choice rule, the SSE frame
+        format -- happens in core.mistral_provider. The Brain deliberately
+        learns none of it: that is what kept adding a third provider an adapter
+        rather than a third branch through this file.
+        """
+        if self.mistral_client is None:
+            raise mistral_provider.MistralAPIError(401, "no_api_key")
+        body = mistral_provider.build_request(
+            model, messages, tools, temperature=0.65, max_tokens=max_tokens,
+            task=task, metadata=self._mistral_metadata(model))
+        async for piece in self.mistral_client.stream(model, body, collector):
+            yield piece
+
+    async def _cloud_round(self, provider: str, model: str, messages: list[dict],
+                           tools: list[dict], collector: dict, max_tokens: int,
+                           task: str | None = None) -> AsyncIterator[str]:
+        """Dispatch one streamed round to whichever cloud provider is answering.
+
+        The ONLY place in the Brain that knows more than one cloud vendor
+        exists. Everything after this -- tool calls, the execution ledger, the
+        failure taxonomy, the diagnostics -- is provider-agnostic because both
+        adapters fill the same collector shape.
+        """
+        if provider == providers.ProviderId.GOOGLE.value:
+            async for piece in self._google_round(model, messages, tools, collector,
+                                                  max_tokens, task):
+                yield piece
+            return
+        if provider == providers.ProviderId.MISTRAL.value:
+            async for piece in self._mistral_round(model, messages, tools, collector,
+                                                   max_tokens, task):
+                yield piece
+            return
+        async for piece in self._groq_round(model, messages, tools, collector, max_tokens):
+            yield piece
+
+    def _cloud_chain(self, route: dict, mode: str) -> tuple[list[tuple[str, str]], list[dict]]:
+        """The ordered (provider, model) attempts this turn may make, and what
+        was skipped to get there.
+
+        The chosen provider first, then the alternatives the router found ready
+        at decision time. Providers already cooling down are dropped in AUTO --
+        asking a provider we know is rate-limited costs latency, fails, and
+        spends a budget that has not come back yet. CLOUD keeps exactly one
+        entry: the user asked for a specific provider and substituting another
+        vendor is the same class of surprise as falling back to local silently.
+
+        The SECOND return value is why anything was dropped. Skipping silently
+        would leave the diagnostics panel saying only "no cloud available",
+        which is true and useless: "Groq is cooling down for another 44 s" is
+        the fact the user needs, and Nano must never report a state vaguer than
+        the one it measured.
+        """
+        models = route.get("cloud_models") or {}
+        states = route.get("cloud_states") or {}
+        chosen = str(route.get("provider") or "")
+        skipped: list[dict] = []
+        if chosen not in providers.CLOUD_PROVIDER_IDS:
+            return [], skipped
+
+        ordered = [chosen]
+        if mode != "CLOUD":
+            ordered += [pid for pid in (route.get("alternatives") or [])
+                        if pid in providers.CLOUD_PROVIDER_IDS and pid != chosen]
+
+        chain: list[tuple[str, str]] = []
+        for provider_id in ordered:
+            # SETUP_REQUIRED means no credential, or no model chosen yet. A
+            # request cannot succeed and the correct output is the setup
+            # message, not a doomed round trip. Every OTHER unhealthy state is
+            # still attempted in CLOUD mode, deliberately: the snapshot behind
+            # it is up to 45 s old, and a stale probe must not turn into a
+            # refusal to work for a user who asked for cloud-only.
+            if states.get(provider_id) == providers.ProviderState.SETUP_REQUIRED.value:
+                skipped.append({"provider": provider_id, "reason": "setup_required"})
+                continue
+            if not self._cloud_provider_ready(provider_id):
+                skipped.append({"provider": provider_id, "reason": "not_configured"})
+                continue
+            model = str(models.get(provider_id) or "")
+            if provider_id == chosen and route.get("model"):
+                model = str(route["model"])
+            if not model:
+                skipped.append({"provider": provider_id, "reason": "no_model"})
+                continue
+            breaker = provider_failures.cooldown_for(provider_id)
+            if mode == "AUTO" and breaker.is_cooling_down():
+                remaining = breaker.remaining_seconds()
+                logger.info("%s skipped: cooling down for another %.0fs",
+                            provider_id, remaining)
+                skipped.append({"provider": provider_id, "reason": "cooldown",
+                                "retry_in_seconds": round(remaining, 1)})
+                continue
+            chain.append((provider_id, model))
+        return chain, skipped
+
+    def _cloud_provider_ready(self, provider_id: str) -> bool:
+        """Whether this process actually holds a client for that provider."""
+        if provider_id == providers.ProviderId.GOOGLE.value:
+            return bool(self.google_enabled and self.google_client is not None)
+        if provider_id == providers.ProviderId.MISTRAL.value:
+            return bool(self.mistral_enabled and self.mistral_client is not None)
+        if provider_id == providers.ProviderId.GROQ.value:
+            return bool(self.groq_enabled and self.client is not None)
+        return False
+
+    async def _cloud_attempt(self, provider_id: str, model: str, *, system_prompt: str,
+                             tools: list[dict], max_tokens: int, task: str,
+                             started: float, outcome: dict) -> AsyncIterator[str]:
+        """Run one cloud provider for this turn: rounds, tool calls and all.
+
+        ``outcome`` is an out-parameter because an async generator cannot
+        return a value. It reports what happened so the caller can decide
+        between "done", "try the next provider" and "explain the failure":
+
+            done          the turn produced its answer
+            failure       the classified ProviderFailure, when it did not
+            emitted_text  whether visible words already reached the screen
+
+        Nothing here executes a tool. Tool calls are handed to ``_run_tool``,
+        which is the single path into POLICY -> PERMISSION -> ToolExecutor and
+        which owns the per-turn duplicate-execution ledger.
+        """
+        outcome.update({"done": False, "failure": None, "emitted_text": False})
+
+        for round_num in range(MAX_TOOL_ROUNDS):
+            collector: dict[str, Any] = {"first_token_at": None, "tool_calls": [], "usage": None}
+            text_parts: list[str] = []
+            try:
+                async for piece in self._cloud_round(
+                        provider_id, model, self._messages_for_request(system_prompt, tools),
+                        tools, collector, max_tokens, task):
+                    text_parts.append(piece)
+                    yield piece
+            except Exception as exc:
+                # ONE classification for every provider failure, whichever
+                # vendor raised it. What follows depends on the TYPE, not on
+                # where the exception came from.
+                failure = provider_failures.classify(exc, provider=provider_id)
+                cooldown = provider_failures.cooldown_for(provider_id).note_failure(failure)
+                logger.warning("%s %s (round %d, cooldown %.0fs): %s", provider_id,
+                               failure.type.value, round_num, cooldown, failure.message[:200])
+                # Rate-limit numbers live HERE, in structured diagnostics --
+                # never concatenated into the answer. `_ratelimit_:{...}` used
+                # to be yielded as a token and was read aloud on voice turns.
+                self.last_metadata["error"] = failure.type.value
+                self.last_metadata["provider_failure"] = failure.as_dict()
+                if failure.rate_limit:
+                    # The provider travels WITH the numbers. Without it the
+                    # sentence the UI shows had to guess, and with three cloud
+                    # providers a guess sends the user to fix the wrong key.
+                    self.last_metadata["rate_limited"] = {
+                        **failure.rate_limit, "provider": provider_id}
+                if cooldown:
+                    self.last_metadata[f"{provider_id}_cooldown_seconds"] = round(cooldown, 1)
+                    if provider_id == providers.ProviderId.GROQ.value:
+                        # The pre-existing diagnostics key, kept so the panel and
+                        # its regression tests keep reading the same field.
+                        self.last_metadata["groq_cooldown_seconds"] = round(cooldown, 1)
+                outcome["failure"] = failure
+                outcome["emitted_text"] = bool("".join(text_parts).strip())
+                return
+
+            self.last_provider_used = provider_id
+            provider_failures.cooldown_for(provider_id).note_success()
+            self._record_metrics(started, collector)
+
+            calls = collector.get("tool_calls") or []
+            text = "".join(text_parts)
+
+            if not calls:
+                self.conversation.append({"role": "assistant", "content": text})
+                outcome["done"] = True
+                return
+
+            self.conversation.append({
+                "role": "assistant",
+                "content": text or None,
+                "tool_calls": [
+                    {"id": c["id"] or f"call_{i}", "type": "function",
+                     "function": {"name": c["name"], "arguments": c["args"] or "{}"}}
+                    for i, c in enumerate(calls)
+                ],
+            })
+            yield f"_thinking_:⚙️ {', '.join(c['name'] for c in calls)}..."
+
+            shaped = [{"function": {"name": c["name"], "arguments": c["args"] or "{}"}}
+                      for c in calls]
+            results = await asyncio.gather(*(self._run_tool(c) for c in shaped),
+                                           return_exceptions=True)
+            for index, (call, result) in enumerate(zip(calls, results)):
+                if isinstance(result, Exception):
+                    logger.error("Tool %s falhou", call["name"], exc_info=result)
+                    result = {"ok": False, "error": "tool_failed"}
+                self.conversation.append({
+                    "role": "tool",
+                    "tool_call_id": call["id"] or f"call_{index}",
+                    "content": self._tool_result_for_model(call["name"], result),
+                })
+
+        yield "Atingi o limite de operações encadeadas. Podes reformular o pedido?"
+        outcome["done"] = True
+
     async def chat(self, user_message: str, stream: bool = True) -> AsyncIterator[str]:
         """Answer one message, streaming real provider tokens as they arrive."""
         started = time.monotonic()
         # One ledger per logical user turn. Provider failover happens INSIDE a
-        # turn, so this must not be cleared between model steps.
+        # turn -- now between two CLOUD providers as well as cloud-to-local --
+        # so this must not be cleared between model steps. It is what stops the
+        # second provider re-running a Windows action the first already did.
         self._turn_tool_results = {}
         self.conversation.append({"role": "user", "content": user_message})
         self._trim_conversation()
@@ -712,8 +1206,19 @@ class Brain:
         self.last_metadata = {
             "task": task, "tier": route.get("tier"), "mode": mode,
             "provider": route.get("provider"), "model": route.get("model"),
+            "preferred_cloud": self.preferred_cloud,
             "tools_offered": len(tools), "tools_available": len(all_tools),
             "max_tokens": max_tokens, "fallback_used": False,
+            # THE HOPS THIS TURN ACTUALLY MADE, in order, each with what
+            # happened to it. `provider`/`model` say who finished the turn;
+            # this says who was asked first and why they did not.
+            #
+            # It exists because "Provider: groq (fallback)" is a true statement
+            # that answers the wrong question. The user selected Gemini, so the
+            # fact they need is "Gemini was asked, it returned a service error,
+            # Groq finished the turn" -- and a single pair of fields cannot
+            # carry that. See core.response_meta for what survives to the UI.
+            "provider_attempts": [],
         }
         # What memory contributed to THIS turn: counts, ids and token spend.
         # Assembled by the composer and already free of recalled text, so it is
@@ -721,7 +1226,7 @@ class Brain:
         if self.last_context_meta:
             self.last_metadata["memory"] = dict(self.last_context_meta)
 
-        if route.get("provider") == "ollama":
+        if route.get("provider") == providers.ProviderId.OLLAMA.value:
             self.last_provider_used = "ollama"
             self.last_metadata["fallback_used"] = bool(route.get("fallback"))
             async for token in self._ollama_fallback(
@@ -729,114 +1234,96 @@ class Brain:
                 yield token
             return
 
-        if not self.groq_enabled or route.get("provider") != "groq":
+        chain, skipped = self._cloud_chain(route, mode)
+        if skipped:
+            self.last_metadata["cloud_skipped"] = skipped
+
+        if not chain:
+            # Name the precise reason the cloud is unreachable. A cooldown is
+            # the common one and the only one with a number attached, so it
+            # wins over the generic message.
+            cooled = next((entry for entry in skipped if entry["reason"] == "cooldown"), None)
+            if cooled is not None:
+                self.last_metadata["fallback_reason"] = f"{cooled['provider']}_cooldown"
+                self.last_metadata[f"{cooled['provider']}_cooldown_seconds"] = \
+                    cooled.get("retry_in_seconds")
             if mode == "CLOUD":
                 # Asked for cloud-only: say so instead of quietly answering
                 # from somewhere the user did not choose.
                 self.last_provider_used = None
-                yield ("**Modo Cloud activo mas o Groq não está disponível.** "
+                name = providers.provider_name(route.get("provider") or self.preferred_cloud)
+                yield (f"**Modo Cloud activo mas o {name} não está disponível.** "
                        f"{route.get('reason') or ''} "
                        "Verifica a chave em Definições → Inteligência Artificial, "
                        "ou muda para Automático para usar o modelo local.")
                 return
             self.last_provider_used = "ollama"
             self.last_metadata["fallback_used"] = True
-            async for token in self._ollama_fallback(user_message, "Groq indisponível", system_prompt):
+            self.last_metadata.setdefault("fallback_reason", "no_cloud_available")
+            reason = ("Cloud temporariamente limitada" if cooled is not None
+                      else "Cloud indisponível")
+            async for token in self._ollama_fallback(user_message, reason, system_prompt):
                 yield token
             return
 
-        # THE BREAKER, CHECKED BEFORE PAYING FOR A ROUND TRIP.
+        # THE CLOUD CHAIN.
         #
-        # In AUTO, a Groq we already know is rate-limited is not worth asking:
-        # the request costs latency, fails, and spends tokens that have not
-        # come back yet. CLOUD deliberately still tries -- the user chose
-        # cloud-only, and a stale cooldown must not turn into a refusal to work.
-        if mode == "AUTO" and provider_failures.GROQ_COOLDOWN.is_cooling_down():
-            remaining = provider_failures.GROQ_COOLDOWN.remaining_seconds()
-            logger.info("Groq skipped: cooling down for another %.0fs", remaining)
-            self.last_provider_used = "ollama"
-            self.last_metadata["fallback_used"] = True
-            self.last_metadata["fallback_reason"] = "groq_cooldown"
-            self.last_metadata["groq_cooldown_seconds"] = round(remaining, 1)
-            async for token in self._ollama_fallback(
-                    user_message, "Groq temporariamente limitada", system_prompt):
+        # Each entry is tried in order, and a failure only moves to the next one
+        # when the classification allows it. The three refusals below are the
+        # same ones that already governed cloud-to-local failover, applied one
+        # step earlier: CLOUD never substitutes a provider, an auth or bad-request
+        # failure must reach the user, and a half-streamed answer is never
+        # replaced by a second complete one.
+        for position, (provider_id, model) in enumerate(chain):
+            remaining = chain[position + 1:]
+            self.last_metadata["provider"] = provider_id
+            self.last_metadata["model"] = model
+            attempt: dict[str, Any] = {"provider": provider_id, "model": model}
+            self.last_metadata["provider_attempts"].append(attempt)
+            if position:
+                self.last_metadata["fallback_used"] = True
+                self.last_metadata.setdefault("cloud_attempts", []).append(provider_id)
+
+            outcome: dict[str, Any] = {}
+            async for token in self._cloud_attempt(
+                    provider_id, model, system_prompt=system_prompt, tools=tools,
+                    max_tokens=max_tokens, task=task, started=started, outcome=outcome):
+                yield token
+
+            if outcome.get("done"):
+                attempt["outcome"] = "ok"
+                return
+
+            failure = outcome.get("failure")
+            if failure is None:                      # defensive: never silently loop
+                return
+            attempt["outcome"] = failure.type.value
+
+            # `mode != "CLOUD"` is REDUNDANT here and kept on purpose: in CLOUD
+            # mode `_cloud_chain` already returns a single entry, so `remaining`
+            # is empty. It is stated again because this is the line a reader
+            # checks to answer "can a turn cross vendors?", and a rule that is
+            # only enforced somewhere else is a rule that gets deleted.
+            may_try_next = (
+                bool(remaining) and mode != "CLOUD"
+                and failure.may_fall_back and not outcome.get("emitted_text")
+            )
+            if may_try_next:
+                next_name = providers.provider_name(remaining[0][0])
+                logger.info("%s failed (%s); continuing this turn on %s",
+                            provider_id, failure.type.value, remaining[0][0])
+                self.last_metadata["fallback_reason"] = failure.type.value
+                yield (f"_thinking_:\🔄 {failure.user_message()} "
+                       f"A usar {next_name}...")
+                continue
+
+            async for token in self._handle_provider_failure(
+                    failure, mode=mode, user_message=user_message,
+                    system_prompt=system_prompt,
+                    emitted_text=bool(outcome.get("emitted_text")),
+                    did_work=self._turn_has_tool_results()):
                 yield token
             return
-
-        model = str(route.get("model") or self.groq_fast_model)
-        self.last_metadata["model"] = model
-
-        for round_num in range(MAX_TOOL_ROUNDS):
-            collector: dict[str, Any] = {"first_token_at": None, "tool_calls": [], "usage": None}
-            text_parts: list[str] = []
-            try:
-                async for piece in self._groq_round(
-                        model, self._messages_for_request(system_prompt, tools),
-                        tools, collector, max_tokens):
-                    text_parts.append(piece)
-                    yield piece
-            except Exception as exc:
-                # ONE classification for every provider failure. What follows
-                # depends on the TYPE, not on where the exception was raised.
-                failure = provider_failures.classify(exc)
-                cooldown = provider_failures.GROQ_COOLDOWN.note_failure(failure)
-                logger.warning("Groq %s (round %d, cooldown %.0fs): %s",
-                               failure.type.value, round_num, cooldown, failure.message[:200])
-                # Rate-limit numbers live HERE, in structured diagnostics --
-                # never concatenated into the answer. `_ratelimit_:{...}` used
-                # to be yielded as a token and was read aloud on voice turns.
-                self.last_metadata["error"] = failure.type.value
-                self.last_metadata["provider_failure"] = failure.as_dict()
-                if failure.rate_limit:
-                    self.last_metadata["rate_limited"] = failure.rate_limit
-                if cooldown:
-                    self.last_metadata["groq_cooldown_seconds"] = round(cooldown, 1)
-
-                async for token in self._handle_provider_failure(
-                        failure, mode=mode, user_message=user_message,
-                        system_prompt=system_prompt,
-                        emitted_text=bool("".join(text_parts).strip()),
-                        did_work=self._turn_has_tool_results()):
-                    yield token
-                return
-
-            self.last_provider_used = "groq"
-            provider_failures.GROQ_COOLDOWN.note_success()
-            self._record_metrics(started, collector)
-
-            calls = collector.get("tool_calls") or []
-            text = "".join(text_parts)
-
-            if not calls:
-                self.conversation.append({"role": "assistant", "content": text})
-                return
-
-            self.conversation.append({
-                "role": "assistant",
-                "content": text or None,
-                "tool_calls": [
-                    {"id": c["id"] or f"call_{i}", "type": "function",
-                     "function": {"name": c["name"], "arguments": c["args"] or "{}"}}
-                    for i, c in enumerate(calls)
-                ],
-            })
-            yield f"_thinking_:⚙️ {', '.join(c['name'] for c in calls)}..."
-
-            shaped = [{"function": {"name": c["name"], "arguments": c["args"] or "{}"}}
-                      for c in calls]
-            results = await asyncio.gather(*(self._run_tool(c) for c in shaped),
-                                           return_exceptions=True)
-            for call, result in zip(calls, results):
-                if isinstance(result, Exception):
-                    logger.error("Tool %s falhou", call["name"], exc_info=result)
-                    result = {"ok": False, "error": "tool_failed"}
-                self.conversation.append({
-                    "role": "tool",
-                    "tool_call_id": call["id"] or f"call_{calls.index(call)}",
-                    "content": self._tool_result_for_model(call["name"], result),
-                })
-
-        yield "Atingi o limite de operações encadeadas. Podes reformular o pedido?"
 
     def _turn_has_tool_results(self) -> bool:
         """True when this turn already executed a tool and recorded its result.
@@ -893,9 +1380,10 @@ class Brain:
         if emitted_text:
             # THE STREAMING POLICY, CHOSEN DELIBERATELY.
             #
-            # Groq already sent visible words to the screen. Running the local
-            # model now would append a second, complete answer under a
-            # half-finished one -- two assistant voices in one bubble. The
+            # The cloud provider already sent visible words to the screen.
+            # Running the local model -- or the next cloud provider -- would
+            # append a second, complete answer under a half-finished one: two
+            # assistant voices in one bubble. The
             # alternative, buffering every response until it completes, would
             # cost the streaming UX on every healthy turn to improve a rare
             # one. So a partial answer stays partial and says so.
@@ -914,7 +1402,8 @@ class Brain:
         # assistant tool_calls entry AND the tool results. The local model must
         # continue from those, not be handed the original request again.
         async for token in self._ollama_fallback(
-                user_message, "Groq indisponível", system_prompt,
+                user_message,
+                f"{failure.provider_label} indisponível", system_prompt,
                 continue_turn=did_work):
             yield token
 
@@ -932,6 +1421,19 @@ class Brain:
         if self.conversation and self.conversation[-1].get("role") == "user":
             self.conversation.pop()
 
+    @staticmethod
+    def _usage_value(usage: Any, key: str) -> Any:
+        """Read one usage counter from either provider's shape.
+
+        Groq's SDK returns an object with attributes; Google returns a plain
+        dict decoded from JSON. Reading only attributes silently reported None
+        for every Gemini turn, which would have made the diagnostics panel
+        claim Nano had no token data when it had.
+        """
+        if isinstance(usage, dict):
+            return usage.get(key)
+        return getattr(usage, key, None)
+
     def _record_metrics(self, started: float, collector: dict) -> None:
         """Store safe latency/token metrics for the diagnostics panel."""
         first = collector.get("first_token_at")
@@ -940,8 +1442,8 @@ class Brain:
         self.last_metadata["total_latency_ms"] = int((time.monotonic() - started) * 1000)
         usage = collector.get("usage")
         if usage is not None:
-            self.last_metadata["prompt_tokens"] = getattr(usage, "prompt_tokens", None)
-            self.last_metadata["completion_tokens"] = getattr(usage, "completion_tokens", None)
+            self.last_metadata["prompt_tokens"] = self._usage_value(usage, "prompt_tokens")
+            self.last_metadata["completion_tokens"] = self._usage_value(usage, "completion_tokens")
 
     def _build_default_executor(self, permission_manager: Any | None):
         """Create an execution authority when the caller did not supply one."""
@@ -1223,6 +1725,17 @@ class Brain:
             self.last_metadata["attempted_model"] = attempted_model
         self.last_metadata["provider"] = "ollama"
         self.last_metadata["model"] = selected_model
+        # The local model is a hop like any other, so it joins the same ledger.
+        # Recording it here rather than at the three call sites is what keeps
+        # the chain complete: a caller that forgot would leave the panel saying
+        # a turn ended on Ollama with no Ollama attempt in it.
+        #
+        # It is recorded with NO OUTCOME. Ollama has been asked, not answered,
+        # and writing "ok" at the moment of asking would report a state that has
+        # not happened yet -- the outcome is set below, where it is known.
+        attempts = self.last_metadata.setdefault("provider_attempts", [])
+        local_attempt: dict[str, Any] = {"provider": "ollama", "model": selected_model}
+        attempts.append(local_attempt)
         # Local models are far weaker at ignoring irrelevant tools, and the
         # local context window is small, so the same scoped subset applies.
         tools = model_selection.select_tools(message, get_all_tools())
@@ -1276,6 +1789,7 @@ class Brain:
                             text = ("Não consegui completar esse pedido com o modelo local. "
                                     "Tenta outra vez daqui a pouco.")
                         self.conversation.append({"role": "assistant", "content": text})
+                        local_attempt["outcome"] = "ok"
                         if text:
                             async for chunk in _stream_text_chunks(text):
                                 yield chunk
@@ -1327,6 +1841,7 @@ class Brain:
                                     break
                     except Exception as err2:
                         logger.error("Modelo local indisponível: %s", err2)
+                        local_attempt["outcome"] = "unavailable"
                         # No answer was produced, so the turn is undone rather
                         # than left half-recorded.
                         self._rollback_turn()
@@ -1336,7 +1851,9 @@ class Brain:
                     text = "".join(streamed).strip()
                     if text:
                         self.conversation.append({"role": "assistant", "content": text})
+                        local_attempt["outcome"] = "ok"
                     else:
+                        local_attempt["outcome"] = "other"
                         self._rollback_turn()
                     return
             yield "Atingi o limite de operações encadeadas offline. Podes reformular o pedido?"
