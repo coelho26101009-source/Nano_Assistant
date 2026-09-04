@@ -20,6 +20,34 @@ groq_model: "openai/gpt-oss-20b"
 groq_fast_model: "openai/gpt-oss-20b"
 groq_complex_model: "openai/gpt-oss-120b"
 
+# Qual dos provedores cloud e usado primeiro em AUTO e em CLOUD.
+#   groq   | google | mistral
+# O MODO (AUTO/CLOUD/LOCAL) e o PROVEDOR sao coisas diferentes: o modo e o que
+# o utilizador pediu, isto e quem responde. O Groq continua a ser o predefinido
+# ate um benchmark medido mostrar o contrario -- um provedor novo nao passa a
+# predefinicao so por ser novo.
+preferred_cloud: "groq"
+
+# ── Google / Gemini ───────────────────────────────────────────────────────────
+# SEM ids por omissao, e de proposito. Os modelos concretos desta conta sao
+# DESCOBERTOS na API (ListModels) e escolhidos nas Definicoes; fixar aqui um id
+# literal foi exactamente o que deixou o Nano a chamar um modelo Groq
+# descontinuado e a dar 404 em todas as mensagens. Vazio = o Google nao e usado
+# e o Groq responde como sempre respondeu.
+google_fast_model: ""
+google_complex_model: ""
+
+# -- Mistral -------------------------------------------------------------------
+# Tambem SEM ids por omissao. Os modelos desta conta sao DESCOBERTOS em
+# /v1/models, que publica por modelo se faz chat e se faz function calling --
+# metadados reais, nao adivinhados a partir do nome. Vazio = o Mistral nao e
+# usado e os outros provedores respondem como sempre responderam.
+#
+# Nenhum limite de quota (TPM/RPS) e escrito aqui nem em codigo: sao numeros de
+# um painel num dia concreto, e o encaminhamento nunca pode depender deles.
+mistral_fast_model: ""
+mistral_complex_model: ""
+
 # ── LLM local ─────────────────────────────────────────────────────────────────
 local:
   enabled: true

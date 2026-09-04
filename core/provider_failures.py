@@ -29,6 +29,16 @@ the local model instead of paying for a doomed round trip.
 It is process-local, monotonic, and passive: no thread, no timer, no
 background loop. Eligibility is a comparison against the clock, evaluated when
 somebody asks.
+
+ONE BREAKER PER PROVIDER
+------------------------
+With more than one cloud provider the breaker had to stop being a Groq
+singleton. A rate-limited Gemini must not stop Nano asking Groq -- routing to
+the next provider is precisely what a second provider is for -- so cooldowns
+live in a registry keyed by provider id (``cooldown_for``). The classifier is
+already provider-parameterised and now produces the right provider's name in
+the sentence the user reads, which matters: telling somebody their Groq key was
+refused when Gemini's was is a bug report waiting to happen.
 """
 from __future__ import annotations
 
@@ -144,20 +154,35 @@ class ProviderFailure:
             return 30.0
         return float(max(candidates))
 
+    @property
+    def provider_label(self) -> str:
+        """The provider's human name, for a sentence shown to the user.
+
+        Resolved through core.providers so a new provider gets a correct
+        sentence the day it is added, instead of a message that still says
+        "Groq" because the taxonomy predates it. That was a real hazard: with
+        two cloud providers, "a chave da Groq foi recusada" for a Gemini auth
+        failure would send the user to fix the wrong credential.
+        """
+        from core import providers
+
+        return providers.provider_name(self.provider)
+
     def user_message(self) -> str:
         """One clean Portuguese sentence. Never JSON, never a stack trace."""
+        name = self.provider_label
         return {
-            FailureType.RATE_LIMIT: "O limite temporário da Groq foi atingido.",
-            FailureType.TIMEOUT: "A Groq demorou demasiado a responder.",
-            FailureType.CONNECTION_ERROR: "Não foi possível contactar a Groq.",
-            FailureType.SERVER_ERROR: "A Groq está com problemas de serviço.",
-            FailureType.AUTH_ERROR: ("A chave de API da Groq foi recusada. "
+            FailureType.RATE_LIMIT: f"O limite temporário do {name} foi atingido.",
+            FailureType.TIMEOUT: f"O {name} demorou demasiado a responder.",
+            FailureType.CONNECTION_ERROR: f"Não foi possível contactar o {name}.",
+            FailureType.SERVER_ERROR: f"O {name} está com problemas de serviço.",
+            FailureType.AUTH_ERROR: (f"A chave de API do {name} foi recusada. "
                                      "Verifica-a em Definições → Inteligência Artificial."),
-            FailureType.BAD_REQUEST: "O pedido enviado à Groq foi recusado.",
-            FailureType.MODEL_UNAVAILABLE: "O modelo pedido não está disponível na Groq.",
+            FailureType.BAD_REQUEST: f"O pedido enviado ao {name} foi recusado.",
+            FailureType.MODEL_UNAVAILABLE: f"O modelo pedido não está disponível no {name}.",
             FailureType.CANCELLED: "O pedido foi cancelado.",
-            FailureType.UNKNOWN_PROVIDER_ERROR: "A Groq não respondeu.",
-        }.get(self.type, "A Groq não respondeu.")
+            FailureType.UNKNOWN_PROVIDER_ERROR: f"O {name} não respondeu.",
+        }.get(self.type, f"O {name} não respondeu.")
 
     def as_dict(self) -> dict[str, Any]:
         """Structured diagnostics. This is where rate-limit numbers belong.
@@ -327,13 +352,50 @@ class ProviderCooldown:
         return payload
 
 
-#: The process-wide Groq breaker. One per process, shared by the Brain and the
+#: One breaker PER PROVIDER, process-wide, shared by the Brain and the
 #: settings/status surface so both see the same state without extra probing.
-GROQ_COOLDOWN = ProviderCooldown("groq")
+#:
+#: Per provider is the whole point of the registry. A single shared breaker
+#: would mean a rate-limited Gemini also stopped Nano asking Groq -- which is
+#: the exact opposite of what a second cloud provider is for. Each provider
+#: exhausts, cools down and recovers on its own clock.
+_COOLDOWNS: dict[str, ProviderCooldown] = {}
+_COOLDOWN_LOCK = __import__("threading").RLock()
+
+
+def cooldown_for(provider: str) -> ProviderCooldown:
+    """The breaker for one provider, created on first use."""
+    key = str(provider or "").strip().lower() or "unknown"
+    with _COOLDOWN_LOCK:
+        breaker = _COOLDOWNS.get(key)
+        if breaker is None:
+            breaker = ProviderCooldown(key)
+            _COOLDOWNS[key] = breaker
+        return breaker
+
+
+def all_cooldowns() -> dict[str, ProviderCooldown]:
+    """Every breaker created so far. For status surfaces only."""
+    with _COOLDOWN_LOCK:
+        return dict(_COOLDOWNS)
+
+
+def reset_all_cooldowns() -> None:
+    """Clear every breaker. For an explicit mode/provider change, and tests."""
+    for breaker in all_cooldowns().values():
+        breaker.reset()
+
+
+#: Kept as module-level names because the Brain, main.py and the existing
+#: regression suite all reference GROQ_COOLDOWN directly. They are the registry
+#: entries, not copies, so `cooldown_for("groq") is GROQ_COOLDOWN`.
+GROQ_COOLDOWN = cooldown_for("groq")
+GOOGLE_COOLDOWN = cooldown_for("google")
 
 
 __all__ = [
     "FALLBACK_ELIGIBLE",
+    "GOOGLE_COOLDOWN",
     "GROQ_COOLDOWN",
     "MAX_COOLDOWN_SECONDS",
     "MIN_COOLDOWN_SECONDS",
@@ -341,5 +403,8 @@ __all__ = [
     "FailureType",
     "ProviderCooldown",
     "ProviderFailure",
+    "all_cooldowns",
     "classify",
+    "cooldown_for",
+    "reset_all_cooldowns",
 ]

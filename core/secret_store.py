@@ -31,6 +31,17 @@ _STORE_PATH = DATA_DIR / "secrets.dat"
 # keeps working. Writing always goes to the encrypted store, never back to .env.
 _ENV_FALLBACK: dict[str, tuple[str, ...]] = {
     "groq_api_key": ("NANO_API_KEY", "HELIOS_API_KEY", "GROQ_API_KEY"),
+    # Google/Gemini. NANO_GEMINI_API_KEY is the name Nano documents; the two
+    # vendor names are accepted because a machine that already has one should
+    # not need a second copy. Each provider has its OWN entry -- one key must
+    # never satisfy or overwrite another's, so removing Groq cannot silently
+    # disable Google and vice versa.
+    "google_api_key": ("NANO_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    # Mistral. NANO_MISTRAL_API_KEY is the name Nano documents; the vendor name
+    # is accepted so a machine that already has one does not need a second copy.
+    # Same rule as above: its OWN entry, so it can never satisfy or be satisfied
+    # by another provider's credential.
+    "mistral_api_key": ("NANO_MISTRAL_API_KEY", "MISTRAL_API_KEY"),
 }
 
 

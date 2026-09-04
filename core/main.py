@@ -56,7 +56,10 @@ from core.agent_orchestrator import AgentOrchestrator
 from core.agent_registry import AgentRegistry
 from core.tool_execution import ToolExecutor
 from core.background_worker import BackgroundTaskWorker
-from core import audio_feedback, desktop_bridge, ollama_service, provider_failures, provider_status, providers, secret_store, speech_filter, user_settings
+from core import (audio_feedback, desktop_bridge, google_provider, mistral_provider,
+                  ollama_service,
+                  provider_failures, provider_status, providers, response_meta,
+                  secret_store, speech_filter, user_settings)
 
 if not getattr(sys, "frozen", False):
     load_dotenv(ROOT / ".env")
@@ -122,8 +125,14 @@ def cloud_configured() -> bool:
 
     brain.groq_enabled is the live answer: reload_cloud_credentials() sets it
     from the secret store every time the credential changes.
+
+    With more than one cloud provider the question became "is ANY cloud
+    provider reachable", because that is what readiness is actually reporting:
+    a machine configured only for Gemini is not "cloud: not configured".
     """
-    return bool(getattr(brain, "groq_enabled", False))
+    return bool(getattr(brain, "groq_enabled", False)
+                or getattr(brain, "google_enabled", False)
+                or getattr(brain, "mistral_enabled", False))
 
 # Agent-core foundations for Nano: queue, context, events and autonomous task planning.
 event_bus = EventBus()
@@ -323,8 +332,13 @@ def get_last_response_meta() -> dict:
 
     Used by the technical-details panel and by latency measurement. Contains no
     prompt text, no tool arguments and no credentials.
+
+    Shaped by the SAME allow-list as the per-message metadata. It used to return
+    ``brain.last_metadata`` verbatim, which included the provider's own error
+    string under ``provider_failure.message`` -- a raw backend exception on its
+    way to the screen.
     """
-    return dict(getattr(brain, "last_metadata", {}) or {})
+    return response_meta.for_message(getattr(brain, "last_metadata", {}))
 
 
 @eel.expose
@@ -907,8 +921,20 @@ def current_provider_mode() -> providers.ProviderMode:
     )
 
 
+def current_preferred_cloud() -> str:
+    """Which cloud provider AUTO and CLOUD prefer.
+
+    ONE canonical answer, read from the stored setting. The header pill and the
+    Settings page both call the same endpoints and both render this value, so
+    neither holds a copy that can disagree with the other.
+    """
+    return providers.parse_preferred_cloud(
+        user_settings.get("preferred_cloud") or CONFIG.get("preferred_cloud")
+    )
+
+
 def describe_providers(*, stale_ok: bool = False) -> dict:
-    """Live status of both providers plus the route a request would take.
+    """Live status of every provider plus the route a request would take.
 
     Both Groq tiers are validated against the account, so Settings can show the
     conversation model and the complex model honestly instead of implying a
@@ -923,43 +949,69 @@ def describe_providers(*, stale_ok: bool = False) -> dict:
     the two no longer probe the same account separately.
     """
     mode = current_provider_mode()
-    key = provider_status.cache_key(
-        mode, brain.groq_fast_model, brain.groq_complex_model, brain.ollama_model)
+    preferred = current_preferred_cloud()
+    # The SAME mapping the Brain routes from, so the panel and the router can
+    # never disagree about which model is configured for which provider.
+    tiers = brain.cloud_tiers()
+    key = provider_status.cache_key(mode, tiers, brain.ollama_model, preferred)
 
-    def _produce() -> tuple[dict, dict]:
-        return provider_status.describe_pair(
+    def _produce() -> tuple[dict[str, dict], dict]:
+        return provider_status.describe_all(
             mode,
-            groq_fast_model=brain.groq_fast_model,
-            groq_complex_model=brain.groq_complex_model,
+            cloud_tiers=tiers,
             ollama_model=brain.ollama_model,
             ollama_base_url=brain.ollama_url.removesuffix("/api/chat"),
             local_enabled=brain.local_enabled,
         )
 
     getter = provider_status.CACHE.get_stale_ok if stale_ok else provider_status.CACHE.get_fresh
-    groq, ollama = getter(key, _produce)
+    clouds, ollama = getter(key, _produce)
 
     # The live circuit-breaker state, read from memory. This is why Settings can
-    # say "Groq temporarily limited, using local" once per second without that
-    # becoming one Groq API call per second -- the cooldown knows the answer
-    # already, from the last real chat failure.
-    cooldown = provider_failures.GROQ_COOLDOWN.status()
-    groq = dict(groq)
-    groq["temporarily_limited"] = cooldown["temporarily_limited"]
-    groq["retry_in_seconds"] = cooldown["retry_in_seconds"]
-    if cooldown["temporarily_limited"]:
-        groq["detail"] = (f"Limite temporário atingido. Volta a estar disponível em "
-                          f"~{int(cooldown['retry_in_seconds'] or 0)} s.")
+    # say "temporarily limited, using local" once per second without that
+    # becoming one API call per second -- the cooldown knows the answer already,
+    # from the last real chat failure. One breaker per provider: a rate-limited
+    # Gemini must not make Groq look limited too.
+    def _with_cooldown(payload: dict, provider_id: str) -> tuple[dict, dict]:
+        state = provider_failures.cooldown_for(provider_id).status()
+        merged = dict(payload)
+        merged["temporarily_limited"] = state["temporarily_limited"]
+        merged["retry_in_seconds"] = state["retry_in_seconds"]
+        if state["temporarily_limited"]:
+            merged["detail"] = (f"Limite temporário atingido. Volta a estar disponível em "
+                                f"~{int(state['retry_in_seconds'] or 0)} s.")
+        return merged, state
+
+    # Every cloud provider, by id. Iterating rather than naming them means a
+    # provider added to CLOUD_PROVIDER_IDS reaches the UI with its own breaker
+    # state instead of silently missing one.
+    cooldowns: dict[str, dict] = {}
+    for provider_id in providers.CLOUD_PROVIDER_IDS:
+        clouds[provider_id], cooldowns[provider_id] = _with_cooldown(
+            clouds.get(provider_id) or {}, provider_id)
+
+    def _route(tier: str) -> dict:
+        return providers.resolve_route(
+            mode, clouds[providers.ProviderId.GROQ.value], ollama, tier=tier,
+            google=clouds[providers.ProviderId.GOOGLE.value],
+            mistral=clouds[providers.ProviderId.MISTRAL.value],
+            preferred=preferred)
 
     return {
         "mode": mode.value,
         "modes": [m.value for m in providers.ProviderMode],
-        "groq": groq,
+        "preferredCloud": preferred,
+        "cloudProviders": list(providers.CLOUD_PROVIDER_IDS),
+        **{provider_id: clouds[provider_id]
+           for provider_id in providers.CLOUD_PROVIDER_IDS},
         "ollama": ollama,
-        "cooldown": cooldown,
+        # `cooldown` stays the Groq breaker for the panels that already read
+        # it; `cooldowns` is the per-provider view everything new should use.
+        "cooldown": cooldowns[providers.ProviderId.GROQ.value],
+        "cooldowns": cooldowns,
         # The route a normal conversational message would take right now.
-        "route": providers.resolve_route(mode, groq, ollama, tier="FAST"),
-        "complexRoute": providers.resolve_route(mode, groq, ollama, tier="STRONG"),
+        "route": _route("FAST"),
+        "complexRoute": _route("STRONG"),
     }
 
 
@@ -978,8 +1030,10 @@ def set_provider_mode(mode: str) -> dict:
     brain.provider_mode = parsed.value
     # A manual mode change is an explicit instruction and takes effect NOW. A
     # cooldown left over from an earlier failure must not make the user's very
-    # next request skip the provider they just chose.
-    provider_failures.GROQ_COOLDOWN.reset()
+    # next request skip the provider they just chose -- and with three cloud
+    # providers, resetting only Groq's breaker left the other two cooling down
+    # after the user had explicitly asked to change how Nano routes.
+    provider_failures.reset_all_cooldowns()
     logger.info("Modo de provedor: %s", parsed.value)
     return {"ok": True, "mode": parsed.value, "providers": describe_providers()}
 
@@ -1048,6 +1102,245 @@ def set_groq_model(model: str) -> dict:
     CONFIG["groq_model"] = chosen
     brain.groq_model = chosen
     return {"ok": True, "model": chosen, "providers": describe_providers()}
+
+
+@eel.expose
+def set_preferred_cloud_provider(provider: str) -> dict:
+    """Choose which cloud provider AUTO and CLOUD use first.
+
+    This is the single authority the header pill and Settings both write. It
+    changes WHO answers, never WHAT mode Nano is in: a user in LOCAL mode who
+    switches preferred provider is still in LOCAL mode afterwards.
+    """
+    chosen = providers.parse_preferred_cloud(provider)
+    if str(provider or "").strip().lower() not in providers.CLOUD_PROVIDER_IDS:
+        return {"ok": False, "error": "unknown_provider",
+                "detail": f"'{provider}' não é um provedor cloud do Nano."}
+
+    result = user_settings.set_value("preferred_cloud", chosen)
+    if not result.get("ok"):
+        return {"ok": False, "error": result.get("error", "write_failed")}
+
+    CONFIG["preferred_cloud"] = chosen
+    brain.preferred_cloud = chosen
+    # An explicit choice takes effect NOW. A cooldown left over from an earlier
+    # failure must not make the user's very next request skip the provider they
+    # just chose.
+    provider_failures.cooldown_for(chosen).reset()
+    brain.invalidate_provider_snapshot()
+    logger.info("Provedor cloud preferido: %s", chosen)
+    return {"ok": True, "provider": chosen, "providers": describe_providers()}
+
+
+#: Which stored settings hold each cloud provider's two model tiers. The
+#: generic key/model operations below read this instead of naming providers, so
+#: the next provider is one entry here rather than four more eel functions.
+_CLOUD_MODEL_SETTINGS: dict[str, tuple[str, str]] = {
+    providers.ProviderId.GOOGLE.value: ("google_fast_model", "google_complex_model"),
+    providers.ProviderId.GROQ.value: ("groq_fast_model", "groq_complex_model"),
+    providers.ProviderId.MISTRAL.value: ("mistral_fast_model", "mistral_complex_model"),
+}
+
+
+def _cloud_provider_id(provider: str) -> str:
+    """A known cloud provider id, or "" for anything else."""
+    parsed = providers.ProviderId.parse(provider)
+    if parsed is None or parsed.value not in providers.CLOUD_PROVIDER_IDS:
+        return ""
+    return parsed.value
+
+
+def _unknown_provider(provider: str) -> dict:
+    return {"ok": False, "error": "unknown_provider",
+            "detail": f"'{provider}' não é um provedor cloud do Nano."}
+
+
+def _store_cloud_model(provider_id: str, key: str, chosen: str) -> None:
+    """Persist one tier and apply it to the running Brain immediately.
+
+    A setting that claims to change runtime behaviour has to change it now: a
+    value that only takes effect at the next restart is a setting that silently
+    does nothing, which this project has already shipped once (see
+    set_local_model).
+    """
+    user_settings.set_value(key, chosen)
+    CONFIG[key] = chosen
+    setattr(brain, key, chosen)
+
+
+@eel.expose
+def set_cloud_api_key(provider: str, api_key: str) -> dict:
+    """Validate a cloud key, then store it OS-encrypted. The key never returns.
+
+    ONE privileged operation for every cloud provider. The renderer may send a
+    key once, through here, and can never read it back; everything the UI is
+    told afterwards is a boolean and a mask.
+
+    Groq is delegated to its own function rather than handled here, and the
+    reason is a real difference and not an oversight: Groq's conversation model
+    is also persisted under the legacy ``groq_model`` name that older installs
+    and the Brain constructor still read, so its adoption rule has one extra
+    write. Two implementations of the same rule would drift; a delegation
+    cannot.
+    """
+    provider_id = _cloud_provider_id(provider)
+    if not provider_id:
+        return _unknown_provider(provider)
+    if provider_id == providers.ProviderId.GROQ.value:
+        return set_groq_api_key(api_key)
+
+    candidate = (api_key or "").strip()
+    if not candidate:
+        return {"ok": False, "error": "empty_key", "detail": "Introduz uma chave de API."}
+
+    verdict = providers.test_cloud(provider_id, candidate)
+    if not verdict["ok"]:
+        # Never persist a key we could not validate.
+        return {"ok": False, "error": verdict["error"], "detail": verdict["detail"]}
+
+    if not secret_store.set_secret(providers.CLOUD_SECRET_NAMES[provider_id], candidate):
+        return {"ok": False, "error": "store_failed",
+                "detail": "Não foi possível guardar a chave em segurança."}
+
+    # Adopt a working model when the configured one is absent or does not exist
+    # on this account, so the provider is usable immediately. An EXISTING and
+    # VALID choice is never overwritten -- silently changing the model a user
+    # picked is the substitution this project already removed from the local
+    # router.
+    fast_key, complex_key = _CLOUD_MODEL_SETTINGS[provider_id]
+    configured = str(getattr(brain, fast_key, "") or "")
+    if configured not in (verdict.get("models") or []):
+        suggested = verdict["suggested_model"]
+        _store_cloud_model(provider_id, fast_key, suggested)
+        if not str(getattr(brain, complex_key, "") or ""):
+            _store_cloud_model(provider_id, complex_key, suggested)
+        logger.info("Modelo %s inicial: '%s'.", provider_id, suggested)
+
+    brain.reload_cloud_credentials()
+    logger.info("Chave de API do %s guardada (encriptada=%s).",
+                providers.provider_name(provider_id), secret_store.is_encrypted())
+    return {"ok": True, "detail": verdict["detail"], "providers": describe_providers()}
+
+
+@eel.expose
+def test_cloud_connection(provider: str, api_key: str = "") -> dict:
+    """Test the stored key, or a candidate the user is typing (never stored)."""
+    provider_id = _cloud_provider_id(provider)
+    if not provider_id:
+        return _unknown_provider(provider)
+    verdict = providers.test_cloud(provider_id, api_key or None)
+    return {
+        "ok": verdict["ok"],
+        "detail": verdict["detail"],
+        "models": verdict.get("models", []),
+        "suggested_model": verdict.get("suggested_model"),
+        "latency_ms": verdict.get("latency_ms"),
+    }
+
+
+@eel.expose
+def remove_cloud_api_key(provider: str) -> dict:
+    """Forget one provider's key. The others are untouched, deliberately."""
+    provider_id = _cloud_provider_id(provider)
+    if not provider_id:
+        return _unknown_provider(provider)
+    secret_store.delete_secret(providers.CLOUD_SECRET_NAMES[provider_id])
+    brain.reload_cloud_credentials()
+    logger.info("Chave de API do %s removida.", providers.provider_name(provider_id))
+    return {"ok": True, "providers": describe_providers()}
+
+
+@eel.expose
+def set_cloud_model(provider: str, model: str, tier: str = "fast") -> dict:
+    """Choose a model, validated against what the ACCOUNT really exposes.
+
+    Never accepts an id on trust. A model that does not exist 404s on every
+    single message, which is precisely the failure that made model discovery
+    mandatory for Groq in the first place.
+    """
+    provider_id = _cloud_provider_id(provider)
+    if not provider_id:
+        return _unknown_provider(provider)
+
+    chosen = (model or "").strip()
+    if not chosen:
+        return {"ok": False, "error": "empty_model"}
+
+    available, error = providers.cloud_model_choices(provider_id)
+    name = providers.provider_name(provider_id)
+    if error:
+        return {"ok": False, "error": error,
+                "detail": f"Não foi possível validar o modelo com o {name}."}
+    if chosen not in available:
+        return {"ok": False, "error": "model_unavailable",
+                "detail": f"'{chosen}' não existe nesta conta {name}."}
+
+    fast_key, complex_key = _CLOUD_MODEL_SETTINGS[provider_id]
+    key = complex_key if str(tier).lower() == "complex" else fast_key
+    result = user_settings.set_value(key, chosen)
+    if not result.get("ok"):
+        return {"ok": False, "error": result.get("error", "write_failed")}
+    _store_cloud_model(provider_id, key, chosen)
+
+    # A fast model chosen before any complex one would otherwise leave the
+    # complex tier empty, and an empty tier routes nowhere.
+    if key == fast_key and not str(getattr(brain, complex_key, "") or ""):
+        _store_cloud_model(provider_id, complex_key, chosen)
+    # Groq's conversation model is also read under its legacy name by older
+    # installs and by the Brain constructor; leaving that stale would make a
+    # restart quietly revert the choice.
+    if provider_id == providers.ProviderId.GROQ.value and key == fast_key:
+        user_settings.set_value("groq_model", chosen)
+        CONFIG["groq_model"] = chosen
+        brain.groq_model = chosen
+
+    brain.invalidate_provider_snapshot()
+    logger.info("Modelo %s (%s): %s", provider_id, key, chosen)
+    return {"ok": True, "model": chosen, "tier": key, "providers": describe_providers()}
+
+
+@eel.expose
+def set_google_api_key(api_key: str) -> dict:
+    """The Gemini-named flow. Kept because the renderer and its regression
+    tests call it by this name; the implementation is the generic one, so there
+    is exactly one place where a cloud key is validated and stored."""
+    return set_cloud_api_key(providers.ProviderId.GOOGLE.value, api_key)
+
+
+@eel.expose
+def test_google_connection(api_key: str = "") -> dict:
+    return test_cloud_connection(providers.ProviderId.GOOGLE.value, api_key)
+
+
+@eel.expose
+def remove_google_api_key() -> dict:
+    return remove_cloud_api_key(providers.ProviderId.GOOGLE.value)
+
+
+@eel.expose
+def set_google_model(model: str, tier: str = "fast") -> dict:
+    return set_cloud_model(providers.ProviderId.GOOGLE.value, model, tier)
+
+
+@eel.expose
+def set_mistral_api_key(api_key: str) -> dict:
+    """The Mistral-named flow, for symmetry with the other two providers."""
+    return set_cloud_api_key(providers.ProviderId.MISTRAL.value, api_key)
+
+
+@eel.expose
+def test_mistral_connection(api_key: str = "") -> dict:
+    return test_cloud_connection(providers.ProviderId.MISTRAL.value, api_key)
+
+
+@eel.expose
+def remove_mistral_api_key() -> dict:
+    return remove_cloud_api_key(providers.ProviderId.MISTRAL.value)
+
+
+@eel.expose
+def set_mistral_model(model: str, tier: str = "fast") -> dict:
+    return set_cloud_model(providers.ProviderId.MISTRAL.value, model, tier)
 
 
 @eel.expose
@@ -1254,10 +1547,17 @@ def update_setting(key: str, value) -> dict:
         index = None if value in (None, "", -1) else int(value)
         voice_cfg.setdefault("microphone", {})["device_index"] = index
         voice.input_provider.device_index = index
-    elif key in ("groq_fast_model", "groq_complex_model"):
+    elif key in ("groq_fast_model", "groq_complex_model",
+                 "google_fast_model", "google_complex_model",
+                 "mistral_fast_model", "mistral_complex_model"):
         CONFIG[key] = str(value)
         setattr(brain, key, str(value))
         # The cached provider snapshot names the old model until it expires.
+        brain.invalidate_provider_snapshot()
+    elif key == "preferred_cloud":
+        chosen = providers.parse_preferred_cloud(value)
+        CONFIG[key] = chosen
+        brain.preferred_cloud = chosen
         brain.invalidate_provider_snapshot()
     elif key == "memory_facts_enabled":
         CONFIG.setdefault("memory", {})["facts_enabled"] = bool(value)
@@ -2162,7 +2462,13 @@ def _emit_voice_exchange(turn_id: str, user_text: str, assistant_text: str):
     if memory_stack.ready:
         try:
             memory_stack.record_user_message(user_text, metadata={"source": "voice"})
-            memory_stack.record_assistant_message(assistant_text, metadata={"source": "voice"})
+            # A spoken answer came from a provider too, and reopening the thread
+            # must say which one. Same allow-list as the typed path -- there is
+            # no second definition of "safe metadata".
+            memory_stack.record_assistant_message(
+                assistant_text,
+                metadata={"source": "voice",
+                          **response_meta.for_message(getattr(brain, "last_metadata", {}))})
         except Exception:
             logger.exception("Falha a guardar o turno de voz")
     _notify_ui("on_voice_exchange", turn_id, user_text, assistant_text)
@@ -2618,15 +2924,23 @@ async def _process_message(user_text: str, msg_id: str | None = None,
             # of red text inside the answer.
             _emit_rate_limited(msg_id, rate_limit)
         full_response = full_response.strip() or "Desculpa Simão, não consegui gerar uma resposta."
+        # ONE shaping, used for BOTH the live payload and the stored row.
+        #
+        # The Brain's scratchpad is not shippable: it carries the provider's own
+        # error sentence and its cooldown bookkeeping. response_meta.for_message
+        # is the allow-list that turns it into something a message may carry
+        # forever, and using the same call for the wire and the database is what
+        # makes the panel identical before and after the thread is reopened.
+        safe_meta = response_meta.for_message(getattr(brain, "last_metadata", {}))
         if memory_stack.ready:
-            memory_stack.record_assistant_message(full_response)
+            memory_stack.record_assistant_message(full_response, metadata=safe_meta)
         else:
             memory.save_message("assistant", full_response)
         result = {
             "msg_id": msg_id, "text": full_response, "status": status_updates, "ok": True,
             # Safe diagnostics only: provider, model, tier, token counts and
             # latency. Never the prompt, never a tool argument, never the key.
-            "meta": dict(getattr(brain, "last_metadata", {}) or {}),
+            "meta": safe_meta,
         }
         if rate_limit:
             result["rate_limit"] = rate_limit
@@ -2836,8 +3150,41 @@ def main():
     else:
         _report("Ollama", "UNAVAILABLE", str(OLLAMA_BOOT.get("detail", ""))[:70])
 
-    _report("Cloud", "OK" if cloud_configured() else "NOT CONFIGURED",
-            brain.groq_fast_model if cloud_configured() else "")
+    # NAME WHAT IS ACTUALLY CONFIGURED, NOT WHAT USED TO BE THE ONLY OPTION.
+    #
+    # This printed brain.groq_fast_model whenever any cloud credential existed.
+    # With a second provider that becomes a claim about state it never checked:
+    # a machine configured only for Gemini would announce a Groq model it
+    # cannot use. Each provider is reported from its own live flag.
+    _configured = []
+    if brain.groq_enabled:
+        _configured.append(f"Groq/{brain.groq_fast_model}")
+    if brain.google_enabled:
+        _configured.append(f"Google/{brain.google_fast_model or 'sem modelo escolhido'}")
+    if brain.mistral_enabled:
+        _configured.append(f"Mistral/{brain.mistral_fast_model or 'sem modelo escolhido'}")
+    _report("Cloud", "OK" if _configured else "NOT CONFIGURED",
+            f"preferido: {current_preferred_cloud()} | " + ", ".join(_configured)
+            if _configured else "")
+
+    # Warm the provider snapshot OFF the eel hub, before eel starts serving.
+    #
+    # Same lesson as the audio prewarm above, one layer up: describing a cloud
+    # provider is a blocking HTTP call, the Settings page polls get_settings()
+    # once a second, and get_stale_ok performs the producer inline the very
+    # first time a key is missing from the cache. Paying that on eel's single
+    # cooperative hub freezes the whole interface for the length of the round
+    # trip. Doing it here, on a daemon thread, means the first UI poll is a
+    # dictionary lookup. A failure is harmless: the cache simply stays empty
+    # and the poll behaves exactly as it did before.
+    def _warm_provider_snapshot() -> None:
+        try:
+            describe_providers()
+        except Exception:
+            logger.debug("Provider snapshot warm-up failed", exc_info=True)
+
+    threading.Thread(target=_warm_provider_snapshot,
+                     name="nano-provider-warmup", daemon=True).start()
 
     # Load the audio backends before eel starts serving. A UI request must
     # never be the first thing to import a native extension: eel runs the whole

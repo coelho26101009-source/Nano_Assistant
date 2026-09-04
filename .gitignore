@@ -18,6 +18,13 @@ env/
 runtime/python/
 runtime/wheels/
 
+# Provider/model benchmark reports. These hold RAW MODEL OUTPUT for the
+# user's own prompts, plus latency and token measurements taken against their
+# personal free-tier accounts. They are developer measurements, not source, and
+# must never be committed. The writer additionally refuses to save a report
+# that matches a credential pattern -- see scripts/benchmark_providers.py.
+runtime/benchmarks/
+
 # Speech-accuracy benchmark sessions. These hold RAW RECORDINGS OF THE
 # USER'S VOICE plus the reports derived from them. They are developer
 # measurements of a private human being and must never be committed,

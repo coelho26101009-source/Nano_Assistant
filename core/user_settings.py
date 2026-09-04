@@ -28,9 +28,19 @@ _cache: dict[str, Any] | None = None
 # malicious page reaching the local bridge) from rewriting arbitrary config.
 ALLOWED_KEYS: frozenset[str] = frozenset({
     "provider_mode",           # AUTO | CLOUD | LOCAL
+    # WHICH cloud provider serves AUTO/CLOUD. Separate from provider_mode on
+    # purpose: mode is what the user asked for, this is who answers it.
+    "preferred_cloud",         # google | groq | mistral
     "groq_model",              # legacy alias of groq_fast_model
     "groq_fast_model",         # ordinary conversation and voice
     "groq_complex_model",      # only for explicitly COMPLEX requests
+    # Google/Gemini. No default id: the concrete models are discovered from the
+    # account, so an unconfigured install simply does not route to Google.
+    "google_fast_model",
+    "google_complex_model",
+    # Mistral. No default id either, and for the same reason.
+    "mistral_fast_model",
+    "mistral_complex_model",
     "local_model",
     "wake_phrase_enabled",
     "wake_phrase_allow_nano_only",
@@ -139,8 +149,24 @@ def apply_overlay(config: dict[str, Any]) -> dict[str, Any]:
         config["groq_complex_model"] = stored["groq_complex_model"]
     if "local_model" in stored:
         local["model"] = stored["local_model"]
+    if "google_fast_model" in stored:
+        config["google_fast_model"] = stored["google_fast_model"]
+    if "mistral_fast_model" in stored:
+        config["mistral_fast_model"] = stored["mistral_fast_model"]
+    if "mistral_complex_model" in stored:
+        config["mistral_complex_model"] = stored["mistral_complex_model"]
+    elif "mistral_fast_model" in stored:
+        config["mistral_complex_model"] = stored["mistral_fast_model"]
+    if "google_complex_model" in stored:
+        config["google_complex_model"] = stored["google_complex_model"]
+    elif "google_fast_model" in stored:
+        # A fast model chosen with no complex one would leave the complex tier
+        # empty, and an empty tier routes nowhere.
+        config["google_complex_model"] = stored["google_fast_model"]
     if "provider_mode" in stored:
         config["provider_mode"] = stored["provider_mode"]
+    if "preferred_cloud" in stored:
+        config["preferred_cloud"] = stored["preferred_cloud"]
 
     for key in (
         "wake_phrase_enabled",

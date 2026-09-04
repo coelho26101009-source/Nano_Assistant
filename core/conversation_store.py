@@ -77,6 +77,27 @@ def _loads(raw: Any, default: Any) -> Any:
     return value
 
 
+def _message_meta(raw: Any) -> dict:
+    """The stored per-message diagnostics, re-shaped by the allow-list.
+
+    Imported lazily because ``core.response_meta`` is a leaf that this store has
+    no other reason to depend on, and a store that cannot be constructed without
+    the provider stack is a store that is painful to test.
+    """
+    parsed = _loads(raw, {})
+    if not isinstance(parsed, dict) or not parsed:
+        return {}
+    from core import response_meta
+
+    shaped = response_meta.for_message(parsed)
+    # A row whose metadata says nothing about who produced it has no technical
+    # details to show. `{"source": "voice"}` would otherwise come back as
+    # `{"fallback_used": false}` and open an empty panel on every voice turn.
+    if not shaped.get("provider") and not shaped.get("model"):
+        return {}
+    return shaped
+
+
 class ConversationStore:
     """CRUD for threads and their messages. Owns no connection of its own."""
 
@@ -338,18 +359,30 @@ class ConversationStore:
         try:
             with self._lock:
                 rows = self.conn.execute(
-                    f"SELECT id, role, content, timestamp, trust FROM messages"
+                    f"SELECT id, role, content, timestamp, trust, metadata FROM messages"
                     f" WHERE conversation_id=? AND role IN ({marks})"
                     " ORDER BY id DESC LIMIT ?",
                     (str(conversation_id), *sorted(wanted), limit)).fetchall()
         except sqlite3.Error:
             logger.exception("Falha a ler mensagens da conversa %s", conversation_id)
             return []
-        return [
-            {"id": row[0], "role": row[1], "content": row[2], "timestamp": row[3],
-             "trust": row[4] or TrustLevel.USER.value}
-            for row in reversed(rows)
-        ]
+        out: list[dict] = []
+        for row in reversed(rows):
+            message = {"id": row[0], "role": row[1], "content": row[2],
+                       "timestamp": row[3], "trust": row[4] or TrustLevel.USER.value}
+            # WHICH PROVIDER ANSWERED THIS MESSAGE, months later.
+            #
+            # The column was always written and never read, so reopening a
+            # thread showed no technical details at all -- and the panel that
+            # did appear on a live turn described the CURRENT selection, which
+            # is a different question. It is re-shaped on the way out as well as
+            # on the way in: rows written before the allow-list existed hold
+            # whatever the Brain's scratchpad happened to contain that day.
+            meta = _message_meta(row[5])
+            if meta:
+                message["meta"] = meta
+            out.append(message)
+        return out
 
     def message_count(self, conversation_id: str) -> int:
         try:

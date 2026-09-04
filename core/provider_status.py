@@ -38,6 +38,7 @@ hint and booleans, and this module never inspects the payloads it caches.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures as _futures
 import logging
 import threading
 import time
@@ -150,6 +151,126 @@ class ProviderStatusCache:
 CACHE = ProviderStatusCache()
 
 
+def _disabled(provider_id: str, model: str, detail: str,
+              *, kind: str = "cloud", role: str = "cloud",
+              complex_model: str = "", url: str = "") -> dict:
+    """A provider the current mode forbids contacting, described without asking.
+
+    This is what makes LOCAL a privacy guarantee rather than a preference: the
+    payload is synthesised locally, so nothing leaves the machine -- not even a
+    status probe. The secret block reports configured=False on purpose; the UI
+    must not imply a key was read in a mode where the provider is not used.
+    """
+    payload = {
+        "id": provider_id, "name": providers.provider_name(provider_id),
+        "kind": kind, "role": role,
+        "state": providers.ProviderState.DISABLED.value,
+        "model": model, "models": [], "records": [],
+        "secret": {"configured": False, "masked": "", "source": "none", "encrypted": False},
+        "tiers": {"fast": model, "complex": complex_model or model},
+        "detail": detail,
+    }
+    if url:
+        payload["url"] = url
+    return payload
+
+
+def _tiers_for(cloud_tiers: dict[str, tuple[str, str]], provider_id: str) -> tuple[str, str]:
+    fast, complex_model = cloud_tiers.get(provider_id, ("", ""))
+    return str(fast or ""), str(complex_model or fast or "")
+
+
+def describe_all(
+    mode: providers.ProviderMode,
+    *,
+    cloud_tiers: dict[str, tuple[str, str]],
+    ollama_model: str,
+    ollama_base_url: str,
+    local_enabled: bool = True,
+    only: tuple[str, ...] | None = None,
+) -> tuple[dict[str, dict], dict]:
+    """Describe every provider, probing only those the mode can actually use.
+
+    Returns ``(clouds, ollama)``, where ``clouds`` maps every id in
+    ``providers.CLOUD_PROVIDER_IDS`` to its payload. A MAPPING RATHER THAN A
+    TUPLE, and the change paid for itself immediately: the previous
+    ``(google, groq, ollama)`` return meant every caller and every test had to
+    be edited to unpack one more provider, so the shape of the return value was
+    a tax on adding one. Callers now index by the same id the router, the
+    cooldown registry and the settings surface are keyed on.
+
+    ``cloud_tiers`` is ``{provider_id: (fast_model, complex_model)}``. A
+    provider absent from it is still described -- with no model configured,
+    which is what SETUP_REQUIRED means -- because "you have not chosen a model
+    yet" is a state the user has to be able to see and fix.
+
+    In CLOUD mode Ollama is never contacted and in LOCAL mode NO cloud provider
+    is contacted -- not even for a status probe. That is a privacy property,
+    not an optimisation: in LOCAL mode nothing at all leaves the machine, and
+    adding a third cloud provider must not quietly weaken it.
+
+    ``only`` restricts which cloud providers are probed at all. The others are
+    reported as not evaluated rather than as unavailable, because "we did not
+    ask" and "we asked and it is down" are different facts.
+    """
+    ids = tuple(providers.CLOUD_PROVIDER_IDS)
+    clouds: dict[str, dict] = {}
+
+    if mode == providers.ProviderMode.LOCAL:
+        for provider_id in ids:
+            fast, strong = _tiers_for(cloud_tiers, provider_id)
+            clouds[provider_id] = _disabled(
+                provider_id, fast,
+                f"Modo Local: o {providers.provider_name(provider_id)} não é contactado.",
+                role=("primary" if provider_id == providers.ProviderId.GROQ.value else "cloud"),
+                complex_model=strong)
+        ollama = providers.describe_ollama(ollama_model, ollama_base_url,
+                                           local_enabled=local_enabled)
+        return clouds, ollama
+
+    # Every describe_* short-circuits on an absent key with no network call, so
+    # there is nothing to gate here: an unconfigured install gets an honest
+    # SETUP_REQUIRED payload (and a place to paste a key) rather than a
+    # "disabled" state it never chose.
+    #
+    # THE CLOUD PROBES RUN CONCURRENTLY, AND THAT MATTERS.
+    #
+    # Each is a synchronous httpx call with a 10 second timeout. Run in
+    # sequence, a cold snapshot with three providers configured could block for
+    # thirty seconds -- and on a cache miss that block happens on whichever
+    # thread asked, which for the Settings poller is eel's single cooperative
+    # hub. A hub that stalls is a UI that is frozen, which this project has
+    # already shipped once (see core.audio_feedback.prewarm). One thread per
+    # provider keeps the worst case at one timeout instead of the sum of them.
+    wanted = [pid for pid in ids if only is None or pid in only]
+    skipped = [pid for pid in ids if pid not in wanted]
+
+    for provider_id in skipped:
+        fast, strong = _tiers_for(cloud_tiers, provider_id)
+        clouds[provider_id] = _disabled(provider_id, fast, "Não avaliado nesta consulta.",
+                                        complex_model=strong)
+
+    if wanted:
+        with _futures.ThreadPoolExecutor(max_workers=len(wanted)) as pool:
+            probes = {}
+            for provider_id in wanted:
+                fast, strong = _tiers_for(cloud_tiers, provider_id)
+                probes[provider_id] = pool.submit(
+                    providers.describe_cloud, provider_id, fast, strong)
+            for provider_id, probe in probes.items():
+                clouds[provider_id] = probe.result()
+
+    if mode == providers.ProviderMode.CLOUD:
+        ollama = _disabled("ollama", ollama_model,
+                           "Modo Cloud: o Ollama não é contactado.",
+                           kind="local", role="fallback", url=ollama_base_url)
+        return clouds, ollama
+
+    ollama = providers.describe_ollama(ollama_model, ollama_base_url,
+                                       local_enabled=local_enabled)
+    return clouds, ollama
+
+
 def describe_pair(
     mode: providers.ProviderMode,
     *,
@@ -159,48 +280,42 @@ def describe_pair(
     ollama_base_url: str,
     local_enabled: bool = True,
 ) -> tuple[dict, dict]:
-    """Describe both providers, probing only those the mode can actually use.
+    """``(groq, ollama)`` and nothing else. For callers that only need the pair.
 
-    In CLOUD mode Ollama is never contacted and in LOCAL mode Groq is never
-    contacted -- not even for a status probe. That is a privacy property, not an
-    optimisation: in LOCAL mode nothing at all leaves the machine.
+    The other cloud providers are not merely omitted from the return value --
+    they are never described at all, so this cannot cost a request to an
+    account the caller did not ask about.
     """
-    if mode == providers.ProviderMode.CLOUD:
-        groq = providers.describe_groq(groq_fast_model, groq_complex_model)
-        ollama = {
-            "id": "ollama", "name": "Ollama", "kind": "local", "role": "fallback",
-            "state": providers.ProviderState.DISABLED.value,
-            "model": ollama_model, "models": [],
-            "secret": {"configured": True, "masked": "", "source": "none", "encrypted": False},
-            "detail": "Modo Cloud: o Ollama não é contactado.", "url": ollama_base_url,
-        }
-        return groq, ollama
-
-    if mode == providers.ProviderMode.LOCAL:
-        groq = {
-            "id": "groq", "name": "Groq", "kind": "cloud", "role": "primary",
-            "state": providers.ProviderState.DISABLED.value,
-            "model": groq_fast_model, "models": [],
-            "secret": {"configured": False, "masked": "", "source": "none", "encrypted": False},
-            "tiers": {"fast": groq_fast_model, "complex": groq_complex_model},
-            "detail": "Modo Local: o Groq não é contactado.",
-        }
-        ollama = providers.describe_ollama(ollama_model, ollama_base_url, local_enabled=local_enabled)
-        return groq, ollama
-
-    groq = providers.describe_groq(groq_fast_model, groq_complex_model)
-    ollama = providers.describe_ollama(ollama_model, ollama_base_url, local_enabled=local_enabled)
-    return groq, ollama
+    clouds, ollama = describe_all(
+        mode,
+        cloud_tiers={providers.ProviderId.GROQ.value: (groq_fast_model, groq_complex_model)},
+        ollama_model=ollama_model,
+        ollama_base_url=ollama_base_url,
+        local_enabled=local_enabled,
+        only=(providers.ProviderId.GROQ.value,),
+    )
+    return clouds[providers.ProviderId.GROQ.value], ollama
 
 
-def cache_key(mode: providers.ProviderMode, groq_fast_model: str, groq_complex_model: str,
-              ollama_model: str) -> str:
-    """Snapshots are per mode AND per configured model.
+def cache_key(mode: providers.ProviderMode, cloud_tiers: dict[str, tuple[str, str]],
+              ollama_model: str, preferred_cloud: str = "") -> str:
+    """Snapshots are per mode AND per configured model AND per preference.
 
     Keying on mode alone meant changing the conversation model in Settings kept
-    reporting the previous model's availability until the TTL expired.
+    reporting the previous model's availability until the TTL expired. Every
+    provider's models and the preferred provider join the key for the same
+    reason: a snapshot taken while Groq was preferred describes a different
+    decision than one taken after the user switched.
+
+    The cloud half is built from ``CLOUD_PROVIDER_IDS`` rather than from the
+    mapping's own keys, so two callers that pass the same models in a different
+    insertion order share one snapshot instead of probing twice.
     """
-    return f"{mode.value}|{groq_fast_model}|{groq_complex_model}|{ollama_model}"
+    parts = [mode.value, ollama_model, preferred_cloud]
+    for provider_id in providers.CLOUD_PROVIDER_IDS:
+        fast, strong = _tiers_for(cloud_tiers, provider_id)
+        parts.extend((provider_id, fast, strong))
+    return "|".join(parts)
 
 
 __all__ = [
@@ -208,5 +323,6 @@ __all__ = [
     "DEFAULT_TTL_SECONDS",
     "ProviderStatusCache",
     "cache_key",
+    "describe_all",
     "describe_pair",
 ]

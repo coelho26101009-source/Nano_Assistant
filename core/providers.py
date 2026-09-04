@@ -1,18 +1,34 @@
-"""Provider routing for Nano: Groq (cloud, primary) and Ollama (local, fallback).
+"""Provider routing for Nano: one or more cloud providers, and Ollama locally.
 
-Groq is the normal brain. It is fast, it is free at the tier the user is on,
-and — importantly on a 16 GB machine — it costs no local RAM. Ollama stays as
-the local fallback and the privacy option, and its model is only loaded when a
-request actually routes there.
+MODE IS NOT PROVIDER
+--------------------
+This module used to equate CLOUD with Groq. It no longer does, and the
+distinction is the point of the file:
 
-Three modes:
+    MODE      what the user asked for      AUTO | CLOUD | LOCAL
+    PROVIDER  who actually answers          google | groq | mistral | ollama
 
-    AUTO    Groq first, fall back to Ollama when Groq is unavailable.
-    CLOUD   Groq only. If it is unavailable, say so; never silently downgrade.
-    LOCAL   Ollama only. Nothing leaves the machine.
+    AUTO    the preferred cloud provider first, then the other configured
+            cloud providers, then Ollama. Every hop is reported.
+    CLOUD   the preferred cloud provider only. If it is unavailable, say so;
+            never silently downgrade to the local model.
+    LOCAL   Ollama only. Nothing leaves the machine -- not even a status probe
+            (see core.provider_status.describe_all).
 
-Whichever provider actually answered is always reported, so "fell back to
-local" is visible in the UI rather than silent.
+LOCAL's meaning is unchanged by the arrival of a second cloud provider, and
+that is deliberate: a mode whose privacy guarantee shifted because a new
+provider was added would be worse than useless.
+
+Whichever provider actually answered is always reported, so "fell back" is
+visible in the UI rather than silent.
+
+ADDING THE NEXT PROVIDER
+------------------------
+A cloud provider is a ``describe_*`` function returning the payload shape below
+plus an entry in ``CLOUD_PROVIDER_IDS``. Routing, cooldowns, the failure
+taxonomy, the settings surface and the model switcher are all keyed on
+``payload["id"]`` and need no change. Mistral and SambaNova are meant to arrive
+that way.
 """
 from __future__ import annotations
 
@@ -24,7 +40,7 @@ from typing import Any
 
 import httpx
 
-from core import ollama_service, secret_store
+from core import google_provider, mistral_provider, ollama_service, secret_store
 
 logger = logging.getLogger("nano.providers")
 
@@ -74,6 +90,59 @@ class ProviderState(str, Enum):
     NOT_INSTALLED = "NOT_INSTALLED"
     DISABLED = "DISABLED"
     ERROR = "ERROR"
+
+
+class ProviderId(str, Enum):
+    """Every provider Nano can route to. The value IS the payload's "id"."""
+
+    GOOGLE = "google"
+    GROQ = "groq"
+    MISTRAL = "mistral"
+    OLLAMA = "ollama"
+
+    @classmethod
+    def parse(cls, value: Any) -> "ProviderId | None":
+        try:
+            return cls(str(value).strip().lower())
+        except ValueError:
+            return None
+
+
+#: Cloud providers, in the order AUTO tries them once the user's preferred one
+#: has been moved to the front. Adding SambaNova later means adding an id here
+#: and a describe_* function -- nothing in the Brain changes, which is what
+#: adding Mistral demonstrated.
+CLOUD_PROVIDER_IDS: tuple[str, ...] = (
+    ProviderId.GOOGLE.value, ProviderId.GROQ.value, ProviderId.MISTRAL.value,
+)
+
+#: Which cloud provider AUTO and CLOUD prefer when the user has expressed no
+#: choice. Groq, deliberately: it is the measured baseline this account has
+#: been running on, and a new provider does not become the default until a
+#: benchmark says it earned it.
+DEFAULT_CLOUD_PROVIDER = ProviderId.GROQ.value
+
+#: Human names, for sentences shown to the user.
+PROVIDER_NAMES: dict[str, str] = {
+    ProviderId.GOOGLE.value: "Google",
+    ProviderId.GROQ.value: "Groq",
+    ProviderId.MISTRAL.value: "Mistral",
+    ProviderId.OLLAMA.value: "Ollama",
+}
+
+
+def provider_name(provider: Any) -> str:
+    key = str(provider or "").strip().lower()
+    return PROVIDER_NAMES.get(key, key.capitalize() or "Provedor")
+
+
+def parse_preferred_cloud(value: Any) -> str:
+    """Normalise a stored preference. Anything unknown falls back to the
+    default rather than routing to a provider that does not exist."""
+    parsed = ProviderId.parse(value)
+    if parsed is None or parsed.value not in CLOUD_PROVIDER_IDS:
+        return DEFAULT_CLOUD_PROVIDER
+    return parsed.value
 
 
 # --------------------------------------------------------------------------
@@ -252,54 +321,141 @@ def groq_model_for(groq: dict, tier: str = "FAST") -> str:
     return str(tiers.get("fast") or groq.get("model") or DEFAULT_FAST_MODEL)
 
 
-def resolve_route(mode: ProviderMode, groq: dict, ollama: dict, *, tier: str = "FAST") -> dict[str, Any]:
+def cloud_model_for(payload: dict, tier: str = "FAST") -> str:
+    """The model a cloud provider should use for a tier. Provider-agnostic.
+
+    Same rule as ``groq_model_for`` and the same conservatism -- an
+    unrecognised tier is FAST, never STRONG -- but without a Groq-shaped
+    default, because a default belonging to one vendor has no meaning for
+    another. A provider with nothing configured returns "", and the caller
+    reports that honestly rather than substituting a model nobody chose.
+    """
+    tiers = payload.get("tiers") or {}
+    if str(tier).upper() == "STRONG":
+        return str(tiers.get("complex") or payload.get("model") or "")
+    return str(tiers.get("fast") or payload.get("model") or "")
+
+
+def cloud_candidates(preferred: str | None,
+                     payloads: dict[str, dict]) -> list[tuple[str, dict]]:
+    """(provider_id, payload) pairs in the order AUTO should try them.
+
+    The preferred provider is always first. The rest keep the declaration order
+    of ``CLOUD_PROVIDER_IDS`` -- a stable, explainable order beats one derived
+    from measured latency, which would make the same question route differently
+    on two consecutive turns for reasons the user cannot see.
+
+    The id comes from the MAPPING KEY, never from ``payload["id"]``. The key is
+    how the caller looked the provider up and is therefore the authoritative
+    answer; trusting the body would let a payload that omits the field route to
+    a provider literally named "None".
+
+    A provider with no payload (never described, e.g. because the mode forbade
+    contacting it) is simply absent.
+    """
+    chosen = str(preferred or DEFAULT_CLOUD_PROVIDER).lower()
+    order = [chosen] + [pid for pid in CLOUD_PROVIDER_IDS if pid != chosen]
+    seen: set[str] = set()
+    result: list[tuple[str, dict]] = []
+    for pid in order:
+        payload = payloads.get(pid)
+        if payload and pid not in seen:
+            seen.add(pid)
+            result.append((pid, payload))
+    return result
+
+
+def _is_ready(payload: dict | None) -> bool:
+    return bool(payload) and payload.get("state") == ProviderState.READY.value
+
+
+def _route(provider: str, model: str, *, usable: bool, fallback: bool,
+           mode: ProviderMode, tier: str, reason: str,
+           alternatives: list[str] | None = None) -> dict[str, Any]:
+    """One routing decision, in the single shape every caller reads.
+
+    ``alternatives`` is the ordered list of OTHER cloud providers that were
+    ready at decision time. The Brain uses it to fail over inside a turn
+    without re-probing, and it is what makes "o Gemini atingiu o limite, a usar
+    o Groq" a decision rather than a retry loop.
+    """
+    return {
+        "provider": provider, "model": model, "usable": usable,
+        "fallback": fallback, "mode": mode.value, "tier": tier,
+        "reason": reason, "alternatives": list(alternatives or []),
+    }
+
+
+def resolve_route(mode: ProviderMode, groq: dict, ollama: dict, *,
+                  tier: str = "FAST", google: dict | None = None,
+                  mistral: dict | None = None,
+                  preferred: str | None = None) -> dict[str, Any]:
     """Decide which provider AND model a request should use, and say why.
 
     This is the single authoritative routing decision. ``Brain.chat`` calls it
-    directly; nothing else may decide a provider. Never returns a provider it
-    believes is unusable without also flagging the decision, so the UI can show
-    "fell back to local" rather than pretending the primary answered.
+    directly; nothing else may decide a provider. It never returns a provider
+    it believes is unusable without also flagging the decision, so the UI can
+    show "fell back to local" rather than pretending the primary answered.
+
+    EVERY cloud provider but Groq is optional, and an absent one is simply
+    not a candidate. When none is supplied the behaviour is exactly what it
+    was when Groq was the only cloud provider, which is what keeps a machine
+    that has never configured Google or Mistral routing the way it always did.
+
+    One keyword per provider rather than a mapping is deliberate: the caller
+    has to name what it is passing, so a payload cannot be filed under the
+    wrong provider by a typo in a dictionary key. The ids the router then
+    uses come from :func:`cloud_candidates`, which reads the mapping KEY and
+    never ``payload["id"]``.
     """
-    groq_ready = groq["state"] == ProviderState.READY.value
-    ollama_ready = ollama["state"] == ProviderState.READY.value
-    cloud_model = groq_model_for(groq, tier)
+    payloads = {ProviderId.GROQ.value: groq}
+    if google:
+        payloads[ProviderId.GOOGLE.value] = google
+    if mistral:
+        payloads[ProviderId.MISTRAL.value] = mistral
+    clouds = cloud_candidates(preferred, payloads)
+    ollama_ready = _is_ready(ollama)
 
     if mode == ProviderMode.LOCAL:
-        return {
-            "provider": "ollama", "model": ollama["model"], "usable": ollama_ready,
-            "fallback": False, "mode": mode.value, "tier": tier,
-            "reason": "Modo Local: apenas o Ollama é usado." if ollama_ready else ollama["detail"],
-        }
+        return _route("ollama", ollama["model"], usable=ollama_ready, fallback=False,
+                      mode=mode, tier=tier,
+                      reason=("Modo Local: apenas o Ollama é usado." if ollama_ready
+                              else ollama["detail"]))
 
     if mode == ProviderMode.CLOUD:
-        return {
-            "provider": "groq", "model": cloud_model, "usable": groq_ready,
-            "fallback": False, "mode": mode.value, "tier": tier,
-            "reason": "Modo Cloud: apenas o Groq é usado." if groq_ready else groq["detail"],
-        }
+        # CLOUD honours the user's preference exactly. It does NOT quietly try
+        # the other cloud provider: "use this provider" is an instruction, and
+        # substituting a different vendor is the same class of surprise as
+        # falling back to local without saying so.
+        chosen_id, chosen = clouds[0] if clouds else (ProviderId.GROQ.value, groq)
+        ready = _is_ready(chosen)
+        return _route(chosen_id, cloud_model_for(chosen, tier),
+                      usable=ready, fallback=False, mode=mode, tier=tier,
+                      reason=(f"Modo Cloud: apenas o {provider_name(chosen_id)} é usado."
+                              if ready else str(chosen.get("detail") or "")))
 
     # AUTO
-    if groq_ready:
-        return {
-            "provider": "groq", "model": cloud_model, "usable": True,
-            "fallback": False, "mode": mode.value, "tier": tier,
-            "reason": "Groq disponível (sem custo de RAM local).",
-        }
+    ready_clouds = [(pid, payload) for pid, payload in clouds if _is_ready(payload)]
+    if ready_clouds:
+        (chosen_id, _chosen), *rest = ready_clouds
+        return _route(chosen_id, cloud_model_for(_chosen, tier),
+                      usable=True, fallback=False, mode=mode, tier=tier,
+                      reason=f"{provider_name(chosen_id)} disponível (sem custo de RAM local).",
+                      alternatives=[pid for pid, _ in rest])
     if ollama_ready:
-        return {
-            "provider": "ollama", "model": ollama["model"], "usable": True,
-            # 'tier' belongs on EVERY branch. It was set on CLOUD and LOCAL but
-            # dropped on both AUTO branches, so Brain.last_metadata["tier"] read
-            # None exactly when Nano had fallen back -- the case the diagnostics
-            # panel most needs to explain.
-            "fallback": True, "mode": mode.value, "tier": tier,
-            "reason": f"Groq indisponível — a usar o Ollama local. {groq['detail']}",
-        }
-    return {
-        "provider": "none", "model": "", "usable": False,
-        "fallback": False, "mode": mode.value, "tier": tier,
-        "reason": f"Nenhum provedor disponível. Groq: {groq['detail']} Ollama: {ollama['detail']}",
-    }
+        details = " ".join(str(p.get("detail") or "") for _, p in clouds).strip()
+        return _route("ollama", ollama["model"], usable=True,
+                      # 'tier' belongs on EVERY branch. It was set on CLOUD and
+                      # LOCAL but dropped on both AUTO branches, so
+                      # Brain.last_metadata["tier"] read None exactly when Nano
+                      # had fallen back -- the case the diagnostics panel most
+                      # needs to explain.
+                      fallback=True, mode=mode, tier=tier,
+                      reason=f"Cloud indisponível — a usar o Ollama local. {details}")
+
+    cloud_detail = " ".join(f"{provider_name(pid)}: {p.get('detail')}" for pid, p in clouds)
+    return _route("none", "", usable=False, fallback=False, mode=mode, tier=tier,
+                  reason=f"Nenhum provedor disponível. {cloud_detail} Ollama: {ollama['detail']}")
 
 
 def parse_rate_limit(headers: Any) -> dict[str, Any]:
@@ -354,30 +510,176 @@ def parse_rate_limit(headers: Any) -> dict[str, Any]:
     }
 
 
-def rate_limit_message(info: dict[str, Any]) -> str:
-    """Portuguese explanation of a 429. Never just 'Error'."""
+def rate_limit_message(info: dict[str, Any], provider: Any = None) -> str:
+    """Portuguese explanation of a 429. Never just 'Error'.
+
+    The provider is named when it is known -- from the argument, or from a
+    ``provider`` key the caller put in ``info``. With three cloud providers a
+    sentence that always said "Groq" would send a user whose Gemini or
+    Mistral quota ran out to fix the wrong credential. Groq stays the wording
+    when nothing says otherwise, because the one caller that supplies no
+    provider is the Groq transport itself.
+    """
+    name = provider_name(provider or info.get("provider") or ProviderId.GROQ.value)
     wait = info.get("wait_seconds")
     if wait and wait > 0:
         rounded = int(wait) if wait >= 1 else 1
-        return (f"Limite temporário da Groq atingido. "
+        return (f"Limite temporário do {name} atingido. "
                 f"Disponível novamente em ~{rounded} s.")
-    return "Limite temporário da Groq atingido. Tenta novamente dentro de momentos."
+    return f"Limite temporário do {name} atingido. Tenta novamente dentro de momentos."
+
+
+
+# --------------------------------------------------------------------------
+# Google (thin re-exports)
+# --------------------------------------------------------------------------
+#
+# The Gemini transport lives in core.google_provider, which owns the wire
+# format. These names exist so every caller keeps importing ONE module for
+# "which providers are there and what state are they in" -- the same reason
+# describe_ollama is a two-line wrapper over ollama_service.
+
+GOOGLE_SECRET_NAME = google_provider.GOOGLE_SECRET_NAME
+describe_google = google_provider.describe_google
+google_api_key = google_provider.google_api_key
+list_google_models = google_provider.list_google_models
+test_google = google_provider.test_google
+
+
+# --------------------------------------------------------------------------
+# Mistral (thin re-exports)
+# --------------------------------------------------------------------------
+#
+# Same arrangement as Google and for the same reason: core.mistral_provider
+# owns the wire format, and every caller keeps importing ONE module for "which
+# providers are there and what state are they in".
+
+MISTRAL_SECRET_NAME = mistral_provider.MISTRAL_SECRET_NAME
+describe_mistral = mistral_provider.describe_mistral
+mistral_api_key = mistral_provider.mistral_api_key
+list_mistral_models = mistral_provider.list_mistral_models
+test_mistral = mistral_provider.test_mistral
+
+
+#: The name of the describe_*/test_* function for each cloud provider, keyed
+#: by the id everything else is keyed by. This is what lets
+#: ``provider_status.describe_all`` probe N providers concurrently without
+#: naming any of them, so the next provider is one entry here plus one line in
+#: CLOUD_PROVIDER_IDS.
+#:
+#: NAMES AND NOT THE FUNCTIONS THEMSELVES, WHICH IS THE WHOLE POINT.
+#:
+#: A dict of function objects is bound once, at import. Every caller would then
+#: hold a reference that a later reassignment of ``providers.describe_groq``
+#: cannot reach -- so a test that substitutes a probe would silently keep
+#: exercising the real one, and a probe that must not run over the network
+#: would run anyway. Resolving the attribute at CALL time keeps one authority
+#: for "how is this provider described", and makes substituting it work the way
+#: substituting any module attribute does.
+_CLOUD_DESCRIBER_NAMES: dict[str, str] = {
+    ProviderId.GOOGLE.value: "describe_google",
+    ProviderId.GROQ.value: "describe_groq",
+    ProviderId.MISTRAL.value: "describe_mistral",
+}
+
+_CLOUD_TESTER_NAMES: dict[str, str] = {
+    ProviderId.GOOGLE.value: "test_google",
+    ProviderId.GROQ.value: "test_groq",
+    ProviderId.MISTRAL.value: "test_mistral",
+}
+
+
+#: The secret each cloud provider stores its key under. One entry per provider
+#: and never a shared name: removing one key must not disable another provider.
+CLOUD_SECRET_NAMES: dict[str, str] = {
+    ProviderId.GOOGLE.value: GOOGLE_SECRET_NAME,
+    ProviderId.GROQ.value: GROQ_SECRET_NAME,
+    ProviderId.MISTRAL.value: MISTRAL_SECRET_NAME,
+}
+
+
+def _resolve(name: str) -> Any:
+    import sys
+
+    return getattr(sys.modules[__name__], name)
+
+
+def describe_cloud(provider_id: str, fast_model: str = "",
+                   complex_model: str = "") -> dict[str, Any]:
+    """Status for ONE cloud provider, by id. Never returns a key.
+
+    The single entry point every status surface goes through, so a provider is
+    described the same way whoever asked.
+    """
+    name = _CLOUD_DESCRIBER_NAMES.get(str(provider_id or "").strip().lower())
+    if name is None:
+        raise KeyError(f"unknown cloud provider: {provider_id!r}")
+    return _resolve(name)(fast_model, complex_model)
+
+
+def test_cloud(provider_id: str, api_key: str | None = None) -> dict[str, Any]:
+    """Validate a candidate key for ONE cloud provider, without storing it."""
+    name = _CLOUD_TESTER_NAMES.get(str(provider_id or "").strip().lower())
+    if name is None:
+        raise KeyError(f"unknown cloud provider: {provider_id!r}")
+    return _resolve(name)(api_key)
+
+
+def cloud_model_choices(provider_id: str) -> tuple[list[str], str | None]:
+    """The model ids one cloud provider really exposes. Returns (ids, error).
+
+    A model choice is validated against the ACCOUNT, never accepted on trust:
+    a model that does not exist 404s on every single message, which is the
+    failure that made discovery mandatory for Groq in the first place.
+    """
+    pid = str(provider_id or "").strip().lower()
+    if pid == ProviderId.GROQ.value:
+        return list_groq_models()
+    if pid == ProviderId.GOOGLE.value:
+        records, error = list_google_models()
+        return (google_provider.model_ids(records) if not error else []), error
+    if pid == ProviderId.MISTRAL.value:
+        records, error = list_mistral_models()
+        return (mistral_provider.model_ids(records) if not error else []), error
+    return [], "unknown_provider"
 
 
 __all__ = [
+    "CLOUD_PROVIDER_IDS",
+    "DEFAULT_CLOUD_PROVIDER",
     "DEFAULT_COMPLEX_MODEL",
     "DEFAULT_FAST_MODEL",
+    "CLOUD_SECRET_NAMES",
+    "GOOGLE_SECRET_NAME",
     "GROQ_SECRET_NAME",
+    "MISTRAL_SECRET_NAME",
+    "PROVIDER_NAMES",
+    "ProviderId",
     "ProviderMode",
     "ProviderState",
+    "cloud_candidates",
+    "cloud_model_choices",
+    "cloud_model_for",
+    "describe_google",
+    "describe_cloud",
     "describe_groq",
+    "describe_mistral",
     "describe_ollama",
+    "google_api_key",
     "groq_api_key",
     "groq_model_for",
+    "list_google_models",
     "list_groq_models",
+    "list_mistral_models",
+    "mistral_api_key",
+    "parse_preferred_cloud",
     "parse_rate_limit",
+    "provider_name",
     "rank_groq_model",
     "rate_limit_message",
     "resolve_route",
+    "test_cloud",
+    "test_google",
     "test_groq",
+    "test_mistral",
 ]
