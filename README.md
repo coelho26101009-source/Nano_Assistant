@@ -22,13 +22,20 @@
 > ### Estado do projeto
 >
 > **O Nano nunca teve um lançamento público.** Não existe nenhuma tag neste
-> repositório, não existe instalador e não há nada para descarregar. Este
+> repositório e não há uma descarga pública. Existem instaladores locais de validação. Este
 > README descreve o ramo `main`.
 >
-> O `version.json` diz `1.0.0` / `v1.0`: é a **versão canónica interna** que a
-> interface, a shell Electron e o backend leem para não se contradizerem. Não é
-> um número de release. Ver [`docs/RELEASING.md`](docs/RELEASING.md) e
+> O `version.json` diz `0.1.0-beta.1`: é a **versão canónica** que a interface,
+> a shell Electron, o backend e o instalador leem para não se contradizerem.
+> Segue a política pré-1.0 descrita em [`docs/RELEASING.md`](docs/RELEASING.md)
+> — ainda não corresponde a nenhum lançamento público, porque não existe
+> nenhum. Ver também
 > [`docs/PUBLIC_RELEASE_CHECKLIST.md`](docs/PUBLIC_RELEASE_CHECKLIST.md).
+>
+> É possível **construir** um instalador Windows a partir deste ramo
+> (`docs/RELEASING.md` explica como) e ele foi validado numa máquina de
+> desenvolvimento, mas **não está assinado** e ainda não foi testado numa
+> máquina limpa. Não existe mecanismo de atualização.
 
 ## O que é o Nano?
 
@@ -486,11 +493,11 @@ aplicação real. Ver [`docs/RELEASING.md`](docs/RELEASING.md).
 
 ## Limitações atuais
 
-- **Não existe lançamento público, instalador nem build assinada.**
-- o runtime Python empacotado para distribuição final ainda não foi feito
+- **Não existe lançamento público nem build assinada.** Existem instaladores locais
+  NSIS e MSI x64 para validação da versão `0.1.0-beta.1`, com Python incluído.
 - **Start with Windows** depende do fluxo de aplicação empacotada
-- não há experiência de primeira execução: o Nano abre diretamente na interface
-  completa
+- a primeira execução apresenta um guia opcional; o chat exige pelo menos
+  um provedor cloud configurado ou um modelo disponível no Ollama
 - não existe mecanismo de atualização
 - automação de browser existe mas depende do `playwright` opcional; não é
   instalada por omissão
@@ -503,8 +510,7 @@ aplicação real. Ver [`docs/RELEASING.md`](docs/RELEASING.md).
 - wake phrase permanece experimental e desativada por omissão
 - o fallback local é mais lento que a cloud (≈19 s por turno contra ≈0,45 s)
 - os provedores cloud continuam sujeitos aos respetivos rate limits
-- `electron/package.json` e `frontend/package.json` ainda dizem `8.1.0`, um
-  resto que pertence ao passe de packaging
+- a validação numa máquina Windows limpa continua necessária antes da publicação
 
 ---
 
@@ -512,9 +518,8 @@ aplicação real. Ver [`docs/RELEASING.md`](docs/RELEASING.md).
 
 Sem ordem rígida, e sem prometer datas:
 
-- **Packaging** — installer, runtime Python autocontido, zero janelas de terminal
-- **Code signing** — sem isto, o SmartScreen avisa em cada descarga
-- **Onboarding** — primeira execução, configuração de provedor e de microfone
+- **Validação limpa** — instalação, configuração, uso e desinstalação fora da máquina de desenvolvimento
+- **Code signing** — a Beta não está assinada e pode mostrar um aviso SmartScreen
 - **Vision / OCR** — ler o ecrã, com controlos de privacidade próprios
 - **Coding / GitHub** — workflows de desenvolvimento assistido
 - **Produtividade** — calendário, email e integrações externas
@@ -523,6 +528,8 @@ Sem ordem rígida, e sem prometer datas:
 ---
 
 ## Documentação
+
+Para instalação e configuração da Beta, consulta o [guia da Beta](docs/BETA_GUIDE.md).
 
 | Documento | Conteúdo |
 |---|---|

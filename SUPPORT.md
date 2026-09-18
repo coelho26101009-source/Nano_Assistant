@@ -1,7 +1,8 @@
 # Support
 
 Nano is in active development and has **not had a public release**. There is no
-installer, no released build and no support contract. What follows is where to
+public installer download, no released build and no support contract. Local
+`0.1.0-beta.1` installers are available to build for validation. What follows is where to
 put each kind of message so it reaches the right place.
 
 ## Choose the right channel
@@ -34,7 +35,11 @@ Most reports are resolved faster with a little of this:
 * Say which mode you were in — **AUTO**, **CLOUD** or **LOCAL** — since Nano
   routes to a different provider in each and many behaviours differ.
 * Include your Windows version and how you started Nano (`NANO_DESKTOP.bat` or
-  `NANO.bat`).
+  `NANO.bat`, or the installed application).
+* Settings → About → **Copiar diagnóstico** prepares a report without keys,
+  conversation content or personal paths. Review it and share it only if wanted.
+  If the app cannot start, use `logs/startup-diagnostics.json` under
+  `%LOCALAPPDATA%\NanoAssistant` (or the configured `NANO_DATA_DIR`).
 
 ## What never to include
 

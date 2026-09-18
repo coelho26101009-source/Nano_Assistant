@@ -66,6 +66,7 @@ function stubElectron(overrides = {}) {
     rendererInvoke: [],       // ipcRenderer.invoke calls
     rendererOn: [],           // ipcRenderer.on subscriptions
     appEvents: [],
+    appHandlers: {},
     browserWindows: [],       // constructor options, in creation order
     windows: [],              // the window objects themselves
     quit: 0,
@@ -81,7 +82,7 @@ function stubElectron(overrides = {}) {
       requestSingleInstanceLock: () => true,
       // Never resolves: loading the module must not start a backend.
       whenReady: () => new Promise(() => {}),
-      on: (event) => { record.appEvents.push(event); },
+      on: (event, handler) => { record.appEvents.push(event); record.appHandlers[event] = handler; },
       quit: () => { record.quit += 1; },
       relaunch: () => {},
       exit: () => {},
@@ -121,6 +122,7 @@ function stubElectron(overrides = {}) {
           // rewriting and assert on the policy that comes out.
           session: {
             setPermissionRequestHandler() {},
+            setPermissionCheckHandler(handler) { self._permissionCheck = handler; },
             webRequest: {
               onHeadersReceived(handler) { self._headersReceived = handler; },
             },

@@ -25,6 +25,8 @@ import SettingsPage, { type Section as SettingsSection } from "../components/Set
 import TaskDetailModal from "../components/TaskDetailModal";
 import TopNav, { SECTIONS, ViewId, sectionEntry, sectionOf, viewEntry } from "../components/TopNav";
 import NanoLogo from "../components/NanoLogo";
+import FirstRunGuide from "../components/FirstRunGuide";
+import DiagnosticsPanel from "../components/DiagnosticsPanel";
 import { Composer, Conversation, Message, ToolEvent } from "../components/Conversation";
 import {
   ActivityPage, AgentsPage, IntegrationsPage,
@@ -123,6 +125,9 @@ export default function Home() {
   const [profileName, setProfileName] = useState<string | null>(null);
   const [messageCount, setMessageCount] = useState<number | null>(null);
   const [memoryReady, setMemoryReady] = useState(true);
+  const [showFirstRun, setShowFirstRun] = useState(false);
+  const [savingFirstRun, setSavingFirstRun] = useState(false);
+  const firstRunChecked = useRef(false);
 
   /* ── Memória / Second Brain ─────────────────────────────────────────── */
   const [nodeDetail, setNodeDetail] = useState<any | null>(null);
@@ -195,6 +200,25 @@ export default function Home() {
   // database, no PortAudio. Provider state keeps the slow readiness cadence.
   const { data: voiceDiag } = usePolled<VoiceDiagnostics>(
     "get_voice_diagnostics", POLL.voiceDiagnostics, ready && view === "settings");
+
+  // The backend owns this preference: the desktop's localhost port may
+  // change between launches, so browser localStorage is not durable here.
+  useEffect(() => {
+    if (!ready || threads === null || firstRunChecked.current || !memoryReady) return;
+    firstRunChecked.current = true;
+    if (threads.some((thread) => thread.messageCount > 0)) return;
+    call<{ completed: boolean }>("get_onboarding_status").then((result) => {
+      if (result?.completed === false) setShowFirstRun(true);
+    });
+  }, [ready, threads, memoryReady]);
+
+  const finishFirstRun = useCallback(async () => {
+    setSavingFirstRun(true);
+    const result = await call<{ ok: boolean }>("update_setting", "onboarding_completed", true);
+    setSavingFirstRun(false);
+    if (result?.ok) setShowFirstRun(false);
+    else notify("Não foi possível guardar o progresso. Tenta novamente.", "error");
+  }, [notify]);
 
   useEffect(() => { document.documentElement.setAttribute("data-theme", theme); }, [theme]);
   // Stamped on the root so rules that cannot see the React tree -- the drag
@@ -1040,7 +1064,7 @@ export default function Home() {
               activeId={activeThreadId}
               query={chatQuery} onQuery={setChatQuery}
               onNew={newConversation}
-              onOpen={openThread}
+              onOpen={(id) => { setShowFirstRun(false); openThread(id); }}
               onRename={renameThread}
               onDelete={deleteThread}
               onDeleteMany={deleteThreads}
@@ -1117,26 +1141,42 @@ export default function Home() {
                   error={{
                     message: "O motor do Nano não respondeu.",
                     component: "ponte eel",
-                    detail: "Verifica se a janela do NANO.bat continua aberta e recarrega esta página.",
+                    detail: isDesktop
+                      ? "Fecha o Nano através do ícone junto ao relógio e volta a abri-lo. Se o problema continuar, copia o diagnóstico para o relatório de erro."
+                      : "Verifica se o motor está a correr e recarrega esta página.",
                   }}
                   onRetry={() => window.location.reload()}
                 />
+                {isDesktop && <DiagnosticsPanel />}
               </div>
             )}
 
             {view === "chat" && (
               <>
-                <Conversation messages={messages} status={activityLabel} thinking={thinking} />
+                {showFirstRun ? (
+                  <FirstRunGuide providers={providers} readiness={readiness}
+                    saving={savingFirstRun} onFinish={finishFirstRun}
+                    onSettings={openSettingsSection}
+                    onRefresh={() => { refreshProviders(); refreshReadiness(); }} />
+                ) : (
+                  <Conversation messages={messages} status={activityLabel} thinking={thinking} />
+                )}
+                {!showFirstRun && providers?.route?.usable === false && (
+                  <div className="setup-notice" role="status">
+                    <span>Configura um provedor cloud ou um modelo local para conversar.</span>
+                    <Button size="sm" onClick={() => openSettingsSection("ai")}>Configurar IA</Button>
+                  </div>
+                )}
                 <Composer
                   value={input} onChange={setInput}
-                  onSend={() => sendMessage()} onStop={stopWork}
+                  onSend={() => { setShowFirstRun(false); sendMessage(); }} onStop={stopWork}
                   onVoice={startVoice} onCancelVoice={cancelVoice}
                   onNew={newConversation}
                   thinking={thinking} disabled={!ready}
                   voiceState={readiness?.voice.state ?? "UNKNOWN"}
                   listening={listening}
                   suggestions={suggestions}
-                  onSuggestion={(text) => sendMessage(text)}
+                  onSuggestion={(text) => { setShowFirstRun(false); sendMessage(text); }}
                 />
                 <p className="stage__footer">
                   O Nano pode cometer erros. Ações sensíveis pedem sempre a tua autorização.
@@ -1227,6 +1267,7 @@ export default function Home() {
                     onClearConversation={newConversation}
                     onForgetAllMemory={forgetAllMemory}
                     onNavigate={setView}
+                    onOpenFirstRun={() => { setShowFirstRun(true); setView("chat"); }}
                     section={settingsSection} onSection={setSettingsSection}
                     theme={theme} onTheme={setTheme}
                     reduceMotion={reduceMotion} onReduceMotion={setReduceMotion}

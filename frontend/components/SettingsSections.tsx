@@ -19,6 +19,7 @@ import type { SettingsPayload } from "../lib/backend";
 import { useFetch } from "../lib/backend";
 import type { CapabilityCatalogue } from "./CapabilitiesPage";
 import { VERSION } from "../lib/version";
+import DiagnosticsPanel from "./DiagnosticsPanel";
 import {
   Badge, Button, ConfirmDialog, MetricRow, Panel, StatusIndicator, Toggle,
 } from "./ui";
@@ -218,7 +219,9 @@ export function MemorySection({
 
 /* ── Sobre ────────────────────────────────────────────────────────────── */
 
-export function AboutSection({ settings }: { settings: SettingsPayload }) {
+export function AboutSection({ settings, onOpenFirstRun }: {
+  settings: SettingsPayload; onOpenFirstRun: () => void;
+}) {
   const { data: dataLocation } = useFetch<any>("get_data_location", true);
   const runtime = settings.runtime ?? {};
 
@@ -252,6 +255,10 @@ export function AboutSection({ settings }: { settings: SettingsPayload }) {
         <MetricRow label="Produto" value={VERSION.product} />
         <MetricRow label="Canal" value={VERSION.channel} />
         <MetricRow label="Motor (Python)" value={runtime.version ?? "—"} />
+        <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+          Versão Beta. Ainda não existe atualização automática.
+        </p>
+        <Button size="sm" onClick={onOpenFirstRun}>Abrir guia inicial</Button>
         <p className="dim" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>
           A interface e o motor leem a mesma versão do ficheiro <code>version.json</code>,
           para que nunca possam discordar sobre que versão está a correr.
@@ -278,6 +285,7 @@ export function AboutSection({ settings }: { settings: SettingsPayload }) {
           código, em <code>docs/</code>.
         </p>
       </Panel>
+      <DiagnosticsPanel />
     </div>
   );
 }

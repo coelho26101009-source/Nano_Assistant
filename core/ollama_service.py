@@ -148,6 +148,10 @@ def ensure_running(
             creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
         subprocess.Popen(
             [executable, "serve"],
+            # This detached shared service outlives Nano. Inheriting Nano's
+            # resources directory as cwd locks that directory on Windows and
+            # prevents a later upgrade/uninstall from removing the binaries.
+            cwd=str(Path(executable).resolve().parent),
             env=env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

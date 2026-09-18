@@ -113,6 +113,7 @@ app.whenReady().then(async () => {
   let MODE = 'AUTO';
   let PREFERRED = 'groq';
   let GOOGLE_FAST = 'gemini-stub-fast';
+  let ONBOARDING_COMPLETED = true;
   /* The list the UI renders from. Every provider-shaped assertion below is
      derived from it, so adding the next provider to the backend is one entry
      here rather than a hunt for hardcoded counts. */
@@ -204,6 +205,11 @@ app.whenReady().then(async () => {
   };
 
   const RESPONSES = {
+    get_onboarding_status: () => ({ completed: ONBOARDING_COMPLETED }),
+    update_setting: (key, value) => {
+      if (key === 'onboarding_completed') ONBOARDING_COMPLETED = value;
+      return { ok: true, key, value };
+    },
     get_providers: () => providersPayload(),
     get_settings: () => settingsPayload(),
     get_capability_catalogue: () => catalogue,
@@ -453,6 +459,38 @@ app.whenReady().then(async () => {
   report.aboutText = aboutText.slice(0, 700);
   ok('About shows the product version', aboutText.includes('1.0.0'), aboutText.slice(0, 160));
   ok('About does not show the legacy 8.1.0', !aboutText.includes('8.1.0'), '');
+
+  /* Beta guide reuses the actual settings and persists through the backend. */
+  byText('button', 'Abrir guia inicial')?.click();
+  await sleep(350);
+  ok('the initial guide can be reopened from About', !!q('#first-run-title'));
+  byText('button', 'Configurar IA')?.click();
+  await sleep(400);
+  ok('the guide opens existing provider settings', !!q('.settings-body') && /Groq/.test(q('.settings-body').textContent));
+  byText('.topnav-item', 'Chat')?.click();
+  await sleep(300);
+  byText('button', 'Começar a conversar')?.click();
+  await sleep(300);
+  ok('finishing the guide persists acknowledgement without enabling services',
+    !q('#first-run-title') && report.calls.some(c => c.name === 'update_setting' &&
+      c.args[0] === 'onboarding_completed' && c.args[1] === true));
+
+  byText('.topnav-item', 'Definições')?.click();
+  await sleep(300);
+  railItem('Sobre')?.click();
+  await sleep(300);
+  window.nanoApp = { isDesktop: true, getDesktopStatus: async () => ({
+    version: '0.1.0-beta.1', platform: 'win32', arch: 'x64', packaged: true,
+    versions: { electron: '44.2.0', chrome: '152.0.0.0' },
+    backend: { running: true, lastExitCode: null, secret: 'synthetic-credential' },
+    frontendReady: true, lastErrorCode: 'untrusted-error-with-secret',
+    dataDir: 'C:/private-profile', shortcutError: 'synthetic-credential',
+  }) };
+  byText('button', 'Copiar diagnóstico')?.click();
+  await sleep(350);
+  const diagnosticText = q('[aria-label="Relatório de diagnóstico"]')?.value || '';
+  ok('diagnostics whitelist excludes private fields and raw errors',
+    diagnosticText.includes('44.2.0') && !/synthetic-credential|private-profile|untrusted-error/.test(diagnosticText));
 
   /* ---- 9. PC Control shows guarantees, not switches --------------------- */
   railItem('PC Control')?.click();

@@ -37,13 +37,13 @@ const {
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
-const http = require('http');
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 
 const { NanoBackend } = require('./lib/backend');
 const overlayState = require('./lib/overlay-state');
 const windowState = require('./lib/window-state');
 const { canonicalDataDir, shellStateFile } = require('./lib/paths');
+const { diagnostics, waitForHttp, loadRecovery } = require('./lib/startup-health');
 
 /* ── Constants ──────────────────────────────────────────────────────────── */
 
@@ -84,6 +84,25 @@ let saveBoundsTimer = null;
 let overlayReady = false;
 /** The last view that arrived before the renderer was ready. */
 let pendingOverlayView = null;
+let frontendReady = false;
+let lastErrorCode = null;
+
+function desktopDiagnostics() {
+  return diagnostics({ version: app.getVersion(), packaged: !IS_DEV, backend,
+    frontendReady, lastErrorCode });
+}
+
+function recordFailure(code) {
+  lastErrorCode = code;
+  // Useful even when startup failed before a renderer existed. No raw error,
+  // environment, path, credential or conversation is included in this report.
+  try {
+    const directory = path.join(canonicalDataDir(process.env), 'logs');
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(path.join(directory, 'startup-diagnostics.json'),
+      JSON.stringify(desktopDiagnostics(), null, 2), 'utf8');
+  } catch (_) { /* An unwritable profile must still produce the dialog. */ }
+}
 
 /** Real, measured shortcut state. Never assumed to have worked. */
 const shortcutState = { accelerator: ACTIVATION_ACCELERATOR, registered: false, error: null };
@@ -148,6 +167,8 @@ function findPython() {
 
 function loadEnvFile() {
   const env = { ...process.env };
+  // An explicit profile is an isolation boundary for tests and portable use.
+  if (env.NANO_DATA_DIR || env.HELIOS_DATA_DIR) return env;
   const userEnv = path.join(app.getPath('userData'), '.env');
   const devEnv = path.join(APP_ROOT, '.env');
   const envFile = fs.existsSync(userEnv) ? userEnv : (IS_DEV && fs.existsSync(devEnv) ? devEnv : null);
@@ -167,6 +188,7 @@ function backendEnv() {
   const dataDir = canonicalDataDir(process.env);
   return {
     ...loadEnvFile(),
+    ...(process.env.NANO_DATA_DIR || process.env.HELIOS_DATA_DIR ? { NANO_SKIP_DOTENV: '1' } : {}),
     NANO_MODE: 'electron',
     NANO_APP_ROOT: APP_ROOT,
     NANO_DATA_DIR: dataDir,
@@ -213,40 +235,19 @@ function backendAlreadyRunning(port = PY_INSTANCE_LOCK_PORT) {
  * a route for index.html, which is how a desktop window ends up briefly blank.
  * This asks for the actual page and waits for a 200.
  */
-function waitForHttp(port, timeoutMs = 45000) {
-  const deadline = Date.now() + timeoutMs;
-  return new Promise((resolve, reject) => {
-    const attempt = () => {
-      if (Date.now() > deadline) {
-        reject(new Error('A interface do Nano não ficou disponível a tempo.'));
-        return;
-      }
-      const req = http.get(
-        { host: '127.0.0.1', port, path: '/index.html', timeout: 2000 },
-        (res) => {
-          res.resume();
-          if (res.statusCode === 200) resolve();
-          else setTimeout(attempt, 300);
-        },
-      );
-      req.on('error', () => setTimeout(attempt, 300));
-      req.on('timeout', () => { req.destroy(); setTimeout(attempt, 300); });
-    };
-    attempt();
-  });
-}
-
 /* ── Backend lifecycle ──────────────────────────────────────────────────── */
 
 function killTree(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return;
   if (process.platform === 'win32') {
-    try { exec(`taskkill /pid ${pid} /f /t`); } catch (_) { /* already gone */ }
+    try { execFile('taskkill.exe', ['/pid', String(pid), '/f', '/t'], { windowsHide: true }, () => {}); } catch (_) { /* already gone */ }
   } else {
     try { process.kill(pid, 'SIGKILL'); } catch (_) { /* already gone */ }
   }
 }
 
 async function startBackend() {
+  frontendReady = false;
   const python = findPython();
   if (!fs.existsSync(MAIN_PY)) {
     throw new Error(`O core do Nano não foi encontrado em ${MAIN_PY}.`);
@@ -257,6 +258,7 @@ async function startBackend() {
   backend.on('event', onBackendEvent);
   backend.on('exit', ({ code, expected }) => {
     if (expected || isQuitting) return;
+    recordFailure('backend_exited');
     log(`O motor terminou inesperadamente (${code}).`);
     unregisterShortcut();
     hideOverlay(true);
@@ -284,7 +286,7 @@ async function startBackend() {
   });
 
   await backend.waitUntilAlive({ timeoutMs: 90000 });
-  await waitForHttp(port);
+  await waitForHttp(port, 45000, { alive: () => Boolean(backend && backend.running) });
   return port;
 }
 
@@ -350,10 +352,38 @@ function createMainWindow(port) {
   });
 
   const origin = `http://127.0.0.1:${port}`;
+  const window = mainWindow;
+  const loadPage = () => {
+    if (window.isDestroyed() || isQuitting) return;
+    // did-fail-load owns recovery; consume loadURL's rejection as well.
+    Promise.resolve(window.loadURL(`${origin}/index.html`)).catch(() => {});
+  };
+  const reportLoadFailure = async (code) => {
+    frontendReady = false;
+    recordFailure(code);
+    const answer = await dialog.showMessageBox(window, {
+      type: 'error', title: 'Nano — interface indisponível',
+      message: 'Não foi possível abrir a interface do Nano.',
+      detail: `Código: ${code}. Podes tentar novamente ou sair e reabrir o Nano. ` +
+        'Se continuar, reinstala a mesma versão. Os teus dados são preservados. ' +
+        'O relatório local logs/startup-diagnostics.json contém apenas dados técnicos.',
+      buttons: ['Tentar novamente', 'Sair'], defaultId: 0, cancelId: 1,
+    }).catch(() => ({ response: 1 }));
+    if (isQuitting || window.isDestroyed()) return;
+    if (answer.response === 0) { recovery.ready(); loadPage(); }
+    else quitNano();
+  };
+  const recovery = loadRecovery({ reload: loadPage,
+    report: () => { reportLoadFailure('frontend_load_failed'); },
+    closed: () => isQuitting || window.isDestroyed() });
   // Before the first load, so the very first response is already covered.
   applyContentSecurityPolicy(mainWindow.webContents.session, port);
-  mainWindow.loadURL(`${origin}/index.html`);
   hardenWebContents(mainWindow.webContents, origin);
+  window.webContents.on('did-finish-load', () => {
+    recovery.ready(); frontendReady = true; lastErrorCode = null;
+  });
+  window.webContents.on('render-process-gone', () => { reportLoadFailure('renderer_gone'); });
+  window.on('closed', () => recovery.dispose());
 
   mainWindow.once('ready-to-show', () => {
     if (bounds.maximized) mainWindow.maximize();
@@ -388,12 +418,11 @@ function createMainWindow(port) {
   });
 
   mainWindow.webContents.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
-    if (!isMainFrame || isQuitting) return;
-    log(`Falha a carregar a UI (${code} ${description}); nova tentativa.`);
-    setTimeout(() => {
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.loadURL(`${origin}/index.html`);
-    }, 1500);
+    if (!isMainFrame || isQuitting || code === -3) return;
+    frontendReady = false;
+    recovery.failed();
   });
+  loadPage();
 }
 
 /**
@@ -500,6 +529,7 @@ function hardenWebContents(contents, origin) {
   // nothing here should be able to ask for the camera, the clipboard or
   // notifications behind the user's back.
   contents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+  contents.session.setPermissionCheckHandler(() => false);
 
   // 100% ZOOM IS THE TARGET, NOT A WORKAROUND. The layout is fixed to work at
   // devicePixelRatio-independent 100%; pinning the factor here means a stray
@@ -885,6 +915,15 @@ function refreshTrayMenu() {
 
 let restarting = false;
 
+function replaceMainWindow(port) {
+  rememberBounds();
+  const previous = mainWindow;
+  if (previous && !previous.isDestroyed()) previous.destroy();
+  frontendReady = false;
+  // Rebind navigation, recovery and CSP to the new backend's ephemeral origin.
+  createMainWindow(port);
+}
+
 async function restartNano() {
   if (restarting) return;
   restarting = true;
@@ -893,13 +932,14 @@ async function restartNano() {
   try {
     await stopBackend();
     const port = await startBackend();
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.loadURL(`http://127.0.0.1:${port}/index.html`);
-    }
+    replaceMainWindow(port);
     registerShortcut();
     log('O motor do Nano foi reiniciado.');
   } catch (err) {
-    dialog.showErrorBox('Nano — falha ao reiniciar', err.message);
+    recordFailure('backend_start_failed');
+    await stopBackend();
+    dialog.showErrorBox('Nano — falha ao reiniciar',
+      'Código: backend_start_failed. Sai do Nano e volta a abrir. Se continuar, verifica o espaço livre e a pasta de dados indicada em Sobre, ou reinstala a mesma versão.');
   } finally {
     restarting = false;
   }
@@ -962,6 +1002,7 @@ function registerRendererIpc() {
   ipcMain.handle('nano:window-state', () => currentWindowState());
 
   ipcMain.handle('nano:desktop-status', () => ({
+    ...desktopDiagnostics(),
     isDesktop: true,
     version: app.getVersion(),
     shortcut: humanAccelerator(),
@@ -1047,10 +1088,14 @@ if (!gotLock) {
       registerShortcut();
       log(`Nano Desktop pronto em http://127.0.0.1:${port}`);
     } catch (err) {
-      log('Erro fatal no arranque:', err.message);
+      recordFailure('backend_start_failed');
+      log('Erro fatal no arranque: backend_start_failed');
       dialog.showErrorBox(
         'Nano — não foi possível arrancar',
-        `${err.message}\n\nO Nano não abriu nenhuma janela porque o motor não ficou pronto.`,
+        'Código: backend_start_failed. O motor ou a interface não ficaram prontos.\n\n' +
+        'Fecha outras instâncias do Nano e tenta novamente. Verifica o espaço livre e as permissões ' +
+        'da pasta %LOCALAPPDATA%\\NanoAssistant. Se continuar, reinstala a mesma versão; os dados são preservados.\n\n' +
+        'Podes partilhar logs/startup-diagnostics.json dessa pasta: contém apenas dados técnicos, sem conversas nem chaves.',
       );
       isQuitting = true;
       await stopBackend();
@@ -1065,7 +1110,11 @@ app.on('activate', () => { if (mainWindow) showMainWindow(); });
 // are the point of keeping it alive.
 app.on('window-all-closed', () => { if (isQuitting) app.quit(); });
 
-app.on('before-quit', () => { isQuitting = true; });
+app.on('before-quit', (event) => {
+  if (isQuitting) return;
+  event.preventDefault();
+  quitNano();
+});
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
@@ -1089,13 +1138,16 @@ module.exports = {
     hideOverlay,
     createOverlayWindow,
     createMainWindow,
+    replaceMainWindow,
     onBackendEvent,
     quitNano,
+    desktopDiagnostics,
     state: () => ({ overlayWindow, mainWindow, overlayReady, shellState }),
     setOverlayEnabled: (value) => { shellState.overlayEnabled = value; },
     reset: () => {
       overlayWindow = null; mainWindow = null; overlayReady = false;
       pendingOverlayView = null; isQuitting = false;
+      frontendReady = false; lastErrorCode = null;
       shellState = { bounds: null, overlayEnabled: true };
     },
   },

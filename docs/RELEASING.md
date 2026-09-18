@@ -1,10 +1,9 @@
 # Releasing Nano
 
-**Nano has never been released.** There is no tag in this repository, no
-installer, and nothing to download. This document describes the process that
-*will* be used, so that the first release is deliberate rather than improvised.
+**Nano has never had a public release.** Local unsigned NSIS/MSI installers can
+be built for `0.1.0-beta.1`. There is no public download or automatic updater.
 
-Nothing here should be executed until the packaging pass is complete and
+Publishing must wait until clean Windows validation is complete and
 [`PUBLIC_RELEASE_CHECKLIST.md`](PUBLIC_RELEASE_CHECKLIST.md) is satisfied.
 
 ## Versioning
@@ -29,18 +28,52 @@ automatically, which keeps a beta from looking like a finished product.
 `version.json` at the repository root is the single source of truth:
 
 ```json
-{ "product": "1.0.0", "display": "v1.0", "name": "Nano Assistant", "channel": "stable" }
+{ "product": "0.1.0-beta.1", "display": "v0.1.0-beta.1", "name": "Nano Assistant", "channel": "beta" }
 ```
 
-`core/version.py`, `frontend/lib/version.ts` and the Electron shell all read it.
-Before this existed there were four version strings in three languages and they
-disagreed — the UI said `v1.0` while the backend reported `8.1.0`.
+`core/version.py` and `frontend/lib/version.ts` read it. Before this existed
+there were four version strings in three languages and they disagreed — the UI
+said `v1.0` while the backend reported `8.1.0`.
 
-**Still to reconcile:** `electron/package.json` and `frontend/package.json` both
-carry a legacy `8.1.0`. `electron-builder` reads the Electron one to stamp the
-installer, so it must be aligned as part of the packaging pass. Leaving it out
-of scope until then was deliberate — changing it changes the installer's
-identity, which is a packaging decision.
+**Reconciled in the packaging pass.** `electron/package.json` and
+`frontend/package.json` used to carry a legacy `8.1.0`, and `electron-builder`
+stamps the installer from the Electron one — so an installer built before that
+pass would have called itself version 8.1.0 of a product whose interface said
+`v1.0`. All three now hold the same string, as do both `package-lock.json`
+files, and `electron/test/packaging.test.js` fails if they drift.
+
+`channel` was `stable`, which the Settings panel rendered to the user as
+“Canal: stable” for a product that has never been released. It is now `beta`.
+
+### Bumping the version
+
+Six version records, one number, and a rebuild:
+
+1. `version.json` — `product`, `display` and, if the stage changed, `channel`.
+2. `electron/package.json` and `electron/package-lock.json` (root `version` and
+   `packages[""].version` — leave any dependency that happens to share the old
+   number alone).
+3. `frontend/package.json` and `frontend/package-lock.json`, likewise.
+4. **Rebuild the frontend.** `frontend/lib/version.ts` imports `version.json` at
+   *build* time, so `frontend/out` freezes whatever the version was when it was
+   exported. Skipping this produced an installer whose title bar said `v1.0`
+   while the shell and backend both reported `0.1.0-beta.1`.
+   `electron/scripts/verify-package-inputs.js` now refuses to package a stale
+   export, but the rebuild is still the thing to do.
+
+Then `cd electron && npm test` — the packaging suite checks all six files agree.
+
+### One limitation worth knowing
+
+Windows Installer's `ProductVersion` field accepts only numeric
+`major.minor.build`, so the MSI records the numeric version and drops `-beta.1`.
+The executable's Windows `ProductVersion` metadata is also numeric `0.1.0.0`.
+Its readable `FileVersion`, the version displayed throughout Nano, package
+manifests and installer filenames retain the product identity `0.1.0-beta.1`.
+Do not interpret numeric Windows metadata as a stable-release claim. The
+practical consequence: **Windows would not consider `0.1.0-beta.2` an upgrade
+over `0.1.0-beta.1` via MSI**, because both are `0.1.0.0`. Bump the numeric part
+for any MSI a user is expected to upgrade over.
 
 ## Release flow
 
@@ -62,11 +95,11 @@ identity, which is a packaging decision.
         ├─ tests
         ├─ frontend build
         ├─ embedded Python runtime
-        ├─ electron-builder → Nano-Setup-x64.exe, .msi
+        ├─ electron-builder → Nano-Setup-0.1.0-beta.1-x64.exe, .msi
         ├─ SHA256SUMS.txt
         │
         ▼
-  GitHub Release (draft) → review → publish
+  GitHub prerelease (only with explicit publish input and matching version tag)
 ```
 
 ### The test gate
@@ -102,15 +135,15 @@ The `nano-test-gate` project skill is the canonical checklist.
 
 | Artifact | Purpose |
 | --- | --- |
-| `Nano-Setup-x64.exe` | NSIS installer (primary) |
-| `Nano-Setup-x64.msi` | MSI, for managed environments |
+| `Nano-Setup-0.1.0-beta.1-x64.exe` | NSIS installer (primary, per user) |
+| `Nano-Setup-0.1.0-beta.1-x64.msi` | MSI, for managed environments |
 | `SHA256SUMS.txt` | Checksums for both |
 
 Checksums are generated in CI and attached to the release, so a download can be
 verified independently of the transport:
 
 ```powershell
-Get-FileHash Nano-Setup-x64.exe -Algorithm SHA256
+Get-FileHash Nano-Setup-0.1.0-beta.1-x64.exe -Algorithm SHA256
 ```
 
 ### Release notes
@@ -128,13 +161,13 @@ A beta release must say it is a beta in the first sentence.
 
 ## Code signing
 
-**Not implemented.** Until it is, Windows SmartScreen will warn on every
-download, and every user is right to be suspicious of an unsigned executable
-that asks to control their computer.
+**Not implemented.** The installer is unsigned. Windows may show an unknown
+publisher or SmartScreen warning. Communicate that before an unsigned Beta is
+downloaded; do not ask users to disable Windows security.
 
 When it is set up:
 
-* Use an OV or EV certificate; EV avoids the SmartScreen reputation delay.
+* Choose a supported signing service or certificate and validate the result.
 * The certificate lives in GitHub Actions secrets, **never** in the repository.
 * Only the manual release workflow may access it — never a workflow triggered by
   a pull request, because a fork's PR must never be able to reach a signing key.
@@ -167,9 +200,45 @@ reading a newer database is the failure mode that loses somebody's data.
 
 Stated plainly so nothing here reads as more finished than it is:
 
-* No packaging pass has been completed; `build-windows.yml` is a starting point,
-  not a working pipeline.
 * No code signing.
 * No update mechanism — a user with `0.1.0` will not learn that `0.2.0` exists.
-* No installed-application testing: everything so far has been validated from a
-  development checkout, not from an installed build.
+* A developer-host smoke does not prove installation on a clean Windows machine.
+* MSI prerelease-only upgrades need a numeric-version policy before Beta 2.
+
+## Building and validating locally
+
+Use Node 22.12+ and Python 3.12 on Windows x64. From the repository root:
+
+```powershell
+Push-Location frontend
+npm ci
+npx tsc --noEmit
+npm run build
+Pop-Location
+./scripts/prepare_windows_runtime.ps1
+Push-Location electron
+npm ci
+npm run fetch-electron
+npm test
+npm run build:all
+node scripts/verify-built-package.js
+node test/packaged-smoke.js 'dist-electron/win-unpacked/Nano Assistant.exe'
+Pop-Location
+```
+
+The runtime preparer stages a fresh embedded interpreter, verifies pinned
+download hashes and dependency imports, then replaces only `runtime/python`.
+The package gate rejects missing resources, mismatched frontend version and
+private files. It never copies the broader `runtime/` developer-data tree.
+
+The smoke creates its own temporary profile, strips inherited credentials,
+checks the guide/settings/SQLite/restart and requests a normal quit. Its
+loopback debugging port is a test-launch flag only. It retains synthetic
+evidence in the printed temporary folder. Ollama is a shared detached service
+and deliberately survives Nano shutdown; Nano's Python and Electron processes
+must terminate. The same command accepts the installed executable's path.
+
+Before distribution, inspect `app.asar`, resources, executable product/file
+versions and MSI metadata, then run the checklist on clean Windows. NSIS
+uninstall preserves `%LOCALAPPDATA%\NanoAssistant` and Electron shell data;
+no wipe option is supplied. See [BETA_GUIDE.md](BETA_GUIDE.md).

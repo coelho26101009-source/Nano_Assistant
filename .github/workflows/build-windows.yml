@@ -1,13 +1,13 @@
 name: Build Nano Windows (manual)
 
-# PACKAGING IS NOT READY, AND THIS WORKFLOW IS MANUAL ON PURPOSE.
+# This workflow produces beta installers for manual validation. Publishing
+# requires an explicit input and a matching version tag; pushes never publish.
 #
 # It used to run on every push to main and to publish a GitHub Release on any
 # `v*` tag. Neither is appropriate yet:
 #
-#   * Nano has never had a public release. There is no signed installer, no
-#     update mechanism and no first-run onboarding, so an artifact produced here
-#     would look like a product and behave like a development build.
+#   * Nano has never had a public release. Installers are unsigned, there is no
+#     updater, and a clean Windows validation remains a release requirement.
 #   * Building an installer on every push spends Windows runner minutes -- the
 #     most expensive kind -- to produce something nobody may download.
 #   * A release published from a tag is irreversible in practice. Until the
@@ -15,10 +15,21 @@ name: Build Nano Windows (manual)
 #     publish by accident.
 #
 # So the triggers are `workflow_dispatch` only. Ordinary CI lives in ci.yml.
-# The steps below are kept intact rather than deleted: they are the closest
-# thing to a working packaging pipeline this project has, and they are the
-# starting point for the packaging pass. See docs/RELEASING.md for the intended
-# end state.
+#
+# WHAT THE PACKAGING PASS CHANGED HERE. Three things made this workflow unable
+# to produce an artifact at all, and none of them could be seen by reading it:
+#
+#   1. Node 20, while electron@44 and its whole install chain declare
+#      `engines: node >= 22.12.0`. npm only warns, so it failed later and
+#      less obviously.
+#   2. The builder wrote to `<repo>/dist-electron` (its `directories.output`
+#      was `../dist-electron`, relative to `electron/`) while every path below
+#      looked in `electron/dist-electron`. The output directory is now
+#      `dist-electron` inside `electron/`, which is where these paths already
+#      pointed.
+#   3. The artifact verification compared real filenames against glob patterns,
+#      and `-join` binds tighter than `-ne`, so the whole expression evaluated
+#      to the *string* "True" -- always truthy. The step could never pass.
 
 on:
   workflow_dispatch:
@@ -48,9 +59,11 @@ jobs:
   build:
     needs: test
     runs-on: windows-latest
+    # Read only. Packaging never needs to write to the repository; publishing
+    # does, and it now lives in its own job below so that the token used while
+    # running electron-builder and a downloaded toolchain cannot write here.
     permissions:
-      # Write is required only by the optional publish step below.
-      contents: write
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -60,10 +73,13 @@ jobs:
         with:
           python-version: '3.12.10'
 
+      # NODE 22, NOT 20. electron@44 and its install chain
+      # (@electron/get, @electron-internal/extract-zip) declare
+      # `engines: node >= 22.12.0`, matching the electron job in ci.yml.
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: |
             frontend/package-lock.json
@@ -73,6 +89,9 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      # Must precede packaging: `frontend/out` is copied in as an extraResource,
+      # and it embeds version.json at build time. electron/scripts/verify-package-inputs.js
+      # fails the build if this export is missing or stale.
       - name: Build frontend
         working-directory: frontend
         run: npm run build
@@ -81,36 +100,26 @@ jobs:
         working-directory: electron
         run: npm ci
 
-      - name: Prepare relocatable embedded Python runtime
+      - name: Verify requested release version
+        if: inputs.publish_release
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          $runtime = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
-          $zip = Join-Path $env:RUNNER_TEMP 'python-3.12.10-embed-amd64.zip'
-          New-Item -ItemType Directory -Force -Path $runtime | Out-Null
-          Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip' -OutFile $zip
-          Expand-Archive -Path $zip -DestinationPath $runtime -Force
+          $version = (Get-Content version.json -Raw | ConvertFrom-Json).product
+          if ($env:GITHUB_REF -ne "refs/tags/v$version") {
+            throw 'Publishing requires the exact tag from version.json.'
+          }
 
-          $pth = Get-ChildItem -Path $runtime -Filter '*._pth' | Select-Object -First 1
-          if (-not $pth) { throw 'Embedded Python ._pth file not found.' }
-          $lines = Get-Content -LiteralPath $pth.FullName
-          if (-not ($lines -contains 'Lib\site-packages')) { Add-Content -LiteralPath $pth.FullName -Value 'Lib\site-packages' }
-          $lines = Get-Content -LiteralPath $pth.FullName
-          $lines = $lines | ForEach-Object { if ($_ -eq '#import site') { 'import site' } else { $_ } }
-          if (-not ($lines -contains $env:GITHUB_WORKSPACE)) { $lines += $env:GITHUB_WORKSPACE }
-          Set-Content -LiteralPath $pth.FullName -Value $lines -Encoding ascii
+      # NO `npm run fetch-electron` HERE, DELIBERATELY. Electron 42 stopped
+      # downloading its binary during `npm ci`, which is why ci.yml's
+      # chromium-ui job fetches it explicitly -- that job *runs* Electron.
+      # Packaging does not: electron-builder resolves the version from
+      # node_modules/electron/package.json and downloads its own dist zip
+      # through @electron/get. Adding the fetch here would download ~100 MB
+      # that nothing reads.
 
-          $sitePackages = Join-Path $runtime 'Lib\site-packages'
-          New-Item -ItemType Directory -Force -Path $sitePackages | Out-Null
-          python -m pip install --upgrade pip
-          # Eel is published on PyPI as a source distribution. Use the public
-          # PyPI index explicitly so the Windows runner's package mirror does
-          # not incorrectly report it as unavailable.
-          python -m pip install --index-url https://pypi.org/simple --target $sitePackages -r requirements.txt
-
-          $embeddedPython = Join-Path $runtime 'python.exe'
-          & $embeddedPython -c "import sys; assert sys.version_info[:2] == (3, 12); import eel, httpx, groq, psutil, yaml, dotenv; print('Nano embedded dependencies OK')"
-          & $embeddedPython -c "import core.main; print('Nano embedded core import OK')"
+      - name: Prepare relocatable embedded Python runtime
+        shell: pwsh
+        run: ./scripts/prepare_windows_runtime.ps1
 
       - name: Validate plugin source
         shell: pwsh
@@ -124,31 +133,61 @@ jobs:
           }
           Write-Host "Nano plugin syntax validation OK ($($pluginFiles.Count) files)"
 
+      # `prebuild:all` runs electron/scripts/verify-package-inputs.js first, so a
+      # missing runtime, a stale frontend export or a stray secret stops the
+      # build here rather than shipping.
       - name: Build installers
         working-directory: electron
         run: npm run build:all
+
+      - name: Inspect packaged resources and shell archive
+        working-directory: electron
+        run: node scripts/verify-built-package.js
 
       - name: Verify installer artifacts
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $expectedPaths = @(
-            'electron/dist-electron/*.exe'
-            'electron/dist-electron/*.msi'
+          $outDir = 'electron/dist-electron'
+          $version = (Get-Content version.json -Raw | ConvertFrom-Json).product
+          $expected = @(
+            "Nano-Setup-$version-x64.exe"
+            "Nano-Setup-$version-x64.msi"
           )
-          $artifacts = @(
-            Get-ChildItem -Path 'electron/dist-electron' -Filter '*.exe' -File -ErrorAction SilentlyContinue
-            Get-ChildItem -Path 'electron/dist-electron' -Filter '*.msi' -File -ErrorAction SilentlyContinue
-          )
-          if ($artifacts.Count -eq 0) { throw 'No .exe or .msi installer artifacts were produced.' }
-          $actualPaths = @($artifacts | ForEach-Object { $_.FullName.Replace($env:GITHUB_WORKSPACE + '\', '').Replace('\', '/') })
-          if (($actualPaths | Sort-Object) -join ';' -ne ($expectedPaths | Sort-Object) -join ';') {
-            throw "Artifact discovery does not match publish paths: $($actualPaths -join ', ')"
+          foreach ($name in $expected) {
+            $file = Join-Path $outDir $name
+            if (-not (Test-Path $file)) {
+              $found = (Get-ChildItem $outDir -File | ForEach-Object { $_.Name }) -join ', '
+              throw "Expected artifact '$name' was not produced. Found: $found"
+            }
+            $length = (Get-Item $file).Length
+            # A Nano installer carries Electron, Chromium and an embedded
+            # CPython. Anything under 50 MB means a resource silently went
+            # missing, which is precisely the failure this catches.
+            if ($length -lt 50MB) {
+              throw "Artifact '$name' is only $length bytes; a complete installer is far larger."
+            }
+            Write-Host ("Installer artifact OK: {0} ({1:N1} MB)" -f $name, ($length / 1MB))
           }
-          if (($expectedPaths | Sort-Object) -join ';' -ne ('electron/dist-electron/*.exe;electron/dist-electron/*.msi')) {
-            throw 'Publish paths are not aligned with verified artifact paths.'
-          }
-          foreach ($artifact in $artifacts) { Write-Host "Installer artifact: $($artifact.FullName) ($($artifact.Length) bytes)" }
+
+      # docs/RELEASING.md tells users to verify a download against these, so
+      # they have to actually exist. They did not before this pass.
+      - name: Generate checksums
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location electron/dist-electron
+          $lines = Get-ChildItem -File -Include '*.exe','*.msi' -Path * |
+            Sort-Object Name |
+            ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
+          if (-not $lines) { throw 'No installers to checksum.' }
+          # ASCII, LF-terminated: the format `sha256sum -c` expects.
+          [System.IO.File]::WriteAllText(
+            (Join-Path (Get-Location) 'SHA256SUMS.txt'),
+            (($lines -join "`n") + "`n"),
+            [System.Text.Encoding]::ASCII)
+          Get-Content SHA256SUMS.txt
+          Pop-Location
 
       - name: Upload installers
         uses: actions/upload-artifact@v4
@@ -157,13 +196,26 @@ jobs:
           path: |
             electron/dist-electron/*.exe
             electron/dist-electron/*.msi
+            electron/dist-electron/SHA256SUMS.txt
           if-no-files-found: error
 
-      # Requires BOTH an explicit opt-in and a version tag. Publishing is
-      # also the only step that needs write access, so it carries its own
-      # permission rather than the whole workflow being granted it.
+  # Publishing is the only thing that needs write access, so it is the only job
+  # that holds it, and it downloads what `build` produced rather than assuming
+  # a working directory it never ran in still exists.
+  publish:
+    needs: build
+    if: inputs.publish_release && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          name: Nano-Windows
+          path: installers
+
       - name: Publish GitHub release
-        if: inputs.publish_release && startsWith(github.ref, 'refs/tags/v')
         # The only third-party action in this repository, and it runs in the
         # only job that holds `contents: write`. A mutable `@v2` tag can be
         # repointed at any commit by whoever controls that tag, so this one is
@@ -174,6 +226,9 @@ jobs:
         # is moving to in the pull request.
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
+          prerelease: true
+          fail_on_unmatched_files: true
           files: |
-            electron/dist-electron/*.exe
-            electron/dist-electron/*.msi
+            installers/*.exe
+            installers/*.msi
+            installers/SHA256SUMS.txt

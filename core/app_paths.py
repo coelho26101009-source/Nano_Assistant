@@ -15,13 +15,18 @@ def app_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def default_data_root() -> Path:
+    """The normal profile, independent of an explicit test/portable override."""
+    if os.name == "nt":
+        return Path(os.getenv("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")) / "NanoAssistant"
+    return Path(os.getenv("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "NanoAssistant"
+
+
 def data_root() -> Path:
     configured = os.getenv("NANO_DATA_DIR") or os.getenv("HELIOS_DATA_DIR")
     if configured:
         return Path(configured).expanduser().resolve()
-    if os.name == "nt":
-        return Path(os.getenv("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")) / "NanoAssistant"
-    return Path(os.getenv("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "NanoAssistant"
+    return default_data_root()
 
 
 ROOT = app_root()

@@ -758,6 +758,21 @@ def _step(drive_report: dict, label: str) -> dict:
     return step
 
 
+def test_beta_guide_reuses_settings_and_persists_completion(drive_report):
+    for label in (
+        "the initial guide can be reopened from About",
+        "the guide opens existing provider settings",
+        "finishing the guide persists acknowledgement without enabling services",
+    ):
+        step = _step(drive_report, label)
+        assert step["pass"], step["detail"]
+
+
+def test_beta_diagnostics_share_only_whitelisted_fields(drive_report):
+    step = _step(drive_report, "diagnostics whitelist excludes private fields and raw errors")
+    assert step["pass"], step["detail"]
+
+
 def test_activity_offers_no_duplicate_tasks_filter(drive_report):
     label = "Atividade does NOT offer a Tarefas filter (that would duplicate the Tarefas subview)"
     step = _step(drive_report, label)

@@ -29,7 +29,7 @@ if str(_bootstrap_root) not in sys.path:
 import eel
 import psutil
 from dotenv import load_dotenv
-from core.app_paths import DATA_DIR, FRONTEND_DIR, PLUGINS_DIR, ROOT
+from core.app_paths import DATA_DIR, FRONTEND_DIR, PLUGINS_DIR, ROOT, default_data_root
 from core import data_migration
 from core import capability_catalogue, local_control_plane
 from core import version as nano_version
@@ -61,7 +61,8 @@ from core import (audio_feedback, desktop_bridge, google_provider, mistral_provi
                   provider_failures, provider_status, providers, response_meta,
                   secret_store, speech_filter, user_settings)
 
-if not getattr(sys, "frozen", False):
+if (not getattr(sys, "frozen", False) and os.getenv("NANO_SKIP_DOTENV") != "1"
+        and DATA_DIR.resolve() == default_data_root().resolve()):
     load_dotenv(ROOT / ".env")
 
 setup_logger()
@@ -1564,6 +1565,12 @@ def get_settings() -> dict:
         "stored": user_settings.all_settings(),
         "runtime": get_runtime_info(),
     }
+
+
+@eel.expose
+def get_onboarding_status() -> dict:
+    """Read first-run state locally, without probing providers or audio."""
+    return {"completed": user_settings.get("onboarding_completed", False) is True}
 
 
 @eel.expose

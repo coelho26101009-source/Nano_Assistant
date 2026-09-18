@@ -60,7 +60,13 @@ function serve() {
 /* The policy under test. Kept byte-identical to main.js by requiring the same
    module rather than restating it -- a copy here could drift and then this
    would be testing a policy nobody ships. */
-const { contentSecurityPolicy } = require('../main.js');
+// Read the production policy without starting the real backend or touching a
+// user's profile. This harness owns its own window and server lifecycle.
+const { stubElectron, loadFresh } = require('./harness');
+const policyStub = stubElectron();
+let contentSecurityPolicy;
+try { ({ contentSecurityPolicy } = loadFresh('../main.js')); }
+finally { policyStub.restore(); }
 
 app.disableHardwareAcceleration();
 

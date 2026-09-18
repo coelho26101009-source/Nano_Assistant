@@ -1,26 +1,31 @@
 {
   "name": "nano-assistant",
-  "version": "8.1.0",
+  "version": "0.1.0-beta.1",
   "description": "Nano Assistant — Assistente Virtual Executivo e Inteligente",
   "main": "main.js",
   "author": "Simão Coelho",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "scripts": {
-    "start": "electron .",
     "build": "electron-builder --win --x64",
-    "build:installer": "electron-builder --win msi --x64",
     "build:all": "electron-builder --win nsis msi --x64",
+    "build:installer": "electron-builder --win msi --x64",
     "dev": "electron . --dev",
-    "test": "node test/run.js",
     "fetch-electron": "install-electron",
-    "icon": "powershell -ExecutionPolicy Bypass -File ../scripts/build_app_icon.ps1"
+    "icon": "powershell -ExecutionPolicy Bypass -File ../scripts/build_app_icon.ps1",
+    "prebuild": "npm run verify:package",
+    "prebuild:all": "npm run verify:package",
+    "prebuild:installer": "npm run verify:package",
+    "start": "electron .",
+    "test": "node test/run.js",
+    "verify:package": "node scripts/verify-package-inputs.js"
   },
   "build": {
     "appId": "com.nano.assistant",
     "productName": "Nano Assistant",
+    "asar": true,
     "copyright": "© 2026 Simão Coelho",
     "directories": {
-      "output": "../dist-electron"
+      "output": "dist-electron"
     },
     "files": [
       "main.js",
@@ -34,21 +39,30 @@
         "from": "../core",
         "to": "app/core",
         "filter": [
-          "**/*"
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/*.pyc",
+          "!**/*.pyo"
         ]
       },
       {
         "from": "../plugins",
         "to": "app/plugins",
         "filter": [
-          "**/*"
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/*.pyc",
+          "!**/*.pyo"
         ]
       },
       {
         "from": "../config",
         "to": "app/config",
         "filter": [
-          "**/*"
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/*.pyc",
+          "!**/*.pyo"
         ]
       },
       {
@@ -59,11 +73,26 @@
         ]
       },
       {
-        "from": "../runtime",
-        "to": "app/runtime",
+        "from": "../runtime/python",
+        "to": "app/runtime/python",
         "filter": [
-          "**/*"
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/*.pyc",
+          "!**/*.pyo"
         ]
+      },
+      {
+        "from": "../version.json",
+        "to": "app/version.json"
+      },
+      {
+        "from": "../LICENSE",
+        "to": "app/LICENSE"
+      },
+      {
+        "from": "../THIRD_PARTY_NOTICES.md",
+        "to": "app/THIRD_PARTY_NOTICES.md"
       }
     ],
     "win": {
@@ -87,13 +116,15 @@
     "nsis": {
       "oneClick": false,
       "perMachine": false,
+      "deleteAppDataOnUninstall": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Nano Assistant",
       "runAfterFinish": true,
       "installerIcon": "assets/icon.ico",
-      "uninstallerIcon": "assets/icon.ico"
+      "uninstallerIcon": "assets/icon.ico",
+      "artifactName": "Nano-Setup-${version}-${arch}.${ext}"
     },
     "msi": {
       "oneClick": false,
@@ -102,12 +133,12 @@
       "createDesktopShortcut": false,
       "createStartMenuShortcut": false,
       "runAfterFinish": true,
-      "artifactName": "Nano-Assistant-Setup-${version}.${ext}",
+      "artifactName": "Nano-Setup-${version}-${arch}.${ext}",
       "warningsAsErrors": true
     }
   },
   "devDependencies": {
     "electron": "^44.2.0",
-    "electron-builder": "^24.0.0"
+    "electron-builder": "^26.16.1"
   }
 }

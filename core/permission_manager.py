@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from core.app_paths import DATA_DIR
+from core.atomic_storage import write_bytes
 from core.policy_engine import (
     AuthorityDecision,
     AutonomyMode,
@@ -394,12 +395,23 @@ class PermissionManager:
             return
         try:
             raw = json.loads(self._policy_store_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError):
             return
         if not isinstance(raw, dict):
             return
         for capability, details in raw.items():
             if not isinstance(details, dict):
+                continue
+            # Corrupt on-disk fields must not prevent startup or relax the
+            # built-in policy. Only complete, typed records may replace it.
+            if not all(isinstance(details.get(key, default), str) for key, default in (
+                ("decision", "APPROVAL_REQUIRED"), ("scope", "current_workspace"),
+                ("risk", RiskLevel.LOW.value), ("reason", ""),
+            )):
+                continue
+            try:
+                RiskLevel(details.get("risk", RiskLevel.LOW.value).lower())
+            except ValueError:
                 continue
             sanitized = self._sanitize_stored_decision(capability, details.get("decision", "AUTONOMOUS"))
             self.register_policy(
@@ -421,7 +433,7 @@ class PermissionManager:
             }
             for capability, details in self._policies.items()
         }
-        self._policy_store_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_bytes(self._policy_store_path, json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"))
 
     def register_policy(
         self,

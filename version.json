@@ -1,6 +1,6 @@
 {
-  "product": "1.0.0",
-  "display": "v1.0",
+  "product": "0.1.0-beta.1",
+  "display": "v0.1.0-beta.1",
   "name": "Nano Assistant",
-  "channel": "stable"
+  "channel": "beta"
 }

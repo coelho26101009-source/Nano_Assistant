@@ -263,6 +263,13 @@ test('no static server in this directory maps a URL to a path on its own', () =>
     if (!name.endsWith('.js') || name === path.basename(__filename)) continue;
     const code = withoutComments(fs.readFileSync(path.join(__dirname, name), 'utf8'));
     if (!code.includes('http.createServer')) continue;
+    // Readiness unit tests only return literal HTTP responses (or deliberately
+    // hang); there is no filesystem there and no URL-to-path mapping to guard.
+    if (name === 'startup-health.test.js') {
+      assert.ok(!/\bfs\b|readFile|createReadStream/.test(code),
+        'the readiness test exemption must never gain filesystem access');
+      continue;
+    }
     if (code.includes('decodeURIComponent')) {
       offenders.push(`${name} decodes a request URL itself`);
     }

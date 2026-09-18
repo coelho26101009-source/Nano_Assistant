@@ -1,15 +1,18 @@
 """Nano Assistant Logger — structured, colored in the terminal, rotating file.
 
-The log lives in logs/nano.log (a folder ignored by Git) instead of the repo
-root, so that files generated at runtime do not pollute the project tree or
-show up as uncommitted changes.
+The log lives in the durable user-data directory, so installed builds never
+need to write into their application resources. Formatters redact credentials
+after formatting, including exception traceback text.
 """
 
 import logging
 import logging.handlers
-from pathlib import Path
+import copy
 
-LOG_DIR = Path(__file__).parent.parent / "logs"
+from core.app_paths import DATA_DIR
+from core.log_safety import redact_log_text
+
+LOG_DIR = DATA_DIR / "logs"
 LOG_PATH = LOG_DIR / "nano.log"
 
 COLORS = {
@@ -22,14 +25,20 @@ COLORS = {
 }
 
 
-class ColorFormatter(logging.Formatter):
+class SafeFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        return redact_log_text(super().format(record))
+
+
+class ColorFormatter(SafeFormatter):
     FMT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
     def format(self, record: logging.LogRecord) -> str:
+        record = copy.copy(record)
         color = COLORS.get(record.levelname, COLORS["RESET"])
         reset = COLORS["RESET"]
         record.levelname = f"{color}{record.levelname}{reset}"
-        return logging.Formatter(self.FMT, datefmt="%H:%M:%S").format(record)
+        return SafeFormatter(self.FMT, datefmt="%H:%M:%S").format(record)
 
 
 def setup_logger(level: int = logging.INFO):
@@ -51,7 +60,7 @@ def setup_logger(level: int = logging.INFO):
         fh = logging.handlers.RotatingFileHandler(
             LOG_PATH, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
         )
-        fh.setFormatter(logging.Formatter(
+        fh.setFormatter(SafeFormatter(
             "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         ))

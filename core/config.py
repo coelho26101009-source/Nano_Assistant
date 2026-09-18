@@ -89,7 +89,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # came back as "Ei, nano!", "Ei, não.", "E ai, no." and "NÃO!", so the
         # matcher never fired. "Ei" is a native interjection the model knows.
         "wake_phrase": "ei nano",
-        "wake_phrase_enabled": True,
+        "wake_phrase_enabled": False,
         # Bare "nano" is OFF by default. It caused real false activations: a
         # single hallucinated or overheard "nano" was enough to wake Nano.
         # Requiring the full "hey nano" is dramatically more selective.
@@ -183,8 +183,23 @@ DEFAULT_CONFIG: dict[str, Any] = {
 def _deep_merge(base: dict, override: dict) -> dict:
     result = copy.deepcopy(base)
     for key, value in override.items():
-        if isinstance(value, dict) and isinstance(result.get(key), dict):
-            result[key] = _deep_merge(result[key], value)
+        default = result.get(key)
+        if isinstance(default, dict):
+            if isinstance(value, dict):
+                result[key] = _deep_merge(default, value)
+            else:
+                logger.warning("Invalid config section %s; using defaults", key)
+        elif isinstance(default, bool):
+            if isinstance(value, bool):
+                result[key] = value
+            else:
+                logger.warning("Invalid boolean config key %s; using default", key)
+        elif isinstance(default, (int, float)) and (
+            isinstance(value, bool) or not isinstance(value, (int, float))
+        ):
+            logger.warning("Invalid numeric config key %s; using default", key)
+        elif isinstance(default, str) and not isinstance(value, str):
+            logger.warning("Invalid string config key %s; using default", key)
         else:
             result[key] = value
     return result
@@ -301,7 +316,10 @@ def load_config(reload: bool = False) -> dict:
     except FileNotFoundError:
         logger.warning("settings.yaml não encontrado em %s; a usar defaults", CONFIG_PATH)
     except Exception as exc:
-        logger.error("settings.yaml inválido: %s; a usar defaults", exc)
+        # YAML exceptions include the offending source line, which may contain
+        # an old inline API key. Report only the failure category.
+        loaded = {}
+        logger.error("settings.yaml inválido (%s); a usar defaults", type(exc).__name__)
     _cache = _deep_merge(DEFAULT_CONFIG, loaded)
     _normalize_voice_config(_cache)
     # Choices the user made in the Settings UI live outside the repository and

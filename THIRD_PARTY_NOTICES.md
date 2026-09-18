@@ -112,21 +112,24 @@ Not distributed with Nano.
 
 | Package | Version | Licence |
 | --- | --- | --- |
-| `electron` | 30.5.1 | MIT |
-| `electron-builder` | 24.13.3 | MIT |
+| `electron` | 44.2.0 | MIT |
+| `electron-builder` | 26.16.1 | MIT (build only) |
 
 **REVIEW — Electron redistribution.** Electron itself is MIT, but a packaged
 Electron application redistributes **Chromium** and **Node.js**, which carry
 their own licences and a substantial third-party notices file (BSD-style terms
 plus many bundled components). `electron-builder` can emit these. Any shipped
 installer must include Chromium's and Node's notices; this file does not yet
-reproduce them, because nothing is packaged yet.
+reproduce them. Packaging retains Electron's `LICENSE.electron.txt` and
+`LICENSES.chromium.html` alongside the executable, Python's license and the
+installed distributions' license metadata. Nano's own `LICENSE` and this
+notice are included under `resources/app/`.
 
 ## JavaScript — frontend (`frontend/package.json`)
 
 | Package | Version | Licence |
 | --- | --- | --- |
-| `next` | 14.2.3 | MIT |
+| `next` | 14.2.35 | MIT |
 | `react` | 18.3.1 | MIT |
 | `react-dom` | 18.3.1 | MIT |
 | `typescript` | 5.9.3 | Apache-2.0 (dev only) |
@@ -160,7 +163,7 @@ Stated plainly so the omissions are not mistaken for a clean bill of health.
    eel's immediate chain were audited. A full tree (`pip-licenses`,
    `license-checker`) is needed before distribution.
 2. **`gevent-websocket`'s licence is unconfirmed.**
-3. **Chromium and Node notices are absent**, because nothing is packaged yet.
+3. Verify the bundled Electron, Chromium and Node notices in every final artifact.
 4. **Model weights are unaudited** — a separate question from library licences.
 5. **Compatibility of Apache-2.0 with the LGPL dependencies above has not had a
    legal review** — Apache-2.0 is generally considered compatible with LGPL

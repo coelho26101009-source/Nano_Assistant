@@ -16,10 +16,17 @@ consumes; `display` is what a person sees in the interface. They are allowed to
 differ in FORM ("1.0.0" against "v1.0") but they are derived from one record, so
 they can never disagree about WHICH release this is.
 
-NOT IN SCOPE HERE: the `version` field of either package.json. electron-builder
-reads that to stamp the installer, so changing it is a packaging decision and
-belongs to a packaging pass, not to a settings pass. Until then it stays at its
-legacy 8.1.0 and this module is the authority for everything a user reads.
+NOW ALIGNED: the `version` field of both package.json files. electron-builder
+reads the Electron one to stamp the installer, so changing it was a packaging
+decision and it was made in the packaging pass. All three -- version.json,
+electron/package.json and frontend/package.json -- read the same number, and
+electron/test/packaging.test.js fails if they ever drift apart again.
+
+WHERE THIS FILE HAS TO BE AT RUN TIME: `<app root>/version.json`. In a packaged
+build the app root is `resources/app`, and version.json is copied there by the
+`extraResources` list in electron/package.json. It was not, once, and an
+installed Nano answered "desconhecida" while the interface -- which imports the
+same file at BUILD time -- confidently showed a real version.
 """
 from __future__ import annotations
 

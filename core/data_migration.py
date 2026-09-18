@@ -176,8 +176,9 @@ def migrate_user_data(destination: Path | None = None, *, force: bool = False) -
     Returns a summary describing exactly what happened. Safe to call on every
     startup: it exits immediately once a receipt exists.
     """
-    from core.app_paths import DATA_DIR
+    from core.app_paths import DATA_DIR, default_data_root
 
+    explicit_destination = destination is not None
     destination = Path(destination) if destination is not None else Path(DATA_DIR)
     summary: dict = {
         "destination": str(destination),
@@ -187,6 +188,15 @@ def migrate_user_data(destination: Path | None = None, *, force: bool = False) -
         "skipped_existing": [],
         "errors": [],
     }
+
+    # A portable/test profile must remain empty on first run. Never scan the
+    # real profile or import its credentials just because an override is empty.
+    # Electron also sets NANO_DATA_DIR for its normal canonical profile, which
+    # must retain the rescue path. Passing destination explicitly is the opt-in
+    # API for a deliberate migration into another location.
+    if not explicit_destination and destination.resolve() != default_data_root().resolve():
+        summary["status"] = "isolated_profile"
+        return summary
 
     if not force and _has_valid_receipt(destination):
         summary["status"] = "already_done"

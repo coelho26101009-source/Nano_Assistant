@@ -18,14 +18,18 @@ import json
 import logging
 import os
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
 from core.app_paths import DATA_DIR
+from core.atomic_storage import write_bytes
+from core.log_safety import register_secret
 
 logger = logging.getLogger("nano.secrets")
 
 _STORE_PATH = DATA_DIR / "secrets.dat"
+_LOCK = threading.RLock()
 
 # Environment variables checked as a read-only fallback, so an existing .env
 # keeps working. Writing always goes to the encrypted store, never back to .env.
@@ -109,7 +113,11 @@ def _read_store() -> dict[str, str]:
 
     decrypted = _dpapi(False, raw)
     if decrypted is None:
-        # Written without DPAPI (non-Windows, or DPAPI unavailable at write time).
+        if _dpapi_available():
+            logger.warning("Windows secret store could not be decrypted; re-enter credentials in Settings.")
+            return {}
+        # The documented non-Windows fallback. Windows never treats plaintext
+        # as an encrypted credential store, including old failed-DPAPI writes.
         decrypted = raw
     try:
         data = json.loads(decrypted.decode("utf-8"))
@@ -122,11 +130,15 @@ def _read_store() -> dict[str, str]:
 def _write_store(values: dict[str, str]) -> bool:
     payload = json.dumps(values, ensure_ascii=False).encode("utf-8")
     encrypted = _dpapi(True, payload)
+    if encrypted is None and _dpapi_available():
+        # Windows credentials must never silently downgrade to plaintext.
+        # Leave any existing encrypted store untouched when DPAPI fails.
+        logger.error("Could not protect credentials with Windows DPAPI; store unchanged.")
+        return False
     blob = encrypted if encrypted is not None else payload
 
     try:
-        _STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _STORE_PATH.write_bytes(blob)
+        write_bytes(_STORE_PATH, blob)
         if encrypted is None and os.name != "nt":
             os.chmod(_STORE_PATH, 0o600)
         return True
@@ -144,29 +156,34 @@ def get_secret(name: str) -> str:
     """Return a secret, preferring the encrypted store over the environment."""
     stored = _read_store().get(name)
     if stored:
+        register_secret(stored)
         return stored
     for env_name in _ENV_FALLBACK.get(name, ()):
         value = os.getenv(env_name)
         if value:
+            register_secret(value.strip())
             return value.strip()
     return ""
 
 
 def set_secret(name: str, value: str) -> bool:
-    values = _read_store()
-    cleaned = (value or "").strip()
-    if not cleaned:
-        return delete_secret(name)
-    values[name] = cleaned
-    return _write_store(values)
+    with _LOCK:
+        values = _read_store()
+        cleaned = (value or "").strip()
+        register_secret(cleaned)
+        if not cleaned:
+            return delete_secret(name)
+        values[name] = cleaned
+        return _write_store(values)
 
 
 def delete_secret(name: str) -> bool:
-    values = _read_store()
-    if name not in values:
-        return True
-    del values[name]
-    return _write_store(values)
+    with _LOCK:
+        values = _read_store()
+        if name not in values:
+            return True
+        del values[name]
+        return _write_store(values)
 
 
 def has_secret(name: str) -> bool:

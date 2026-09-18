@@ -217,7 +217,7 @@ existing installs are not stranded; see [`docs/README.md`](docs/README.md).
 | API keys | `secrets.dat`, OS-encrypted (**DPAPI** on Windows) | Until removed | **Yes** — Definições → IA, per provider |
 | Screenshots | `screenshots/` in the data directory | **Auto-deleted: older than 1 hour, or beyond the 10 most recent** | Yes, and they expire on their own |
 | Permission audit trail | In memory only (a list in `PermissionManager`) | **Lost when Nano closes** | Closing Nano clears it |
-| Logs | `logs/nano.log` in the project folder | Rotates at 5 MB, 3 files kept | Yes, delete the files |
+| Logs | `logs/nano.log` in the data directory | Rotates at 5 MB, 3 backups kept | Yes, delete the files |
 | Voice recordings | Temporary file, deleted immediately after transcription | Seconds | Automatic |
 | Spoken audio | Temporary file, deleted after playback | Seconds | Automatic |
 | Clipboard | **Never stored** | — | — |
@@ -251,6 +251,13 @@ actions without holding what was written.
 **Logs** record Nano's activity, which can include application names, window
 titles and file paths. They are local, gitignored, and rotate. If you attach a
 log to a bug report, read it first — see [SUPPORT.md](SUPPORT.md).
+
+**Diagnostics** in Settings → About are an explicit local report of version,
+platform, architecture, backend/frontend status and fixed error codes. The
+report excludes paths, credentials and conversation contents. Copying it does
+not upload it. Startup failures also write `logs/startup-diagnostics.json` in
+the data directory, where writable. Uninstalling preserves this directory and
+its conversations, memories, settings, encrypted credentials and policies.
 
 **Voice.** Wake-phrase detection and transcription both run locally with
 faster-whisper. There is no cloud speech-to-text path in the code: the runtime

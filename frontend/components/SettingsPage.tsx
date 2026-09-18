@@ -403,7 +403,7 @@ export default function SettingsPage({
   settings, providers, diagnostics, loading, busy, onSetMode, onSetPreferredCloud,
   onSaveCloudKey, onRemoveCloudKey, onTestCloud, onSetCloudModel,
   onSetLocalModel, onUpdate, onTestSpeaker, onTestMicrophone,
-  onToggleEmergencyStop, onClearConversation, onForgetAllMemory, onNavigate,
+  onToggleEmergencyStop, onClearConversation, onForgetAllMemory, onNavigate, onOpenFirstRun,
   section, onSection,
   theme, onTheme, reduceMotion, onReduceMotion,
 }: {
@@ -433,6 +433,7 @@ export default function SettingsPage({
   onForgetAllMemory: () => void;
   /** Jump to a top-level page (Permissões, Memória, Capacidades). */
   onNavigate: (view: "permissions" | "memory" | "capabilities") => void;
+  onOpenFirstRun: () => void;
   /** The open category. Owned by the shell so the AI pill's "Abrir definições
    *  de IA" can land directly on IA rather than on whatever was open last. */
   section: Section;
@@ -807,7 +808,7 @@ export default function SettingsPage({
         )}
 
         {/* ── SOBRE ────────────────────────────────────────────────────── */}
-        {section === "about" && <AboutSection settings={settings} />}
+        {section === "about" && <AboutSection settings={settings} onOpenFirstRun={onOpenFirstRun} />}
 
         {/* ── PRIVACY ──────────────────────────────────────────────────── */}
         {section === "privacy" && (
@@ -859,7 +860,8 @@ export default function SettingsPage({
               <p className="dim" style={{ fontSize: 12, marginTop: 8, lineHeight: 1.6 }}>
                 Nenhuma capability pode ser autorizada para sempre. Cada decisão vale para
                 uma execução, ou para uma tarefa com um alvo concreto. Ações destrutivas,
-                shell e envios para o exterior pedem sempre confirmação.
+                capturas de ecrã e envios para o exterior pedem confirmação. O modelo
+                não tem acesso a shell ou terminal.
               </p>
             </Panel>
 

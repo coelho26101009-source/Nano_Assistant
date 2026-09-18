@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import threading
 from typing import Any
 
 from core.app_paths import DATA_DIR
+from core.atomic_storage import write_bytes
 
 logger = logging.getLogger("nano.user_settings")
 
@@ -27,6 +29,7 @@ _cache: dict[str, Any] | None = None
 # Only these keys may be written from the UI. An allow-list keeps a bug (or a
 # malicious page reaching the local bridge) from rewriting arbitrary config.
 ALLOWED_KEYS: frozenset[str] = frozenset({
+    "onboarding_completed",    # durable first-run acknowledgement
     "provider_mode",           # AUTO | CLOUD | LOCAL
     # WHICH cloud provider serves AUTO/CLOUD. Separate from provider_mode on
     # purpose: mode is what the user asked for, this is who answers it.
@@ -65,6 +68,35 @@ ALLOWED_KEYS: frozenset[str] = frozenset({
     "memory_auto_capture",
 })
 
+_BOOLEAN_KEYS = frozenset({
+    "onboarding_completed", "wake_phrase_enabled", "wake_phrase_allow_nano_only",
+    "voice_enabled", "tts_enabled", "typed_chat_tts", "voice_reply_tts",
+    "reduce_motion", "memory_facts_enabled", "memory_rag_enabled",
+    "memory_long_term_enabled", "memory_auto_capture",
+})
+
+
+def _valid_value(key: str, value: Any) -> bool:
+    if key not in ALLOWED_KEYS:
+        return False
+    if key in _BOOLEAN_KEYS:
+        return isinstance(value, bool)
+    if key in {"input_device_index", "output_device_index"}:
+        return value is None or (type(value) is int and -1 <= value <= 1024)
+    if key in {"wake_phrase_cooldown_seconds", "wake_command_timeout_seconds"}:
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            return False
+        return (0 <= value <= 60 if key == "wake_phrase_cooldown_seconds"
+                else type(value) is int and 3 <= value <= 15)
+    if key == "provider_mode":
+        return isinstance(value, str) and value in {"AUTO", "CLOUD", "LOCAL"}
+    if key == "preferred_cloud":
+        return isinstance(value, str) and value in {"groq", "google", "mistral"}
+    if key == "theme":
+        return isinstance(value, str) and value in {"dark", "light"}
+    # Model IDs are bounded plain strings, never arbitrary JSON containers.
+    return isinstance(value, str) and len(value) <= 200 and not any(ord(ch) < 32 for ch in value)
+
 
 def _load() -> dict[str, Any]:
     global _cache
@@ -75,17 +107,18 @@ def _load() -> dict[str, Any]:
         try:
             parsed = json.loads(_PATH.read_text(encoding="utf-8"))
             if isinstance(parsed, dict):
-                data = parsed
+                data = {key: value for key, value in parsed.items() if _valid_value(key, value)}
+                if len(data) != len(parsed):
+                    logger.warning("Ignored invalid or unknown persisted settings; using defaults.")
         except Exception as exc:
-            logger.warning("user_settings.json unreadable (%s); using defaults.", exc)
+            logger.warning("user_settings.json unreadable (%s); using defaults.", type(exc).__name__)
     _cache = data
     return _cache
 
 
 def _save(data: dict[str, Any]) -> bool:
     try:
-        _PATH.parent.mkdir(parents=True, exist_ok=True)
-        _PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_bytes(_PATH, json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"))
         return True
     except OSError as exc:
         logger.error("Could not write user settings: %s", exc)
@@ -101,6 +134,8 @@ def set_value(key: str, value: Any) -> dict[str, Any]:
     """Persist one setting. Rejects keys outside the allow-list."""
     if key not in ALLOWED_KEYS:
         return {"ok": False, "error": "unknown_setting", "key": key}
+    if not _valid_value(key, value):
+        return {"ok": False, "error": "invalid_value", "key": key}
     with _LOCK:
         data = dict(_load())
         data[key] = value
@@ -119,7 +154,8 @@ def reset(key: str) -> dict[str, Any]:
     with _LOCK:
         data = dict(_load())
         data.pop(key, None)
-        _save(data)
+        if not _save(data):
+            return {"ok": False, "error": "write_failed", "key": key}
         globals()["_cache"] = data
         return {"ok": True, "key": key}
 

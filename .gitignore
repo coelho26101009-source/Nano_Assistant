@@ -63,6 +63,12 @@ out/
 .next/
 build/
 
+# Windows installers and the unpacked app tree that electron-builder writes.
+# `dist/` above does NOT cover this: gitignore matches the name exactly, and
+# the builder's output directory is `dist-electron`. A real packaging run
+# therefore left several hundred megabytes sitting in `git status`.
+dist-electron/
+
 # OS
 .DS_Store
 Thumbs.db

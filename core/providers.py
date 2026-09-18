@@ -230,7 +230,7 @@ def list_groq_models(api_key: str | None = None, *, timeout: float = 10.0) -> tu
             timeout=timeout,
         )
     except Exception as exc:
-        return [], f"network_error: {exc}"
+        return [], f"network_error: {type(exc).__name__}"
 
     if response.status_code in (401, 403):
         return [], "invalid_api_key"
@@ -240,7 +240,7 @@ def list_groq_models(api_key: str | None = None, *, timeout: float = 10.0) -> tu
     try:
         ids = [str(item.get("id")) for item in response.json().get("data", []) if item.get("id")]
     except Exception as exc:
-        return [], f"bad_response: {exc}"
+        return [], f"bad_response: {type(exc).__name__}"
 
     chat_models = sorted((m for m in ids if is_chat_model(m)), key=lambda m: (rank_groq_model(m), m))
     return chat_models, None

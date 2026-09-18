@@ -40,6 +40,13 @@ export type DesktopStatus = {
   autoLaunch: AutoLaunchState;
   dataDir: string;
   packaged: boolean;
+  schema?: number;
+  platform?: string;
+  arch?: string;
+  versions?: { electron: string | null; chrome: string | null };
+  backend?: { running: boolean; lastExitCode: number | null };
+  frontendReady?: boolean;
+  lastErrorCode?: "backend_start_failed" | "backend_exited" | "frontend_load_failed" | "renderer_gone" | null;
 };
 
 type NanoAppApi = {
