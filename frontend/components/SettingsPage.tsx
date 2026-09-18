@@ -544,7 +544,7 @@ export default function SettingsPage({
               )}
 
               {providers?.route && (
-                <div className="tl-meta" style={{ whiteSpace: "normal", marginTop: 10 }}>
+                <div className="route-reason" style={{ marginTop: 10 }}>
                   {providers.route.reason}
                 </div>
               )}

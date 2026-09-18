@@ -20,6 +20,7 @@ import { useFetch } from "../lib/backend";
 import type { CapabilityCatalogue } from "./CapabilitiesPage";
 import { VERSION } from "../lib/version";
 import DiagnosticsPanel from "./DiagnosticsPanel";
+import NanoLogo from "./NanoLogo";
 import {
   Badge, Button, ConfirmDialog, MetricRow, Panel, StatusIndicator, Toggle,
 } from "./ui";
@@ -229,17 +230,13 @@ export function AboutSection({ settings, onOpenFirstRun }: {
     <div className="stack">
       <Panel title="Nano">
         <div className="about-hero">
+          {/* THE SUPPLIED MARK, not a hand-drawn stand-in. This used to be two
+              SVG paths approximating a flame, and the inner one was filled with
+              `var(--bg-1)` — a token that has never existed in the stylesheet,
+              so it resolved to nothing and painted a black blob in the middle
+              of the logo on the About page. */}
           <div className="about-hero__mark" aria-hidden="true">
-            <svg viewBox="0 0 24 32" width="34" height="45" aria-hidden="true">
-              <path
-                d="M12 1c3.6 5.2 9 8.6 9 15.2C21 24 17 31 12 31S3 24 3 16.2C3 9.6 8.4 6.2 12 1Z"
-                fill="var(--accent)" opacity="0.92"
-              />
-              <path
-                d="M12 12c1.7 2.6 4 4.3 4 7.4 0 3.6-1.9 6.8-4 6.8s-4-3.2-4-6.8c0-3.1 2.3-4.8 4-7.4Z"
-                fill="var(--bg-1)" opacity="0.85"
-              />
-            </svg>
+            <NanoLogo size={38} bare />
           </div>
           <div>
             <h3 className="about-hero__name">{VERSION.name}</h3>

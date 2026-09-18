@@ -99,7 +99,7 @@ export default function Home() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const [railOpen, setRailOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [theme, setTheme] = useState<"dark" | "light">("light");
   const [reduceMotion, setReduceMotion] = useState(false);
 
   /* ── Conversation ───────────────────────────────────────────────────── */
@@ -982,7 +982,7 @@ export default function Home() {
 
   const suggestions = useMemo(() => {
     if (messages.length > 0) return [];
-    const base = ["Ver uso de RAM", "Listar processos pesados", "Ajuda"];
+    const base = ["Ajuda-me a planear o dia", "Explica um conceito", "Revê um texto"];
     if (providers?.route?.usable === false) return ["Ajuda"];
     return base;
   }, [messages.length, providers]);
@@ -1029,7 +1029,7 @@ export default function Home() {
       <Head>
         <title>Nano</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <meta name="theme-color" content="#050303" />
+        <meta name="theme-color" content={theme === "light" ? "#EDE7DF" : "#201F1D"} />
         {/* The real mark, so the taskbar and the tab carry the brand rather
             than a hand-drawn stand-in. */}
         <link rel="icon" href="/branding/nano-mark-alpha.png" />
@@ -1164,10 +1164,14 @@ export default function Home() {
                 {!showFirstRun && providers?.route?.usable === false && (
                   <div className="setup-notice" role="status">
                     <span>Configura um provedor cloud ou um modelo local para conversar.</span>
-                    <Button size="sm" onClick={() => openSettingsSection("ai")}>Configurar IA</Button>
+                    {/* Primary: with no provider this is the ONE action that
+                        unblocks the app, and it was styled as a neutral
+                        secondary button sitting beside the sentence explaining
+                        the block. */}
+                    <Button size="sm" variant="primary" onClick={() => openSettingsSection("ai")}>Configurar IA</Button>
                   </div>
                 )}
-                <Composer
+                {!showFirstRun && <Composer
                   value={input} onChange={setInput}
                   onSend={() => { setShowFirstRun(false); sendMessage(); }} onStop={stopWork}
                   onVoice={startVoice} onCancelVoice={cancelVoice}
@@ -1177,7 +1181,7 @@ export default function Home() {
                   listening={listening}
                   suggestions={suggestions}
                   onSuggestion={(text) => { setShowFirstRun(false); sendMessage(text); }}
-                />
+                />}
                 <p className="stage__footer">
                   O Nano pode cometer erros. Ações sensíveis pedem sempre a tua autorização.
                 </p>

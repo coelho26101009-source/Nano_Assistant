@@ -219,6 +219,9 @@ export default function AiModeMenu({
   const label = providerLabel(providers, offline);
   const route = providers?.route;
   const fellBack = Boolean(route?.fallback);
+  // Presentation follows measured route availability; idle agent != usable AI.
+  const routeState = offline ? "OFFLINE" : !route ? "UNKNOWN"
+    : !route.usable ? "SETUP_REQUIRED" : fellBack ? "WAITING" : agentState;
 
   const preferred = (providers?.preferredCloud ?? "groq") as CloudProviderKey;
   const cloudKeys = (providers?.cloudProviders ?? []) as CloudProviderKey[];
@@ -256,12 +259,12 @@ export default function AiModeMenu({
           type="button"
           className="status-pill status-pill--menu"
           onClick={() => setOpen((v) => !v)}
-          title={`${healthLabel} — mudar o modo de IA`}
+          title={`${label}${fellBack ? " — rota alternativa" : ""}. ${healthLabel} — mudar o modo de IA`}
           data-mode={active}
         >
-          <StatusIndicator state={agentState} label="" />
+          <StatusIndicator state={routeState} label="" />
           <span className="status-pill__text">{label}</span>
-          {fellBack && <span className="status-pill__tag">fallback</span>}
+          {fellBack && <span className="status-pill__tag">alternativa</span>}
           <span className="status-pill__caret" aria-hidden="true">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                  strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -271,7 +274,10 @@ export default function AiModeMenu({
         </button>
       )}
     >
-      <p className="popover__label">Modo</p>
+      {/* No group label here: Popover already renders its own `label` as the
+          panel heading, so a "Modo" line under "Modo de inteligência" was the
+          same word twice. The panel title heads the mode group; the labelled
+          sub-groups below it start after a separator. */}
       {MODES.map((mode) => (
         <MenuItem
           key={mode.value}

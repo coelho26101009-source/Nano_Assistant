@@ -8,17 +8,54 @@ from its first public release onward.
 
 ## About the entries below
 
-**Nano has never had a public release.** There are no version tags in this
-repository, so nothing below carries a version number — inventing one would
-imply a release that never happened and that nobody can download.
+`0.1.0-beta.1` is Nano's **first public release**. Everything under it is the
+work that produced it, grouped by milestone rather than by version, because
+those milestones predate the existence of any release to attach them to.
 
 Dates are the real dates of the commits that delivered the work, taken from the
-repository history. Entries are grouped by the milestone they belong to rather
-than by release, because a release is not what produced them.
+repository history. See [docs/RELEASING.md](docs/RELEASING.md) for the
+versioning policy.
 
-The first tagged version will become `## [0.1.0-beta] - YYYY-MM-DD` at the top
-of this file, with everything below it folded into it as the initial release.
-See [docs/RELEASING.md](docs/RELEASING.md).
+---
+
+## [0.1.0-beta.1] - 2026-09-18
+
+The first public Beta. Pre-release: not a stable version, not 1.0.
+
+### Interface
+
+- Rebuilt the interface around a warm cream, charcoal and terracotta design
+  system. The previous system was near-black with the flame red of the mark
+  spent on navigation, primary actions, focus and permission emphasis at once;
+  that read as a gaming skin rather than as desktop software, and one red
+  family carrying both the brand and "this is dangerous" left the two
+  indistinguishable. The brand accent is now a terracotta and danger a cooler
+  crimson, and they are never the same hue.
+- Colour is a semantic role rather than a literal, so the dark theme and the
+  charcoal conversation rail redefine tokens and every component follows.
+- Four text roles replace two, fixing helper copy and metadata that rendered
+  identically.
+- Focus rings are warm rather than steel blue; every text role clears 4.5:1
+  against every surface it can sit on, in both themes, measured off the painted
+  page rather than derived from the stylesheet.
+- A provider that is missing or unconfigured now shows a hollow amber ring
+  instead of an indicator that read as healthy. Provider routing is unchanged.
+- The first-run guide owns the whole stage instead of sharing it with the
+  composer, which was the source of the cramped onboarding at 940x620.
+- Assistant turns are unbubbled and flush with the reading column; user turns
+  keep a bubble.
+- Fixed a hand-drawn SVG "flame" on the About page whose inner path referenced
+  a token that has never existed, painting a black blob inside the logo. It now
+  uses the supplied mark.
+
+### Release
+
+- First tagged version, published as a GitHub pre-release with the NSIS
+  installer and `SHA256SUMS.txt`.
+- Windows binaries are **unsigned** in this Beta.
+- There is no automatic updater; Beta updates are manual.
+- The MSI is built and verified but not published in this release: a full
+  managed-installer lifecycle has not been validated.
 
 ---
 

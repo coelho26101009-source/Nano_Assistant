@@ -31,14 +31,15 @@
      the few values it needs are restated here — and only those. */
   :root {
     --brand-red:  #F40101;
-    --accent:     #E8161B;
-    --accent-hot: #FF5A54;
-    --surface:    rgba(20, 12, 12, 0.86);
-    --border:     rgba(255, 90, 84, 0.16);
+    --accent:     #A64D38;
+    --accent-hot: #E9AE94;
+    --danger: #F49BB4;
+    --surface:    #292826;
+    --border:     #817365;
     --hairline:   rgba(255, 240, 240, 0.06);
     --text:       #F6F2F1;
-    --text-dim:   #A9A0A0;
-    --quiet:      #8A7E7E;
+    --text-dim:   #D0C6BB;
+    --quiet:      #B9ADA0;
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -50,7 +51,7 @@
     -webkit-user-select: none;
     user-select: none;
     cursor: default;
-    font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
   }
 
   #panel {
@@ -59,18 +60,13 @@
     padding: 0 18px;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 22px;
-    /* Depth, a whisper of the brand red around the edge, and a hairline of
-       light along the top: the same three layers as the panels in the shell.
-       The red is deliberately a whisper — trimmed with the shell's ambient
-       wash so the overlay reads as a dark floating panel that happens to be
-       Nano's, not as a red light. The IDENTITY is carried by the mark, the
-       halo and the accent text; the panel behind them stays black. */
-    box-shadow: 0 20px 46px -16px rgba(0, 0, 0, 0.85),
-                0 0 0 1px rgba(0, 0, 0, 0.4),
-                0 0 26px -18px rgba(244, 1, 1, 0.34),
-                inset 0 1px 0 rgba(255, 240, 240, 0.06);
-    backdrop-filter: blur(22px) saturate(125%);
+    border-radius: 14px;
+    /* One shadow, one hairline border, nothing else. The overlay stays a dark
+       floating panel in both themes — it is drawn over whatever the user is
+       doing, so it never adopts the workspace's cream. Its identity comes from
+       the mark and the coral accent text, not from a glow. */
+    box-shadow: 0 8px 24px -10px rgba(0, 0, 0, .45);
+    backdrop-filter: none;
     opacity: 0;
     transform: translateY(10px) scale(0.97);
     transition: opacity 170ms ease, transform 190ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -83,16 +79,12 @@
   /* The disc the mark sits on, matching .mark-disc in the shell. */
   #disc {
     position: absolute; inset: 0; border-radius: 50%;
-    background: radial-gradient(circle at 50% 30%, rgba(244, 1, 1, 0.22), rgba(244, 1, 1, 0.05) 70%);
-    border: 1px solid rgba(255, 90, 84, 0.20);
+    background: radial-gradient(circle at 50% 30%, rgba(166, 77, 56, .12), rgba(166, 77, 56, .12) 70%);
+    border: 1px solid rgba(233, 174, 148, .3);
   }
 
-  /* A soft halo that breathes while Nano is listening or speaking. */
-  #halo {
-    position: absolute; inset: -7px; border-radius: 50%;
-    background: radial-gradient(circle, var(--brand-red) 0%, transparent 66%);
-    opacity: 0.16; transform: scale(0.9);
-  }
+  /* No ambient glow; the status label and stateful indicator carry feedback. */
+  #halo { display: none; }
 
   /* A single arc that orbits the mark while a request is being worked on.
      One arc with a gap, not a full ring: a closed ring reads as a progress
@@ -101,7 +93,7 @@
     position: absolute; inset: -5px; border-radius: 50%;
     border: 1.5px solid transparent;
     border-top-color: var(--accent-hot);
-    border-right-color: rgba(255, 90, 84, 0.35);
+    border-right-color: rgba(233, 174, 148, .3);
     opacity: 0;
     transition: opacity 200ms ease;
   }
@@ -130,7 +122,7 @@
   #viz i {
     display: block; width: 3px; height: 4px; border-radius: 2px;
     background: var(--accent-hot);
-    box-shadow: 0 0 6px -1px rgba(244, 1, 1, 0.75);
+    box-shadow: none;
     transform-origin: center;
   }
 
@@ -151,8 +143,6 @@
   /* ══ STATE: LISTENING ═══════════════════════════════════════════════
      A slow red breath plus a live wave. This is the only state where the
      microphone is genuinely open, so it is the loudest of the six. */
-  #panel[data-state="activated"] #halo,
-  #panel[data-state="listening"] #halo { animation: breathe 2200ms ease-in-out infinite; }
   #panel[data-state="activated"] #viz,
   #panel[data-state="listening"] #viz { opacity: 1; }
   #panel[data-state="activated"] #viz i,
@@ -176,14 +166,12 @@
   /* ══ STATE: PROCESSING ══════════════════════════════════════════════
      The model is thinking. The arc orbits the mark and the rail travels. */
   #panel[data-state="processing"] #ring { opacity: 1; animation: orbit 1500ms linear infinite; }
-  #panel[data-state="processing"] #halo { opacity: 0.22; }
   #panel[data-state="processing"] #rail { opacity: 1; }
   #panel[data-state="processing"] #rail i { animation: travel 1400ms ease-in-out infinite; }
 
   /* ══ STATE: SPEAKING ════════════════════════════════════════════════
      Nano is talking. A smooth symmetric wave — see the note at the top of this
      file: it is a loop, not a level meter, because no amplitude is sent here. */
-  #panel[data-state="speaking"] #halo { animation: breathe 1500ms ease-in-out infinite; }
   #panel[data-state="speaking"] #viz { opacity: 1; }
   #panel[data-state="speaking"] #viz i {
     animation-name: speak; animation-duration: 900ms;
@@ -200,8 +188,6 @@
   }
   #panel[data-state="busy"] #disc,
   #panel[data-state="quiet"] #disc { border-color: rgba(255, 240, 240, 0.10); background: rgba(255, 240, 240, 0.04); }
-  #panel[data-state="busy"] #halo,
-  #panel[data-state="quiet"] #halo { opacity: 0.05; }
   #panel[data-state="busy"] #mark,
   #panel[data-state="quiet"] #mark { opacity: 0.65; }
   #panel[data-state="busy"] #label,
@@ -210,19 +196,11 @@
   /* ══ STATE: ERROR ═══════════════════════════════════════════════════
      Red, and no more than that. Something did not work; the overlay is not
      the place to make a scene about it. */
-  #panel[data-state="error"] {
-    border-color: rgba(255, 90, 84, 0.42);
-    box-shadow: 0 20px 46px -16px rgba(0, 0, 0, 0.85),
-                0 0 0 1px rgba(0, 0, 0, 0.4),
-                0 0 28px -16px rgba(244, 1, 1, 0.38),
-                inset 0 1px 0 rgba(255, 240, 240, 0.06);
-  }
-  #panel[data-state="error"] #label { color: var(--accent-hot); }
-  #panel[data-state="error"] #halo { opacity: 0.22; }
+  #panel[data-state="error"] { border-color: var(--danger); }
+  #panel[data-state="error"] #label { color: var(--danger); }
 
   /* ══ STATE: DONE ════════════════════════════════════════════════════
      A brief acknowledgement on the way out. */
-  #panel[data-state="done"] #halo { opacity: 0.10; }
   #panel[data-state="done"] #mark { animation: flare 620ms ease-out 1; }
 
   @keyframes breathe {
@@ -248,10 +226,12 @@
     0%, 100% { opacity: 0.25; }
     50%      { opacity: 1; }
   }
+  /* The completion flare is the accent, not the old scarlet: a bright red
+     burst was the last piece of the previous identity left in the overlay. */
   @keyframes flare {
-    0%   { filter: drop-shadow(0 0 0 rgba(244, 1, 1, 0)); }
-    35%  { filter: drop-shadow(0 0 10px rgba(255, 120, 114, 0.9)); }
-    100% { filter: drop-shadow(0 0 0 rgba(244, 1, 1, 0)); }
+    0%   { filter: drop-shadow(0 0 0 rgba(233, 174, 148, 0)); }
+    35%  { filter: drop-shadow(0 0 9px rgba(233, 174, 148, 0.75)); }
+    100% { filter: drop-shadow(0 0 0 rgba(233, 174, 148, 0)); }
   }
 
   /* Delays span roughly half the cycle, so the five bars form one travelling
@@ -264,13 +244,12 @@
   #viz i:nth-child(5) { animation-delay: -420ms; }
 
   /* Nothing animates while hidden: a window nobody can see must not repaint. */
-  #panel[data-visible="false"] #halo,
   #panel[data-visible="false"] #ring,
   #panel[data-visible="false"] #viz i,
   #panel[data-visible="false"] #rail i { animation: none !important; }
 
   @media (prefers-reduced-motion: reduce) {
-    #halo, #ring, #viz i, #rail i, #mark { animation: none !important; }
+    #ring, #viz i, #rail i, #mark { animation: none !important; }
     /* The states must still be told apart without motion, so the visualiser
        stays visible at a fixed height and the arc stays parked. */
     #panel[data-state="processing"] #ring { opacity: 1; }

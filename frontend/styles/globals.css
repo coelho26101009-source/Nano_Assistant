@@ -1,15 +1,33 @@
 /* ============================================================================
-   NANO DESIGN SYSTEM  ·  "Ember"
-   Warm near-black base · dark glass surfaces · the flame red of the Nano mark.
-   Every colour, space, radius and size is a token. Components never hardcode
-   a value.
+   NANO DESIGN SYSTEM
+   A warm desktop workspace: cream reading surfaces, a charcoal rail that
+   anchors them, and terracotta as the one interactive brand colour.
 
-   THE PALETTE IS DERIVED FROM THE BRAND ASSETS, NOT INVENTED.
-   --brand-red is #F40101, sampled from the flame in public/branding/
-   nano-mark.png. Every other red in this file is that hue lightened, darkened
-   or made translucent, so the interface and the logo cannot drift apart. The
-   greys are warm (a trace of red in them) rather than the blue-grey of the
-   previous system, because a neutral grey next to a saturated red reads green.
+   WHY THE PALETTE CHANGED. The previous system was near-black with the flame
+   red of the mark (#F40101) spent on navigation, the send button, active
+   states, focus and permission emphasis at once. Measured against its own
+   goals it failed two of them: saturated red on black reads as a gaming skin
+   rather than as desktop software, and a single red family carrying both the
+   brand and "this is dangerous" left the two indistinguishable. So the brand
+   accent is now a terracotta (--accent) and danger a cooler crimson
+   (--danger); they are never the same hue, and error is still always paired
+   with an icon or a word rather than colour alone.
+
+   THE MARK IS NOT RETINTED. #F40101 survives in exactly one place — the
+   artwork in public/branding — and that is the point: it reads as the brand
+   because nothing around it competes for the same attention.
+
+   COLOUR IS A ROLE, NEVER A LITERAL. Components reference --surface-hover, not
+   a wash; --text-muted, not a grey. That is what lets the dark theme and the
+   charcoal rail below redefine a dozen tokens and have every component follow,
+   instead of each one needing its own variant rule.
+
+   CONTRAST IS MEASURED, NOT INTENDED. Every text role clears 4.5:1 against
+   every surface it can legally sit on, in both themes and inside the rail.
+   Those ratios were not derived from the values written here: they were read
+   back off the painted page with getComputedStyle, walking each text node up
+   to its first opaque ancestor, because a token that looks safe in this file
+   can still land on a surface it was never checked against.
 
    RESPONSIVENESS RULE (this fixed a real bug):
    The old shell used `grid-template-columns: auto 1fr auto`, so the side
@@ -21,96 +39,133 @@
    ========================================================================== */
 
 :root {
-  /* ── Brand ────────────────────────────────────────────────────────────── */
-  --brand-red:   #F40101;   /* the flame, straight from the mark */
-  --accent:      #E8161B;   /* interactive red: fills, active states  */
-  --accent-hover:#FF3B33;
-  --accent-deep: #8E0B0F;   /* gradient end, pressed                  */
-  --accent-ink:  #FF6A64;   /* red TEXT — lifted for contrast on black */
+  color-scheme: light;
 
-  --accent-wash:   rgba(244, 1, 1, 0.13);
-  --accent-faint:  rgba(244, 1, 1, 0.06);
-  --accent-veil:   rgba(244, 1, 1, 0.22);
+  /* ── Brand ────────────────────────────────────────────────────────────── */
+  --brand-red: #F40101; /* original artwork only — never an interface colour */
+  --accent: #A64D38;
+  --accent-hover: #8D3D2D;
+  --accent-deep: #7D3527;
+  --accent-ink: #8D3D2D;   /* terracotta TEXT: darkened for 4.5:1 on cream */
+  --accent-wash: #F3E2D9;
+  --accent-faint: #FAF0EA;
+  --accent-veil: #EACCBF;
+  --accent-soft: var(--accent-wash);
 
   /* ── Surfaces ─────────────────────────────────────────────────────────── */
-  --bg-void:    #050303;    /* behind the panels: the darkest thing there is */
-  --bg-base:    #0A0706;
-  --bg-sunken:  #060404;    /* code blocks, insets                           */
+  /* Four steps, all opaque. The old system stacked translucent panels so the
+     ambient background bled through; on a light ground that same trick turns
+     every overlapping edge into a different cream and the shell stops reading
+     as one object. */
+  --bg: #EDE7DF;           /* behind the panels */
+  --surface: #FAF8F4;      /* columns, rails, page bodies */
+  --surface-raised: #FFFDFA; /* cards, the composer, modals */
+  --surface-hover: #F0EBE4;
+  --surface-active: #E8DFD5;
 
-  /* Dark glass. Translucent on purpose: the ambient red behind the shell
-     shows through just enough to tie the panels to the background. */
-  --surface-1:  rgba(22, 14, 14, 0.62);   /* columns, rails, headers  */
-  --surface-2:  rgba(30, 19, 19, 0.58);   /* cards, panels, bubbles   */
-  --surface-3:  rgba(44, 27, 27, 0.66);   /* hover, raised            */
-  --surface-4:  rgba(58, 34, 34, 0.78);   /* inputs, pressed          */
-  --surface-solid-2: #161010;             /* where translucency would stack */
-  --surface-overlay: rgba(5, 3, 3, 0.78);
+  /* The charcoal rail. Its own scale, because it is the one dark region in a
+     light interface and it must not be derived from the light surfaces. */
+  --sidebar: #292826;
+  --sidebar-hover: #363431;
+  --sidebar-active: #4B3A32;
 
-  --blur-panel: blur(22px) saturate(118%);
-  --blur-chip:  blur(12px) saturate(115%);
+  --bg-void: var(--bg);
+  --bg-base: var(--surface);
+  --bg-sunken: #F0ECE6;
+  --surface-1: var(--surface);
+  --surface-2: var(--surface-raised);
+  --surface-3: var(--surface-hover);
+  --surface-4: var(--surface-active);
+  --surface-solid-2: var(--surface-raised);
+  --surface-overlay: rgba(28, 26, 24, .45);
+  --blur-panel: none;
+  --blur-chip: none;
 
   /* ── Borders ──────────────────────────────────────────────────────────── */
-  /* Hairlines are white-based (neutral, invisible); the accented ones carry
-     the red. Both stay under 25% opacity — a bright border is what makes an
-     interface look like a gaming skin. */
-  --border:        rgba(255, 236, 236, 0.07);
-  --border-strong: rgba(255, 236, 236, 0.14);
-  --border-accent: rgba(244, 1, 1, 0.38);
-  --border-glow:   rgba(255, 90, 84, 0.20);
+  /* Opaque warm greys, not white at 7%: a translucent hairline that worked on
+     near-black is literally invisible on cream. */
+  --border: #DDD5CC;
+  --border-strong: #B9ADA1;
+  --border-accent: #C78973;
+  --border-glow: var(--border-accent);
 
-  /* ── Text ─────────────────────────────────────────────────────────────── */
-  --text:         #F6F2F1;
-  --text-muted:   #A9A0A0;
-  --text-dim:     #6F6564;
-  --text-inverse: #0A0706;                /* ink on a light or saturated fill */
-  --text-on-red:  #FFFFFF;
+  /* ── Text ─────────────────────────────────────────────────────────────────
+     FOUR ROLES, FOUR VALUES. The previous pass aliased --text-muted to
+     --text-secondary, which collapsed the two middle steps and left helper
+     copy and metadata rendering identically — the exact "weak hierarchy"
+     finding this system exists to fix. Each step below clears 4.5:1 on every
+     surface it is allowed to sit on, --surface-active included. */
+  --text-primary:   #292724;
+  --text-secondary: #554E46;  /* body copy that is not the headline */
+  --text-muted:     #635C53;  /* helper text, hints, empty-state copy */
+  --text-dim:       #6A6259;  /* metadata, timestamps, counts */
+  --text: var(--text-primary);
+  --text-inverse: #FFFDFA;
+  --text-on-red: #FFFFFF;
 
   /* ── Semantic state ───────────────────────────────────────────────────────
-     Deliberately restrained and desaturated so they read as signals inside a
-     red interface rather than as a second palette. The green matches the live
-     dot in the approved reference; red-family states reuse the brand red so
-     "error" and "brand" are never confusable — error is always paired with an
-     icon and a word, never colour alone. */
-  --st-ready:        #3FD68C;
-  --st-working:      #E8161B;
-  --st-waiting:      #E0A33A;
-  --st-approval:     #F0A32B;
-  --st-setup:        #C08A86;
-  --st-offline:      #6B6060;
-  --st-error:        #FF5A54;
-  --st-experimental: #C88E8A;
-
-  --risk-low:      #3FD68C;
-  --risk-medium:   #E0A33A;
-  --risk-high:     #FF8A4C;
-  --risk-critical: #FF5A54;
+     Distinct hues, all dark enough to be read as TEXT on cream rather than
+     only as fills. --danger is a cooler crimson than --accent's terracotta on
+     purpose: brand and destructive must never be the same colour. */
+  --danger:      #A8123E;
+  --danger-soft: #FAE9EC;
+  --warning:     #7A5606;
+  --success:     #1F6347;
+  --information: #2F6483;
+  /* FOCUS IS WARM, NOT BLUE. A steel-blue ring is the web default and it was
+     what the previous pass used, but on this palette it is the single most
+     out-of-place colour on screen — every focused input, pill and close button
+     grew a cold outline in a warm interface. Burnt umber sits in the brand
+     family, clears 8:1 on cream, and stays clearly distinct from --danger.
+     --information keeps the blue, where it is a 7 px dot and reads as a
+     signal rather than as chrome. */
+  --focus: #7A3B22;
+  /* Tinted backgrounds for the state colours above. Components used to mix
+     these inline as rgba() of a bright dark-theme hue, which is why a "low
+     risk" badge still carried a mint border on cream. */
+  --warning-soft:     #FBF0D8;
+  --success-soft:     #E4F1EA;
+  --information-soft: #E6EFF5;
+  --st-ready: var(--success);
+  --st-working: var(--information);
+  --st-waiting: var(--warning);
+  --st-approval: var(--warning);
+  --st-setup: var(--warning);
+  --st-offline: var(--text-dim);
+  --st-error: var(--danger);
+  --st-experimental: var(--information);
+  --risk-low: var(--success);
+  --risk-medium: var(--warning);
+  --risk-high: var(--danger);
+  --risk-critical: var(--danger);
 
   /* ── Spacing ──────────────────────────────────────────────────────────── */
   --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px; --sp-4: 16px;
   --sp-5: 20px; --sp-6: 24px; --sp-8: 32px; --sp-10: 40px; --sp-12: 48px;
 
   /* ── Radius ───────────────────────────────────────────────────────────── */
-  --r-sm: 7px; --r-md: 10px; --r-lg: 14px; --r-xl: 18px; --r-2xl: 22px; --r-full: 999px;
+  --r-sm: 6px; --r-md: 8px; --r-lg: 12px; --r-xl: 14px; --r-2xl: 16px; --r-full: 999px;
 
   /* ── Type ─────────────────────────────────────────────────────────────── */
-  --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text",
-             "Segoe UI", Roboto, system-ui, sans-serif;
+  --font-ui: "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
-  --fs-xs: 11px; --fs-sm: 12px; --fs-base: 13px; --fs-md: 14px;
+  --fs-xs: 12px; --fs-sm: 13px; --fs-base: 14px; --fs-md: 15px;
   --fs-lg: 16px; --fs-xl: 20px; --fs-2xl: 26px;
 
-  /* ── Elevation & glow ─────────────────────────────────────────────────────
-     Shadow gives depth; glow gives identity. They are separate tokens because
-     glow is applied sparingly — to the send button, the active tab and a
-     focused input, and to nothing else. */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
-  --shadow-md: 0 6px 22px -8px rgba(0, 0, 0, 0.7);
-  --shadow-lg: 0 26px 60px -18px rgba(0, 0, 0, 0.85);
-  --shadow-panel: 0 18px 44px -22px rgba(0, 0, 0, 0.9);
+  /* ── Elevation ────────────────────────────────────────────────────────────
+     Warm-grey shadows, because a neutral black shadow over cream goes grey and
+     the surface looks dirty. The glow tokens are kept and set to `none`: they
+     are referenced from a handful of component rules, and neutralising them
+     here turns the old identity off everywhere at once rather than leaving a
+     stray bloom behind whichever rule was missed. */
+  --shadow-sm: 0 1px 2px rgba(45, 35, 25, .04);
+  --shadow-md: 0 4px 16px rgba(45, 35, 25, .06);
+  --shadow-lg: 0 20px 60px rgba(20, 18, 16, .2);
+  --shadow-panel: 0 2px 10px rgba(45, 35, 25, .04);
 
-  --glow-xs: 0 0 12px -2px rgba(244, 1, 1, 0.35);
-  --glow-sm: 0 0 18px -4px rgba(244, 1, 1, 0.45);
-  --glow-md: 0 6px 26px -8px rgba(244, 1, 1, 0.55);
+  --glow-xs: none;
+  --glow-sm: none;
+  --glow-md: none;
 
   /* ── Layout ───────────────────────────────────────────────────────────── */
   --rail-w:            288px;
@@ -125,7 +180,7 @@
   --shell-gap:         12px;
   /* One radius for the three big surfaces. They have to agree or the shell
      stops reading as one object. */
-  --r-shell:           20px;
+  --r-shell:           16px;
   /* Desktop caption height. The caption IS the top bar now, so this stays 0
      and every rule that has to clear a caption reads --topbar-h instead. Kept
      as a token because the drawer rules below still need to know whether a
@@ -154,9 +209,9 @@ body {
 button, input, textarea, select { font: inherit; color: inherit; }
 button { background: none; border: none; cursor: pointer; }
 a { color: var(--accent-ink); text-decoration: none; }
-::selection { background: rgba(244, 1, 1, 0.30); color: #FFFFFF; }
+::selection { background: var(--accent-wash); color: var(--text); }
 
-:focus-visible { outline: 2px solid var(--accent-hover); outline-offset: 2px; border-radius: var(--r-sm); }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-sm); }
 :focus:not(:focus-visible) { outline: none; }
 
 .sr-only {
@@ -167,10 +222,12 @@ a { color: var(--accent-ink); text-decoration: none; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 236, 236, 0.13); border-radius: var(--r-full);
+  background: var(--border-strong); border-radius: var(--r-full);
   border: 3px solid transparent; background-clip: content-box;
 }
-::-webkit-scrollbar-thumb:hover { background: rgba(255, 90, 84, 0.35); background-clip: content-box; }
+/* DARKER on hover, not lighter. --accent-wash is a pale cream: using it here
+   made the thumb fade out at the moment the pointer reached it. */
+::-webkit-scrollbar-thumb:hover { background: var(--text-dim); background-clip: content-box; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -189,18 +246,14 @@ a { color: var(--accent-ink); text-decoration: none; }
    flame keeps its proportions at every size it is used at.
    ========================================================================== */
 .nano-mark {
-  display: block; flex: none;
-  object-fit: contain;
-  /* A whisper of the flame's own colour under the artwork. At 20 px this is
-     what stops the mark reading as a flat sticker on a dark panel. */
-  filter: drop-shadow(0 0 5px rgba(244, 1, 1, 0.38));
+  display: block; flex: none; object-fit: contain; filter: none;
 }
 .nano-mark--plain { filter: none; }
-.nano-mark--active { animation: nano-pulse 2.4s ease-in-out infinite; }
-@keyframes nano-pulse {
-  0%, 100% { filter: drop-shadow(0 0 4px rgba(244, 1, 1, 0.30)); }
-  50%      { filter: drop-shadow(0 0 12px rgba(244, 1, 1, 0.75)); }
-}
+/* ACTIVITY IS OPACITY, NOT GLOW. The mark used to breathe a red drop-shadow;
+   on cream a coloured bloom around the one saturated object on screen reads as
+   a halo effect rather than as "working". A slow opacity pulse says the same
+   thing and disappears entirely under prefers-reduced-motion. */
+.nano-mark--active { animation: pulse 2s ease-in-out infinite; }
 
 .nano-wordmark { display: block; flex: none; object-fit: contain; height: auto; }
 
@@ -216,8 +269,10 @@ a { color: var(--accent-ink); text-decoration: none; }
 .mark-disc {
   display: grid; place-items: center; flex: none;
   border-radius: var(--r-full);
-  background: radial-gradient(circle at 50% 30%, rgba(244, 1, 1, 0.20), rgba(244, 1, 1, 0.05) 70%);
-  border: 1px solid var(--border-glow);
+  /* A flat wash, not a gradient: both stops of the old radial resolve to the
+     same cream now, so the gradient was doing nothing but costing a paint. */
+  background: var(--accent-faint);
+  border: 1px solid var(--border-accent);
 }
 
 /* ============================================================================
@@ -239,23 +294,23 @@ a { color: var(--accent-ink); text-decoration: none; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .btn--primary {
-  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-deep) 100%);
-  border-color: rgba(255, 90, 84, 0.45); color: var(--text-on-red); font-weight: 600;
-  box-shadow: var(--glow-xs);
+  background: var(--accent); border-color: var(--accent); color: var(--text-on-red); font-weight: 600;
 }
 .btn--primary:hover:not(:disabled) {
-  background: linear-gradient(180deg, var(--accent-hover) 0%, var(--accent) 100%);
-  border-color: rgba(255, 120, 114, 0.6); box-shadow: var(--glow-sm);
+  background: var(--accent-hover); border-color: var(--accent-ink);
 }
 .btn--ghost { background: transparent; border-color: transparent; color: var(--text-muted); }
 .btn--ghost:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
-.btn--danger { background: rgba(255, 90, 84, 0.08); border-color: rgba(255, 90, 84, 0.32); color: var(--st-error); }
-.btn--danger:hover:not(:disabled) { background: rgba(255, 90, 84, 0.16); border-color: var(--st-error); }
-.btn--allow-once {
-  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-deep) 100%);
-  border-color: rgba(255, 90, 84, 0.45); color: var(--text-on-red); font-weight: 600;
+.btn--danger {
+  background: var(--danger-soft); border-color: var(--danger); color: var(--danger);
 }
-.btn--allow-once:hover:not(:disabled) { background: linear-gradient(180deg, var(--accent-hover) 0%, var(--accent) 100%); }
+.btn--danger:hover:not(:disabled) {
+  background: var(--danger); color: var(--text-on-red); border-color: var(--danger);
+}
+.btn--allow-once {
+  background: var(--accent); border-color: var(--accent); color: var(--text-on-red); font-weight: 600;
+}
+.btn--allow-once:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-ink); }
 .btn--allow-task { background: var(--accent-wash); border-color: var(--border-accent); color: var(--accent-ink); font-weight: 600; }
 .btn--allow-task:hover:not(:disabled) { background: var(--accent-veil); }
 .btn--sm { height: 30px; padding: 0 var(--sp-3); font-size: var(--fs-sm); }
@@ -284,7 +339,7 @@ a { color: var(--accent-ink); text-decoration: none; }
   transition: border-color var(--transition), background var(--transition), box-shadow var(--transition);
 }
 .input:focus, .textarea:focus, .select:focus {
-  outline: none; border-color: var(--border-accent);
+  outline: none; border-color: var(--focus);
   background: var(--surface-3); box-shadow: 0 0 0 3px var(--accent-faint);
 }
 .input::placeholder, .textarea::placeholder { color: var(--text-dim); }
@@ -294,7 +349,7 @@ a { color: var(--accent-ink); text-decoration: none; }
 
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .field__label { font-size: var(--fs-sm); font-weight: 500; color: var(--text-muted); }
-.field__hint { font-size: var(--fs-xs); color: var(--text-dim); }
+.field__hint { font-size: var(--fs-xs); color: var(--text-muted); }
 .field__error { font-size: var(--fs-xs); color: var(--st-error); }
 .field__row { display: flex; gap: var(--sp-2); align-items: center; min-width: 0; flex-wrap: wrap; }
 
@@ -335,11 +390,11 @@ a { color: var(--accent-ink); text-decoration: none; }
 /* ── Segmented control ────────────────────────────────────────────────── */
 .segmented {
   display: inline-flex; padding: 3px; gap: 3px; min-width: 0;
-  background: rgba(0, 0, 0, 0.28); border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--bg-sunken); border: 1px solid var(--border); border-radius: var(--r-md);
   align-self: flex-start; width: max-content; max-width: 100%;
 }
 .segmented__option {
-  padding: 6px var(--sp-3); border-radius: 7px; white-space: nowrap;
+  padding: 6px var(--sp-3); border-radius: var(--r-sm); white-space: nowrap;
   font-size: var(--fs-sm); font-weight: 500; color: var(--text-muted);
   transition: background var(--transition), color var(--transition);
 }
@@ -353,17 +408,17 @@ a { color: var(--accent-ink); text-decoration: none; }
 .badge {
   display: inline-flex; align-items: center; gap: 5px; flex: none;
   padding: 3px 8px; border-radius: var(--r-sm);
-  font-family: var(--font-mono); font-size: var(--fs-xs); font-weight: 600;
-  letter-spacing: 0.03em; text-transform: uppercase;
+  font-family: var(--font-ui); font-size: var(--fs-xs); font-weight: 600;
+  letter-spacing: 0;
   border: 1px solid transparent; white-space: nowrap;
 }
 .badge--neutral { background: var(--surface-3); color: var(--text-muted); border-color: var(--border); }
 .badge--accent  { background: var(--accent-wash); color: var(--accent-ink); border-color: var(--border-accent); }
 .badge--info    { background: var(--surface-3); color: var(--text-muted); border-color: var(--border-strong); }
-.badge--risk-low      { background: rgba(63,214,140,0.10); color: var(--risk-low);      border-color: rgba(63,214,140,0.26); }
-.badge--risk-medium   { background: rgba(224,163,58,0.10); color: var(--risk-medium);   border-color: rgba(224,163,58,0.26); }
-.badge--risk-high     { background: rgba(255,138,76,0.10); color: var(--risk-high);     border-color: rgba(255,138,76,0.28); }
-.badge--risk-critical { background: rgba(255,90,84,0.12);  color: var(--risk-critical); border-color: rgba(255,90,84,0.34); }
+.badge--risk-low      { background: var(--success-soft); color: var(--risk-low);      border-color: var(--success); }
+.badge--risk-medium   { background: var(--warning-soft); color: var(--risk-medium);   border-color: var(--warning); }
+.badge--risk-high     { background: var(--danger-soft);  color: var(--risk-high);     border-color: var(--risk-high); }
+.badge--risk-critical { background: var(--danger-soft);  color: var(--risk-critical); border-color: var(--danger); }
 
 .status {
   display: inline-flex; align-items: center; gap: 6px; min-width: 0;
@@ -371,11 +426,20 @@ a { color: var(--accent-ink); text-decoration: none; }
 }
 .status__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-dot { width: 7px; height: 7px; border-radius: var(--r-full); background: var(--st-offline); flex: none; }
-.status--ready { color: var(--st-ready); }        .status--ready .status-dot { background: var(--st-ready); box-shadow: 0 0 8px -1px var(--st-ready); }
-.status--working { color: var(--accent-ink); }    .status--working .status-dot { background: var(--accent); animation: pulse 1.6s ease-in-out infinite; }
+/* SIX STATES, AND NO TWO OF THEM LOOK ALIKE.
+   The audit found "provedor em falta" sitting beside a dot that read as
+   healthy, so the honesty of this row matters more than its prettiness.
+   Colour alone does not carry any of it: each state also differs in FILL or in
+   MOTION, which is what keeps them separable for a colour-blind user and in a
+   screenshot. --st-waiting and --st-setup are both amber because both mean
+   "not fully working", and the ring is what says which one needs YOU. */
+.status--ready { color: var(--st-ready); }        .status--ready .status-dot { background: var(--st-ready); }
+.status--working { color: var(--st-working); }    .status--working .status-dot { background: var(--st-working); animation: pulse 1.6s ease-in-out infinite; }
 .status--waiting { color: var(--st-waiting); }    .status--waiting .status-dot { background: var(--st-waiting); }
 .status--approval { color: var(--st-approval); }  .status--approval .status-dot { background: var(--st-approval); animation: pulse 1.2s ease-in-out infinite; }
-.status--setup { color: var(--st-setup); }        .status--setup .status-dot { background: var(--st-setup); }
+/* HOLLOW, not filled: "nothing is configured yet" is an empty state, and it is
+   the one state in this list that is waiting on the user rather than on Nano. */
+.status--setup { color: var(--st-setup); }        .status--setup .status-dot { background: transparent; box-shadow: inset 0 0 0 2px var(--st-setup); }
 .status--offline { color: var(--st-offline); }    .status--offline .status-dot { background: var(--st-offline); }
 .status--error { color: var(--st-error); }        .status--error .status-dot { background: var(--st-error); }
 .status--experimental { color: var(--st-experimental); } .status--experimental .status-dot { background: var(--st-experimental); }
@@ -406,9 +470,9 @@ a { color: var(--accent-ink); text-decoration: none; }
 .panel-head {
   display: flex; align-items: center; gap: var(--sp-2);
   padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--border);
-  font-family: var(--font-mono); font-size: var(--fs-xs); font-weight: 600;
-  letter-spacing: 0.09em; text-transform: uppercase; color: var(--text-dim);
-  min-width: 0; background: rgba(255, 236, 236, 0.015);
+  font-family: var(--font-ui); font-size: var(--fs-md); font-weight: 600;
+  letter-spacing: 0; color: var(--text);
+  min-width: 0; background: transparent;
 }
 .panel-head__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .panel-head-spacer { flex: 1; }
@@ -425,20 +489,23 @@ a { color: var(--accent-ink); text-decoration: none; }
   gap: var(--sp-2); font-size: var(--fs-sm); min-width: 0;
 }
 .metric-label { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.metric-value .status, .metric-value .badge { font-family: var(--font-ui); letter-spacing: 0; }
 .metric-value {
   font-family: var(--font-mono); color: var(--text);
   font-variant-numeric: tabular-nums; text-align: right;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
 }
-.meter { height: 5px; border-radius: var(--r-full); background: rgba(255, 236, 236, 0.07); overflow: hidden; }
+.meter { height: 5px; border-radius: var(--r-full); background: var(--surface-active); overflow: hidden; }
 .meter > i {
   display: block; height: 100%; border-radius: var(--r-full);
   background: linear-gradient(90deg, var(--accent-deep), var(--accent));
   transition: width 320ms ease;
 }
-.meter--info > i { background: linear-gradient(90deg, #5A4444, #9A7A78); }
-.meter--warn > i { background: linear-gradient(90deg, #8A6420, var(--st-waiting)); }
-.meter--danger > i { background: linear-gradient(90deg, #8E2A26, var(--st-error)); }
+/* Flat fills in the semantic colours. The gradients were hand-mixed browns and
+   scarlets from the previous palette and did not follow the theme. */
+.meter--info > i { background: var(--information); }
+.meter--warn > i { background: var(--st-waiting); }
+.meter--danger > i { background: var(--st-error); }
 
 /* ── Modal ────────────────────────────────────────────────────────────── */
 .modal-backdrop {
@@ -449,7 +516,7 @@ a { color: var(--accent-ink); text-decoration: none; }
 }
 .modal {
   background: var(--surface-solid-2); border: 1px solid var(--border-strong);
-  border-radius: var(--r-2xl); box-shadow: var(--shadow-lg), 0 0 60px -30px rgba(244, 1, 1, 0.5);
+  border-radius: var(--r-2xl); box-shadow: var(--shadow-lg);
   width: min(720px, 100%); max-height: min(86vh, 900px);
   display: flex; flex-direction: column; min-width: 0;
   animation: modalIn 150ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -479,7 +546,7 @@ a { color: var(--accent-ink); text-decoration: none; }
   display: flex; gap: var(--sp-1); flex: none;
   overflow-x: auto; scrollbar-width: none;
   padding: 3px; border-radius: var(--r-lg);
-  background: rgba(0, 0, 0, 0.28); border: 1px solid var(--border);
+  background: var(--bg-sunken); border: 1px solid var(--border);
   align-self: flex-start; width: max-content; max-width: 100%;
 }
 .tabs::-webkit-scrollbar { display: none; }
@@ -495,7 +562,7 @@ a { color: var(--accent-ink); text-decoration: none; }
 }
 .tab__count {
   margin-left: 6px; font-family: var(--font-mono); font-size: 10px;
-  background: rgba(0, 0, 0, 0.35); padding: 1px 6px; border-radius: var(--r-full);
+  background: var(--bg-sunken); padding: 1px 6px; border-radius: var(--r-full);
 }
 
 /* ── States ───────────────────────────────────────────────────────────── */
@@ -515,7 +582,7 @@ a { color: var(--accent-ink); text-decoration: none; }
 @keyframes shimmer { to { background-position: -200% 0; } }
 
 .error-state {
-  border: 1px solid rgba(255,90,84,0.28); background: rgba(255,90,84,0.06);
+  border: 1px solid var(--danger); background: var(--danger-soft);
   border-radius: var(--r-md); padding: var(--sp-4); min-width: 0;
 }
 .error-state__title { display: flex; align-items: center; gap: var(--sp-2); font-weight: 600; color: var(--st-error); font-size: var(--fs-base); }
@@ -529,23 +596,28 @@ a { color: var(--accent-ink); text-decoration: none; }
 }
 
 /* ── Toast ────────────────────────────────────────────────────────────── */
+/* TOP-CENTRED, not bottom-centred. Anchored 24px off the bottom edge the stack
+   landed directly on the composer and the footer line beneath it — the bottom
+   of this window is already fully occupied. It is worst at 940x620, where the
+   toast covered the input the user needs next after an error, but it overlapped
+   the footer at every height. The top strip is empty, so the toast clears both
+   without the composer having to publish its height to a fixed element. */
 .toast-stack {
-  position: fixed; bottom: var(--sp-6); left: 50%; transform: translateX(-50%);
+  position: fixed; top: calc(var(--topbar-h) + var(--stage-head-h) + var(--sp-3)); left: 50%; transform: translateX(-50%);
   z-index: 1400; display: flex; flex-direction: column; gap: var(--sp-2);
   align-items: center; pointer-events: none; max-width: min(560px, 92vw);
 }
 .toast {
   display: flex; align-items: center; gap: var(--sp-2);
   padding: var(--sp-3) var(--sp-5); border-radius: var(--r-full);
-  background: rgba(24, 15, 15, 0.92); border: 1px solid var(--border-strong);
-  backdrop-filter: var(--blur-chip);
-  box-shadow: var(--shadow-md); font-size: var(--fs-base);
+  background: var(--surface-raised); border: 1px solid var(--border-strong);
+  color: var(--text); box-shadow: var(--shadow-lg); font-size: var(--fs-base);
   animation: toastIn 180ms cubic-bezier(0.16, 1, 0.3, 1); pointer-events: auto;
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.toast--error { border-color: rgba(255,90,84,0.42); color: var(--st-error); }
-.toast--success { border-color: rgba(63,214,140,0.38); color: var(--st-ready); }
-@keyframes toastIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.toast--error { border-color: var(--danger); background: var(--danger-soft); color: var(--st-error); }
+.toast--success { border-color: var(--success); background: var(--success-soft); color: var(--st-ready); }
+@keyframes toastIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
 
 /* ── Key/value + helpers ──────────────────────────────────────────────── */
 .kv { display: grid; grid-template-columns: minmax(72px, 108px) minmax(0, 1fr); gap: var(--sp-2) var(--sp-3); font-size: var(--fs-base); }
@@ -560,7 +632,7 @@ a { color: var(--accent-ink); text-decoration: none; }
 kbd {
   font-family: var(--font-mono); font-size: 10px;
   background: var(--surface-4); border: 1px solid var(--border-strong);
-  border-bottom-width: 2px; border-radius: 5px; padding: 1px 5px; color: var(--text-muted);
+  border-bottom-width: 2px; border-radius: var(--r-sm); padding: 1px 5px; color: var(--text-muted);
 }
 
 /* ============================================================================
@@ -586,32 +658,9 @@ kbd {
 :root[data-desktop="true"] .shell { -webkit-app-region: drag; }
 :root[data-desktop="true"] .app { -webkit-app-region: no-drag; }
 
-/* AMBIENT EMBER. A hint of warmth along the very bottom edge — nothing more.
-   The canvas is deep black and red is spent on meaning: the active nav
-   indicator, the selected conversation, focus rings, the send button, the
-   logo, permission emphasis, voice state.
-
-   This used to be three wide radials at 0.32/0.28/0.24 alpha covering roughly
-   the bottom half of the window, which read as a backlit gaming chassis rather
-   than as premium desktop software. The alphas are now ~0.06 and the radials
-   are half the height, so the wash is visible as a warm floor and invisible as
-   a colour cast — measured against `--bg-void` (#050303), the brightest pixel
-   this layer contributes is a little over one step of red.
-
-   `inset: 0`, NOT a negative inset. A negative inset was measured adding 312 px
-   to `.shell`'s scrollHeight at 1920x1080 — an absolutely positioned child
-   still counts towards its ancestor's scrollable overflow even when it is
-   purely decorative, so `overflow: hidden` on the shell was silently clipping
-   a box taller than the window. The gradients are placed and sized to bleed off
-   the edges on their own instead. */
-.shell::before {
-  content: ""; position: absolute; inset: 0;
-  z-index: -1; pointer-events: none;
-  background:
-    radial-gradient(52% 26% at 50% 116%, rgba(214, 12, 12, 0.075), transparent 70%),
-    radial-gradient(30% 20% at 4% 110%,  rgba(214, 12, 12, 0.05),  transparent 68%),
-    radial-gradient(30% 20% at 96% 110%, rgba(214, 12, 12, 0.045), transparent 68%);
-}
+/* The shell has NO ambient decoration. It used to carry three red radial
+   gradients along the bottom edge; on a cream ground the equivalent would be a
+   tint with nothing to say. The warmth comes from --bg itself. */
 
 .app {
   display: grid;
@@ -631,7 +680,7 @@ kbd {
   border-radius: var(--r-shell);
   /* Depth, then a hairline of light along the top edge: that highlight is what
      makes a flat translucent rectangle read as a raised piece of glass. */
-  box-shadow: var(--shadow-panel), inset 0 1px 0 rgba(255, 240, 240, 0.045);
+  box-shadow: var(--shadow-panel);
   overflow: hidden; min-width: 0;
 }
 
@@ -649,9 +698,9 @@ kbd {
   min-width: 0;
   border: 1px solid var(--border);
   border-radius: var(--r-shell);
-  background: linear-gradient(180deg, rgba(26, 16, 16, 0.72), rgba(13, 9, 9, 0.62));
+  background: var(--surface-raised);
   backdrop-filter: var(--blur-panel);
-  box-shadow: var(--shadow-panel), inset 0 1px 0 rgba(255, 240, 240, 0.05);
+  box-shadow: var(--shadow-panel);
   /* The active-tab indicator is absolutely positioned inside the nav, and its
      glow is meant to stay inside the bar. */
   overflow: hidden;
@@ -664,7 +713,7 @@ kbd {
 :root[data-desktop="true"] .topbar a,
 :root[data-desktop="true"] .topbar input,
 :root[data-desktop="true"] .topbar .status-pill { -webkit-app-region: no-drag; }
-.topbar[data-focused="false"] { background: rgba(12, 8, 8, 0.62); }
+.topbar[data-focused="false"] { background: var(--surface); }
 .topbar[data-focused="false"] .brand-lockup__word { opacity: 0.6; }
 
 .topbar__brand { display: flex; align-items: center; gap: var(--sp-3); flex: none; min-width: 0; margin-right: var(--sp-2); }
@@ -687,43 +736,30 @@ kbd {
    the light line beneath it. */
 .topnav-indicator {
   position: absolute; left: 0; top: 8px; bottom: 8px;
-  border-radius: 12px; pointer-events: none;
-  background: linear-gradient(180deg, rgba(244, 1, 1, 0.07), rgba(244, 1, 1, 0.20));
-  /* The light line lives INSIDE the pill, as its bottom edge. Sitting it below
-     the pill put its glow against the bar's clipped bottom edge, which read as
-     a red smear rather than a light strip. */
-  box-shadow: inset 0 0 0 1px rgba(255, 90, 84, 0.20),
-              inset 0 1px 0 rgba(255, 190, 186, 0.10),
-              inset 0 -2px 0 rgba(255, 96, 90, 0.55),
-              0 6px 20px -10px rgba(244, 1, 1, 0.55);
-  opacity: 0;
-  transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1),
-              width 320ms cubic-bezier(0.22, 1, 0.36, 1),
-              opacity 180ms ease;
+  border-radius: var(--r-md); pointer-events: none; background: var(--accent-wash);
+  box-shadow: inset 0 -2px var(--accent); opacity: 0;
+  transition: transform var(--transition), width var(--transition), opacity var(--transition);
 }
 .topnav-indicator[data-ready="true"] { opacity: 1; }
 
-/* A brighter core to that bottom edge, so the line reads as light rather than
-   as a border. It rides the indicator, so it travels with it. */
+
 .topnav-indicator::after {
-  content: ""; position: absolute; left: 26%; right: 26%; bottom: 0;
-  height: 2px; border-radius: var(--r-full);
-  background: linear-gradient(90deg, transparent, #FF6B63, transparent);
+  content: none;
 }
 
 .topnav-item {
   position: relative; z-index: 1;
   display: inline-flex; align-items: center; gap: var(--sp-2);
   padding: 0 var(--sp-4); height: 100%; flex: none;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   color: var(--text-muted); font-size: var(--fs-md); font-weight: 500;
   white-space: nowrap;
   transition: color 180ms ease, background 180ms ease;
 }
 /* The hover wash sits UNDER the travelling indicator, so hovering the active
    tab never stacks two reds on top of each other. */
-.topnav-item:hover { color: var(--text); background: rgba(255, 240, 240, 0.05); }
-.topnav-item[aria-current="page"] { color: #FFFFFF; font-weight: 600; background: transparent; }
+.topnav-item:hover { color: var(--text); background: var(--surface-hover); }
+.topnav-item[aria-current="page"] { color: var(--text); font-weight: 600; background: transparent; }
 .topnav-item[aria-current="page"]:hover { background: transparent; }
 
 .topnav-item__badge {
@@ -735,22 +771,22 @@ kbd {
 
 /* Right cluster ────────────────────────────────────────────────────────── */
 .status-pill {
-  display: inline-flex; align-items: center; gap: var(--sp-2);
-  height: 34px; padding: 0 var(--sp-3); max-width: 230px;
-  border-radius: var(--r-full); border: 1px solid var(--border-accent);
-  background: linear-gradient(180deg, rgba(244, 1, 1, 0.16), rgba(244, 1, 1, 0.06));
+  display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 10px;
+  max-width: 280px; min-width: 0; border-radius: var(--r-md);
+  border: 1px solid var(--border); background: var(--surface-raised);
   color: var(--text); font-size: var(--fs-sm); font-weight: 500;
-  box-shadow: var(--glow-xs); min-width: 0;
-  transition: border-color var(--transition), box-shadow var(--transition);
+  transition: border-color var(--transition);
 }
-.status-pill:hover { border-color: rgba(255, 90, 84, 0.55); box-shadow: var(--glow-sm); }
+.status-pill:hover {
+  border-color: var(--border-strong);
+}
 .status-pill__text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
 .bell { position: relative; }
 .bell__dot {
   position: absolute; top: 6px; right: 6px;
   width: 7px; height: 7px; border-radius: var(--r-full);
-  background: var(--accent); box-shadow: 0 0 6px 1px rgba(244, 1, 1, 0.8);
+  background: var(--accent);
 }
 
 .profile-chip {
@@ -777,15 +813,18 @@ kbd {
 .window-control {
   width: 32px; height: 32px; flex: none;
   display: grid; place-items: center;
-  border-radius: 9px;
+  border-radius: var(--r-md);
   color: var(--text-dim);
   transition: background 150ms ease, color 150ms ease;
   -webkit-app-region: no-drag;
 }
-.window-control:hover { background: rgba(255, 240, 240, 0.08); color: var(--text); }
-.window-control:active { background: rgba(255, 240, 240, 0.13); }
-/* Restrained: the brand red at partial strength, not a flat scarlet block. */
-.window-control--close:hover { background: rgba(216, 20, 24, 0.85); color: #FFFFFF; }
+.window-control:hover { background: var(--surface-hover); color: var(--text); }
+.window-control:active { background: var(--surface-active); }
+/* Windows convention: close goes red on hover. It uses --danger rather than
+   the brand accent, so "close" never shares a colour with "primary action",
+   and its label stays white — the previous pass tokenised this to --text,
+   which put near-black glyphs on a saturated red block. */
+.window-control--close:hover { background: var(--danger); color: var(--text-on-red); }
 .window-control:focus-visible { outline-offset: -2px; }
 
 /* ============================================================================
@@ -800,16 +839,16 @@ kbd {
 .rail__search-row { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
 
 /* The search field is furniture, not a form control: it sits quietly until it
-   is used, then picks up the same red focus treatment as the composer. */
+   is used, then picks up the rail's own focus treatment. */
 .rail .search .input {
   height: 38px; border-radius: var(--r-md);
-  background: rgba(0, 0, 0, 0.30);
-  border-color: rgba(255, 240, 240, 0.06);
+  background: var(--bg-sunken);
+  border-color: var(--border);
 }
 .rail .search .input:focus {
-  background: rgba(0, 0, 0, 0.42);
-  border-color: rgba(255, 90, 84, 0.34);
-  box-shadow: 0 0 0 3px var(--accent-faint);
+  background: var(--bg-sunken);
+  border-color: var(--focus);
+  box-shadow: 0 0 0 2px var(--accent-faint);
 }
 
 .rail__scroll {
@@ -836,7 +875,7 @@ kbd {
   color: var(--text-muted); font-size: var(--fs-base); text-align: left; min-width: 0;
   transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
 }
-.chat-item:hover { background: rgba(255, 240, 240, 0.05); color: var(--text); }
+.chat-item:hover { background: var(--surface-hover); color: var(--text); }
 .chat-item__icon { width: 18px; display: grid; place-items: center; flex: none; color: var(--text-dim); }
 .chat-item__title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-item__time {
@@ -844,36 +883,27 @@ kbd {
   font-variant-numeric: tabular-nums; letter-spacing: 0.01em;
 }
 
-/* THE SELECTED CONVERSATION.
-   It used to carry a full-strength red border all the way round, which reads
-   as an alert, not as "you are here". A selection only has to be unmistakable
-   among its neighbours.
-
-   THE LEADING RED STRIPE IS GONE. It was a second "you are here" marker sitting
-   on top of one that already worked, and against the rail's own left edge it
-   read as a scrollbar or a stray divider rather than as state. Everything it
-   said is now said by the surface: a warmer red-tinted wash, a slightly
-   stronger border, the mark replacing the document glyph, and white title text.
-   Four signals, none of them a bar, and the row is still unmistakable with the
-   list scrolled to any position. */
+/* THE SELECTED CONVERSATION. Four signals, none of them a bar across the left
+   edge: a warmer surface, a stronger border, the mark replacing the document
+   glyph, and a heavier title. The row stays unmistakable with the list scrolled
+   to any position, and the rail's own rule below adds the accent edge. */
 .chat-item[aria-current="true"] {
-  color: #FFFFFF;
-  background: linear-gradient(90deg, rgba(160, 16, 18, 0.38), rgba(120, 12, 14, 0.12));
-  border-color: rgba(255, 90, 84, 0.26);
-  box-shadow: inset 0 1px 0 rgba(255, 190, 186, 0.10);
+  color: var(--text);
+  background: var(--accent-wash);
+  border-color: var(--border-accent);
 }
 .chat-item[aria-current="true"] .chat-item__title { font-weight: 600; }
-.chat-item[aria-current="true"]:hover { background: linear-gradient(90deg, rgba(176, 18, 20, 0.44), rgba(120, 12, 14, 0.16)); }
-.chat-item[aria-current="true"] .chat-item__icon { color: var(--accent-hover); }
-.chat-item[aria-current="true"] .chat-item__time { color: rgba(255, 236, 236, 0.62); }
+.chat-item[aria-current="true"]:hover { background: var(--accent-wash); }
+.chat-item[aria-current="true"] .chat-item__icon { color: var(--accent-ink); }
+.chat-item[aria-current="true"] .chat-item__time { color: var(--text-muted); }
 
 .rail__footer { flex: none; padding: var(--sp-3); border-top: 1px solid var(--border); }
 /* Quiet by default: it is a destination, not a call to action. */
 .rail__footer .btn {
-  background: rgba(255, 240, 240, 0.035); border-color: transparent;
+  background: var(--surface-hover); border-color: transparent;
   color: var(--text-muted); justify-content: flex-start; height: 38px;
 }
-.rail__footer .btn:hover { background: rgba(255, 240, 240, 0.07); color: var(--text); border-color: var(--border); }
+.rail__footer .btn:hover { background: var(--surface-active); color: var(--text); border-color: var(--border); }
 .rail__note {
   font-size: var(--fs-xs); color: var(--text-dim); line-height: 1.55;
   padding: var(--sp-2) var(--sp-3);
@@ -889,10 +919,12 @@ kbd {
 
 .stage__header {
   flex: none; min-height: var(--stage-head-h);
-  display: flex; align-items: center; gap: var(--sp-3);
+  /* --sp-4, not --sp-3: on Memória the subtitle runs to its 58% cap and the
+     view tabs begin immediately after it, so 12px read as a collision. */
+  display: flex; align-items: center; gap: var(--sp-4);
   padding: var(--sp-2) var(--sp-3) var(--sp-2) var(--sp-5);
   border-bottom: 1px solid var(--border);
-  background: rgba(255, 236, 236, 0.018);
+  background: transparent;
   min-width: 0;
 }
 .stage__title { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; flex: none; max-width: 58%; }
@@ -904,7 +936,7 @@ kbd {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .stage__sub {
-  display: block; font-size: var(--fs-xs); color: var(--text-dim); line-height: 1.35;
+  display: block; font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.35;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .stage__spacer { flex: 1; min-width: 0; }
@@ -925,7 +957,7 @@ kbd {
 }
 .subtab__count {
   margin-left: 6px; font-family: var(--font-mono); font-size: 10px;
-  background: rgba(0, 0, 0, 0.35); padding: 1px 5px; border-radius: var(--r-full);
+  background: var(--bg-sunken); padding: 1px 5px; border-radius: var(--r-full);
 }
 
 .stage__footer {
@@ -986,10 +1018,10 @@ kbd {
 }
 .settings-rail__label { font-size: var(--fs-sm); font-weight: 600; }
 .settings-rail__hint {
-  font-size: 11px; color: var(--text-dim); line-height: 1.35;
+  font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.35;
   overflow: hidden; text-overflow: ellipsis;
 }
-.settings-rail__item[aria-current="page"] .settings-rail__hint { color: var(--text-muted); }
+.settings-rail__item[aria-current="page"] .settings-rail__hint { color: var(--text-secondary); }
 
 .settings-body { width: 100%; min-width: 0; margin: 0; }
 .settings-body__head { margin-bottom: var(--sp-4); }
@@ -1023,13 +1055,17 @@ kbd {
    conversation's scroll area so the composer remains reachable on laptops. */
 .first-run { flex: 1; min-height: 0; }
 .first-run__inner { max-width: 820px; margin: 0 auto; padding: 22px; }
-.first-run p { font-size: 13px; line-height: 1.65; margin: 8px 0; }
+/* --fs-sm, one step below the rest of the app, and deliberately so: the guide
+   is six paragraphs plus three panels, and at 940x620 the finish button has
+   about 55px of headroom. Reading size here is bought straight out of whether
+   the user can still see the way out. */
+.first-run p { font-size: var(--fs-sm); line-height: 1.65; margin: 8px 0; }
 .first-run__actions { margin-top: 12px; flex-wrap: wrap; }
 .first-run__details { margin-top: 12px; }
 .first-run__details summary { cursor: pointer; font-size: 13px; }
 .first-run__path { display: block; overflow-wrap: anywhere; font-size: 12px; }
 .first-run__finish { padding-bottom: 8px; }
-.setup-notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 0 20px 10px; padding: 12px; border: 1px solid var(--border-strong); border-radius: var(--r-sm); color: var(--text-muted); font-size: 12px; }
+.setup-notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 0 20px 10px; padding: 12px; border: 1px solid var(--border-strong); border-radius: var(--r-md); color: var(--text-secondary); font-size: var(--fs-sm); }
 .diagnostics-report { display: block; width: 100%; margin-top: 10px; resize: vertical; font-family: var(--font-mono); font-size: 11px; }
 .conversation__inner {
   max-width: var(--chat-max); width: 100%;
@@ -1068,15 +1104,15 @@ kbd {
   border-radius: var(--r-xl);
   padding: var(--sp-3) var(--sp-4);
   background: var(--surface-2);
-  box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255, 240, 240, 0.035);
+  box-shadow: var(--shadow-sm);
 }
 .msg--assistant .msg__bubble { border-top-left-radius: 8px; }
 .msg--user .msg__bubble {
-  border-top-right-radius: 8px;
-  background: linear-gradient(118deg, rgba(96, 14, 17, 0.62), rgba(150, 18, 22, 0.50));
-  border-color: rgba(255, 90, 84, 0.18);
+  border-top-right-radius: 4px; background: var(--accent-wash); border-color: transparent;
 }
-.msg--error .msg__bubble { border-color: rgba(255, 90, 84, 0.42); background: rgba(255, 90, 84, 0.07); }
+.msg--error .msg__bubble {
+  border-color: var(--danger); background: var(--danger-soft);
+}
 
 .msg__foot {
   display: flex; align-items: center; gap: 7px;
@@ -1107,7 +1143,7 @@ kbd {
               border-color var(--transition);
 }
 .msg__meta-toggle:hover {
-  color: var(--text); background: rgba(255, 240, 240, 0.05);
+  color: var(--text); background: var(--surface-hover);
   border-color: var(--border);
 }
 /* THE SURFACE ON :focus, THE RING ON :focus-visible, and the split is
@@ -1116,14 +1152,14 @@ kbd {
    keyboard navigation, where an outline is the convention and a mouse user
    would find it noise. */
 .msg__meta-toggle:focus {
-  color: var(--text); background: rgba(255, 240, 240, 0.055);
+  color: var(--text); background: var(--surface-active);
   border-color: var(--border); outline: none;
 }
 .msg__meta-toggle:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px;
 }
 .msg__meta-toggle[aria-expanded="true"] {
-  color: var(--text); background: rgba(255, 240, 240, 0.055);
+  color: var(--text); background: var(--surface-active);
   border-color: var(--border);
 }
 .msg__meta-caret {
@@ -1131,15 +1167,15 @@ kbd {
   transform: rotate(-90deg); transition: transform var(--transition), color var(--transition);
 }
 .msg__meta-toggle:hover .msg__meta-caret,
-.msg__meta-toggle[aria-expanded="true"] .msg__meta-caret { color: var(--accent-hover); }
+.msg__meta-toggle[aria-expanded="true"] .msg__meta-caret { color: var(--accent-ink); }
 .msg__meta-toggle[aria-expanded="true"] .msg__meta-caret { transform: rotate(0deg); }
 /* The one place red appears here: a turn that changed provider is the fact
    this panel exists to surface. */
 .msg__meta-tag {
   font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase;
   padding: 1px 6px; border-radius: var(--r-full);
-  background: rgba(176, 18, 20, 0.20); color: var(--accent-hover);
-  border: 1px solid rgba(255, 90, 84, 0.22);
+  background: var(--accent-wash); color: var(--accent-ink);
+  border: 1px solid var(--accent-wash);
 }
 .msg__meta-panel { margin-top: var(--sp-2); }
 .msg__meta .kv {
@@ -1174,21 +1210,21 @@ kbd {
 .msg__body li::marker { color: var(--accent-ink); }
 .msg__body h1, .msg__body h2, .msg__body h3 {
   font-size: var(--fs-md); font-weight: 600; margin: var(--sp-4) 0 var(--sp-2);
-  padding-top: var(--sp-3); border-top: 1px solid var(--border); color: #FFFFFF;
+  padding-top: var(--sp-3); border-top: 1px solid var(--border); color: var(--text);
 }
 .msg__body > :first-child { margin-top: 0; padding-top: 0; border-top: none; }
 .msg__body code {
   font-family: var(--font-mono); font-size: 0.88em;
-  background: rgba(0, 0, 0, 0.4); border: 1px solid var(--border);
-  padding: 1px 5px; border-radius: var(--r-sm); color: #FFD9D7;
+  background: var(--bg-sunken); border: 1px solid var(--border);
+  padding: 1px 5px; border-radius: var(--r-sm); color: var(--accent-ink);
 }
-.msg__body strong { font-weight: 600; color: #FFFFFF; }
+.msg__body strong { font-weight: 600; color: var(--text); }
 .msg__body a { text-decoration: underline; text-underline-offset: 2px; }
 
 .code-block { margin: var(--sp-3) 0; border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; min-width: 0; }
 .code-block__head {
   display: flex; align-items: center; gap: var(--sp-2);
-  padding: 5px var(--sp-3); background: rgba(0, 0, 0, 0.35); border-bottom: 1px solid var(--border);
+  padding: 5px var(--sp-3); background: var(--bg-sunken); border-bottom: 1px solid var(--border);
   font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-dim);
 }
 .code-block__spacer { flex: 1; }
@@ -1198,13 +1234,13 @@ kbd {
 .md-table-wrap { overflow-x: auto; margin: var(--sp-3) 0; border: 1px solid var(--border); border-radius: var(--r-md); }
 .md-table { border-collapse: collapse; width: 100%; font-size: var(--fs-sm); }
 .md-table th, .md-table td { padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--border); text-align: left; }
-.md-table th { background: rgba(0, 0, 0, 0.3); font-weight: 600; color: var(--text-muted); }
+.md-table th { background: var(--bg-sunken); font-weight: 600; color: var(--text-muted); }
 .md-table tr:last-child td { border-bottom: none; }
 
 /* ── Tool activity card ───────────────────────────────────────────────── */
 .tool-card {
   margin: var(--sp-2) 0; border: 1px solid var(--border);
-  border-radius: var(--r-md); background: rgba(0, 0, 0, 0.28); overflow: hidden; min-width: 0;
+  border-radius: var(--r-md); background: var(--bg-sunken); overflow: hidden; min-width: 0;
 }
 .tool-card__head {
   display: flex; align-items: center; gap: var(--sp-2);
@@ -1214,9 +1250,12 @@ kbd {
 .tool-card__title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool-card__toggle { flex: none; font-size: var(--fs-xs); color: var(--text-dim); }
 .tool-card--ok .tool-card__icon { color: var(--st-ready); }
-.tool-card--running .tool-card__icon { color: var(--accent-hover); }
+/* A running tool is tinted; a finished one is not. Colour alone never
+   carries it — the icon and the label change too. */
+.tool-card--running { background: var(--information-soft); border-color: var(--information); }
+.tool-card--running .tool-card__icon { color: var(--information); }
 .tool-card--error .tool-card__icon { color: var(--st-error); }
-.tool-card--approval { border-color: rgba(240,163,43,0.34); }
+.tool-card--approval { border-color: var(--warning); }
 .tool-card--approval .tool-card__icon { color: var(--st-approval); }
 .tool-card__details {
   border-top: 1px solid var(--border); padding: var(--sp-3);
@@ -1237,8 +1276,8 @@ kbd {
 /* The welcome state, which is the first thing a new user sees. */
 .chat-hero { display: flex; flex-direction: column; align-items: center; text-align: center; padding: var(--sp-10) var(--sp-5) var(--sp-6); }
 .chat-hero__mark { margin-bottom: var(--sp-5); }
-.chat-hero__title { font-size: var(--fs-2xl); font-weight: 600; letter-spacing: -0.02em; color: #FFFFFF; }
-.chat-hero__hint { margin-top: var(--sp-2); font-size: var(--fs-md); color: var(--text-muted); max-width: 46ch; line-height: 1.65; }
+.chat-hero__title { font-size: var(--fs-2xl); font-weight: 600; letter-spacing: -0.02em; color: var(--text); }
+.chat-hero__hint { margin-top: var(--sp-2); font-size: var(--fs-md); color: var(--text-secondary); max-width: 46ch; line-height: 1.65; }
 
 /* ============================================================================
    COMPOSER
@@ -1256,26 +1295,27 @@ kbd {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   transition: border-color var(--transition), color var(--transition), background var(--transition);
 }
-.suggestion:hover { border-color: var(--border-accent); color: #FFFFFF; background: var(--accent-faint); }
+.suggestion:hover { border-color: var(--border-accent); color: var(--text); background: var(--accent-faint); }
 
 .composer {
-  background: linear-gradient(180deg, rgba(40, 17, 18, 0.60), rgba(24, 12, 13, 0.72));
-  backdrop-filter: var(--blur-chip);
-  border: 1px solid rgba(255, 90, 84, 0.12);
-  border-radius: var(--r-shell); min-width: 0;
-  box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255, 240, 240, 0.05);
-  transition: border-color 200ms ease, box-shadow 200ms ease;
+  background: var(--surface-raised); border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg); min-width: 0; box-shadow: var(--shadow-md);
+  transition: border-color var(--transition), box-shadow var(--transition);
 }
-/* A THIN focus treatment. The old one put a 3 px halo around a box that is
-   already the brightest thing on the screen; one crisp red hairline plus a
-   whisper of bloom says "typing here" without turning the panel into a sign. */
+
+/* A HAIRLINE focus treatment, not a halo. The composer is already the most
+   prominent object on the page; one crisp ring says "typing here" without
+   turning the panel into a sign. */
 .composer:focus-within {
-  border-color: rgba(255, 90, 84, 0.44);
-  box-shadow: var(--shadow-md), 0 0 0 1px rgba(244, 1, 1, 0.16), 0 6px 26px -14px rgba(244, 1, 1, 0.6);
+  border-color: var(--focus); box-shadow: 0 0 0 1px var(--focus), var(--shadow-md);
 }
+/* THE MICROPHONE IS OPEN, and that is a privacy state, not a style. It gets
+   the same ring weight as focus in the information colour, and it is never
+   carried by colour alone: the mic button fills, and the wave indicator
+   appears beside it. */
 .composer--listening {
-  border-color: rgba(255, 90, 84, 0.55);
-  box-shadow: var(--shadow-md), 0 0 0 1px rgba(244, 1, 1, 0.24), var(--glow-md);
+  border-color: var(--information);
+  box-shadow: 0 0 0 1px var(--information), var(--shadow-md);
 }
 
 .composer__textarea {
@@ -1296,38 +1336,29 @@ kbd {
   white-space: nowrap; margin-right: var(--sp-3);
 }
 
-/* The two round controls on the right, exactly as in the reference: a quiet
-   glass microphone and one unmistakable red send button. */
-/* Two round controls, deliberately different weights: the microphone is quiet
-   glass, the send button is the one saturated red object on the screen. */
+
+
 .composer__mic {
   width: 40px; height: 40px; flex: none; border-radius: var(--r-full);
   display: grid; place-items: center;
-  background: rgba(255, 240, 240, 0.05); border: 1px solid rgba(255, 240, 240, 0.10);
+  background: var(--surface-hover); border: 1px solid var(--border);
   color: var(--text);
   transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
 }
-.composer__mic:hover:not(:disabled) { background: rgba(255, 240, 240, 0.10); border-color: rgba(255, 90, 84, 0.30); }
+.composer__mic:hover:not(:disabled) { background: var(--surface-active); border-color: var(--border-strong); }
 .composer__mic:disabled { opacity: 0.32; cursor: not-allowed; }
 .composer__mic--live {
-  background: var(--accent); border-color: var(--accent-hover);
+  background: var(--accent); border-color: var(--accent-ink);
   color: var(--text-on-red); box-shadow: var(--glow-sm);
 }
 
 .composer__send {
-  width: 42px; height: 42px; border-radius: var(--r-full); flex: none;
-  background: linear-gradient(155deg, #FF4A42 0%, var(--accent) 48%, var(--accent-deep) 100%);
-  border: 1px solid rgba(255, 130, 124, 0.42);
-  color: var(--text-on-red);
-  display: grid; place-items: center;
-  /* Depth first, glow second: the bloom is what stops it looking like a flat
-     sticker, and the highlight along the top is what makes it look pressed. */
-  box-shadow: 0 6px 20px -8px rgba(244, 1, 1, 0.72), inset 0 1px 0 rgba(255, 210, 206, 0.42);
-  transition: transform 160ms ease, box-shadow 200ms ease, opacity 160ms ease;
+  width: 36px; height: 36px; border-radius: var(--r-md); flex: none;
+  background: var(--accent); border: 1px solid var(--accent); color: var(--text-on-red);
+  display: grid; place-items: center; transition: background var(--transition);
 }
 .composer__send:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 10px 28px -8px rgba(244, 1, 1, 0.85), inset 0 1px 0 rgba(255, 210, 206, 0.5);
+  background: var(--accent-hover);
 }
 .composer__send:active:not(:disabled) { transform: translateY(0); }
 .composer__send:disabled { opacity: 0.30; cursor: not-allowed; box-shadow: none; }
@@ -1368,6 +1399,8 @@ kbd {
 .tl-content { min-width: 0; }
 .tl-label { font-size: var(--fs-sm); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tl-meta { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-dim); overflow-wrap: anywhere; }
+/* Prose, so it reads in the UI font. */
+.route-reason { font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.6; overflow-wrap: anywhere; }
 
 .row-item {
   display: flex; align-items: center; gap: var(--sp-3); width: 100%;
@@ -1391,8 +1424,8 @@ kbd {
 
 .tile { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--sp-4); min-width: 0; }
 .tile__label {
-  font-family: var(--font-mono); font-size: var(--fs-xs); font-weight: 600;
-  letter-spacing: 0.09em; text-transform: uppercase; color: var(--text-dim); margin-bottom: var(--sp-2);
+  font-family: var(--font-ui); font-size: var(--fs-md); font-weight: 600;
+  letter-spacing: 0; color: var(--text); margin-bottom: var(--sp-2);
 }
 .tile__value { font-size: var(--fs-xl); font-weight: 600; font-variant-numeric: tabular-nums; }
 
@@ -1403,9 +1436,9 @@ kbd {
 .page-title:first-child { margin-top: 0; }
 
 .perm-card { border: 1px solid var(--border-strong); border-radius: var(--r-lg); background: var(--surface-2); overflow: hidden; min-width: 0; }
-.perm-card--critical { border-color: rgba(255,90,84,0.42); }
-.perm-card--high { border-color: rgba(255,138,76,0.34); }
-.perm-card__head { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--border); background: rgba(0,0,0,0.28); flex-wrap: wrap; }
+.perm-card--critical { border-color: var(--danger); }
+.perm-card--high { border-color: var(--warning); }
+.perm-card__head { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--border); background: var(--bg-sunken); flex-wrap: wrap; }
 .perm-card__intent { font-size: var(--fs-md); font-weight: 600; padding: var(--sp-4) var(--sp-4) var(--sp-2); overflow-wrap: anywhere; }
 .perm-card__body { padding: 0 var(--sp-4) var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-3); }
 .perm-card__args {
@@ -1413,7 +1446,7 @@ kbd {
   padding: var(--sp-2) var(--sp-3); font-family: var(--font-mono); font-size: var(--fs-xs);
   color: var(--text-muted); max-height: 170px; overflow: auto;
 }
-.perm-card__actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; padding: var(--sp-3) var(--sp-4); border-top: 1px solid var(--border); background: rgba(0,0,0,0.22); }
+.perm-card__actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; padding: var(--sp-3) var(--sp-4); border-top: 1px solid var(--border); background: var(--bg-sunken); }
 
 /* ── Command palette ──────────────────────────────────────────────────── */
 .palette-backdrop {
@@ -1425,7 +1458,7 @@ kbd {
 .palette {
   width: min(560px, 100%); background: var(--surface-solid-2);
   border: 1px solid var(--border-strong); border-radius: var(--r-2xl);
-  box-shadow: var(--shadow-lg), 0 0 60px -30px rgba(244, 1, 1, 0.55); overflow: hidden;
+  box-shadow: var(--shadow-lg); overflow: hidden;
   animation: modalIn 150ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 /* NOTE: the palette markup uses single-dash names (palette-input, palette-list,
@@ -1445,7 +1478,7 @@ kbd {
   text-align: left; color: var(--text-muted); font-size: var(--fs-base); min-width: 0;
 }
 .palette-item[data-active="true"] {
-  background: var(--accent-wash); color: #FFFFFF;
+  background: var(--accent-wash); color: var(--text);
   box-shadow: inset 0 0 0 1px var(--border-accent);
 }
 .palette-item-hint { margin-left: auto; font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-dim); flex: none; }
@@ -1453,7 +1486,7 @@ kbd {
 /* ── Drawer scrim (rail at narrow widths) ─────────────────────────────── */
 .drawer-scrim {
   position: fixed; inset: 0; z-index: 90;
-  background: rgba(5, 3, 3, 0.6); backdrop-filter: blur(3px);
+  background: var(--surface-overlay); backdrop-filter: blur(3px);
   animation: fadeIn 120ms ease-out;
 }
 
@@ -1487,7 +1520,7 @@ kbd {
 /* 1280x720 class. Tighter chrome, same shape. */
 @media (max-width: 1280px) {
   :root { --rail-w: 224px; --chat-max: 760px; --shell-pad: 10px; --shell-gap: 10px; }
-  .status-pill { max-width: 150px; }
+  .status-pill { max-width: 245px; }
   .page__inner { padding: var(--sp-4) var(--sp-5); }
   .topbar { padding-left: var(--sp-4); gap: var(--sp-2); }
   .composer-wrap { padding-bottom: var(--sp-3); }
@@ -1515,7 +1548,9 @@ kbd {
 /* Very constrained: the primary nav gives up its labels before anything else
    loses function. */
 @media (max-width: 980px) {
-  .status-pill__text, .profile-chip__caret { display: none; }
+  .profile-chip__caret { display: none; }
+  .status-pill__text { max-width: 170px; }
+  .status-pill__tag { font-size: 10px; }
   .status-pill { padding: 0 var(--sp-2); max-width: none; }
   .topnav-item { padding: 0 10px; font-size: var(--fs-base); }
   .stage__sub { display: none; }
@@ -1573,9 +1608,11 @@ kbd {
   overflow-y: auto;
   padding: var(--sp-2);
   border-radius: var(--r-lg); border: 1px solid var(--border-strong);
-  background: var(--surface-overlay);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  /* AN OPAQUE PANEL. This read --surface-overlay, which is the dark scrim a
+     modal paints BEHIND itself, not a surface: over a cream page the menu came
+     out as a muddy grey slab with its own labels barely legible through it.
+     A menu is a raised surface like any other card. */
+  background: var(--surface-raised);
   box-shadow: var(--shadow-lg);
   animation: popover-in 140ms cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -1588,7 +1625,7 @@ kbd {
 .popover__label {
   padding: var(--sp-2) var(--sp-3) var(--sp-1);
   font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
-  text-transform: uppercase; color: var(--text-dim);
+  text-transform: uppercase; color: var(--text-muted);
 }
 
 .popover__item {
@@ -1602,7 +1639,13 @@ kbd {
 .popover__item[aria-checked="true"] {
   background: var(--accent-wash); border-color: var(--border-accent);
 }
-.popover__item:disabled { opacity: 0.5; cursor: not-allowed; }
+/* NOT dimmed to 0.5. The disabled rows in the provider menu are the ones whose
+   hint says WHY they are disabled ("Falta a chave de API") — that sentence is
+   the most useful text in the menu, and halving its opacity took it to roughly
+   2.3:1. Unavailability is carried by the muted label, the absent check and the
+   button's own disabled state instead. */
+.popover__item:disabled { cursor: not-allowed; }
+.popover__item:disabled .popover__item-label { color: var(--text-muted); font-weight: 500; }
 
 .popover__item-check {
   flex: none; width: 16px; height: 16px; margin-top: 2px;
@@ -1611,11 +1654,11 @@ kbd {
 }
 .popover__item-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .popover__item-label { font-size: var(--fs-sm); font-weight: 600; }
-.popover__item-hint { font-size: 11px; color: var(--text-dim); line-height: 1.45; }
+.popover__item-hint { font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.45; }
 
 .popover__note {
   margin: var(--sp-2) var(--sp-3) 0;
-  font-size: 11px; color: var(--text-dim); line-height: 1.5;
+  font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.5;
 }
 .popover__sep {
   height: 1px; margin: var(--sp-2) var(--sp-1);
@@ -1676,11 +1719,11 @@ kbd {
   margin: var(--sp-2) 0 0 var(--sp-4); padding: 0; list-style: none;
   display: flex; flex-direction: column; gap: 3px;
 }
-.cap-item__alts li { font-size: 11px; color: var(--text-dim); line-height: 1.45; }
+.cap-item__alts li { font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.45; }
 
 .cap-item__more { margin-top: var(--sp-2); margin-left: var(--sp-4); }
 .cap-item__more summary {
-  font-size: 11px; color: var(--text-dim); cursor: pointer;
+  font-size: var(--fs-xs); color: var(--text-muted); cursor: pointer;
   list-style: none; width: fit-content;
 }
 .cap-item__more summary::-webkit-details-marker { display: none; }
@@ -1697,16 +1740,22 @@ kbd {
 .guarantee-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
 
 .guarantee { display: flex; align-items: flex-start; gap: var(--sp-3); min-width: 0; }
+/* GREEN, NOT BRAND. These ticks assert a property of the architecture that is
+   permanently true and cannot be switched off, which is what --success means
+   everywhere else in the app. In the brand colour they read as decoration on a
+   marketing list; in the success colour they read as state. It also stops the
+   accent from quietly acquiring a second meaning ("verified") that it carries
+   nowhere else. */
 .guarantee__mark {
   flex: none; width: 20px; height: 20px; margin-top: 1px;
   display: inline-flex; align-items: center; justify-content: center;
   border-radius: var(--r-full);
-  background: var(--accent-wash); border: 1px solid var(--border-accent);
-  color: var(--accent-ink);
+  background: var(--success-soft); border: 1px solid var(--success);
+  color: var(--success);
 }
 .guarantee__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .guarantee__label { font-size: var(--fs-sm); font-weight: 600; color: var(--text); }
-.guarantee__detail { font-size: 12px; color: var(--text-dim); line-height: 1.55; }
+.guarantee__detail { font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.55; }
 
 /* ============================================================================
    ABOUT
@@ -1757,9 +1806,9 @@ kbd {
 }
 .chat-item__menu[aria-expanded="true"] {
   opacity: 1; background: var(--surface-3); color: var(--text);
-  border-color: rgba(255, 90, 84, 0.28);
+  border-color: var(--border-accent);
 }
-.chat-item__menu:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 1px; }
+.chat-item__menu:focus-visible { opacity: 1; outline: 2px solid var(--focus); outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) {
   .chat-item__menu { transition: none; }
 }
@@ -1771,7 +1820,7 @@ kbd {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   margin-top: var(--sp-2); padding: 5px 6px;
   border-radius: var(--r-md); border: 1px solid var(--border);
-  background: rgba(160, 16, 18, 0.12);
+  background: var(--accent-wash);
 }
 .rail__select-bar--idle {
   background: transparent; border-color: transparent; padding: 0 2px;
@@ -1790,24 +1839,27 @@ kbd {
               border-color var(--transition);
 }
 .rail__select-action:hover:not(:disabled) {
-  background: rgba(255, 240, 240, 0.07); color: var(--text); border-color: var(--border);
+  background: var(--surface-hover); color: var(--text); border-color: var(--border);
 }
-.rail__select-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.rail__select-action:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .rail__select-action:disabled { opacity: 0.4; cursor: not-allowed; }
 .rail__select-action--danger { color: var(--st-error); }
+/* Destructive, so it must not hover into the BRAND wash. It had been tokenised
+   to --accent-wash, which inside the rail resolves to the same brown the
+   selected conversation uses. */
 .rail__select-action--danger:hover:not(:disabled) {
-  background: rgba(255, 90, 84, 0.14); border-color: rgba(255, 90, 84, 0.32);
+  background: var(--danger-soft); border-color: var(--danger);
   color: var(--st-error);
 }
 
 .chat-item__check {
   width: 15px; height: 15px; display: grid; place-items: center;
-  border-radius: 4px; border: 1.5px solid var(--text-dim);
-  color: #FFFFFF; transition: background var(--transition), border-color var(--transition);
+  border-radius: var(--r-sm); border: 1.5px solid var(--text-dim);
+  color: var(--text); transition: background var(--transition), border-color var(--transition);
 }
 .chat-item__check.is-on { background: var(--accent); border-color: var(--accent); }
 .chat-item-row[data-selected="true"] .chat-item {
-  background: rgba(160, 16, 18, 0.18); border-color: rgba(255, 90, 84, 0.22);
+  background: var(--accent-wash); border-color: var(--border-accent);
   color: var(--text);
 }
 
@@ -1838,13 +1890,16 @@ kbd {
 }
 .memory-note { font-size: var(--fs-sm); line-height: 1.6; margin: 0 0 var(--sp-3); }
 .memory-footnote {
-  font-size: 11px; line-height: 1.6; margin-top: var(--sp-6);
+  font-size: var(--fs-xs); line-height: 1.6; margin-top: var(--sp-6);
   padding-top: var(--sp-3); border-top: 1px solid var(--border);
 }
 
 .search--inline { min-width: 180px; max-width: 280px; flex: 1 1 180px; }
 
-.input--select { height: 34px; padding: 0 var(--sp-3); min-width: 150px; cursor: pointer; }
+/* A type filter is a control, not a field: `.input` is width:100%, so inside
+   the flex toolbar the select stretched the full width of Memória and Second
+   Brain with one short word in it. It sizes to its content instead. */
+.input--select { height: 34px; padding: 0 var(--sp-3); min-width: 150px; width: auto; flex: none; max-width: 100%; cursor: pointer; }
 .input--area { min-height: 72px; padding: var(--sp-3); line-height: 1.6; resize: vertical; font: inherit; }
 
 /* A statement of fact about the current configuration, not an error. */
@@ -1856,7 +1911,7 @@ kbd {
   margin-bottom: var(--sp-4);
 }
 .notice strong { color: var(--text); }
-.notice--warn { border-color: rgba(224, 163, 58, 0.35); background: rgba(224, 163, 58, 0.07); }
+.notice--warn { border-color: var(--warning); background: var(--warning-soft); }
 
 /* ============================================================================
    MEMÓRIAS — the list
@@ -1893,8 +1948,8 @@ kbd {
 .origin-chip--manual { border-color: var(--border-strong); color: var(--text-muted); }
 .origin-chip--inferred,
 .origin-chip--candidate {
-  border-color: rgba(224, 163, 58, 0.4); color: var(--st-waiting);
-  background: rgba(224, 163, 58, 0.08);
+  border-color: var(--warning); color: var(--st-waiting);
+  background: var(--warning-soft);
 }
 .origin-chip--pinned { border-color: var(--border-accent); color: var(--accent-ink); }
 
@@ -1954,13 +2009,13 @@ kbd {
    the Ember palette: warm reds, ambers and greys. No cyan, no teal, and no
    rainbow -- a categorical scale that leaves the brand behind stops looking
    like Nano. */
-.node-type--device    { border-color: rgba(255, 90, 84, 0.35);  color: #FF8A84; }
-.node-type--software  { border-color: rgba(224, 163, 58, 0.35); color: #E8B45C; }
-.node-type--project   { border-color: rgba(244, 1, 1, 0.40);    color: var(--accent-ink); }
-.node-type--person    { border-color: rgba(200, 142, 138, 0.4); color: #D6A9A5; }
-.node-type--game      { border-color: rgba(255, 138, 76, 0.35); color: #FF9E68; }
-.node-type--decision  { border-color: rgba(63, 214, 140, 0.28); color: #7FD8AC; }
-.node-type--goal      { border-color: rgba(240, 163, 43, 0.35); color: #F0B45C; }
+.node-type--device    { border-color: var(--information); color: var(--information); }
+.node-type--software  { border-color: var(--warning);     color: var(--warning); }
+.node-type--project   { border-color: var(--border-accent); color: var(--accent-ink); }
+.node-type--person    { border-color: var(--information); color: var(--information); }
+.node-type--game      { border-color: var(--warning);     color: var(--warning); }
+.node-type--decision  { border-color: var(--success);     color: var(--success); }
+.node-type--goal      { border-color: var(--warning);     color: var(--warning); }
 .node-type--topic,
 .node-type--note,
 .node-type--preference { border-color: var(--border-strong); color: var(--text-muted); }
@@ -2007,7 +2062,7 @@ kbd {
    read at rest, not only when something is selected. At 0.14 alpha the graph
    looked like isolated dots even when it had real connections. */
 .graph-edge {
-  stroke: rgba(255, 236, 236, 0.24); fill: none;
+  stroke: var(--border-strong); fill: none;
   transition: stroke var(--transition), opacity var(--transition);
 }
 /* Unrelated elements FADE, they do not vanish: the shape of the rest of the
@@ -2040,20 +2095,22 @@ kbd {
 }
 .graph-node.is-selected .graph-node__label { fill: var(--text); font-weight: 600; }
 
-.graph-node[data-type="device"]   .graph-node__dot { stroke: rgba(255, 90, 84, 0.55); }
-.graph-node[data-type="software"] .graph-node__dot { stroke: rgba(224, 163, 58, 0.55); }
-.graph-node[data-type="project"]  .graph-node__dot { stroke: rgba(244, 1, 1, 0.6); }
-.graph-node[data-type="person"]   .graph-node__dot { stroke: rgba(200, 142, 138, 0.6); }
-.graph-node[data-type="game"]     .graph-node__dot { stroke: rgba(255, 138, 76, 0.55); }
-.graph-node[data-type="decision"] .graph-node__dot { stroke: rgba(63, 214, 140, 0.45); }
+/* The dots had been tokenised to --accent-wash, a pale cream, which drew them
+   invisible against the graph canvas. They follow the node-type colours. */
+.graph-node[data-type="device"]   .graph-node__dot { stroke: var(--information); }
+.graph-node[data-type="software"] .graph-node__dot { stroke: var(--warning); }
+.graph-node[data-type="project"]  .graph-node__dot { stroke: var(--accent); }
+.graph-node[data-type="person"]   .graph-node__dot { stroke: var(--information); }
+.graph-node[data-type="game"]     .graph-node__dot { stroke: var(--warning); }
+.graph-node[data-type="decision"] .graph-node__dot { stroke: var(--success); }
 
 .graph-legend {
   position: absolute; left: var(--sp-3); bottom: var(--sp-3);
   display: flex; flex-wrap: wrap; gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md);
-  background: var(--surface-overlay); border: 1px solid var(--border);
-  backdrop-filter: var(--blur-chip); pointer-events: none;
-  font-size: 10px; color: var(--text-dim);
+  background: var(--surface-raised); border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm); pointer-events: none;
+  font-size: var(--fs-xs); color: var(--text-muted);
 }
 .graph-legend__item { display: inline-flex; align-items: center; gap: 5px; }
 .graph-legend__dot {
@@ -2065,13 +2122,13 @@ kbd {
   position: absolute; right: var(--sp-3); top: var(--sp-3);
   display: flex; align-items: center; gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md);
-  background: var(--surface-overlay); border: 1px solid var(--border-accent);
-  backdrop-filter: var(--blur-chip); font-size: var(--fs-sm); color: var(--text);
+  background: var(--surface-raised); border: 1px solid var(--border-accent);
+  box-shadow: var(--shadow-sm); font-size: var(--fs-sm); color: var(--text);
   max-width: min(320px, 50%);
 }
 .graph-selected strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.graph-foot { padding-top: var(--sp-3); font-size: 11px; line-height: 1.6; }
+.graph-foot { padding-top: var(--sp-3); font-size: var(--fs-xs); line-height: 1.6; }
 
 @media (max-width: 780px) {
   .memory-card { flex-direction: column; gap: var(--sp-3); }
@@ -2087,4 +2144,157 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   .popover { animation: none; }
   .status-pill__caret { transition: none; }
+}
+
+/* ============================================================================
+   THEME VARIANTS
+   Both themes share every geometry token and every semantic role; only the
+   colour values behind the roles change. Nothing below re-states a layout.
+   ========================================================================== */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #201F1D; --surface: #292724; --surface-raised: #302D29;
+  --surface-hover: #3B3732; --surface-active: #464039; --bg-sunken: #23211E;
+  /* The rail stays DARKER than the workspace, not equal to it. Reusing the
+     light theme's #292826 made it the same value as --surface here, so the one
+     structural division in the layout disappeared into a hairline. */
+  --sidebar: #1A1917; --sidebar-hover: #262421; --sidebar-active: #4B3A32;
+  --text-primary: #F5EFE7; --text-secondary: #CFC5B9;
+  --text-muted: #BCB2A5; --text-dim: #ABA093;
+  --text-inverse: #201F1D;
+  --border: #49423B; --border-strong: #776A5D;
+  --accent: #A9513A; --accent-hover: #93422E; --accent-ink: #F0B59D;
+  --accent-wash: #4B342B; --accent-faint: #372B25; --accent-veil: #644334;
+  --border-accent: #BD8165;
+  --danger: #F49BB4; --danger-soft: #4A2731;
+  --warning: #E8C170; --warning-soft: #3D3320;
+  --success: #91CBA9; --success-soft: #21332A;
+  --information: #98C5DF; --information-soft: #223039;
+  /* A darker scrim: the light theme's 45% over a dark page barely dims it. */
+  --surface-overlay: rgba(10, 9, 8, .62);
+  /* Warm on dark too, for the same reason it is warm on cream. */
+  --focus: #E9AE94;
+}
+/* The wordmark artwork is light-on-transparent. On cream it is filtered rather
+   than replaced, because the artwork itself must not be redrawn. */
+:root:not([data-theme="dark"]) .nano-wordmark { filter: brightness(.18); }
+
+/* ============================================================================
+   THE CHARCOAL RAIL
+   The one dark region in the light theme. It redefines the surface, text and
+   accent roles LOCALLY, so every component inside it - search, chat rows,
+   menus, buttons, focus rings - follows without needing a rail-specific rule.
+   ========================================================================== */
+.rail {
+  --text: #F7F0E8; --text-secondary: #DCD3C8;
+  --text-muted: #CFC5BA; --text-dim: #B5AA9D;
+  --surface-2: #302E2B; --surface-raised: #302E2B;
+  --surface-3: var(--sidebar-hover); --surface-4: #45413B;
+  --surface-hover: var(--sidebar-hover); --surface-active: #45413B;
+  --bg-sunken: #242321; --border: #49443E; --border-strong: #817365;
+  --accent-ink: #E9AE94; --accent-wash: var(--sidebar-active);
+  --accent-veil: #584034; --border-accent: #956D56;
+  --danger: #F49BB4; --danger-soft: #4A2731;
+  --focus: #E9AE94;
+  background: var(--sidebar); color: var(--text); border-color: var(--sidebar);
+}
+.rail .input { background: var(--bg-sunken); border-color: var(--border); }
+/* An accent edge is the rail's fourth selection signal, and it is an INSET
+   shadow rather than a ::before so it cannot be mistaken for a divider or a
+   scrollbar when the list is scrolled. */
+.rail .chat-item[aria-current="true"] { box-shadow: inset 3px 0 var(--accent-ink); }
+.rail .btn--primary { background: var(--accent); border-color: var(--border-accent); color: var(--text-on-red); }
+.rail .btn--primary:hover:not(:disabled) { background: var(--accent-hover); }
+
+/* ============================================================================
+   SURFACE HIERARCHY
+   Settings were the worst offender in the audit: cards inside cards inside
+   cards, each a slightly different surface, all separated by borders. The
+   hierarchy is now carried by type size, weight and whitespace, and a nested
+   panel is a heading with room around it rather than another box.
+   ========================================================================== */
+.panel { box-shadow: none; }
+.panel-head { background: transparent; padding-top: 16px; padding-bottom: 12px; }
+.panel-body { padding: 16px 20px 20px; gap: 12px; }
+.panel .panel { background: transparent; box-shadow: none; }
+.settings-rail { background: transparent; border-color: transparent; padding: 0 12px 0 0; }
+.settings-rail__label { font-size: 14px; }
+.settings-rail__hint { font-size: 12px; }
+.settings-rail__item { padding: 12px; }
+.settings-body__head { padding: 4px 0 10px; }
+.page-title { font-size: 24px; letter-spacing: -.025em; line-height: 1.3; }
+.field__hint, .metric-label, .dim { line-height: 1.6; }
+
+/* -- Dialogs ----------------------------------------------------------- */
+.modal { box-shadow: var(--shadow-lg); }
+.modal-eyebrow { font-family: var(--font-ui); letter-spacing: .04em; color: var(--warning); }
+.modal-title { font-size: 20px; overflow-wrap: anywhere; }
+.modal-backdrop { backdrop-filter: blur(3px); }
+.btn--allow-task { border-color: var(--border-strong); }
+
+/* -- State presentation --------------------------------------------------
+   No glow on a status dot: on cream a bloom around a 7 px circle is a smudge.
+   "Working" is --information and not the accent, so a busy Nano is never
+   confused with a branded surface. */
+.bell__dot { box-shadow: none; }
+.status-pill__tag { color: var(--warning); background: transparent; }
+
+/* -- First run -----------------------------------------------------------
+   The guide owns the whole stage while it is open (index.tsx withholds the
+   composer), so it can use the vertical space instead of competing for it. */
+.first-run__inner { max-width: 900px; padding: 28px; gap: 20px; }
+.first-run__inner > header { padding-bottom: 4px; }
+.first-run__inner > header .page-title { margin-top: 12px; font-size: 28px; }
+.first-run__finish { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.first-run__finish p { margin: 0; }
+.setup-notice { background: var(--accent-faint); border-color: var(--border-accent); }
+.diagnostics-report { background: var(--bg-sunken); font-size: 12px; line-height: 1.7; padding: 16px; }
+
+/* -- Conversation --------------------------------------------------------
+   Nano's turns have NO bubble. The user's do. That single asymmetry does the
+   whole job of telling the two apart, and it keeps the assistant's text - the
+   part actually being read - flush against the reading column instead of
+   boxed. */
+.chat-hero { gap: 16px; }
+.chat-hero__hint { max-width: 360px; font-size: 15px; line-height: 1.7; }
+.msg__body { font-size: 15px; line-height: 1.75; }
+.msg__bubble { box-shadow: none; }
+.msg--assistant .msg__bubble { background: transparent; border-color: transparent; padding-left: 0; }
+.msg--assistant.msg--error .msg__bubble { background: var(--danger-soft); border-color: var(--danger); padding-left: 16px; }
+.msg__time { font-size: 12px; }
+.msg { margin-bottom: 24px; }
+.msg__body pre { background: var(--bg-sunken); }
+
+/* -- Composer ------------------------------------------------------------
+   Compact enough that it never dominates an empty chat at 620 px tall, and
+   still two-row capable. The microphone is a quiet square; the send button is
+   the accent. Listening is --information, so "recording" never borrows the
+   colour that elsewhere means "brand" or "destructive". */
+.composer__textarea { padding: 12px 16px 4px; min-height: 40px; }
+.composer__bar { padding: 4px 10px 10px 12px; }
+.composer__mic { width: 36px; height: 36px; border-radius: var(--r-md); background: var(--surface); border-color: var(--border); }
+.composer__mic:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--border-strong); }
+.composer__mic--live { background: var(--information); color: var(--text-inverse); border-color: var(--information); }
+.suggestion { border-radius: var(--r-md); padding: 8px 12px; background: transparent; }
+.suggestion:hover { color: var(--accent-ink); }
+.mark-disc { background: var(--surface-hover); border-color: var(--border); }
+
+/* ============================================================================
+   RESPONSIVE - the desktop sizes Nano is measured at
+   ========================================================================== */
+@media (max-width: 1080px) {
+  .topbar__brand { margin-right: 0; gap: 6px; }
+  .topbar { gap: 6px; padding-left: 10px; }
+  .topnav-item { padding: 0 8px; }
+  .first-run__inner { padding: 20px; }
+}
+/* 940x620 and other short windows: the guide gives up padding before it gives
+   up any action, and the composer stops being able to grow past a third of
+   the viewport. */
+@media (max-height: 640px) {
+  .first-run__inner { padding: 16px 24px; gap: 16px; }
+  .first-run__inner > header .page-title { font-size: 24px; }
+  .first-run__inner > header { padding-bottom: 0; }
+  .composer__textarea { max-height: 120px; }
+  .chat-hero { padding-top: var(--sp-6); padding-bottom: var(--sp-4); }
 }

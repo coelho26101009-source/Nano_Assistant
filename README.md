@@ -13,29 +13,92 @@
 <p align="center">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-Desktop-111111?style=for-the-badge&logo=windows11&logoColor=F40101" />
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12%2B-111111?style=for-the-badge&logo=python&logoColor=F40101" />
-  <img alt="Electron" src="https://img.shields.io/badge/Electron-30-111111?style=for-the-badge&logo=electron&logoColor=F40101" />
+  <img alt="Electron" src="https://img.shields.io/badge/Electron-44-111111?style=for-the-badge&logo=electron&logoColor=F40101" />
   <img alt="Next.js" src="https://img.shields.io/badge/Next.js-14-111111?style=for-the-badge&logo=nextdotjs&logoColor=F40101" />
+</p>
+
+<p align="center">
+  <a href="https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.1.0-beta.1"><img alt="Beta publica" src="https://img.shields.io/badge/Beta%20p%C3%BAblica-v0.1.0--beta.1-A64D38?style=for-the-badge" /></a>
+  <img alt="Licenca" src="https://img.shields.io/badge/Licen%C3%A7a-Apache%202.0-111111?style=for-the-badge" />
 </p>
 
 ---
 
-> ### Estado do projeto
+> ### Estado do projeto — Beta pública
 >
-> **O Nano nunca teve um lançamento público.** Não existe nenhuma tag neste
-> repositório e não há uma descarga pública. Existem instaladores locais de validação. Este
-> README descreve o ramo `main`.
+> **Versão atual: `0.1.0-beta.1`.** Esta é a primeira Beta pública do Nano. Não
+> é uma versão estável e não é 1.0. Espera arestas por limar e guarda cópias do
+> que for importante para ti.
 >
 > O `version.json` diz `0.1.0-beta.1`: é a **versão canónica** que a interface,
 > a shell Electron, o backend e o instalador leem para não se contradizerem.
-> Segue a política pré-1.0 descrita em [`docs/RELEASING.md`](docs/RELEASING.md)
-> — ainda não corresponde a nenhum lançamento público, porque não existe
-> nenhum. Ver também
-> [`docs/PUBLIC_RELEASE_CHECKLIST.md`](docs/PUBLIC_RELEASE_CHECKLIST.md).
+> Segue a política pré-1.0 descrita em [`docs/RELEASING.md`](docs/RELEASING.md).
 >
-> É possível **construir** um instalador Windows a partir deste ramo
-> (`docs/RELEASING.md` explica como) e ele foi validado numa máquina de
-> desenvolvimento, mas **não está assinado** e ainda não foi testado numa
-> máquina limpa. Não existe mecanismo de atualização.
+> **Os binários não estão assinados.** O Windows pode mostrar um aviso de
+> *Editor desconhecido* ou do SmartScreen. Descarrega apenas a partir da página
+> de releases oficial deste repositório e confirma o `SHA256SUMS.txt` antes de
+> instalar. Não desligues o SmartScreen nem o Defender para instalar o Nano.
+>
+> **Não existe atualização automática.** As atualizações da Beta são manuais:
+> descarrega a versão nova a partir da página de releases.
+
+## Descarregar
+
+<p align="center">
+  <a href="https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.1.0-beta.1"><strong>Descarregar o Nano 0.1.0-beta.1 para Windows</strong></a>
+</p>
+
+| | |
+|---|---|
+| **Instalador recomendado** | `Nano-Setup-0.1.0-beta.1-x64.exe` |
+| **Sistema** | Windows 10/11 **x64** |
+| **Verificação** | `SHA256SUMS.txt`, na mesma página de release |
+| **Assinatura** | não assinado — ver o aviso acima |
+| **Todas as versões** | [página de releases](https://github.com/coelho26101009-source/Nano_Assistant/releases) |
+
+### Instalar
+
+1. Descarrega `Nano-Setup-0.1.0-beta.1-x64.exe` da página de release.
+2. Confirma a soma de verificação (abaixo).
+3. Executa o instalador. Se o Windows mostrar *Editor desconhecido*, isso é
+   esperado numa Beta não assinada: escolhe **Mais informações → Executar
+   mesmo assim** depois de teres confirmado a soma de verificação.
+4. Abre o Nano e segue o guia da primeira execução.
+
+Para confirmar a descarga, no PowerShell:
+
+```powershell
+Get-FileHash .\Nano-Setup-0.1.0-beta.1-x64.exe -Algorithm SHA256
+```
+
+O valor tem de coincidir com a linha correspondente em `SHA256SUMS.txt`.
+
+### A seguir
+
+- **[Guia da Beta](docs/BETA_GUIDE.md)** — primeira execução, ligar um provedor
+  de IA, voz, e o que fazer quando algo corre mal.
+- **[Privacidade](PRIVACY.md)** — o que fica no teu computador e o que sai dele.
+- **[Segurança](SECURITY.md)** — modelo de segurança e como reportar uma
+  vulnerabilidade.
+- **[Suporte](SUPPORT.md)** — onde reportar erros e colocar dúvidas.
+
+## Como é
+
+<p align="center">
+  <img src="docs/assets/screenshots/nano-chat.png" alt="O ecra inicial do Nano" width="900" />
+</p>
+
+<p align="center">
+  <img src="docs/assets/screenshots/nano-conversation.png" alt="Uma conversa no Nano" width="900" />
+</p>
+
+<p align="center">
+  <img src="docs/assets/screenshots/nano-pc-control.png" alt="Definicoes de PC Control, com as garantias de seguranca" width="900" />
+</p>
+
+<p align="center">
+  <img src="docs/assets/screenshots/nano-first-run.png" alt="O guia da primeira execucao" width="900" />
+</p>
 
 ## O que é o Nano?
 
@@ -48,15 +111,16 @@ de modelos cloud e um modelo local, voz global através de
 ferramentas extensíveis e controlo seguro do Windows. O modelo pode pedir
 ações, mas **não recebe autoridade direta sobre o sistema operativo**.
 
-A interface chama-se **Ember**: uma experiência desktop em preto e vermelho com
-superfícies glass, navegação superior, rail de conversas e overlay de voz
-independente da janela principal.
+A interface é um espaço de trabalho desktop em tons quentes: superfícies
+creme, um rail de conversas em carvão, e um acento terracota usado com
+parcimónia. Navegação superior, rail de conversas à esquerda e um overlay de
+voz independente da janela principal.
 
 ## O que já existe
 
 | Área | Estado atual |
 |---|---|
-| **Desktop** | Electron, tray, single-instance, interface Ember e shell responsiva |
+| **Desktop** | Electron, tray, single-instance, interface clara/escura e shell responsiva |
 | **IA cloud** | **Groq**, **Mistral** e **Google (Gemini)** |
 | **IA local** | Ollama, por omissão `qwen3:8b` |
 | **Modos** | AUTO / CLOUD / LOCAL, com uma única autoridade de routing |
@@ -124,11 +188,12 @@ overlay de voz desktop.
 
 ---
 
-## Experiência Desktop — Ember
+## Experiência Desktop
 
 - top bar flutuante com navegação por **Chat · Ferramentas · PC · Memória · Definições**
 - rail de conversas à esquerda, com pesquisa, seleção múltipla e eliminação
-- superfícies glass em preto e vermelho Nano (`#F40101`)
+- superfícies creme sobre um rail em carvão, com acento terracota
+- tema claro e escuro, com o mesmo sistema de tokens semânticos
 - wordmark e marca oficial em toda a aplicação
 - ícone próprio no Windows, taskbar e tray
 - composer flutuante e responsivo
@@ -257,7 +322,7 @@ convertido em áudio. "Local" refere-se ao modelo de linguagem, não a silêncio
 total de rede. Desliga as respostas faladas em Definições → Voz se quiseres que
 nada saia. Ver [PRIVACY.md](PRIVACY.md).
 
-### Overlay Ember
+### Overlay de voz
 
 O overlay de voz é uma janela Electron própria, sempre no topo e independente da
 janela principal. Mostra estados distintos para Listening, Transcribing,
@@ -391,7 +456,7 @@ Política técnica: [Security Policy](docs/SECURITY_POLICY.md) · [SECURITY.md](
 
 ```text
 ┌──────────────────────── Nano Desktop / Electron ────────────────────────┐
-│  Ember UI · Tray · Global Hotkey · Voice Overlay · Window Lifecycle     │
+│  Nano UI · Tray · Global Hotkey · Voice Overlay · Window Lifecycle      │
 └──────────────────────────────────┬──────────────────────────────────────┘
                                    │ canal de controlo pai/filho (stdio)
                                    ▼
@@ -429,7 +494,7 @@ Documentação detalhada: [Desktop Architecture](docs/architecture/DESKTOP.md) �
 Nano/
 ├── core/        # brain, providers, memória, segurança, voz e execução
 ├── plugins/     # tools e integrações autorizadas
-├── frontend/    # Next.js + React + interface Ember
+├── frontend/    # Next.js + React + interface do Nano
 ├── electron/    # shell desktop, tray, hotkey e voice overlay
 ├── config/      # configuração base
 ├── benchmarks/  # artefactos de medição versionados
@@ -493,8 +558,11 @@ aplicação real. Ver [`docs/RELEASING.md`](docs/RELEASING.md).
 
 ## Limitações atuais
 
-- **Não existe lançamento público nem build assinada.** Existem instaladores locais
-  NSIS e MSI x64 para validação da versão `0.1.0-beta.1`, com Python incluído.
+- **Os binários da Beta não estão assinados.** O Windows mostra avisos de
+  editor desconhecido; verifica sempre o `SHA256SUMS.txt` da release.
+- **O instalador publicado é o NSIS x64.** O MSI é construído e verificado, mas
+  ainda não foi validado num ciclo completo de instalação gerida, por isso não
+  é publicado nesta Beta.
 - **Start with Windows** depende do fluxo de aplicação empacotada
 - a primeira execução apresenta um guia opcional; o chat exige pelo menos
   um provedor cloud configurado ou um modelo disponível no Ollama
@@ -510,7 +578,7 @@ aplicação real. Ver [`docs/RELEASING.md`](docs/RELEASING.md).
 - wake phrase permanece experimental e desativada por omissão
 - o fallback local é mais lento que a cloud (≈19 s por turno contra ≈0,45 s)
 - os provedores cloud continuam sujeitos aos respetivos rate limits
-- a validação numa máquina Windows limpa continua necessária antes da publicação
+- a validação numa máquina Windows limpa continua a ser trabalho em aberto
 
 ---
 

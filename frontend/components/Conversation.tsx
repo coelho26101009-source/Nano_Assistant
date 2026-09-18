@@ -542,11 +542,11 @@ export function Conversation({
             the moment the product introduces itself. Everywhere else the mark
             alone carries the identity. */}
         <div className="chat-hero">
-          <NanoLogo size={72} className="chat-hero__mark" title="Nano" />
+          <NanoLogo size={48} className="chat-hero__mark" title="Nano" />
           <NanoWordmark height={30} />
           <p className="chat-hero__hint">
-            Pergunta alguma coisa, ou diz “Ei Nano”. Ações sensíveis pedem sempre a tua
-            autorização antes de acontecerem.
+            Um espaço para pensar, escrever e organizar o teu dia.
+            O controlo do computador fica sempre contigo.
           </p>
         </div>
       </div>

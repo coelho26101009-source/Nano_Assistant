@@ -172,12 +172,17 @@ jobs:
 
       # docs/RELEASING.md tells users to verify a download against these, so
       # they have to actually exist. They did not before this pass.
+      #
+      # ONLY THE PUBLISHED ARTIFACT IS CHECKSUMMED. The MSI is built and
+      # verified above but not attached to the release (see the publish job),
+      # and a SHA256SUMS.txt listing a file nobody can download makes
+      # `sha256sum -c` fail on a correct download.
       - name: Generate checksums
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           Push-Location electron/dist-electron
-          $lines = Get-ChildItem -File -Include '*.exe','*.msi' -Path * |
+          $lines = Get-ChildItem -File -Include '*.exe' -Path * |
             Sort-Object Name |
             ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
           if (-not $lines) { throw 'No installers to checksum.' }
@@ -228,7 +233,13 @@ jobs:
         with:
           prerelease: true
           fail_on_unmatched_files: true
+          # NSIS ONLY, DELIBERATELY. The MSI is produced and verified by the
+          # build job, and it is kept in the workflow artifact, but it is not
+          # attached to a public release until a full managed-installer
+          # lifecycle -- install, launch, upgrade, uninstall -- has actually
+          # been run. Publishing it beside the tested NSIS path would present
+          # two installers as equivalent when only one of them has been
+          # exercised end to end.
           files: |
             installers/*.exe
-            installers/*.msi
             installers/SHA256SUMS.txt

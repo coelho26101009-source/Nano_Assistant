@@ -464,6 +464,9 @@ app.whenReady().then(async () => {
   byText('button', 'Abrir guia inicial')?.click();
   await sleep(350);
   ok('the initial guide can be reopened from About', !!q('#first-run-title'));
+  ok('onboarding has the full reading area without the chat composer',
+    !q('.composer') && q('.first-run')?.getBoundingClientRect().height > 300);
+
   byText('button', 'Configurar IA')?.click();
   await sleep(400);
   ok('the guide opens existing provider settings', !!q('.settings-body') && /Groq/.test(q('.settings-body').textContent));
