@@ -1,10 +1,13 @@
 # Releasing Nano
 
-**Nano has never had a public release.** Local unsigned NSIS/MSI installers can
-be built for `0.1.0-beta.1`. There is no public download or automatic updater.
+**Current public release: [`0.1.0-beta.1`](https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.1.0-beta.1)**,
+published on 2026-09-18 as a GitHub **pre-release**. Only the unsigned NSIS x64
+installer and `SHA256SUMS.txt` are attached; the MSI is built by the workflow but
+not published. There is no automatic updater: Beta updates are manual.
 
-Publishing must wait until clean Windows validation is complete and
-[`PUBLIC_RELEASE_CHECKLIST.md`](PUBLIC_RELEASE_CHECKLIST.md) is satisfied.
+The Beta shipped with the open items in
+[`PUBLIC_RELEASE_CHECKLIST.md`](PUBLIC_RELEASE_CHECKLIST.md) still unchecked,
+including clean Windows validation. They carry forward to the next release.
 
 ## Versioning
 

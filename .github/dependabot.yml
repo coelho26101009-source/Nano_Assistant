@@ -67,6 +67,17 @@ updates:
       day: monday
     open-pull-requests-limit: 5
     groups:
+      # React and ReactDOM are one runtime and must move together, majors
+      # included. Ungrouped, the React 19 major arrived as two pull requests --
+      # react, then react-dom -- and each failed `npm ci` on the other's peer
+      # range, so neither could ever pass CI. Listed first, because a
+      # dependency joins the first group it matches.
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
       frontend-minor-and-patch:
         update-types:
           - minor

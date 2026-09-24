@@ -6,8 +6,9 @@ name: Build Nano Windows (manual)
 # It used to run on every push to main and to publish a GitHub Release on any
 # `v*` tag. Neither is appropriate yet:
 #
-#   * Nano has never had a public release. Installers are unsigned, there is no
-#     updater, and a clean Windows validation remains a release requirement.
+#   * Nano's public releases are Beta pre-releases (0.1.0-beta.1 was the first).
+#     Installers are unsigned, there is no updater, and a clean Windows
+#     validation remains an open release requirement.
 #   * Building an installer on every push spends Windows runner minutes -- the
 #     most expensive kind -- to produce something nobody may download.
 #   * A release published from a tag is irreversible in practice. Until the

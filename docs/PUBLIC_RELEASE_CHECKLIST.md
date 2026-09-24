@@ -1,7 +1,9 @@
 # Public Beta release checklist
 
 Reviewed **2026-09-18**, against the local `0.1.0-beta.1` candidate. This is a
-local engineering result, not a published release or a clean-machine result.
+local engineering result, not a clean-machine result. `0.1.0-beta.1` was then
+published the same day as a GitHub pre-release (NSIS only); the unchecked items
+below were still open at publication and carry forward to the next release.
 See [BETA_READINESS_REPORT.md](BETA_READINESS_REPORT.md) for evidence and limits,
 [BETA_GUIDE.md](BETA_GUIDE.md) for user instructions, and
 [RELEASING.md](RELEASING.md) for the build/publish procedure.
@@ -65,7 +67,8 @@ or one-click cross-store data wipe. These are not silently promised by this Beta
 - [ ] Decide whether the public Beta distribution policy permits unsigned builds.
 - [ ] Review and authorize the changes, then run remote protected CI and CodeQL.
 - [ ] Prepare release notes, known issues, checksums and a staffed support channel.
-- [ ] Authorize a tag and explicit manual publication. No release exists yet.
+- [ ] Authorize a tag and explicit manual publication. (`v0.1.0-beta.1` was
+      tagged and published on 2026-09-18.)
 
 A normal push to main must not publish. This engineering pass stages, commits,
 pushes, tags and publishes nothing. Code signing, hardware validation, review and

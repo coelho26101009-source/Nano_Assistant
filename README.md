@@ -140,8 +140,8 @@ voz independente da janela principal.
 ### Requisitos
 
 - **Windows 10/11 x64**
-- **Python 3.12 ou superior**
-- **Node.js + npm** para Electron/frontend na primeira execução
+- **Python 3.12** — a versão testada no CI e a que o instalador embute
+- **Node.js 22.12 ou superior + npm** para Electron/frontend na primeira execução
 - dependências Python instaladas com `requirements.txt`
 - **Ollama** apenas se quiseres usar os modos AUTO/LOCAL
 - uma chave de API de pelo menos um provedor cloud, para AUTO/CLOUD

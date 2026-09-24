@@ -43,7 +43,7 @@ test('the version record still declares a channel, and it is not a false "stable
   const canonical = readJson(path.join(REPO, 'version.json'));
   assert.ok(canonical.channel, 'Settings renders VERSION.channel; it cannot be empty');
   assert.notStrictEqual(canonical.channel, 'stable',
-    'Nano has never had a public release, and Settings shows this string to the user');
+    'Nano has only ever shipped Beta pre-releases, and Settings shows this string to the user');
 });
 
 test('the lockfiles carry the canonical version too, so npm ci stays reproducible', () => {

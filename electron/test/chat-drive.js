@@ -109,6 +109,29 @@ app.whenReady().then(async () => {
   win.focus();
   win.webContents.focus();
 
+  /* EMULATE A FOCUSED PAGE, so the answer does not depend on the desktop.
+
+     Everything below re-asserts OS focus, and on a Windows desktop that is not
+     enough: a window shown with showInactive() cannot take the foreground while
+     another application owns it (Windows' foreground lock), so on a developer's
+     machine with the editor in front, `document.hasFocus()` went false part-way
+     through and the focused disclosure measured as transparent on every run --
+     a stylesheet defect that does not exist, while CI's Linux runner passed.
+     This is DevTools' "Emulate a focused page": the document behaves as focused
+     and `:focus` matches, which is the state these assertions are about. It
+     changes nothing about which element is focused, so a missing focus style
+     still fails. If the protocol is unavailable the run falls back to the OS
+     focus handling below and says so. */
+  let focusEmulated = false;
+  try {
+    win.webContents.debugger.attach('1.3');
+    await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
+    focusEmulated = true;
+  } catch (err) {
+    console.error('WARNING: focus emulation unavailable (' + err.message
+      + '); falling back to OS focus, which another window can take.');
+  }
+
   /* WAIT FOR THE FOCUS TO ACTUALLY ARRIVE, and record whether it did.
 
      `:focus` does not match in a document that is not focused, so without this
@@ -158,7 +181,7 @@ app.whenReady().then(async () => {
      reported as its own step. A focus failure then names itself instead of
      surfacing as "the focused control has no background". */
   ok('the harness window owns keyboard focus',
-     document.hasFocus(), 'hasFocus=' + document.hasFocus());
+     document.hasFocus(), 'hasFocus=' + document.hasFocus() + ' emulated=${focusEmulated}');
   const q  = (s) => document.querySelector(s);
   const qa = (s) => Array.from(document.querySelectorAll(s));
   const byText = (sel, text) =>
@@ -1072,6 +1095,7 @@ app.whenReady().then(async () => {
   }, null, 2));
 
   clearInterval(focusKeeper);
+  if (focusEmulated) { try { win.webContents.debugger.detach(); } catch (_) { /* already gone */ } }
   guard.disarm();
   server.close();
   app.exit(failed.length ? 1 : 0);
