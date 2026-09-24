@@ -179,7 +179,7 @@ jobs:
       # The harnesses drive the bundle the frontend job already exported, so
       # the build happens once in this workflow rather than twice.
       - name: Fetch the built frontend
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: frontend-out
           path: frontend/out
