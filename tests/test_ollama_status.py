@@ -545,7 +545,11 @@ def test_the_router_measures_ollama_instead_of_trusting_an_unmeasured_snapshot(
 
     shown = main_module.describe_providers()
     assert shown["ollama"]["state"] == ProviderState.UNKNOWN.value
-    assert shown["route"]["usable"] is False
+    # Nothing is decided on an unmeasured Ollama -- no usable route, and no
+    # "LOCAL has no provider" either, which the UI renders as "configure a
+    # provider": no route is presented at all until it is measured.
+    assert shown["route"] is None and shown["complexRoute"] is None
+    assert shown["routePending"] is True
     snapshot = provider_status.CACHE._entries
     assert len(snapshot) == 1
     assert next(iter(snapshot.values()))[1][1]["state"] == ProviderState.UNKNOWN.value

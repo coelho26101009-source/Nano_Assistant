@@ -16,6 +16,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from typing import Callable, NamedTuple
 
 # Suporte ao caminho de arranque empacotado ou local
 _APP_ROOT_ENV = os.getenv("NANO_APP_ROOT") or os.getenv("HELIOS_APP_ROOT")
@@ -216,6 +217,82 @@ def run_coro(coro, *, timeout: float | None = DEFAULT_COROUTINE_TIMEOUT):
         )
     future = asyncio.run_coroutine_threadsafe(coro, loop)
     return future.result(timeout=timeout)
+
+
+# ===========================================================================
+#  WAITING WITHOUT STOPPING THE BRIDGE
+# ===========================================================================
+# eel runs every exposed function as its own greenlet on ONE gevent hub, and
+# nothing in Nano is monkey-patched: a blocking call inside any of them -- a
+# socket, a Future.result(), a threading wait -- stops every other bridge call
+# until it returns. The functions below are how a bridge call that genuinely
+# has to wait for something (a user who pressed "Test connection" is waiting
+# for the answer) does so without freezing the rest of the interface: the work
+# runs on an ordinary OS thread, and the greenlet waits with gevent.sleep,
+# which lets the hub serve everything else meanwhile.
+
+#: How often a waiting bridge call checks its worker. Only latency: the hub
+#: runs other calls between checks.
+_COOPERATIVE_POLL_SECONDS = 0.02
+
+
+def _on_bridge_greenlet() -> bool:
+    """True when running as an eel bridge call, i.e. inside a gevent greenlet."""
+    try:
+        import gevent
+    except ImportError:          # pragma: no cover - eel depends on gevent
+        return False
+    return isinstance(gevent.getcurrent(), gevent.Greenlet)
+
+
+def _wait_cooperatively(event: threading.Event, timeout: float) -> bool:
+    """Wait for ``event`` without stopping eel's hub. True if it was set in time.
+
+    Off the hub (a worker thread, startup, a test) this is a plain wait.
+    """
+    if event.is_set():
+        return True
+    if not _on_bridge_greenlet():
+        return event.wait(max(0.0, timeout))
+    import gevent
+
+    deadline = time.monotonic() + max(0.0, timeout)
+    while not event.is_set():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        gevent.sleep(min(_COOPERATIVE_POLL_SECONDS, remaining))
+    return True
+
+
+def _off_hub(fn, *args, timeout: float, **kwargs):
+    """Call a blocking ``fn`` so that eel's hub keeps serving while it runs.
+
+    On the bridge the call runs on a daemon thread and only the calling
+    greenlet waits for it; anywhere else it simply runs here. Raises
+    TimeoutError when it has not finished within ``timeout`` -- it then
+    finishes in the background and its result is discarded.
+    """
+    if not _on_bridge_greenlet():
+        return fn(*args, **kwargs)
+    done = threading.Event()
+    outcome: dict = {}
+
+    def _run() -> None:
+        try:
+            outcome["value"] = fn(*args, **kwargs)
+        except BaseException as exc:  # noqa: BLE001 - re-raised in the caller
+            outcome["error"] = exc
+        finally:
+            done.set()
+
+    threading.Thread(target=_run, name="nano-bridge-io", daemon=True).start()
+    if not _wait_cooperatively(done, timeout):
+        raise TimeoutError(f"{getattr(fn, '__name__', 'call')} did not finish in {timeout:.0f}s")
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["value"]
+
 
 def _permission_confirmation_message(action_name: str, args: dict) -> str:
     """A sentence naming WHAT will happen and to WHAT.
@@ -924,7 +1001,14 @@ def probe_local_model() -> dict:
     )
 
 
-def _start_ollama() -> None:
+#: The cancellable autostart of this session's startup, while it runs on a
+#: worker thread. shutdown() cancels it: a Nano that is closing never spawns a
+#: server it would then walk away from.
+_OLLAMA_AUTOSTART: ollama_service.Autostart | None = None
+_OLLAMA_STARTUP_THREAD: threading.Thread | None = None
+
+
+def _start_ollama(control: ollama_service.Autostart | None = None) -> None:
     """Bring up the Ollama API at startup, reusing it if it is already running.
 
     Only the SERVER is started. No model is preloaded, no warm-up inference is
@@ -932,6 +1016,15 @@ def _start_ollama() -> None:
     while an 8B model costs gigabytes, so the model must wait for a real
     request. If Ollama is missing or refuses to start, Nano continues to boot —
     voice, wake phrase and the UI stay usable and the state is reported honestly.
+
+    Holds the shared status's startup gate from the first probe to the last:
+    readers get UNKNOWN saying Ollama is being started instead of probing
+    underneath the launch, and a caller that needs Ollama (the router in LOCAL
+    mode) waits for this answer instead of concluding "not answering" from a
+    server seconds away from answering.
+
+    BLOCKING for seconds when Ollama is not running. main() runs it on a worker
+    thread; see _start_ollama_in_background.
     """
     global OLLAMA_BOOT
     if not brain.local_enabled:
@@ -940,35 +1033,116 @@ def _start_ollama() -> None:
 
     base_url = brain.ollama_url.removesuffix("/api/chat")
     autostart = bool(CONFIG.get("local", {}).get("autostart", True))
+    monitor = ollama_service.STATUS
+    monitor.begin_startup(base_url)
+    boot: dict = {"available": False, "started": False, "reused": False, "detail": "não avaliado"}
+    measurement: dict | None = None
     try:
-        OLLAMA_BOOT = ollama_service.ensure_running(
+        boot = ollama_service.ensure_running(
             base_url,
             autostart=autostart,
             keep_alive=str(CONFIG.get("local", {}).get("keep_alive") or ollama_service.DEFAULT_KEEP_ALIVE),
+            control=control,
         )
+        logger.info("Ollama: %s", boot.get("detail"))
+        # Seed the shared measurement from what ensure_running just learned, so
+        # startup asks Ollama once and not three times. The failing case was the
+        # expensive one: the banner and the provider warm-up each repeated the
+        # two-second refusal ensure_running had already paid.
+        if boot.get("available"):
+            # Up: one inventory read, because readiness depends on the model list.
+            measurement = monitor.probe_now(base_url)
+        elif not boot.get("cancelled"):
+            # Not answering: that IS the measurement. No second probe to confirm it.
+            measurement = {"reachable": False, "installed": [],
+                           "executable": bool(boot.get("executable"))}
     except Exception as exc:
         logger.exception("Falha inesperada ao preparar o Ollama")
-        OLLAMA_BOOT = {"available": False, "started": False, "reused": False, "detail": str(exc)}
-        return
+        boot = {"available": False, "started": False, "reused": False, "detail": str(exc)}
+    finally:
+        OLLAMA_BOOT = boot
+        monitor.finish_startup(base_url, measurement)
 
-    logger.info("Ollama: %s", OLLAMA_BOOT.get("detail"))
-    # Seed the shared measurement from what ensure_running just learned, so
-    # startup asks Ollama once and not three times. The failing case was the
-    # expensive one: the banner and the provider warm-up each repeated the
-    # two-second refusal ensure_running had already paid.
-    if OLLAMA_BOOT.get("available"):
-        # Up: one inventory read, because readiness depends on the model list.
-        status = ollama_service.STATUS.measure(brain.ollama_model, base_url)
+    if boot.get("available"):
+        status = probe_local_model()
         if status["state"] != ollama_service.OllamaState.READY:
             # Say exactly what is missing instead of quietly using another model.
             logger.warning("Modelo local indisponível: %s", status.get("detail"))
     else:
-        # Not answering: that IS the measurement. No second probe to confirm it.
-        ollama_service.STATUS.record(base_url, {
-            "reachable": False, "installed": [],
-            "executable": bool(OLLAMA_BOOT.get("executable")),
-        })
-        logger.warning("Nano continua a arrancar sem modelo local. %s", OLLAMA_BOOT.get("detail"))
+        logger.warning("Nano continua a arrancar sem modelo local. %s", boot.get("detail"))
+
+
+def _start_ollama_in_background() -> threading.Thread | None:
+    """Run _start_ollama on a worker thread, so the window never waits for Ollama.
+
+    MEASURED ON WINDOWS before this existed, from process start to the UI
+    answering: 1.5 s with Ollama already running, 3.7 s with it installed but
+    stopped (a refused connection on 127.0.0.1 takes ~2.2 s to fail) and
+    7.3 s when Nano had to launch it -- 6.0 s of which was _start_ollama:
+    that refusal, then ~3.7 s of `ollama serve` binding its port. Nothing
+    else at startup depends on Ollama: cloud providers, voice and the
+    interface all work without it, so none of them waits for it now.
+
+    WHAT KEEPS THIS SAFE.
+    * The status gate is taken HERE, before the thread exists, so no poll can
+      slip in between and probe a server that is being launched: readers get
+      UNKNOWN ("a arrancar"), and the router, when it needs Ollama, waits for
+      this answer.
+    * One thread, one spawn: ensure_running still probes before it spawns, the
+      single-instance lock still keeps a second Nano out, and status probes
+      never spawn anything.
+    * shutdown() cancels it. The check and the spawn share a lock with the
+      cancel, so once shutdown has cancelled no server is spawned, and a wait
+      for the port ends at once. A server spawned before that stays up, as it
+      always has -- it is the user's shared, detached service.
+    * The thread is a daemon: it can never keep a closing Nano alive.
+    """
+    global OLLAMA_BOOT, _OLLAMA_AUTOSTART, _OLLAMA_STARTUP_THREAD
+    if not brain.local_enabled:
+        _start_ollama()
+        return None
+
+    base_url = brain.ollama_url.removesuffix("/api/chat")
+    control = ollama_service.Autostart()
+    _OLLAMA_AUTOSTART = control
+    OLLAMA_BOOT = {"available": False, "started": False, "reused": False, "pending": True,
+                   "detail": "A verificar o Ollama em segundo plano."}
+    ollama_service.STATUS.begin_startup(base_url)
+
+    def _run() -> None:
+        try:
+            _start_ollama(control)
+        finally:
+            # _start_ollama releases the gate itself; this covers the one path
+            # that returns before taking it (local models switched off
+            # meanwhile), so no reader is left seeing "a arrancar" forever.
+            ollama_service.STATUS.finish_startup(base_url, None)
+        _report_ollama_state()
+
+    thread = threading.Thread(target=_run, name="nano-ollama-startup", daemon=True)
+    try:
+        thread.start()
+    except RuntimeError:
+        ollama_service.STATUS.finish_startup(base_url, None)
+        return None
+    _OLLAMA_STARTUP_THREAD = thread
+    return thread
+
+
+def _report_ollama_state() -> None:
+    """The startup banner line for Ollama, from the shared measurement."""
+    model_status = probe_local_model()
+    if model_status["state"] == "READY":
+        _report("Ollama", "READY", model_status["model"])
+    elif model_status["state"] == "MODEL_UNAVAILABLE":
+        _report("Ollama", "MODEL MISSING", f"{model_status['model']} not installed")
+    elif model_status["state"] == "DISABLED":
+        _report("Ollama", "DISABLED", "local models off in config")
+    elif model_status["state"] == ollama_service.OllamaState.UNKNOWN:
+        # Only if startup could not measure at all (an unexpected error).
+        _report("Ollama", "CHECKING", str(OLLAMA_BOOT.get("detail", ""))[:70])
+    else:
+        _report("Ollama", "UNAVAILABLE", str(OLLAMA_BOOT.get("detail", ""))[:70])
 
 
 @eel.expose
@@ -1001,6 +1175,41 @@ def current_preferred_cloud() -> str:
     )
 
 
+class _ProviderQuery(NamedTuple):
+    """Everything one provider snapshot is keyed on and produced from."""
+
+    mode: providers.ProviderMode
+    preferred: str
+    key: str
+    ollama_base_url: str
+    produce: Callable[[], tuple]
+    unmeasured: Callable[[], tuple]
+
+
+def _provider_query() -> _ProviderQuery:
+    mode = current_provider_mode()
+    preferred = current_preferred_cloud()
+    # The SAME mapping the Brain routes from, so the panel and the router can
+    # never disagree about which model is configured for which provider.
+    tiers = brain.cloud_tiers()
+    ollama_base_url = brain.ollama_url.removesuffix("/api/chat")
+    options = dict(cloud_tiers=tiers, ollama_model=brain.ollama_model,
+                   ollama_base_url=ollama_base_url, local_enabled=brain.local_enabled)
+
+    def _produce() -> tuple[dict[str, dict], dict]:
+        # A background refresh, or a thread that is allowed to block -- never
+        # eel's hub. The Ollama half still reads the shared measurement rather
+        # than asking again: describe_providers replaces it with a live read.
+        return provider_status.describe_all(mode, ollama_wait=False, **options)
+
+    def _unmeasured() -> tuple[dict[str, dict], dict]:
+        return provider_status.describe_unmeasured(mode, **options)
+
+    return _ProviderQuery(mode, preferred,
+                          provider_status.cache_key(mode, tiers, brain.ollama_model, preferred),
+                          ollama_base_url, _produce, _unmeasured)
+
+
 def describe_providers(*, stale_ok: bool = False) -> dict:
     """Live status of every provider plus the route a request would take.
 
@@ -1008,38 +1217,32 @@ def describe_providers(*, stale_ok: bool = False) -> dict:
     conversation model and the complex model honestly instead of implying a
     single model answers everything.
 
-    ``stale_ok`` is for high-frequency polling. This function used to call
-    describe_groq() unconditionally, and the Settings page polls get_settings()
-    once per second so microphone levels stay live -- which meant one blocking
-    request to api.groq.com per second, per open Settings page. With stale_ok
-    the poller is served from the shared snapshot and any refresh happens on a
-    background thread. The snapshot is the same one the Brain routes from, so
-    the two no longer probe the same account separately.
+    ``stale_ok=True`` is the ONLY form a bridge call may use. It never waits on
+    the network: the shared snapshot when there is one (a stale one refreshes
+    in the background), and when there is none, a placeholder in which every
+    cloud provider that would have to be asked is UNKNOWN while the first
+    measurement is taken in the background. Before that placeholder existed the
+    first poll after startup, after a saved key or after a mode change probed
+    every configured provider ON eel's hub -- 0.6 s with healthy providers,
+    10.4 s with one that did not answer, and every other bridge call waited.
+
+    ``stale_ok=False`` joins the refresh in flight, or takes one, and waits for
+    it. For threads that are allowed to block: startup's warm-up, tests.
+
+    While the decision still hinges on a provider nobody has measured, ``route``
+    and ``complexRoute`` are None and ``routePending`` is True. A decision taken
+    around an unmeasured provider -- "no provider available", "cloud down, using
+    local" -- is not yet true of the machine, and the UI renders "no provider"
+    as "configure a provider".
     """
-    mode = current_provider_mode()
-    preferred = current_preferred_cloud()
-    # The SAME mapping the Brain routes from, so the panel and the router can
-    # never disagree about which model is configured for which provider.
-    tiers = brain.cloud_tiers()
-    key = provider_status.cache_key(mode, tiers, brain.ollama_model, preferred)
-    ollama_base_url = brain.ollama_url.removesuffix("/api/chat")
-
-    def _produce() -> tuple[dict[str, dict], dict]:
-        # This runs on eel's hub whenever the snapshot misses, so the Ollama
-        # half must not wait on the network: ollama_wait=False reads the
-        # shared measurement. With it True, a stopped Ollama froze every
-        # bridge call for ~2 s once per snapshot TTL.
-        return provider_status.describe_all(
-            mode,
-            cloud_tiers=tiers,
-            ollama_model=brain.ollama_model,
-            ollama_base_url=ollama_base_url,
-            local_enabled=brain.local_enabled,
-            ollama_wait=False,
-        )
-
-    getter = provider_status.CACHE.get_stale_ok if stale_ok else provider_status.CACHE.get_fresh
-    clouds, ollama = getter(key, _produce)
+    query = _provider_query()
+    mode, preferred, ollama_base_url = query.mode, query.preferred, query.ollama_base_url
+    if stale_ok:
+        clouds, ollama = provider_status.CACHE.get_stale_ok(query.key, query.produce,
+                                                            placeholder=query.unmeasured)
+    else:
+        clouds, ollama = provider_status.CACHE.get_fresh(query.key, query.produce)
+    clouds = dict(clouds)
     if mode != providers.ProviderMode.CLOUD:
         # Ollama's authority is its own measurement, not the copy inside a
         # snapshot that may be 45 s old: read it like the cooldowns below, from
@@ -1071,12 +1274,17 @@ def describe_providers(*, stale_ok: bool = False) -> dict:
         clouds[provider_id], cooldowns[provider_id] = _with_cooldown(
             clouds.get(provider_id) or {}, provider_id)
 
-    def _route(tier: str) -> dict:
+    route_args = dict(google=clouds[providers.ProviderId.GOOGLE.value],
+                      mistral=clouds[providers.ProviderId.MISTRAL.value],
+                      preferred=preferred)
+    pending = providers.route_pending(mode, clouds[providers.ProviderId.GROQ.value], ollama,
+                                      **route_args)
+
+    def _route(tier: str) -> dict | None:
+        if pending:
+            return None
         return providers.resolve_route(
-            mode, clouds[providers.ProviderId.GROQ.value], ollama, tier=tier,
-            google=clouds[providers.ProviderId.GOOGLE.value],
-            mistral=clouds[providers.ProviderId.MISTRAL.value],
-            preferred=preferred)
+            mode, clouds[providers.ProviderId.GROQ.value], ollama, tier=tier, **route_args)
 
     return {
         "mode": mode.value,
@@ -1090,15 +1298,84 @@ def describe_providers(*, stale_ok: bool = False) -> dict:
         # it; `cooldowns` is the per-provider view everything new should use.
         "cooldown": cooldowns[providers.ProviderId.GROQ.value],
         "cooldowns": cooldowns,
-        # The route a normal conversational message would take right now.
+        # The route a normal conversational message would take right now --
+        # None while that still depends on a provider nobody has measured.
         "route": _route("FAST"),
         "complexRoute": _route("STRONG"),
+        "routePending": pending,
     }
 
 
 @eel.expose
 def get_providers() -> dict:
-    return describe_providers()
+    """Polled every 10 s by the shell. Never waits on a provider: see describe_providers.
+
+    It used the blocking form, so once per snapshot TTL (45 s) the poll that
+    found the snapshot expired re-probed every configured cloud provider on
+    eel's hub, and the first poll after a start or a saved key did the same.
+    """
+    return describe_providers(stale_ok=True)
+
+
+#: How long a settings change waits -- cooperatively, so the rest of the UI
+#: keeps working -- for the provider refresh the change made necessary. Enough
+#: for healthy providers (0.3-0.6 s measured); a provider that does not answer
+#: is reported as not yet verified instead of holding the button for its full
+#: 10 s timeout.
+_SETTINGS_REFRESH_WAIT_SECONDS = 3.0
+
+
+def _providers_after_change() -> dict:
+    """The provider payload a settings change returns. Never blocks the hub.
+
+    A change of key, model, preference or mode invalidates the snapshot, or
+    moves to a key that has none, and the UI refreshes the moment the change
+    returns. Returning at once would hand that refresh a placeholder that says
+    "not verified yet" for up to one poll interval; so the refresh is started
+    here and waited for -- cooperatively, and only up to
+    _SETTINGS_REFRESH_WAIT_SECONDS.
+    """
+    query = _provider_query()
+    refreshed = provider_status.CACHE.refresh(query.key, query.produce)
+    if refreshed is not None:
+        _wait_cooperatively(refreshed, _SETTINGS_REFRESH_WAIT_SECONDS)
+    return describe_providers(stale_ok=True)
+
+
+#: How long a user-triggered validation (a key, a model) may take before the
+#: user is told it did not answer. Below the renderer's own 25 s bridge limit,
+#: so the answer arrives as a sentence rather than as "no response".
+_VALIDATION_TIMEOUT_SECONDS = 20.0
+
+
+def _validation_timeout(provider_id: str) -> dict:
+    name = providers.provider_name(provider_id)
+    return {"ok": False, "error": "timeout",
+            "detail": f"O {name} não respondeu a tempo. Tenta novamente dentro de momentos."}
+
+
+# The latest selection per setting. A model choice is validated off the hub,
+# so a second choice made while the first is still being validated could
+# otherwise finish FIRST and then be overwritten by the older one.
+_SELECTION_LOCK = threading.Lock()
+_SELECTIONS: dict[str, int] = {}
+
+
+def _begin_selection(setting: str) -> int:
+    with _SELECTION_LOCK:
+        ticket = _SELECTIONS.get(setting, 0) + 1
+        _SELECTIONS[setting] = ticket
+        return ticket
+
+
+def _selection_is_latest(setting: str, ticket: int) -> bool:
+    with _SELECTION_LOCK:
+        return _SELECTIONS.get(setting) == ticket
+
+
+def _superseded() -> dict:
+    return {"ok": False, "error": "superseded",
+            "detail": "Entretanto foi escolhida outra opção; essa é a que fica."}
 
 
 @eel.expose
@@ -1116,17 +1393,25 @@ def set_provider_mode(mode: str) -> dict:
     # after the user had explicitly asked to change how Nano routes.
     provider_failures.reset_all_cooldowns()
     logger.info("Modo de provedor: %s", parsed.value)
-    return {"ok": True, "mode": parsed.value, "providers": describe_providers()}
+    return {"ok": True, "mode": parsed.value, "providers": _providers_after_change()}
 
 
 @eel.expose
 def set_groq_api_key(api_key: str) -> dict:
-    """Validate a key, then store it OS-encrypted. The key never returns."""
+    """Validate a key, then store it OS-encrypted. The key never returns.
+
+    The validation is a request to api.groq.com that the user is waiting for,
+    so this call waits for it -- off the hub, so nothing else in the interface
+    does.
+    """
     candidate = (api_key or "").strip()
     if not candidate:
         return {"ok": False, "error": "empty_key", "detail": "Introduz uma chave de API."}
 
-    verdict = providers.test_groq(candidate)
+    try:
+        verdict = _off_hub(providers.test_groq, candidate, timeout=_VALIDATION_TIMEOUT_SECONDS)
+    except TimeoutError:
+        return _validation_timeout(providers.ProviderId.GROQ.value)
     if not verdict["ok"]:
         # Never persist a key we could not validate.
         return {"ok": False, "error": verdict["error"], "detail": verdict["detail"]}
@@ -1144,13 +1429,21 @@ def set_groq_api_key(api_key: str) -> dict:
 
     brain.reload_cloud_credentials()
     logger.info("Chave de API do Groq guardada (encriptada=%s).", secret_store.is_encrypted())
-    return {"ok": True, "detail": verdict["detail"], "providers": describe_providers()}
+    return {"ok": True, "detail": verdict["detail"], "providers": _providers_after_change()}
 
 
 @eel.expose
 def test_groq_connection(api_key: str = "") -> dict:
-    """Test the stored key, or a candidate the user is typing (never stored)."""
-    verdict = providers.test_groq(api_key or None)
+    """Test the stored key, or a candidate the user is typing (never stored).
+
+    A button the user pressed and is waiting on, so it waits for the answer --
+    off the hub, so the rest of the interface does not.
+    """
+    try:
+        verdict = _off_hub(providers.test_groq, api_key or None,
+                           timeout=_VALIDATION_TIMEOUT_SECONDS)
+    except TimeoutError:
+        return _validation_timeout(providers.ProviderId.GROQ.value)
     return {
         "ok": verdict["ok"],
         "detail": verdict["detail"],
@@ -1165,7 +1458,7 @@ def remove_groq_api_key() -> dict:
     secret_store.delete_secret(providers.GROQ_SECRET_NAME)
     brain.reload_cloud_credentials()
     logger.info("Chave de API do Groq removida.")
-    return {"ok": True, "providers": describe_providers()}
+    return {"ok": True, "providers": _providers_after_change()}
 
 
 @eel.expose
@@ -1173,16 +1466,23 @@ def set_groq_model(model: str) -> dict:
     chosen = (model or "").strip()
     if not chosen:
         return {"ok": False, "error": "empty_model"}
-    available, error = providers.list_groq_models()
+    ticket = _begin_selection("groq_model")
+    try:
+        available, error = _off_hub(providers.list_groq_models,
+                                    timeout=_VALIDATION_TIMEOUT_SECONDS)
+    except TimeoutError:
+        return _validation_timeout(providers.ProviderId.GROQ.value)
     if error:
         return {"ok": False, "error": error, "detail": "Não foi possível validar o modelo com o Groq."}
     if chosen not in available:
         return {"ok": False, "error": "model_unavailable",
                 "detail": f"'{chosen}' não existe nesta conta Groq."}
+    if not _selection_is_latest("groq_model", ticket):
+        return _superseded()
     user_settings.set_value("groq_model", chosen)
     CONFIG["groq_model"] = chosen
     brain.groq_model = chosen
-    return {"ok": True, "model": chosen, "providers": describe_providers()}
+    return {"ok": True, "model": chosen, "providers": _providers_after_change()}
 
 
 @eel.expose
@@ -1210,7 +1510,7 @@ def set_preferred_cloud_provider(provider: str) -> dict:
     provider_failures.cooldown_for(chosen).reset()
     brain.invalidate_provider_snapshot()
     logger.info("Provedor cloud preferido: %s", chosen)
-    return {"ok": True, "provider": chosen, "providers": describe_providers()}
+    return {"ok": True, "provider": chosen, "providers": _providers_after_change()}
 
 
 #: Which stored settings hold each cloud provider's two model tiers. The
@@ -1274,7 +1574,11 @@ def set_cloud_api_key(provider: str, api_key: str) -> dict:
     if not candidate:
         return {"ok": False, "error": "empty_key", "detail": "Introduz uma chave de API."}
 
-    verdict = providers.test_cloud(provider_id, candidate)
+    try:
+        verdict = _off_hub(providers.test_cloud, provider_id, candidate,
+                           timeout=_VALIDATION_TIMEOUT_SECONDS)
+    except TimeoutError:
+        return _validation_timeout(provider_id)
     if not verdict["ok"]:
         # Never persist a key we could not validate.
         return {"ok": False, "error": verdict["error"], "detail": verdict["detail"]}
@@ -1300,16 +1604,24 @@ def set_cloud_api_key(provider: str, api_key: str) -> dict:
     brain.reload_cloud_credentials()
     logger.info("Chave de API do %s guardada (encriptada=%s).",
                 providers.provider_name(provider_id), secret_store.is_encrypted())
-    return {"ok": True, "detail": verdict["detail"], "providers": describe_providers()}
+    return {"ok": True, "detail": verdict["detail"], "providers": _providers_after_change()}
 
 
 @eel.expose
 def test_cloud_connection(provider: str, api_key: str = "") -> dict:
-    """Test the stored key, or a candidate the user is typing (never stored)."""
+    """Test the stored key, or a candidate the user is typing (never stored).
+
+    A button the user pressed and is waiting on, so it waits for the answer --
+    off the hub, so the rest of the interface does not.
+    """
     provider_id = _cloud_provider_id(provider)
     if not provider_id:
         return _unknown_provider(provider)
-    verdict = providers.test_cloud(provider_id, api_key or None)
+    try:
+        verdict = _off_hub(providers.test_cloud, provider_id, api_key or None,
+                           timeout=_VALIDATION_TIMEOUT_SECONDS)
+    except TimeoutError:
+        return _validation_timeout(provider_id)
     return {
         "ok": verdict["ok"],
         "detail": verdict["detail"],
@@ -1328,7 +1640,7 @@ def remove_cloud_api_key(provider: str) -> dict:
     secret_store.delete_secret(providers.CLOUD_SECRET_NAMES[provider_id])
     brain.reload_cloud_credentials()
     logger.info("Chave de API do %s removida.", providers.provider_name(provider_id))
-    return {"ok": True, "providers": describe_providers()}
+    return {"ok": True, "providers": _providers_after_change()}
 
 
 @eel.expose
@@ -1347,7 +1659,14 @@ def set_cloud_model(provider: str, model: str, tier: str = "fast") -> dict:
     if not chosen:
         return {"ok": False, "error": "empty_model"}
 
-    available, error = providers.cloud_model_choices(provider_id)
+    fast_key, complex_key = _CLOUD_MODEL_SETTINGS[provider_id]
+    key = complex_key if str(tier).lower() == "complex" else fast_key
+    ticket = _begin_selection(key)
+    try:
+        available, error = _off_hub(providers.cloud_model_choices, provider_id,
+                                    timeout=_VALIDATION_TIMEOUT_SECONDS)
+    except TimeoutError:
+        return _validation_timeout(provider_id)
     name = providers.provider_name(provider_id)
     if error:
         return {"ok": False, "error": error,
@@ -1355,9 +1674,9 @@ def set_cloud_model(provider: str, model: str, tier: str = "fast") -> dict:
     if chosen not in available:
         return {"ok": False, "error": "model_unavailable",
                 "detail": f"'{chosen}' não existe nesta conta {name}."}
+    if not _selection_is_latest(key, ticket):
+        return _superseded()
 
-    fast_key, complex_key = _CLOUD_MODEL_SETTINGS[provider_id]
-    key = complex_key if str(tier).lower() == "complex" else fast_key
     result = user_settings.set_value(key, chosen)
     if not result.get("ok"):
         return {"ok": False, "error": result.get("error", "write_failed")}
@@ -1377,7 +1696,7 @@ def set_cloud_model(provider: str, model: str, tier: str = "fast") -> dict:
 
     brain.invalidate_provider_snapshot()
     logger.info("Modelo %s (%s): %s", provider_id, key, chosen)
-    return {"ok": True, "model": chosen, "tier": key, "providers": describe_providers()}
+    return {"ok": True, "model": chosen, "tier": key, "providers": _providers_after_change()}
 
 
 @eel.expose
@@ -1424,13 +1743,37 @@ def set_mistral_model(model: str, tier: str = "fast") -> dict:
     return set_cloud_model(providers.ProviderId.MISTRAL.value, model, tier)
 
 
+#: How long choosing a local model may wait for Ollama's answer -- one probe
+#: (at most PROBE_TIMEOUT) joined or taken off the hub, or a startup in
+#: progress. Below the renderer's 25 s bridge limit, so a slow Ollama is
+#: reported as a sentence rather than as "no response".
+_LOCAL_MODEL_CHECK_SECONDS = 20.0
+
+
 @eel.expose
 def set_local_model(model: str) -> dict:
     """Choose which installed Ollama model answers in LOCAL mode.
 
-    Validated against what is REALLY installed. `ollama_service.list_models`
-    reads /api/tags, which is read-only and loads nothing into RAM, so this
-    cannot be used to make the machine pull a model it does not have.
+    Validated against what is REALLY installed: the model list comes from
+    /api/tags, which is read-only and loads nothing into RAM, so this cannot be
+    used to make the machine pull a model it does not have.
+
+    WHERE THE ANSWER COMES FROM. The shared Ollama measurement
+    (ollama_service.STATUS), reused when it is no older than the status TTL --
+    what the model list the user just picked from was built from -- and
+    otherwise taken, or joined if one is already in flight, on a worker thread
+    while this bridge call waits cooperatively. It used to ask Ollama twice,
+    inline on eel's hub: with Ollama stopped that was 2.0 s during which a
+    cheap call sent 30 ms later waited 1.97 s. A selection is a question the
+    user is waiting on, so it still waits for a verified answer; it just no
+    longer makes the rest of the interface wait with it. Asking the user to
+    retry instead would refuse every selection made while the shared
+    measurement is older than its TTL -- and with readiness polled every 10 s
+    against a 10 s TTL, it routinely is.
+
+    Nothing unverified is accepted: no measurement in time, Ollama down, or
+    the model absent from a fresh inventory are all refusals. With local
+    models disabled Ollama is not contacted at all.
 
     The live application is the point. `local_model` was already on the
     settings allow-list and `apply_overlay` already read it at startup, so the
@@ -1441,17 +1784,34 @@ def set_local_model(model: str) -> dict:
     chosen = (model or "").strip()
     if not chosen:
         return {"ok": False, "error": "empty_model"}
+    if not brain.local_enabled:
+        return {"ok": False, "error": "local_disabled",
+                "detail": "Os modelos locais estao desativados; ativa-os para escolher um."}
 
     base_url = brain.ollama_url.removesuffix("/api/chat")
-    if not ollama_service.api_available(base_url):
+    ticket = _begin_selection("local_model")
+    try:
+        status = _off_hub(ollama_service.STATUS.measure, chosen, base_url,
+                          max_age=ollama_service.STATUS_TTL_SECONDS,
+                          timeout=_LOCAL_MODEL_CHECK_SECONDS)
+    except TimeoutError:
+        status = {"state": ollama_service.OllamaState.UNKNOWN}
+    state = status.get("state")
+    if state == ollama_service.OllamaState.UNKNOWN:
+        return {"ok": False, "error": "ollama_status_unknown",
+                "detail": "Ainda nao foi possivel confirmar os modelos do Ollama; "
+                          "tenta novamente dentro de momentos."}
+    if not status.get("ollamaUp"):
         return {"ok": False, "error": "ollama_unavailable",
                 "detail": "O Ollama nao esta a responder; nao e possivel validar o modelo."}
 
-    installed = ollama_service.list_models(base_url)
+    installed = list(status.get("installed") or [])
     if not ollama_service.model_installed(chosen, installed):
         return {"ok": False, "error": "model_not_installed",
                 "detail": f"'{chosen}' nao esta instalado. Instalados: "
                           f"{', '.join(installed) or 'nenhum'}."}
+    if not _selection_is_latest("local_model", ticket):
+        return _superseded()
 
     result = user_settings.set_value("local_model", chosen)
     if not result.get("ok"):
@@ -1463,7 +1823,7 @@ def set_local_model(model: str) -> dict:
     # would keep naming the previous one until the TTL expired.
     brain.invalidate_provider_snapshot()
     logger.info("Modelo local: %s", chosen)
-    return {"ok": True, "model": chosen, "providers": describe_providers()}
+    return {"ok": True, "model": chosen, "providers": _providers_after_change()}
 
 
 @eel.expose
@@ -3176,6 +3536,11 @@ def _open_browser_tab(port: int):
 
 def shutdown() -> None:
     """Stop every background service started by main()."""
+    control = _OLLAMA_AUTOSTART
+    if control is not None:
+        # First, so that a startup still checking or launching Ollama cannot
+        # spawn a server after this point, and stops waiting for its port.
+        control.cancel()
     try:
         background_worker.stop()
     except Exception:
@@ -3221,6 +3586,22 @@ def shutdown() -> None:
     _release_single_instance()
 
 
+def _warm_provider_snapshot() -> None:
+    """Start the first provider snapshot in the background, before eel serves.
+
+    Describing a cloud provider is a blocking HTTP call. Started here, on the
+    cache's own worker thread, it is usually finished before the window's first
+    poll -- and a poll that arrives first shares it instead of starting a
+    second one, and says "not verified yet" meanwhile rather than waiting. A
+    failure is harmless: the next poll starts another.
+    """
+    try:
+        query = _provider_query()
+        provider_status.CACHE.refresh(query.key, query.produce)
+    except Exception:
+        logger.debug("Provider snapshot warm-up failed", exc_info=True)
+
+
 def _report(component: str, state: str, detail: str = "") -> None:
     """One startup line per component, on stdout so the launcher window shows it.
 
@@ -3260,6 +3641,18 @@ def main():
     else:
         _report("Memory", "DEGRADED", str(memory_stack.migration.get("error"))[:60])
 
+    # The two slow measurements every later poll reads -- Ollama and the cloud
+    # providers -- start FIRST and off this thread, so they run while the rest
+    # of startup does instead of before it. Server only: no model is loaded
+    # until a real request needs one. The Ollama banner line is printed by the
+    # worker once there is something true to say.
+    _start_ollama_in_background()
+    if brain.local_enabled:
+        _report("Ollama", "STARTING", "em segundo plano; a janela não espera pelo Ollama")
+    else:
+        _report_ollama_state()
+    _warm_provider_snapshot()
+
     background_worker.start()
     _report("Backend", "READY" if background_worker.status().get("running") else "ERROR")
 
@@ -3267,23 +3660,6 @@ def main():
     _report("Plugins", "OK", f"{len(list_plugins())} loaded")
     if started_services:
         logger.info("Serviços de plugin activos: %s", ", ".join(started_services))
-
-    # Server only — no model is loaded until a real request needs one.
-    # _start_ollama seeds the shared measurement, so the banner below reads it
-    # rather than asking Ollama a second time.
-    _start_ollama()
-    model_status = probe_local_model()
-    if model_status["state"] == "READY":
-        _report("Ollama", "READY", model_status["model"])
-    elif model_status["state"] == "MODEL_UNAVAILABLE":
-        _report("Ollama", "MODEL MISSING", f"{model_status['model']} not installed")
-    elif model_status["state"] == "DISABLED":
-        _report("Ollama", "DISABLED", "local models off in config")
-    elif model_status["state"] == ollama_service.OllamaState.UNKNOWN:
-        # Only if startup could not measure at all (an unexpected error).
-        _report("Ollama", "CHECKING", str(OLLAMA_BOOT.get("detail", ""))[:70])
-    else:
-        _report("Ollama", "UNAVAILABLE", str(OLLAMA_BOOT.get("detail", ""))[:70])
 
     # NAME WHAT IS ACTUALLY CONFIGURED, NOT WHAT USED TO BE THE ONLY OPTION.
     #
@@ -3317,25 +3693,6 @@ def main():
     _report("Cloud", "OK" if _configured else "NOT CONFIGURED",
             f"preferido: {current_preferred_cloud()} | " + ", ".join(_configured)
             if _configured else "")
-
-    # Warm the provider snapshot OFF the eel hub, before eel starts serving.
-    #
-    # Same lesson as the audio prewarm above, one layer up: describing a cloud
-    # provider is a blocking HTTP call, the Settings page polls get_settings()
-    # once a second, and get_stale_ok performs the producer inline the very
-    # first time a key is missing from the cache. Paying that on eel's single
-    # cooperative hub freezes the whole interface for the length of the round
-    # trip. Doing it here, on a daemon thread, means the first UI poll is a
-    # dictionary lookup. A failure is harmless: the cache simply stays empty
-    # and the poll behaves exactly as it did before.
-    def _warm_provider_snapshot() -> None:
-        try:
-            describe_providers()
-        except Exception:
-            logger.debug("Provider snapshot warm-up failed", exc_info=True)
-
-    threading.Thread(target=_warm_provider_snapshot,
-                     name="nano-provider-warmup", daemon=True).start()
 
     # Load the audio backends before eel starts serving. A UI request must
     # never be the first thing to import a native extension: eel runs the whole

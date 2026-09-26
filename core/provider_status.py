@@ -23,16 +23,37 @@ by every caller, refreshed off-thread, and never recomputed on the hot path.
 Sharing it also *reduces* outbound calls, because the Brain and the UI no longer
 probe the same account separately.
 
-THREE ACCESS PATTERNS, ONE CACHE
---------------------------------
-``get_async``   awaits a worker thread on a miss. For the chat path: the loop
-                keeps turning while the probe runs.
-``get_fresh``   blocks on a miss. For startup and explicit user actions, from a
-                thread that is allowed to block.
-``get_stale_ok`` returns whatever is cached immediately -- even if expired --
-                and refreshes in the background. For high-frequency UI polling:
-                a poller must never wait on the network, and a status that is a
-                few seconds old is honest enough for a status panel.
+THREE ACCESS PATTERNS, ONE CACHE, ONE REFRESH
+---------------------------------------------
+``get_async``    awaits a worker thread on a miss. For the chat path: the loop
+                 keeps turning while the probe runs.
+``get_fresh``    blocks on a miss. For threads that are allowed to block --
+                 startup's warm-up, the router's synchronous variant.
+``get_stale_ok`` NEVER waits. Fresh: the snapshot. Expired: the expired
+                 snapshot, and a refresh starts in the background. Nothing
+                 cached at all: the caller's ``placeholder`` -- a status built
+                 without asking anyone, in which every provider that would
+                 have to be asked is UNKNOWN -- and a refresh starts in the
+                 background. The only form eel's hub may use.
+
+The cold case is the one that used to go wrong. ``get_stale_ok`` ran the
+producer inline when nothing was cached, so the first Settings poll after
+startup, after a saved key or after a mode change probed every configured
+cloud provider ON eel's hub: measured at 0.6 s with healthy providers and
+10.4 s with one that did not answer, during which every other bridge call
+waited. A placeholder costs a dictionary and a secret-store read.
+
+WHAT IS GUARANTEED
+------------------
+* Single flight. At most one producer runs per key at a time, whichever of
+  the three patterns started it: a poller, the Brain and a settings change
+  asking together share one probe set -- they used to run one each.
+* A placeholder is never stored. It is not a measurement, so the router, which
+  never reads the placeholder path, can never route on one.
+* An invalidation is final. A refresh that started before ``invalidate()``
+  describes the state before the change -- a removed key, a different model --
+  so its result is handed to whoever was waiting for it and then discarded
+  rather than cached as current.
 
 Nothing here holds a secret. ``providers.describe_groq`` returns only a masked
 hint and booleans, and this module never inspects the payloads it caches.
@@ -40,13 +61,12 @@ hint and booleans, and this module never inspects the payloads it caches.
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures as _futures
 import logging
 import threading
 import time
 from typing import Any, Callable
 
-from core import model_defaults, providers
+from core import model_defaults, providers, secret_store
 
 logger = logging.getLogger("nano.provider_status")
 
@@ -55,64 +75,122 @@ logger = logging.getLogger("nano.provider_status")
 # conversation does not re-probe on every message.
 DEFAULT_TTL_SECONDS = 45.0
 
+#: How long a caller that is allowed to block waits for a refresh SOMEONE ELSE
+#: started. The producer is bounded by the providers' own HTTP timeouts, so
+#: this only matters if the refreshing thread died without saying so.
+_JOIN_TIMEOUT_SECONDS = 60.0
+
+_MISSING = object()
+
+
+class _Refresh:
+    """One producer run for one key. Everyone who asks while it runs shares it."""
+
+    __slots__ = ("done", "generation", "value", "error")
+
+    def __init__(self, generation: int):
+        self.done = threading.Event()
+        self.generation = generation
+        self.value: Any = _MISSING
+        self.error: BaseException | None = None
+
 
 class ProviderStatusCache:
-    """A tiny TTL cache with a single-flight background refresh."""
+    """A TTL cache with ONE single-flight refresh per key, for every reader."""
 
-    def __init__(self, ttl_seconds: float = DEFAULT_TTL_SECONDS):
+    def __init__(self, ttl_seconds: float = DEFAULT_TTL_SECONDS, *,
+                 clock: Callable[[], float] = time.monotonic):
         self.ttl_seconds = float(ttl_seconds)
+        self._clock = clock
         self._lock = threading.RLock()
         self._entries: dict[str, tuple[float, Any]] = {}
-        # Keys with a refresh already in flight, so a burst of pollers produces
-        # exactly one outbound probe rather than one per tick.
-        self._refreshing: set[str] = set()
+        # The refresh in flight for each key, so a burst of pollers -- and the
+        # Brain asking at the same moment -- produces exactly one probe set.
+        self._refreshes: dict[str, _Refresh] = {}
+        # Bumped by invalidate(): a refresh started under an older generation
+        # may finish, but may not store what it found.
+        self._generation = 0
+        #: Producer runs actually performed. Diagnostics and tests read it.
+        self.refresh_count = 0
 
     # ------------------------------------------------------------- internals
 
-    def _peek(self, key: str) -> tuple[Any | None, bool]:
-        """Return (value, is_fresh). value is None only when nothing is cached."""
+    def _peek(self, key: str) -> tuple[Any, bool]:
+        """Return (value, is_fresh). value is _MISSING when nothing is cached."""
         with self._lock:
             entry = self._entries.get(key)
         if entry is None:
-            return None, False
+            return _MISSING, False
         stored_at, value = entry
-        return value, (time.monotonic() - stored_at) < self.ttl_seconds
+        return value, (self._clock() - stored_at) < self.ttl_seconds
 
-    def _store(self, key: str, value: Any) -> Any:
+    def _claim(self, key: str) -> tuple[_Refresh, bool]:
+        """(refresh, True) for the caller that must run it; (refresh, False) to share it."""
         with self._lock:
-            self._entries[key] = (time.monotonic(), value)
-        return value
+            current = self._refreshes.get(key)
+            if current is not None and current.generation == self._generation:
+                return current, False
+            refresh = _Refresh(self._generation)
+            self._refreshes[key] = refresh
+            return refresh, True
 
-    def _refresh_in_background(self, key: str, producer: Callable[[], Any]) -> None:
-        with self._lock:
-            if key in self._refreshing:
-                return
-            self._refreshing.add(key)
+    def _run(self, key: str, producer: Callable[[], Any], refresh: _Refresh) -> None:
+        try:
+            refresh.value = producer()
+        except Exception as exc:
+            # A failed refresh keeps the previous snapshot rather than replacing
+            # a usable status with nothing; whoever waited gets the error.
+            refresh.error = exc
+            logger.debug("Provider refresh failed for %r", key, exc_info=True)
+        finally:
+            with self._lock:
+                self.refresh_count += 1
+                if refresh.value is not _MISSING and refresh.generation == self._generation:
+                    self._entries[key] = (self._clock(), refresh.value)
+                if self._refreshes.get(key) is refresh:
+                    del self._refreshes[key]
+            refresh.done.set()
 
-        def _run() -> None:
+    def _start_in_background(self, key: str, producer: Callable[[], Any]) -> _Refresh:
+        refresh, owner = self._claim(key)
+        if owner:
             try:
-                self._store(key, producer())
-            except Exception:
-                # A failed refresh keeps the previous snapshot rather than
-                # replacing a usable status with nothing.
-                logger.debug("Background provider refresh failed for %r", key, exc_info=True)
-            finally:
+                threading.Thread(target=self._run, args=(key, producer, refresh),
+                                 name="nano-provider-refresh", daemon=True).start()
+            except RuntimeError as exc:
+                # Interpreter shutting down: release the claim so nothing waits on it.
                 with self._lock:
-                    self._refreshing.discard(key)
+                    if self._refreshes.get(key) is refresh:
+                        del self._refreshes[key]
+                refresh.error = exc
+                refresh.done.set()
+        return refresh
 
-        threading.Thread(target=_run, name=f"nano-provider-refresh", daemon=True).start()
+    def _join(self, key: str, producer: Callable[[], Any]) -> Any:
+        """Share the refresh in flight, or run one on this thread. BLOCKING."""
+        refresh, owner = self._claim(key)
+        if owner:
+            self._run(key, producer, refresh)
+        elif not refresh.done.wait(_JOIN_TIMEOUT_SECONDS):
+            logger.warning("Provider refresh for %r did not finish; asking directly.", key)
+            return producer()
+        if refresh.error is not None:
+            raise refresh.error
+        if refresh.value is _MISSING:
+            raise RuntimeError("the provider refresh ended without a result")
+        return refresh.value
 
     # ---------------------------------------------------------------- access
 
     def get_fresh(self, key: str, producer: Callable[[], Any]) -> Any:
-        """Cached value if fresh, otherwise produce one now. May block."""
+        """Cached value if fresh, otherwise the refresh in flight or a new one. MAY BLOCK."""
         value, fresh = self._peek(key)
         if fresh:
             return value
-        return self._store(key, producer())
+        return self._join(key, producer)
 
     async def get_async(self, key: str, producer: Callable[[], Any]) -> Any:
-        """Cached value if fresh, otherwise produce one on a worker thread.
+        """Cached value if fresh, otherwise a refresh awaited on a worker thread.
 
         The await is what keeps the calling event loop responsive; the producer
         itself is ordinary blocking code and stays that way.
@@ -120,28 +198,46 @@ class ProviderStatusCache:
         value, fresh = self._peek(key)
         if fresh:
             return value
-        return self._store(key, await asyncio.to_thread(producer))
+        return await asyncio.to_thread(self._join, key, producer)
 
-    def get_stale_ok(self, key: str, producer: Callable[[], Any]) -> Any:
-        """Never block if anything is cached; refresh in the background.
+    def get_stale_ok(self, key: str, producer: Callable[[], Any],
+                     placeholder: Callable[[], Any] | None = None) -> Any:
+        """Answer NOW, whatever is cached; refresh in the background. Never waits.
 
-        This is what a once-per-second UI poll must use. Only the very first
-        call for a key pays the network cost.
+        With nothing cached at all this returns ``placeholder()`` -- or None
+        without one -- and never runs the producer on the calling thread.
         """
         value, fresh = self._peek(key)
-        if value is None:
-            return self._store(key, producer())
-        if not fresh:
-            self._refresh_in_background(key, producer)
-        return value
+        if fresh:
+            return value
+        self._start_in_background(key, producer)
+        if value is not _MISSING:
+            return value
+        return placeholder() if placeholder is not None else None
+
+    def refresh(self, key: str, producer: Callable[[], Any]) -> threading.Event | None:
+        """Make sure a current value is on its way. Never waits.
+
+        Returns None when the cached value is already fresh, otherwise the
+        event that is set when the refresh in flight -- shared, or started
+        here -- has finished. For a caller that wants to wait on its own terms,
+        e.g. cooperatively on eel's hub.
+        """
+        _value, fresh = self._peek(key)
+        if fresh:
+            return None
+        return self._start_in_background(key, producer).done
 
     def invalidate(self, key: str | None = None) -> None:
         """Drop a key (or everything) so the next read re-probes.
 
         Called when the credential, the model or the mode changes: a new key
-        must be reflected immediately, not when the TTL happens to expire.
+        must be reflected immediately, not when the TTL happens to expire --
+        and not when a refresh that started before the change finishes, which
+        is why the generation moves too.
         """
         with self._lock:
+            self._generation += 1
             if key is None:
                 self._entries.clear()
             else:
@@ -254,6 +350,12 @@ def describe_all(
     # hub. A hub that stalls is a UI that is frozen, which this project has
     # already shipped once (see core.audio_feedback.prewarm). One thread per
     # provider keeps the worst case at one timeout instead of the sum of them.
+    #
+    # DAEMON THREADS, NOT A ThreadPoolExecutor. The interpreter joins every
+    # executor worker at exit, whatever its daemon flag (measured: 3.15 s to
+    # exit behind a 3 s call, against 0.34 s with a daemon thread), so a normal
+    # exit with a probe in flight -- a provider that does not answer -- waited
+    # out that provider's whole 10 s timeout before the process could end.
     wanted = [pid for pid in ids if only is None or pid in only]
     skipped = [pid for pid in ids if pid not in wanted]
 
@@ -263,14 +365,27 @@ def describe_all(
                                         complex_model=strong)
 
     if wanted:
-        with _futures.ThreadPoolExecutor(max_workers=len(wanted)) as pool:
-            probes = {}
-            for provider_id in wanted:
-                fast, strong = _tiers_for(cloud_tiers, provider_id)
-                probes[provider_id] = pool.submit(
-                    providers.describe_cloud, provider_id, fast, strong)
-            for provider_id, probe in probes.items():
-                clouds[provider_id] = probe.result()
+        results: dict[str, Any] = {}
+        errors: dict[str, BaseException] = {}
+
+        def _describe(provider_id: str, fast: str, strong: str) -> None:
+            try:
+                results[provider_id] = providers.describe_cloud(provider_id, fast, strong)
+            except BaseException as exc:  # noqa: BLE001 - re-raised below, in order
+                errors[provider_id] = exc
+
+        probes = []
+        for provider_id in wanted:
+            fast, strong = _tiers_for(cloud_tiers, provider_id)
+            probe = threading.Thread(target=_describe, args=(provider_id, fast, strong),
+                                     name=f"nano-provider-probe-{provider_id}", daemon=True)
+            probe.start()
+            probes.append((provider_id, probe))
+        for provider_id, probe in probes:
+            probe.join()
+            if provider_id in errors:
+                raise errors[provider_id]
+            clouds[provider_id] = results[provider_id]
 
     if mode == providers.ProviderMode.CLOUD:
         ollama = _disabled("ollama", ollama_model,
@@ -280,6 +395,81 @@ def describe_all(
 
     ollama = providers.describe_ollama(ollama_model, ollama_base_url,
                                        local_enabled=local_enabled, wait=ollama_wait)
+    return clouds, ollama
+
+
+def _unmeasured(provider_id: str, fast: str, strong: str) -> dict:
+    """A cloud provider nobody has asked yet, described without asking it.
+
+    UNKNOWN, which routing never treats as ready. The secret block is real --
+    it is local, and the Settings page renders the stored-key state from it --
+    and a provider with no key at all is described by its own describer,
+    which answers SETUP_REQUIRED from that same local read without touching
+    the network (the contract describe_all already relies on above).
+    """
+    name = providers.provider_name(provider_id)
+    try:
+        secret = secret_store.describe(providers.CLOUD_SECRET_NAMES[provider_id])
+    except Exception:
+        logger.debug("Could not describe the %s credential", provider_id, exc_info=True)
+        secret = {"configured": False, "masked": "", "source": "none", "encrypted": False}
+    if not secret.get("configured"):
+        return providers.describe_cloud(provider_id, fast, strong)
+    return {
+        "id": provider_id, "name": name, "kind": "cloud",
+        "role": "primary" if provider_id == providers.ProviderId.GROQ.value else "cloud",
+        "state": providers.ProviderState.UNKNOWN.value,
+        "model": fast, "models": [], "records": [],
+        "secret": secret,
+        "tiers": {"fast": fast, "complex": strong or fast},
+        "model_source": (model_defaults.SOURCE_CONFIGURED if str(fast or "").strip()
+                         else model_defaults.SOURCE_NONE),
+        "detail": f"O estado do {name} ainda não foi verificado; a verificação está em curso.",
+    }
+
+
+def describe_unmeasured(
+    mode: providers.ProviderMode,
+    *,
+    cloud_tiers: dict[str, tuple[str, str]],
+    ollama_model: str,
+    ollama_base_url: str,
+    local_enabled: bool = True,
+    only: tuple[str, ...] | None = None,
+) -> tuple[dict[str, dict], dict]:
+    """describe_all's shape, built WITHOUT contacting anyone. Hub-safe.
+
+    What a reader that must not wait is given when no snapshot exists yet:
+    every cloud provider the mode would have to ask is UNKNOWN (with its real,
+    local credential state), every one the mode forbids is DISABLED exactly as
+    describe_all reports it, and Ollama is its shared measurement, read without
+    waiting. Nothing here leaves the machine, so LOCAL keeps its privacy
+    guarantee and CLOUD still never contacts Ollama.
+
+    LOCAL contacts no cloud provider in describe_all either, so there the
+    placeholder IS the real answer, and is returned as such.
+    """
+    if mode == providers.ProviderMode.LOCAL:
+        return describe_all(mode, cloud_tiers=cloud_tiers, ollama_model=ollama_model,
+                            ollama_base_url=ollama_base_url, local_enabled=local_enabled,
+                            only=only, ollama_wait=False)
+
+    clouds: dict[str, dict] = {}
+    for provider_id in providers.CLOUD_PROVIDER_IDS:
+        fast, strong = _tiers_for(cloud_tiers, provider_id)
+        if only is not None and provider_id not in only:
+            clouds[provider_id] = _disabled(provider_id, fast, "Não avaliado nesta consulta.",
+                                            complex_model=strong)
+        else:
+            clouds[provider_id] = _unmeasured(provider_id, fast, strong)
+
+    if mode == providers.ProviderMode.CLOUD:
+        ollama = _disabled("ollama", ollama_model,
+                           "Modo Cloud: o Ollama não é contactado.",
+                           kind="local", role="fallback", url=ollama_base_url)
+    else:
+        ollama = providers.describe_ollama(ollama_model, ollama_base_url,
+                                           local_enabled=local_enabled, wait=False)
     return clouds, ollama
 
 
@@ -337,4 +527,5 @@ __all__ = [
     "cache_key",
     "describe_all",
     "describe_pair",
+    "describe_unmeasured",
 ]

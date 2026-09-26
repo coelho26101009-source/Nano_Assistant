@@ -1,5 +1,36 @@
 """Shared pytest configuration.
 
+AN ISOLATED NANO PROFILE, ALWAYS
+--------------------------------
+core/main.py opens its world at IMPORT time: the conversation database, the
+task queue, the secret store, user_settings.json, permission policies and the
+log all live under ``core.app_paths.DATA_DIR``, which is computed once, when
+``core.app_paths`` is first imported, from ``NANO_DATA_DIR``. Without it that
+is the developer's real profile (%LOCALAPPDATA%\\NanoAssistant): a bare
+``pytest`` migrated, reindexed and wrote into the real database and settings
+of whoever ran it.
+
+So this file points ``NANO_DATA_DIR`` at a fresh temporary profile as it is
+imported -- which pytest does before it collects, and therefore before it
+imports, a single test module. The rules:
+
+* Default: a new directory under ``%TEMP%/nano-pytest-profiles``, one per
+  session, removed when the session ends (best effort: Windows keeps files
+  that SQLite still holds open, and those go at the next session's pruning).
+* An explicit ``NANO_DATA_DIR`` or ``HELIOS_DATA_DIR`` that is NOT the real
+  profile is respected: a CI job or a developer that chose a scratch profile
+  keeps it.
+* One that IS the real profile is overridden. The real profile is never a
+  test fixture; there is deliberately no switch to make it one.
+* A test that needs a particular directory still sets it itself --
+  ``monkeypatch.setenv`` for its own process, an explicit ``env=`` for a
+  subprocess -- and child processes inherit the isolated profile otherwise,
+  so a spawned backend is isolated too.
+* If ``core.app_paths`` was somehow imported before this ran, the session
+  stops instead of running against whatever it resolved.
+
+The header of every run names the profile in use.
+
 ORDER INDEPENDENCE
 ------------------
 core/main.py builds its world at import time -- `brain`, `memory`,
@@ -31,7 +62,70 @@ would have to be installed in CI to keep the suite reproducible there.
 """
 from __future__ import annotations
 
+import os
 import random
+import shutil
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+
+# --------------------------------------------------------------------------
+#  The isolated profile -- runs at IMPORT, before any test module is imported
+# --------------------------------------------------------------------------
+
+_PROFILE_PARENT = Path(tempfile.gettempdir()) / "nano-pytest-profiles"
+#: Leftovers older than this belong to no running session and are pruned.
+_STALE_PROFILE_SECONDS = 24 * 3600
+
+
+def _real_profile() -> Path:
+    """core.app_paths.default_data_root(), without importing core.app_paths."""
+    if os.name == "nt":
+        base = os.getenv("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    else:
+        base = os.getenv("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    return (Path(base) / "NanoAssistant").expanduser().resolve()
+
+
+def _prune_stale_profiles() -> None:
+    try:
+        entries = list(_PROFILE_PARENT.iterdir())
+    except OSError:
+        return
+    cutoff = time.time() - _STALE_PROFILE_SECONDS
+    for entry in entries:
+        try:
+            if entry.is_dir() and entry.stat().st_mtime < cutoff:
+                shutil.rmtree(entry, ignore_errors=True)
+        except OSError:
+            continue
+
+
+def _isolate_nano_profile() -> tuple[Path, bool]:
+    """Point Nano at a profile that is not the real one. Returns (dir, created)."""
+    if "core.app_paths" in sys.modules:
+        raise RuntimeError(
+            "core.app_paths was imported before tests/conftest.py could isolate the "
+            "Nano profile; refusing to run against whatever DATA_DIR it resolved")
+    explicit = os.getenv("NANO_DATA_DIR") or os.getenv("HELIOS_DATA_DIR")
+    if explicit and Path(explicit).expanduser().resolve() != _real_profile():
+        os.environ["NANO_DATA_DIR"] = str(Path(explicit).expanduser().resolve())
+        return Path(os.environ["NANO_DATA_DIR"]), False
+    _PROFILE_PARENT.mkdir(parents=True, exist_ok=True)
+    _prune_stale_profiles()
+    profile = Path(tempfile.mkdtemp(prefix="session-", dir=_PROFILE_PARENT)).resolve()
+    os.environ["NANO_DATA_DIR"] = str(profile)
+    return profile, True
+
+
+NANO_TEST_PROFILE, _PROFILE_CREATED = _isolate_nano_profile()
+
+
+def pytest_unconfigure(config):
+    if _PROFILE_CREATED:
+        shutil.rmtree(NANO_TEST_PROFILE, ignore_errors=True)
 
 
 def pytest_addoption(parser):
@@ -53,10 +147,12 @@ def pytest_collection_modifyitems(session, config, items):
 
 
 def pytest_report_header(config):
+    lines = [f"nano data isolated in {NANO_TEST_PROFILE}"
+             + ("" if _PROFILE_CREATED else " (explicit NANO_DATA_DIR)")]
     seed = getattr(config, "_nano_shuffle_seed", None)
-    if seed is None:
-        return None
-    return f"test order shuffled with --shuffle-seed={seed}"
+    if seed is not None:
+        lines.append(f"test order shuffled with --shuffle-seed={seed}")
+    return lines
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):

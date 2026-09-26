@@ -62,6 +62,14 @@ STATUS_MAX_AGE_SECONDS = 60.0
 #: matters if the probing thread died without saying so.
 _JOIN_TIMEOUT_SECONDS = 10.0
 
+#: How long ``ensure_running`` waits for a server it spawned to answer.
+AUTOSTART_TIMEOUT_SECONDS = 25.0
+
+#: How long a caller that is allowed to wait will wait for a STARTUP in
+#: progress: the first probe, the spawn and the full autostart window, plus
+#: the inventory read that ends it.
+_STARTUP_JOIN_TIMEOUT_SECONDS = AUTOSTART_TIMEOUT_SECONDS + 10.0
+
 # Where Ollama installs itself on Windows, beyond whatever is on PATH.
 _WINDOWS_CANDIDATES = (
     r"%LOCALAPPDATA%\Programs\Ollama\ollama.exe",
@@ -179,12 +187,55 @@ def model_installed(model: str, installed: list[str]) -> bool:
     return any(name in wanted for name in installed)
 
 
+class Autostart:
+    """A cancellable "start Ollama if it is not running", for one Nano session.
+
+    Startup runs ``ensure_running`` on a worker thread so the window does not
+    wait for Ollama, which raises the question a synchronous start never had:
+    what if Nano is closed while that thread is still working? The answer is
+    this object. ``cancel()`` and the spawn in ``ensure_running`` take the same
+    lock, so once ``cancel()`` has returned no server can be spawned by this
+    session -- not "probably not", because the check and the spawn cannot
+    interleave with it. A cancelled wait for the port also ends at once rather
+    than at its next poll.
+
+    A server spawned BEFORE the cancel is left running, deliberately and as
+    before: it is detached, shared with every other tool that uses Ollama, and
+    unloads its model by itself (see the module docstring).
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._cancelled = threading.Event()
+
+    def cancel(self) -> None:
+        with self._lock:
+            self._cancelled.set()
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancelled.is_set()
+
+    def sleep(self, seconds: float) -> bool:
+        """Sleep that wakes the moment the start is cancelled. True if it was."""
+        return self._cancelled.wait(max(0.0, seconds))
+
+
+def _cancelled_result(executable: str | None) -> dict:
+    return {
+        "available": False, "started": False, "reused": False, "executable": executable,
+        "cancelled": True,
+        "detail": "O arranque do Ollama foi cancelado porque o Nano está a encerrar.",
+    }
+
+
 def ensure_running(
     base_url: str = DEFAULT_BASE_URL,
     *,
     autostart: bool = True,
-    timeout_seconds: float = 25.0,
+    timeout_seconds: float = AUTOSTART_TIMEOUT_SECONDS,
     keep_alive: str = DEFAULT_KEEP_ALIVE,
+    control: Autostart | None = None,
 ) -> dict:
     """Make the Ollama API available, starting the server only if needed.
 
@@ -194,7 +245,13 @@ def ensure_running(
         reused      bool   True if it was already running
         executable  str|None
         detail      str    human-readable explanation
+        cancelled   bool   present and True only if ``control`` was cancelled
+
+    BLOCKING, for seconds when Ollama is stopped: the first probe alone is a
+    ~2 s refused connection on Windows. Startup calls it on a worker thread.
     """
+    if control is not None and control.cancelled:
+        return _cancelled_result(None)
     if api_available(base_url):
         # Already up — attach to it. This is what stops duplicate servers when
         # the user has Ollama Desktop open or restarts Nano.
@@ -223,24 +280,30 @@ def ensure_running(
     # Applies to models this server loads later; the server itself loads none.
     env.setdefault("OLLAMA_KEEP_ALIVE", keep_alive)
 
+    spawn_lock = control._lock if control is not None else threading.Lock()
     try:
         creation_flags = 0
         if os.name == "nt":
             # No console window, and detached from Nano's process group so that
             # closing Nano does not take the user's model server down with it.
             creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
-        subprocess.Popen(
-            [executable, "serve"],
-            # This detached shared service outlives Nano. Inheriting Nano's
-            # resources directory as cwd locks that directory on Windows and
-            # prevents a later upgrade/uninstall from removing the binaries.
-            cwd=str(Path(executable).resolve().parent),
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-            creationflags=creation_flags,
-        )
+        # The check and the spawn under the lock cancel() takes: a Nano that
+        # is shutting down never starts a server it would then walk away from.
+        with spawn_lock:
+            if control is not None and control.cancelled:
+                return _cancelled_result(executable)
+            subprocess.Popen(
+                [executable, "serve"],
+                # This detached shared service outlives Nano. Inheriting Nano's
+                # resources directory as cwd locks that directory on Windows and
+                # prevents a later upgrade/uninstall from removing the binaries.
+                cwd=str(Path(executable).resolve().parent),
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                creationflags=creation_flags,
+            )
     except Exception as exc:
         logger.warning("Falha ao arrancar o Ollama: %s", exc)
         return {
@@ -248,9 +311,11 @@ def ensure_running(
             "detail": f"Não foi possível arrancar o Ollama: {exc}",
         }
 
-    # `ollama serve` binds its port in a second or two; poll rather than sleep.
+    # `ollama serve` binds its port in a few seconds; poll rather than sleep.
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
+        if control is not None and control.cancelled:
+            return {**_cancelled_result(executable), "started": True}
         if api_available(base_url, timeout=1.0):
             elapsed = timeout_seconds - (deadline - time.monotonic())
             logger.info("Ollama pronto ao fim de %.1fs (nenhum modelo carregado).", elapsed)
@@ -258,7 +323,10 @@ def ensure_running(
                 "available": True, "started": True, "reused": False, "executable": executable,
                 "detail": "Ollama arrancado pelo Nano. Nenhum modelo carregado até ser preciso.",
             }
-        time.sleep(0.5)
+        if control is not None:
+            control.sleep(0.5)
+        else:
+            time.sleep(0.5)
 
     return {
         "available": False, "started": True, "reused": False, "executable": executable,
@@ -359,6 +427,11 @@ class StatusMonitor:
     * Local models disabled: DISABLED, and no probe at all.
     * Nothing probes unless something asks. No timer, no resident thread: a
       hidden window that stops polling stops the probes too.
+    * While startup is checking or launching the server (``begin_startup`` to
+      ``finish_startup``) nobody else probes it. Readers get UNKNOWN saying so
+      -- a probe of their own would race the launch and could record "not
+      answering" about a server seconds away from answering -- and a caller
+      of ``measure()`` waits for startup's answer instead.
     """
 
     def __init__(self, *, ttl_seconds: float = STATUS_TTL_SECONDS,
@@ -373,6 +446,9 @@ class StatusMonitor:
         self._lock = threading.Lock()
         self._measurements: dict[str, tuple[float, dict]] = {}
         self._inflight: dict[str, threading.Event] = {}
+        # Base URLs whose startup is in progress, each with the event that
+        # finish_startup() sets.
+        self._starting: dict[str, threading.Event] = {}
         #: Probes actually performed. Diagnostics and tests read it.
         self.probe_count = 0
 
@@ -386,6 +462,8 @@ class StatusMonitor:
         key = _normalize(base_url)
         measurement, age = self._latest(key)
         if measurement is None or age > self.ttl_seconds:
+            if self._startup_event(key) is not None:
+                return self._starting_status(model, base_url)
             self._refresh_in_background(key)
         return self._status(model, base_url, measurement, age)
 
@@ -393,7 +471,8 @@ class StatusMonitor:
                 local_enabled: bool = True, max_age: float | None = None) -> dict:
         """A status no older than ``max_age`` (default: the TTL). MAY BLOCK.
 
-        Joins a probe already in flight instead of starting a second one.
+        Joins a probe already in flight instead of starting a second one, and
+        waits for a startup in progress instead of probing underneath it.
         """
         if not local_enabled:
             return describe_measurement(model, base_url, None, local_enabled=False)
@@ -402,9 +481,18 @@ class StatusMonitor:
         limit = min(limit, self.max_age_seconds)
         measurement, age = self._latest(key)
         if measurement is None or age > limit:
+            starting = self._startup_event(key)
+            if starting is not None:
+                starting.wait(_STARTUP_JOIN_TIMEOUT_SECONDS)
+                measurement, age = self._latest(key)
+        if measurement is None or age > limit:
             self._probe_and_wait(key)
             measurement, age = self._latest(key)
         return self._status(model, base_url, measurement, age)
+
+    def starting(self, base_url: str = DEFAULT_BASE_URL) -> bool:
+        """Whether startup is checking or launching this server right now."""
+        return self._startup_event(_normalize(base_url)) is not None
 
     # --------------------------------------------------------------- writes
 
@@ -412,6 +500,43 @@ class StatusMonitor:
         """Store a measurement taken elsewhere -- startup already asked."""
         with self._lock:
             self._measurements[_normalize(base_url)] = (self._clock(), dict(measurement))
+
+    def begin_startup(self, base_url: str) -> None:
+        """Startup owns this server's status until finish_startup(). Idempotent."""
+        with self._lock:
+            self._starting.setdefault(_normalize(base_url), threading.Event())
+
+    def probe_now(self, base_url: str) -> dict | None:
+        """ONE probe on the calling thread, counted but not recorded. BLOCKING.
+
+        For startup, which holds the gate and passes the result to
+        finish_startup(): the model inventory it needs after bringing the
+        server up, taken without anyone else probing in between.
+        """
+        key = _normalize(base_url)
+        try:
+            measurement = (self._prober or probe)(key)
+        except Exception:
+            logger.debug("Ollama startup probe failed for %s", key, exc_info=True)
+            measurement = None
+        with self._lock:
+            self.probe_count += 1
+        return measurement if isinstance(measurement, dict) else None
+
+    def finish_startup(self, base_url: str, measurement: dict | None) -> None:
+        """Record what startup learned and hand the status back to readers.
+
+        ``None`` records nothing: readers then get UNKNOWN and take their own
+        measurement, which is the honest outcome of a startup that could not
+        tell.
+        """
+        key = _normalize(base_url)
+        with self._lock:
+            if isinstance(measurement, dict):
+                self._measurements[key] = (self._clock(), dict(measurement))
+            event = self._starting.pop(key, None)
+        if event is not None:
+            event.set()
 
     def invalidate(self, base_url: str | None = None) -> None:
         with self._lock:
@@ -436,6 +561,19 @@ class StatusMonitor:
             measurement, age = None, None
         status = describe_measurement(model, base_url, measurement)
         status["ageSeconds"] = round(age, 1) if measurement is not None and age is not None else None
+        return status
+
+    def _startup_event(self, key: str) -> threading.Event | None:
+        with self._lock:
+            return self._starting.get(key)
+
+    def _starting_status(self, model: str, base_url: str) -> dict:
+        """UNKNOWN, saying why: startup is still checking or launching Ollama."""
+        status = describe_measurement(model, base_url, None)
+        status["detail"] = ("O Nano está a verificar ou a arrancar o Ollama; o modelo local "
+                            "fica disponível assim que o Ollama responder.")
+        status["starting"] = True
+        status["ageSeconds"] = None
         return status
 
     def _claim(self, key: str) -> tuple[threading.Event, bool]:
@@ -494,6 +632,8 @@ STATUS = StatusMonitor()
 
 
 __all__ = [
+    "AUTOSTART_TIMEOUT_SECONDS",
+    "Autostart",
     "DEFAULT_BASE_URL",
     "DEFAULT_KEEP_ALIVE",
     "OllamaState",

@@ -208,7 +208,16 @@ def output_device_report() -> dict:
             report["devices_skipped"] = "capture stream in use"
             return report
 
-        with _PORTAUDIO_LOCK:
+        # NEVER WAIT FOR THE LOCK. A one-shot capture -- a voice turn with the
+        # wake phrase off, which is the default -- holds it for the whole
+        # recording, up to the command timeout. Settings reaches this on eel's
+        # hub, so a blocking acquire froze every bridge call until the user
+        # stopped speaking. Same rule as AudioInputProvider.list_devices: busy
+        # means skip, and say so.
+        if not _PORTAUDIO_LOCK.acquire(blocking=False):
+            report["devices_skipped"] = "microphone in use"
+            return report
+        try:
             pa = pyaudio.PyAudio()
             try:
                 default = pa.get_default_output_device_info()
@@ -220,6 +229,8 @@ def output_device_report() -> dict:
                 ]
             finally:
                 pa.terminate()
+        finally:
+            _PORTAUDIO_LOCK.release()
     except Exception as exc:
         report["pyaudio_error"] = str(exc)
 

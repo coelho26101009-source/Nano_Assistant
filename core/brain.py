@@ -759,12 +759,19 @@ class Brain:
                                         self.preferred_cloud)
 
         def _produce() -> tuple[dict[str, dict], dict]:
+            # ollama_wait=False, exactly as the UI's producer for the same key:
+            # the two share one refresh now, so they must produce one answer.
+            # The snapshot's Ollama half is replaced by _measured_ollama anyway
+            # (in the modes that consult Ollama at all), with the waiting rule
+            # routing needs; measuring it here as well only made a refresh the
+            # Brain started wait ~2 s on a stopped Ollama for nothing.
             return provider_status.describe_all(
                 mode,
                 cloud_tiers=tiers,
                 ollama_model=self.ollama_model,
                 ollama_base_url=base_url,
                 local_enabled=self.local_enabled,
+                ollama_wait=False,
             )
 
         return key, _produce
@@ -778,7 +785,7 @@ class Brain:
         """
         key, produce = self._provider_query(mode)
         clouds, ollama = provider_status.CACHE.get_fresh(key, produce)
-        return clouds, self._measured_ollama(mode, ollama)
+        return clouds, self._measured_ollama(mode, ollama, clouds)
 
     async def _describe_providers_async(self, mode: providers.ProviderMode
                                         ) -> tuple[dict[str, dict], dict]:
@@ -792,27 +799,40 @@ class Brain:
         """
         key, produce = self._provider_query(mode)
         clouds, ollama = await provider_status.CACHE.get_async(key, produce)
-        return clouds, await asyncio.to_thread(self._measured_ollama, mode, ollama)
+        return clouds, await asyncio.to_thread(self._measured_ollama, mode, ollama, clouds)
 
-    def _measured_ollama(self, mode: providers.ProviderMode, cached: dict) -> dict:
+    def _measured_ollama(self, mode: providers.ProviderMode, cached: dict,
+                         clouds: dict[str, dict] | None = None) -> dict:
         """The Ollama half of a routing decision, from a real measurement.
 
         The provider snapshot is shared with the UI, and the UI fills it on
         eel's hub, where waiting on Ollama is forbidden -- so the Ollama entry
         in a snapshot can be UNKNOWN, or as old as the last measurement. A route
         is never decided on that. This reads the shared Ollama measurement and
-        takes a new one (joining any already in flight) when the latest is
-        older than the snapshot TTL: the freshness routing always had, now
-        shared with the UI instead of probed separately. Blocking; callers run
-        it off the event loop.
+        takes a new one (joining any already in flight, or waiting for a
+        startup that is launching Ollama) when the latest is older than the
+        snapshot TTL: the freshness routing always had, now shared with the UI
+        instead of probed separately. Blocking; callers run it off the event
+        loop.
 
         CLOUD mode never contacts Ollama, so its synthesised payload stands.
+
+        AUTO WITH A CLOUD PROVIDER READY does not wait either. resolve_route
+        then routes to the cloud whatever Ollama's state is, so a measurement
+        would only delay the answer -- by a ~2 s refused connection on Windows
+        whenever Ollama is stopped, and by the whole launch while startup is
+        still bringing Ollama up. The latest measurement is read instead (and
+        refreshed in the background when stale). A turn that later fails over
+        to the local model does not use this payload: it asks Ollama directly.
         """
         if mode == providers.ProviderMode.CLOUD:
             return cached
+        decided_by_cloud = mode == providers.ProviderMode.AUTO and any(
+            (payload or {}).get("state") == providers.ProviderState.READY.value
+            for payload in (clouds or {}).values())
         return providers.describe_ollama(
             self.ollama_model, self.ollama_url.removesuffix("/api/chat"),
-            local_enabled=self.local_enabled, wait=True,
+            local_enabled=self.local_enabled, wait=not decided_by_cloud,
             max_age=provider_status.DEFAULT_TTL_SECONDS)
 
     def _finish_route(self, task: model_selection.TaskClass, tier: model_selection.ModelTier,

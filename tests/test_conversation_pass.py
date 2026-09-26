@@ -487,30 +487,42 @@ def test_invalidating_the_snapshot_forces_a_reprobe():
 
 
 def test_a_high_frequency_poll_never_waits_on_the_network():
-    """The 1 s Settings poll must serve stale data rather than block.
+    """The 1 s Settings poll must serve stale data rather than block -- and,
+    with nothing cached at all, a placeholder rather than block.
 
     The property under test is LATENCY, not probe count: a poller must never
     wait on the network. The producer is deliberately slow, so a single
     blocking call would exceed the whole assertion budget on its own.
+
+    The cold read used to be the one exception ("only the very first read for
+    a key pays the probe"), and that exception was precisely the first poll
+    after startup, after a saved key or after a mode change -- on eel's hub,
+    measured at 0.6 s with healthy providers and 10.4 s with one that did not
+    answer. It is not allowed either any more.
     """
     import time as _time
     from core.provider_status import ProviderStatusCache
 
     PROBE_SECONDS = 0.4
     cache = ProviderStatusCache(ttl_seconds=0.0)   # every entry instantly stale
+    unmeasured = lambda: {"state": "UNKNOWN"}      # noqa: E731
 
     def slow_produce():
         _time.sleep(PROBE_SECONDS)
         return {"state": "READY"}
 
-    # Only the very first read for a key is allowed to pay the probe.
-    # (A tolerance, not an exact floor: Windows' timer granularity is ~15 ms
-    # and time.sleep can return a hair early. This line only establishes that
-    # the probe really is slow; the assertion that matters is the one below.)
+    # Cold: the placeholder answers at once, and is never mistaken for a
+    # measurement; the probe runs in the background.
     started = _time.monotonic()
-    assert cache.get_stale_ok("k", slow_produce) == {"state": "READY"}
+    assert cache.get_stale_ok("k", slow_produce, placeholder=unmeasured) == {"state": "UNKNOWN"}
     cold = _time.monotonic() - started
-    assert cold >= PROBE_SECONDS * 0.9, f"the cold read took {cold:.3f}s; probe is not slow"
+    assert cold < PROBE_SECONDS / 4, f"the cold read waited {cold:.3f}s for the probe"
+
+    # The measurement lands by itself, and is what the poll sees from then on.
+    deadline = _time.monotonic() + 5.0
+    while cache.get_stale_ok("k", slow_produce, placeholder=unmeasured)["state"] != "READY":
+        assert _time.monotonic() < deadline, "the background measurement never became visible"
+        _time.sleep(0.01)
 
     # Every later read is served from the snapshot, even though it has expired.
     started = _time.monotonic()

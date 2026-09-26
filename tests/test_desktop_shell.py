@@ -78,8 +78,21 @@ def test_the_electron_shell_test_suite_passes():
 #  Where the data lives  (Part 18: exactly one canonical location)
 # ==========================================================================
 
+def _canonical_resolution(monkeypatch) -> None:
+    """Compare the CANONICAL directory, not the suite's isolated profile.
+
+    tests/conftest.py points NANO_DATA_DIR at a temporary profile, and both
+    halves honour that override -- so with it set, these tests would compare
+    the override with itself and pass without checking the thing they exist
+    for. Only paths are computed here: nothing is read from or written to the
+    directory they name.
+    """
+    monkeypatch.delenv("NANO_DATA_DIR", raising=False)
+    monkeypatch.delenv("HELIOS_DATA_DIR", raising=False)
+
+
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
-def test_electron_and_python_resolve_the_same_data_directory():
+def test_electron_and_python_resolve_the_same_data_directory(monkeypatch):
     """The bug this closes: Electron used to pass its own %APPDATA% folder.
 
     Launching Nano from the desktop app then presented an empty profile --
@@ -88,6 +101,8 @@ def test_electron_and_python_resolve_the_same_data_directory():
     the only way to know they still agree.
     """
     from core.app_paths import data_root
+
+    _canonical_resolution(monkeypatch)
 
     script = (
         "const { canonicalDataDir } = require('./lib/paths');"
@@ -108,7 +123,7 @@ def test_electron_and_python_resolve_the_same_data_directory():
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
-def test_the_environment_the_shell_gives_python_names_the_canonical_directory():
+def test_the_environment_the_shell_gives_python_names_the_canonical_directory(monkeypatch):
     """Built by the real backendEnv(), then compared with Python's own answer.
 
     Electron used to point NANO_DATA_DIR at app.getPath('userData'), which is a
@@ -116,6 +131,8 @@ def test_the_environment_the_shell_gives_python_names_the_canonical_directory():
     someone reintroduced that through a variable, so this executes the function.
     """
     from core.app_paths import data_root
+
+    _canonical_resolution(monkeypatch)
 
     # main.js requires the real electron module, so it is loaded through the
     # shell's own test stub -- the same one the Node suite uses.

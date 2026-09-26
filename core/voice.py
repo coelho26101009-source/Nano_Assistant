@@ -33,6 +33,12 @@ _PORTAUDIO_LOCK = threading.RLock()
 # then costs nothing and does not have to touch PortAudio at all.
 _DEVICE_CACHE_TTL_SECONDS = 30.0
 
+# An expired cache is refreshed on a worker thread (see list_devices). A
+# refresh that could not run -- the microphone busy -- is retried no sooner
+# than this, so a long capture does not start a thread on every poll.
+_DEVICE_REFRESH_RETRY_SECONDS = 5.0
+_DEVICE_REFRESH_LOCK = threading.Lock()
+
 # Set while a long-lived capture stream is open. PyAudio.terminate() tears down
 # PortAudio process-wide, so no other component may construct or destroy a
 # PyAudio instance while a stream is live -- that is exactly the access
@@ -536,6 +542,9 @@ class AudioInputProvider(BaseProvider):
     # and caching it class-wide keeps the readiness poll off PortAudio.
     _device_cache: list[dict[str, Any]] | None = None
     _device_cache_at: float = 0.0
+    # The background refresh of an expired cache (see list_devices).
+    _device_refreshing: bool = False
+    _device_refresh_tried_at: float = float("-inf")
 
     _FRAMES_PER_BUFFER = 1024
 
@@ -575,25 +584,41 @@ class AudioInputProvider(BaseProvider):
         PortAudio while the wake-phrase thread is capturing, and it must never
         block that thread, so it serves a cache and skips the refresh entirely
         if the lock is busy.
+
+        AN EXPIRED CACHE IS REFRESHED IN THE BACKGROUND. Enumerating is a
+        PortAudio initialise/enumerate/terminate cycle, measured at 40-75 ms on
+        Windows, and it ran inline in whichever poll found the cache expired --
+        on eel's hub, so once every 30 s a readiness or command-center poll took
+        ~40 ms and every other bridge call waited behind it, local models or
+        not. The expired list is now served while ONE refresh runs on a daemon
+        thread, under the same non-blocking lock. Only the very first
+        enumeration runs inline -- startup's banner, before eel serves --
+        because before it there is nothing true to serve.
         """
         if not self._available:
             return []
 
-        now = time.monotonic()
-        cached = type(self)._device_cache
-        if cached is not None and (now - type(self)._device_cache_at) < _DEVICE_CACHE_TTL_SECONDS:
-            return cached
+        cls = type(self)
+        cached = cls._device_cache
+        if cached is None:
+            return cls._enumerate_devices() or []
+        if (time.monotonic() - cls._device_cache_at) >= _DEVICE_CACHE_TTL_SECONDS:
+            cls._refresh_devices_in_background()
+        return cached
 
+    @classmethod
+    def _enumerate_devices(cls) -> list[dict[str, Any]] | None:
+        """One PortAudio enumeration into the shared cache. None when skipped or failed."""
         # Constructing a second PyAudio while the persistent stream is live and
         # then terminating it would tear PortAudio down under the running
         # stream, so the cache is served instead. Never refresh here.
         if _MIC_STREAM_OPEN.is_set():
-            return cached if cached is not None else []
+            return None
 
         # Non-blocking: if a capture holds PortAudio, serve the previous list
         # rather than waiting (or worse, racing it).
         if not _PORTAUDIO_LOCK.acquire(blocking=False):
-            return cached if cached is not None else []
+            return None
         try:
             import pyaudio
 
@@ -609,14 +634,38 @@ class AudioInputProvider(BaseProvider):
                     })
             finally:
                 pa.terminate()
-            type(self)._device_cache = devices
-            type(self)._device_cache_at = now
+            cls._device_cache = devices
+            cls._device_cache_at = time.monotonic()
             return devices
         except Exception as exc:
             logger.debug("device enumeration failed: %s", exc)
-            return cached if cached is not None else []
+            return None
         finally:
             _PORTAUDIO_LOCK.release()
+
+    @classmethod
+    def _refresh_devices_in_background(cls) -> None:
+        """At most one refresh at a time, and at most one attempt per retry window."""
+        now = time.monotonic()
+        with _DEVICE_REFRESH_LOCK:
+            if cls._device_refreshing or now - cls._device_refresh_tried_at < _DEVICE_REFRESH_RETRY_SECONDS:
+                return
+            cls._device_refreshing = True
+            cls._device_refresh_tried_at = now
+
+        def _run() -> None:
+            try:
+                cls._enumerate_devices()
+            finally:
+                with _DEVICE_REFRESH_LOCK:
+                    cls._device_refreshing = False
+
+        try:
+            threading.Thread(target=_run, name="nano-audio-devices", daemon=True).start()
+        except RuntimeError:
+            # Interpreter shutting down: keep serving the cached list.
+            with _DEVICE_REFRESH_LOCK:
+                cls._device_refreshing = False
 
     # ------------------------------------------------------- persistent stream
 

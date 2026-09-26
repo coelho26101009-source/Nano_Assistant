@@ -535,6 +535,47 @@ def resolve_route(mode: ProviderMode, groq: dict, ollama: dict, *,
                   reason=f"Nenhum provedor disponível. {cloud_detail} Ollama: {ollama['detail']}")
 
 
+def _unmeasured(payload: dict | None) -> bool:
+    return bool(payload) and payload.get("state") == ProviderState.UNKNOWN.value
+
+
+def route_pending(mode: ProviderMode, groq: dict, ollama: dict, *,
+                  google: dict | None = None, mistral: dict | None = None,
+                  preferred: str | None = None) -> bool:
+    """Whether ``resolve_route``'s decision still hinges on an UNMEASURED provider.
+
+    resolve_route never routes TO an UNKNOWN provider -- UNKNOWN is not READY
+    -- but it does decide AROUND one: in AUTO an unmeasured preferred provider
+    is passed over and the decision names the next one, or falls back to
+    local, or says that no provider is available at all. Each of those is true
+    of the measurements taken so far and may be false of the machine, and the
+    UI renders "no provider" as "configure a provider", which a configured
+    provider that simply has not been asked yet does not deserve.
+
+    Same candidate order as resolve_route. True when, walking it, an UNKNOWN
+    provider comes before the first READY one -- or, with no cloud provider
+    ready, when Ollama is the one not measured. A status surface uses this to
+    say "not decided yet" instead of presenting the decision.
+    """
+    if mode == ProviderMode.LOCAL:
+        return _unmeasured(ollama)
+    payloads = {ProviderId.GROQ.value: groq}
+    if google:
+        payloads[ProviderId.GOOGLE.value] = google
+    if mistral:
+        payloads[ProviderId.MISTRAL.value] = mistral
+    clouds = cloud_candidates(preferred, payloads)
+    if mode == ProviderMode.CLOUD:
+        _chosen_id, chosen = clouds[0] if clouds else (ProviderId.GROQ.value, groq)
+        return _unmeasured(chosen)
+    for _pid, payload in clouds:
+        if _is_ready(payload):
+            return False
+        if _unmeasured(payload):
+            return True
+    return _unmeasured(ollama)
+
+
 def parse_rate_limit(headers: Any) -> dict[str, Any]:
     """Turn Groq's rate-limit headers into something the UI can explain.
 
@@ -755,6 +796,7 @@ __all__ = [
     "rank_groq_model",
     "rate_limit_message",
     "resolve_route",
+    "route_pending",
     "test_cloud",
     "test_google",
     "test_groq",
