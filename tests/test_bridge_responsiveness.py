@@ -573,18 +573,127 @@ def test_local_mode_sends_nothing_to_any_cloud_provider(bridge, main_module, hun
 
 
 def test_local_models_off_send_nothing_to_ollama(bridge, main_module, monkeypatch):
+    """With local models off, no status, readiness, provider, routing, model
+    choice or startup path asks Ollama anything.
+
+    Judged by probes STARTED -- counted the moment a probe is claimed, before
+    any network I/O -- and by what this test's Ollama received. It used to be
+    judged by probe_count, which counts probes that have FINISHED, and that is
+    what made it fail on Ubuntu only: a snapshot refresh left over from the
+    previous test, released when that test's hung provider closed, started a
+    probe for the previous test's Ollama on this test's monitor. Linux refuses
+    a closed loopback port at once, so that probe finished before the
+    assertion; Windows takes ~2 s, so it finished just after. The leftover
+    probe was a real defect -- a refresh acting on settings that no longer
+    held -- and is gone (see the two tests below); counting starts is what
+    keeps the refusal speed of the OS out of the verdict.
+    """
     server = FakeOllama()
+    started_urls: list[str] = []
+    bridge.monitor._prober = lambda url: started_urls.append(url) or ollama_service.probe(url)
     try:
         bridge.use_ollama(server.url, local_enabled=False)
         _exercise_everything(main_module)
         (_s, chosen), = dispatch(("set_local_model", [MODEL]))
         assert chosen["ok"] is False and chosen["error"] == "local_disabled"
         assert main_module._start_ollama_in_background() is None
-        time.sleep(0.3)
-        assert server.tags_requests == 0, f"{server.tags_requests} requests to a disabled Ollama"
-        assert bridge.monitor.probe_count == 0
         assert main_module.get_system_readiness()["model"]["state"] == OllamaState.DISABLED
+        assert bridge.monitor.probes_started == 0, (
+            f"Ollama probes started while local models are off: {started_urls}")
+        assert server.tags_requests == 0, f"{server.tags_requests} requests to a disabled Ollama"
     finally:
+        server.close()
+
+
+def _held_groq(gate: threading.Event):
+    """A Groq describer that answers READY only once ``gate`` opens."""
+    def describe_groq(fast="", strong=""):
+        assert gate.wait(10), "the test never released the held provider"
+        return {"id": "groq", "name": "Groq", "kind": "cloud", "role": "primary",
+                "state": ProviderState.READY.value, "model": fast, "models": [fast],
+                "secret": {"configured": True, "masked": "", "source": "environment",
+                           "encrypted": False},
+                "tiers": {"fast": fast, "complex": strong or fast}, "detail": "ok"}
+    return describe_groq
+
+
+def _settle_monitor(monitor: StatusMonitor) -> None:
+    """Until no probe is in flight on ``monitor`` -- so a probe that WAS started
+    has also reached the network and the fake server before anything is judged."""
+    _wait_until(lambda: not monitor._inflight, message="an Ollama probe never finished")
+
+
+def test_a_refresh_that_outlives_its_settings_starts_no_ollama_probe(bridge, main_module,
+                                                                    monkeypatch):
+    """The Ubuntu-only CI failure, replayed deterministically.
+
+    A snapshot refresh captures the mode, the Ollama URL and the local-models
+    flag when it starts, and may finish long afterwards behind a cloud provider
+    that does not answer. It then described Ollama through whatever shared
+    monitor was current, with what it had captured -- so a refresh begun under
+    one configuration started a probe under another. In CI that was the
+    previous test's refresh probing the previous test's Ollama on the next
+    test's monitor. Here the refresh is held on purpose, everything it
+    captured is replaced -- monitor, Ollama, the local-models flag -- and then
+    it is let go.
+    """
+    earlier, current = FakeOllama(), FakeOllama()
+    gate = threading.Event()
+    bridge.configure_cloud("GROQ_API_KEY")
+    monkeypatch.setattr(providers, "describe_groq", _held_groq(gate))
+    try:
+        bridge.use_ollama(earlier.url)                      # local models on
+        dispatch(("get_providers", []))                     # refresh starts, held on Groq
+        _settle_monitor(bridge.monitor)                     # the poll's own live read: done
+        requests_to_earlier = earlier.tags_requests
+
+        started: list[str] = []
+        after = StatusMonitor(prober=lambda url: started.append(url) or ollama_service.probe(url))
+        monkeypatch.setattr(ollama_service, "STATUS", after)
+        bridge.use_ollama(current.url, local_enabled=False)
+
+        gate.set()
+        main_module.describe_providers()     # the blocking form JOINS the held refresh
+        _settle_monitor(after)
+        assert started == [], f"a finished refresh started Ollama probes: {started}"
+        assert after.probes_started == 0 and after.probe_count == 0
+        assert earlier.tags_requests == requests_to_earlier, "the old Ollama was asked again"
+        assert current.tags_requests == 0
+    finally:
+        gate.set()
+        earlier.close()
+        current.close()
+
+
+def test_switching_to_cloud_while_a_refresh_is_out_sends_nothing_to_ollama(bridge, main_module,
+                                                                          monkeypatch):
+    """The same defect as the user met it: a refresh begun in AUTO, still out
+    behind a slow provider when the user switches to CLOUD, used to ask Ollama
+    for its status after the switch -- in the mode that promises not to."""
+    server = FakeOllama()
+    gate = threading.Event()
+    bridge.configure_cloud("GROQ_API_KEY")
+    monkeypatch.setattr(providers, "describe_groq", _held_groq(gate))
+    try:
+        bridge.use_ollama(server.url)
+        dispatch(("get_providers", []))                     # AUTO refresh, held on Groq
+        _settle_monitor(bridge.monitor)
+        bridge.monitor.invalidate()          # nothing fresh left, as ~10 s later
+        auto_key = provider_status.cache_key(
+            ProviderMode.AUTO, main_module.brain.cloud_tiers(), main_module.brain.ollama_model,
+            main_module.current_preferred_cloud())
+        requests = server.tags_requests
+
+        (_s, switched), = dispatch(("set_provider_mode", ["CLOUD"]))
+        assert switched["ok"] is True and switched["mode"] == "CLOUD"
+        gate.set()
+        bridge.cache.get_fresh(auto_key, lambda: pytest.fail("the AUTO refresh was not in flight"))
+        _settle_monitor(bridge.monitor)
+        assert server.tags_requests == requests, "CLOUD mode sent Ollama a status request"
+        # Exactly one probe in the whole test: the AUTO poll's own, before the switch.
+        assert bridge.monitor.probes_started == 1
+    finally:
+        gate.set()
         server.close()
 
 
@@ -1004,7 +1113,14 @@ def test_every_status_worker_is_a_daemon_and_none_spawns_a_process(bridge, main_
     names = {t.name for t in started_here}
     assert any(n.startswith("nano-ollama") for n in names), names
     assert any(n.startswith("nano-provider") for n in names), names
+    # Leave nothing of THIS test running into the next one: release what the
+    # workers are stuck on, then wait for the threads the test itself started.
+    # `refresher` finishes by reading Ollama's status through whatever shared
+    # monitor is current, so it must not outlive this test's.
+    hung_endpoint.close()
     chooser.join(15)
+    refresher.join(15)
+    assert not chooser.is_alive() and not refresher.is_alive()
 
 
 # ===========================================================================

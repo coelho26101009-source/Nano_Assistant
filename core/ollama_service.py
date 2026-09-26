@@ -449,8 +449,14 @@ class StatusMonitor:
         # Base URLs whose startup is in progress, each with the event that
         # finish_startup() sets.
         self._starting: dict[str, threading.Event] = {}
-        #: Probes actually performed. Diagnostics and tests read it.
+        #: Probes actually performed, counted when each one FINISHES.
         self.probe_count = 0
+        #: Probes begun, counted the moment one is claimed -- before any network
+        #: I/O. "Did Nano ask Ollama?" is a question about this number: a probe
+        #: still waiting on a refused connection is already traffic, yet it only
+        #: reaches probe_count once the refusal arrives, which is immediate on
+        #: Linux and takes ~2 s on Windows.
+        self.probes_started = 0
 
     # ---------------------------------------------------------------- reads
 
@@ -490,6 +496,26 @@ class StatusMonitor:
             measurement, age = self._latest(key)
         return self._status(model, base_url, measurement, age)
 
+    def peek(self, model: str, base_url: str = DEFAULT_BASE_URL, *,
+             local_enabled: bool = True) -> dict:
+        """The latest status and nothing more: never waits, never starts a probe.
+
+        For a caller whose answer is replaced by a live read before anyone
+        uses it -- the provider snapshot. That is built on a background thread
+        from settings captured when it began, and can finish long afterwards,
+        behind a cloud provider that does not answer; had it started a probe
+        then, it would have acted on settings that no longer held. Measured:
+        a snapshot begun in AUTO sent Ollama a request after the user had
+        switched to CLOUD.
+        """
+        if not local_enabled:
+            return describe_measurement(model, base_url, None, local_enabled=False)
+        key = _normalize(base_url)
+        measurement, age = self._latest(key)
+        if (measurement is None or age > self.ttl_seconds) and self._startup_event(key) is not None:
+            return self._starting_status(model, base_url)
+        return self._status(model, base_url, measurement, age)
+
     def starting(self, base_url: str = DEFAULT_BASE_URL) -> bool:
         """Whether startup is checking or launching this server right now."""
         return self._startup_event(_normalize(base_url)) is not None
@@ -514,6 +540,8 @@ class StatusMonitor:
         server up, taken without anyone else probing in between.
         """
         key = _normalize(base_url)
+        with self._lock:
+            self.probes_started += 1
         try:
             measurement = (self._prober or probe)(key)
         except Exception:
@@ -584,6 +612,7 @@ class StatusMonitor:
                 return event, False
             event = threading.Event()
             self._inflight[key] = event
+            self.probes_started += 1
             return event, True
 
     def _run(self, key: str, event: threading.Event) -> None:

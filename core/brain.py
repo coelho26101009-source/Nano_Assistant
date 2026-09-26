@@ -764,7 +764,9 @@ class Brain:
             # The snapshot's Ollama half is replaced by _measured_ollama anyway
             # (in the modes that consult Ollama at all), with the waiting rule
             # routing needs; measuring it here as well only made a refresh the
-            # Brain started wait ~2 s on a stopped Ollama for nothing.
+            # Brain started wait ~2 s on a stopped Ollama for nothing -- and it
+            # starts no probe either, since this may finish after the mode it
+            # captured has changed (see provider_status.describe_all).
             return provider_status.describe_all(
                 mode,
                 cloud_tiers=tiers,

@@ -1198,8 +1198,9 @@ def _provider_query() -> _ProviderQuery:
 
     def _produce() -> tuple[dict[str, dict], dict]:
         # A background refresh, or a thread that is allowed to block -- never
-        # eel's hub. The Ollama half still reads the shared measurement rather
-        # than asking again: describe_providers replaces it with a live read.
+        # eel's hub. The Ollama half is the shared measurement as it stands,
+        # and never starts a probe: this can finish long after the settings it
+        # captured changed, and describe_providers replaces it with a live read.
         return provider_status.describe_all(mode, ollama_wait=False, **options)
 
     def _unmeasured() -> tuple[dict[str, dict], dict]:

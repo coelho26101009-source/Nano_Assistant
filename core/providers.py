@@ -345,7 +345,8 @@ def describe_groq(configured_model: str = "", complex_model: str = "") -> dict[s
 # --------------------------------------------------------------------------
 
 def describe_ollama(model: str, base_url: str, *, local_enabled: bool = True,
-                    wait: bool = True, max_age: float | None = None) -> dict[str, Any]:
+                    wait: bool = True, max_age: float | None = None,
+                    start_probe: bool = True) -> dict[str, Any]:
     """The Ollama provider payload, from the ONE shared measurement.
 
     ``wait=True`` may block for one probe -- joining one already in flight --
@@ -356,12 +357,18 @@ def describe_ollama(model: str, base_url: str, *, local_enabled: bool = True,
     UNKNOWN while one is taken. It is the only form the eel hub may use,
     because a probe there stops every other bridge call for as long as a
     stopped Ollama takes to refuse the connection.
+
+    ``start_probe=False`` (with ``wait=False``) does not start one either: the
+    latest measurement as it stands. For the provider snapshot, whose Ollama
+    half every consumer replaces with a live read -- see StatusMonitor.peek.
     """
     monitor = ollama_service.STATUS
     if wait:
         status = monitor.measure(model, base_url, local_enabled=local_enabled, max_age=max_age)
-    else:
+    elif start_probe:
         status = monitor.read(model, base_url, local_enabled=local_enabled)
+    else:
+        status = monitor.peek(model, base_url, local_enabled=local_enabled)
     mapping = {
         ollama_service.OllamaState.READY: ProviderState.READY,
         ollama_service.OllamaState.MODEL_UNAVAILABLE: ProviderState.MODEL_UNAVAILABLE,

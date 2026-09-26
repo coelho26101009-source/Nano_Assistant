@@ -318,8 +318,15 @@ def describe_all(
     ask" and "we asked and it is down" are different facts.
 
     ``ollama_wait`` is passed to ``providers.describe_ollama``. A caller on the
-    eel hub MUST pass False: the Ollama half is then read from the shared
-    measurement without waiting on the network (see ollama_service.STATUS).
+    eel hub MUST pass False: the Ollama half is then the shared measurement as
+    it stands (see ollama_service.STATUS) -- no wait, and no probe started
+    either. The snapshots built with False are produced on a background thread
+    from settings captured when they began, and can finish long afterwards
+    behind a cloud provider that does not answer; every consumer replaces
+    their Ollama half with a live read, and it is that read, made with the
+    settings of the moment, that starts a probe when one is due. Starting one
+    from here instead acted on settings that no longer held -- measured: a
+    snapshot begun in AUTO sent Ollama a request after the switch to CLOUD.
     """
     ids = tuple(providers.CLOUD_PROVIDER_IDS)
     clouds: dict[str, dict] = {}
@@ -333,7 +340,8 @@ def describe_all(
                 role=("primary" if provider_id == providers.ProviderId.GROQ.value else "cloud"),
                 complex_model=strong)
         ollama = providers.describe_ollama(ollama_model, ollama_base_url,
-                                           local_enabled=local_enabled, wait=ollama_wait)
+                                           local_enabled=local_enabled, wait=ollama_wait,
+                                           start_probe=ollama_wait)
         return clouds, ollama
 
     # Every describe_* short-circuits on an absent key with no network call, so
@@ -394,7 +402,8 @@ def describe_all(
         return clouds, ollama
 
     ollama = providers.describe_ollama(ollama_model, ollama_base_url,
-                                       local_enabled=local_enabled, wait=ollama_wait)
+                                       local_enabled=local_enabled, wait=ollama_wait,
+                                       start_probe=ollama_wait)
     return clouds, ollama
 
 
@@ -442,9 +451,9 @@ def describe_unmeasured(
     What a reader that must not wait is given when no snapshot exists yet:
     every cloud provider the mode would have to ask is UNKNOWN (with its real,
     local credential state), every one the mode forbids is DISABLED exactly as
-    describe_all reports it, and Ollama is its shared measurement, read without
-    waiting. Nothing here leaves the machine, so LOCAL keeps its privacy
-    guarantee and CLOUD still never contacts Ollama.
+    describe_all reports it, and Ollama is its shared measurement as it stands
+    -- no wait, no probe started. Nothing here contacts anyone, so LOCAL keeps
+    its privacy guarantee and CLOUD still never contacts Ollama.
 
     LOCAL contacts no cloud provider in describe_all either, so there the
     placeholder IS the real answer, and is returned as such.
@@ -469,7 +478,8 @@ def describe_unmeasured(
                            kind="local", role="fallback", url=ollama_base_url)
     else:
         ollama = providers.describe_ollama(ollama_model, ollama_base_url,
-                                           local_enabled=local_enabled, wait=False)
+                                           local_enabled=local_enabled, wait=False,
+                                           start_probe=False)
     return clouds, ollama
 
 
