@@ -777,7 +777,8 @@ class Brain:
         probes on the calling thread.
         """
         key, produce = self._provider_query(mode)
-        return provider_status.CACHE.get_fresh(key, produce)
+        clouds, ollama = provider_status.CACHE.get_fresh(key, produce)
+        return clouds, self._measured_ollama(mode, ollama)
 
     async def _describe_providers_async(self, mode: providers.ProviderMode
                                         ) -> tuple[dict[str, dict], dict]:
@@ -790,7 +791,29 @@ class Brain:
         unchanged; only where it runs is.
         """
         key, produce = self._provider_query(mode)
-        return await provider_status.CACHE.get_async(key, produce)
+        clouds, ollama = await provider_status.CACHE.get_async(key, produce)
+        return clouds, await asyncio.to_thread(self._measured_ollama, mode, ollama)
+
+    def _measured_ollama(self, mode: providers.ProviderMode, cached: dict) -> dict:
+        """The Ollama half of a routing decision, from a real measurement.
+
+        The provider snapshot is shared with the UI, and the UI fills it on
+        eel's hub, where waiting on Ollama is forbidden -- so the Ollama entry
+        in a snapshot can be UNKNOWN, or as old as the last measurement. A route
+        is never decided on that. This reads the shared Ollama measurement and
+        takes a new one (joining any already in flight) when the latest is
+        older than the snapshot TTL: the freshness routing always had, now
+        shared with the UI instead of probed separately. Blocking; callers run
+        it off the event loop.
+
+        CLOUD mode never contacts Ollama, so its synthesised payload stands.
+        """
+        if mode == providers.ProviderMode.CLOUD:
+            return cached
+        return providers.describe_ollama(
+            self.ollama_model, self.ollama_url.removesuffix("/api/chat"),
+            local_enabled=self.local_enabled, wait=True,
+            max_age=provider_status.DEFAULT_TTL_SECONDS)
 
     def _finish_route(self, task: model_selection.TaskClass, tier: model_selection.ModelTier,
                       mode: providers.ProviderMode, clouds: dict[str, dict],

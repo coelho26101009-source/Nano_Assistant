@@ -226,23 +226,56 @@ def test_disabled_local_provider_reports_disabled_not_broken():
     assert described["state"] == ProviderState.DISABLED.value
 
 
-def test_ollama_state_mapping_covers_every_service_state():
-    """A new OllamaState must not fall through to a generic UNAVAILABLE."""
+def test_ollama_state_mapping_covers_every_service_state(monkeypatch):
+    """A new OllamaState must not fall through to a generic UNAVAILABLE.
+
+    Behavioural: every declared state is fed THROUGH describe_ollama and the
+    provider state that comes out is checked. This used to compare a hand-kept
+    copy of the mapping with the declared states, which reported a missing
+    mapping when describe_ollama had one -- the copy was being tested, not the
+    function.
+    """
     from core import ollama_service
 
-    mapped = {
-        ollama_service.OllamaState.READY,
-        ollama_service.OllamaState.MODEL_UNAVAILABLE,
-        ollama_service.OllamaState.OLLAMA_UNAVAILABLE,
-        ollama_service.OllamaState.NOT_INSTALLED,
-        ollama_service.OllamaState.DISABLED,
+    State = ollama_service.OllamaState
+    expected = {
+        State.READY: ProviderState.READY,
+        State.MODEL_UNAVAILABLE: ProviderState.MODEL_UNAVAILABLE,
+        State.OLLAMA_UNAVAILABLE: ProviderState.UNAVAILABLE,
+        State.NOT_INSTALLED: ProviderState.NOT_INSTALLED,
+        State.DISABLED: ProviderState.DISABLED,
+        State.UNKNOWN: ProviderState.UNKNOWN,
     }
     declared = {
-        value for name, value in vars(ollama_service.OllamaState).items()
+        value for name, value in vars(State).items()
         if not name.startswith("_") and isinstance(value, str)
     }
-    unmapped = declared - mapped
-    assert not unmapped, "describe_ollama has no mapping for " + repr(unmapped)
+    assert declared == set(expected), (
+        "decide what these states mean to the router: " + repr(declared ^ set(expected)))
+
+    class _Reports:
+        """A monitor that reports one fixed state, whichever way it is read."""
+
+        def __init__(self, state):
+            self.state = state
+
+        def _status(self, model, base_url):
+            return {"state": self.state, "model": model, "url": base_url,
+                    "installed": [], "detail": f"synthetic {self.state}"}
+
+        def read(self, model, base_url, **_kwargs):
+            return self._status(model, base_url)
+
+        def measure(self, model, base_url, **_kwargs):
+            return self._status(model, base_url)
+
+    for state, provider_state in expected.items():
+        monkeypatch.setattr(ollama_service, "STATUS", _Reports(state))
+        for wait in (True, False):
+            described = providers.describe_ollama("qwen3:8b", "http://127.0.0.1:11434", wait=wait)
+            assert described["state"] == provider_state.value, (state, wait)
+            if state != State.OLLAMA_UNAVAILABLE:
+                assert described["state"] != ProviderState.UNAVAILABLE.value, state
 
 
 # ============================================================ routing modes

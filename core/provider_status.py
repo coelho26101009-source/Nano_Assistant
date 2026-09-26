@@ -4,7 +4,9 @@ WHY THIS MODULE EXISTS
 ----------------------
 Describing a provider is not free: ``providers.describe_groq()`` performs a
 synchronous ``httpx.get`` against api.groq.com with a 10 second timeout, and
-``providers.describe_ollama()`` performs one or two more against the local API.
+describing Ollama means asking the local API, which a stopped Ollama makes a
+two-second refused connection on Windows. (Ollama's half now has its own shared
+measurement, ``ollama_service.STATUS``; see ``describe_all(ollama_wait=...)``.)
 Before this module there were two independent callers and two independent
 problems.
 
@@ -193,6 +195,7 @@ def describe_all(
     ollama_base_url: str,
     local_enabled: bool = True,
     only: tuple[str, ...] | None = None,
+    ollama_wait: bool = True,
 ) -> tuple[dict[str, dict], dict]:
     """Describe every provider, probing only those the mode can actually use.
 
@@ -217,6 +220,10 @@ def describe_all(
     ``only`` restricts which cloud providers are probed at all. The others are
     reported as not evaluated rather than as unavailable, because "we did not
     ask" and "we asked and it is down" are different facts.
+
+    ``ollama_wait`` is passed to ``providers.describe_ollama``. A caller on the
+    eel hub MUST pass False: the Ollama half is then read from the shared
+    measurement without waiting on the network (see ollama_service.STATUS).
     """
     ids = tuple(providers.CLOUD_PROVIDER_IDS)
     clouds: dict[str, dict] = {}
@@ -230,7 +237,7 @@ def describe_all(
                 role=("primary" if provider_id == providers.ProviderId.GROQ.value else "cloud"),
                 complex_model=strong)
         ollama = providers.describe_ollama(ollama_model, ollama_base_url,
-                                           local_enabled=local_enabled)
+                                           local_enabled=local_enabled, wait=ollama_wait)
         return clouds, ollama
 
     # Every describe_* short-circuits on an absent key with no network call, so
@@ -272,7 +279,7 @@ def describe_all(
         return clouds, ollama
 
     ollama = providers.describe_ollama(ollama_model, ollama_base_url,
-                                       local_enabled=local_enabled)
+                                       local_enabled=local_enabled, wait=ollama_wait)
     return clouds, ollama
 
 

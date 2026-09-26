@@ -42,7 +42,7 @@ from core.memory_stack import MemoryStack
 from core.knowledge_graph import NODE_TYPES, RELATIONS
 from core.long_term_memory import KINDS as MEMORY_KINDS
 from core.logger import setup_logger
-from core.local_runtime import choose_model, ollama_available, model_available
+from core.local_runtime import choose_model
 from core.voice import VoiceEngine, VoiceRuntime
 from core import wake_phrase as wake_phrase_mod
 from core.wake_word import WakeWordEngine
@@ -398,12 +398,9 @@ def confirm_action(request_id: str, confirmed: bool) -> dict:
 def get_health_status() -> dict:
     """Retorna o estado de saúde dos componentes locais, na cloud e base de dados."""
     profile = choose_model(CONFIG)
-    base_url = brain.ollama_url.removesuffix("/api/chat")
-    try:
-        local_ok = run_coro(ollama_available(base_url))
-        model_ok = run_coro(model_available(brain.ollama_model, base_url)) if local_ok else False
-    except Exception:
-        local_ok = model_ok = False
+    # The shared measurement, not two more round trips on the eel hub.
+    local = probe_local_model()
+    local_ok, model_ok = bool(local.get("ollamaUp")), bool(local.get("modelReady"))
     try:
         db_ok = memory.count_messages() >= 0
         message_count = memory.count_messages() if db_ok else 0
@@ -910,12 +907,17 @@ def get_command_center_state() -> dict:
 
 
 def probe_local_model() -> dict:
-    """Report the local model provider state. Read-only: starts nothing.
+    """Report the local model provider state. Starts nothing, WAITS for nothing.
 
     Startup is where Ollama may be launched (see _start_ollama). This function
-    is called repeatedly by the UI poller, so it must never spawn anything.
+    is called repeatedly by the UI pollers, so it must never spawn anything --
+    and, since they run on eel's single gevent hub, it must never wait on the
+    network either. It used to probe Ollama inline: with Ollama stopped each
+    probe was a ~2 s refused connection on Windows, and every other bridge call
+    queued behind it. It now reads the shared measurement, which is refreshed
+    on a worker thread when stale and says UNKNOWN until one exists.
     """
-    return ollama_service.describe(
+    return ollama_service.STATUS.read(
         brain.ollama_model,
         brain.ollama_url.removesuffix("/api/chat"),
         local_enabled=brain.local_enabled,
@@ -950,12 +952,22 @@ def _start_ollama() -> None:
         return
 
     logger.info("Ollama: %s", OLLAMA_BOOT.get("detail"))
+    # Seed the shared measurement from what ensure_running just learned, so
+    # startup asks Ollama once and not three times. The failing case was the
+    # expensive one: the banner and the provider warm-up each repeated the
+    # two-second refusal ensure_running had already paid.
     if OLLAMA_BOOT.get("available"):
-        status = probe_local_model()
+        # Up: one inventory read, because readiness depends on the model list.
+        status = ollama_service.STATUS.measure(brain.ollama_model, base_url)
         if status["state"] != ollama_service.OllamaState.READY:
             # Say exactly what is missing instead of quietly using another model.
             logger.warning("Modelo local indisponível: %s", status.get("detail"))
     else:
+        # Not answering: that IS the measurement. No second probe to confirm it.
+        ollama_service.STATUS.record(base_url, {
+            "reachable": False, "installed": [],
+            "executable": bool(OLLAMA_BOOT.get("executable")),
+        })
         logger.warning("Nano continua a arrancar sem modelo local. %s", OLLAMA_BOOT.get("detail"))
 
 
@@ -1010,18 +1022,31 @@ def describe_providers(*, stale_ok: bool = False) -> dict:
     # never disagree about which model is configured for which provider.
     tiers = brain.cloud_tiers()
     key = provider_status.cache_key(mode, tiers, brain.ollama_model, preferred)
+    ollama_base_url = brain.ollama_url.removesuffix("/api/chat")
 
     def _produce() -> tuple[dict[str, dict], dict]:
+        # This runs on eel's hub whenever the snapshot misses, so the Ollama
+        # half must not wait on the network: ollama_wait=False reads the
+        # shared measurement. With it True, a stopped Ollama froze every
+        # bridge call for ~2 s once per snapshot TTL.
         return provider_status.describe_all(
             mode,
             cloud_tiers=tiers,
             ollama_model=brain.ollama_model,
-            ollama_base_url=brain.ollama_url.removesuffix("/api/chat"),
+            ollama_base_url=ollama_base_url,
             local_enabled=brain.local_enabled,
+            ollama_wait=False,
         )
 
     getter = provider_status.CACHE.get_stale_ok if stale_ok else provider_status.CACHE.get_fresh
     clouds, ollama = getter(key, _produce)
+    if mode != providers.ProviderMode.CLOUD:
+        # Ollama's authority is its own measurement, not the copy inside a
+        # snapshot that may be 45 s old: read it like the cooldowns below, from
+        # memory, so a started or stopped Ollama shows up within one status TTL.
+        # CLOUD mode keeps its synthesised payload -- Ollama is not contacted.
+        ollama = providers.describe_ollama(brain.ollama_model, ollama_base_url,
+                                           local_enabled=brain.local_enabled, wait=False)
 
     # The live circuit-breaker state, read from memory. This is why Settings can
     # say "temporarily limited, using local" once per second without that
@@ -2224,6 +2249,13 @@ def get_system_readiness() -> dict:
 
     # Ollama is the USER's process, never Nano's. We only probe the API; we
     # never spawn `ollama serve`, never open Ollama Desktop, never pull a model.
+    #
+    # ONE read of the shared measurement, and everything below derives from
+    # it -- including the "providers" block. Readiness used to ask Ollama twice
+    # in a row, inline on eel's hub (describe here, then again in
+    # get_provider_health): with Ollama stopped that was ~3.9 s during which
+    # every other bridge call waited. Reading once also means the two fields
+    # can never disagree about a single moment.
     local = probe_local_model()
     ollama_up = local["ollamaUp"]
     model_ready = local["modelReady"]
@@ -2288,7 +2320,7 @@ def get_system_readiness() -> dict:
             "provider": "ollama" if model_ready else ("cloud" if cloud_configured() else "none"),
         },
         "worker": {"state": "READY" if worker.get("running") else "OFFLINE", **worker},
-        "providers": get_provider_health(),
+        "providers": _provider_health(local),
         "emergencyStop": permission_manager.is_emergency_stopped(),
         "autonomyMode": permission_manager.policy_engine.autonomy_mode.value,
         "browser": {"state": "EXPERIMENTAL"},
@@ -2299,11 +2331,25 @@ def get_system_readiness() -> dict:
 @eel.expose
 def get_provider_health() -> dict:
     """Estado real de cada provider. Nunca reporta 'online' sem verificar."""
-    base_url = brain.ollama_url.removesuffix("/api/chat")
-    try:
-        ollama = "online" if run_coro(ollama_available(base_url), timeout=5) else "offline"
-    except Exception:
+    return _provider_health(probe_local_model())
+
+
+def _provider_health(local: dict) -> dict:
+    """Provider health from ONE local-model reading the caller already holds.
+
+    The command center polls this every 4 s. It used to probe Ollama itself --
+    on the hub, with Local models disabled or not -- so with Ollama stopped it
+    froze the bridge for ~2 s of every 4. Now "online" still means measured
+    reachable; "unknown" means not measured yet; "disabled" means nothing is
+    asked because local models are off.
+    """
+    state = local.get("state")
+    if state == ollama_service.OllamaState.DISABLED:
+        ollama = "disabled"
+    elif state == ollama_service.OllamaState.UNKNOWN:
         ollama = "unknown"
+    else:
+        ollama = "online" if local.get("ollamaUp") else "offline"
 
     try:
         import importlib.util
@@ -3223,6 +3269,8 @@ def main():
         logger.info("Serviços de plugin activos: %s", ", ".join(started_services))
 
     # Server only — no model is loaded until a real request needs one.
+    # _start_ollama seeds the shared measurement, so the banner below reads it
+    # rather than asking Ollama a second time.
     _start_ollama()
     model_status = probe_local_model()
     if model_status["state"] == "READY":
@@ -3231,6 +3279,9 @@ def main():
         _report("Ollama", "MODEL MISSING", f"{model_status['model']} not installed")
     elif model_status["state"] == "DISABLED":
         _report("Ollama", "DISABLED", "local models off in config")
+    elif model_status["state"] == ollama_service.OllamaState.UNKNOWN:
+        # Only if startup could not measure at all (an unexpected error).
+        _report("Ollama", "CHECKING", str(OLLAMA_BOOT.get("detail", ""))[:70])
     else:
         _report("Ollama", "UNAVAILABLE", str(OLLAMA_BOOT.get("detail", ""))[:70])
 

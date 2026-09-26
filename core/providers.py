@@ -91,6 +91,7 @@ class ProviderState(str, Enum):
     NOT_INSTALLED = "NOT_INSTALLED"
     DISABLED = "DISABLED"
     ERROR = "ERROR"
+    UNKNOWN = "UNKNOWN"                  # not measured yet; never treated as ready
 
 
 class ProviderId(str, Enum):
@@ -343,14 +344,31 @@ def describe_groq(configured_model: str = "", complex_model: str = "") -> dict[s
 # Ollama
 # --------------------------------------------------------------------------
 
-def describe_ollama(model: str, base_url: str, *, local_enabled: bool = True) -> dict[str, Any]:
-    status = ollama_service.describe(model, base_url, local_enabled=local_enabled)
+def describe_ollama(model: str, base_url: str, *, local_enabled: bool = True,
+                    wait: bool = True, max_age: float | None = None) -> dict[str, Any]:
+    """The Ollama provider payload, from the ONE shared measurement.
+
+    ``wait=True`` may block for one probe -- joining one already in flight --
+    when the latest measurement is older than ``max_age`` (default: the status
+    TTL). Only for threads allowed to wait, such as the router's worker thread.
+
+    ``wait=False`` never waits on the network: the latest measurement, or
+    UNKNOWN while one is taken. It is the only form the eel hub may use,
+    because a probe there stops every other bridge call for as long as a
+    stopped Ollama takes to refuse the connection.
+    """
+    monitor = ollama_service.STATUS
+    if wait:
+        status = monitor.measure(model, base_url, local_enabled=local_enabled, max_age=max_age)
+    else:
+        status = monitor.read(model, base_url, local_enabled=local_enabled)
     mapping = {
         ollama_service.OllamaState.READY: ProviderState.READY,
         ollama_service.OllamaState.MODEL_UNAVAILABLE: ProviderState.MODEL_UNAVAILABLE,
         ollama_service.OllamaState.OLLAMA_UNAVAILABLE: ProviderState.UNAVAILABLE,
         ollama_service.OllamaState.NOT_INSTALLED: ProviderState.NOT_INSTALLED,
         ollama_service.OllamaState.DISABLED: ProviderState.DISABLED,
+        ollama_service.OllamaState.UNKNOWN: ProviderState.UNKNOWN,
     }
     state = mapping.get(status["state"], ProviderState.UNAVAILABLE)
     return {

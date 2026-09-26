@@ -366,7 +366,12 @@ class ModelRouter:
             "context": float(model_cfg.get("routing", {}).get("context_weight", 1.5)),
             "resource": float(model_cfg.get("routing", {}).get("resource_weight", 1.5)),
         }
-        self.refresh()
+        # No discovery here. Every read -- models(), and so select() and the
+        # generate paths -- refreshes first, so discovering in the constructor
+        # changed no answer; it only made building the Brain, at import time,
+        # ask Ollama for /api/tags. With Ollama stopped that was a ~2 s refused
+        # connection on Windows added to every startup, on top of the check
+        # _start_ollama makes anyway.
 
     async def health(self) -> dict[str, Any]:
         statuses = []
