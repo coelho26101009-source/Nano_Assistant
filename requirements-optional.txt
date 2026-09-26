@@ -6,5 +6,5 @@ beautifulsoup4>=4.12,<5
 Pillow>=10,<12
 pypdf>=5,<7
 playwright>=1.45,<2
-openwakeword>=0.7,<1
+openwakeword>=0.6,<1
 onnxruntime>=1.18,<2
