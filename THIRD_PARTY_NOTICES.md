@@ -82,7 +82,6 @@ become part of a shipped build.
 | `ctranslate2` | 4.8.1 | MIT |
 | `openwakeword` | 0.6.0 | Apache-2.0 |
 | `onnxruntime` | 1.28.0 | MIT |
-| `chromadb` | — | **NOT INSTALLED — verify before shipping** |
 | `SpeechRecognition` | — | **NOT INSTALLED — verify before shipping** |
 | `beautifulsoup4` | — | **NOT INSTALLED — verify before shipping** |
 | `Pillow` | — | **NOT INSTALLED — verify before shipping** |

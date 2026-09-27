@@ -297,9 +297,9 @@
     1. As últimas mensagens (memory.history_messages, truncadas para caber
        na janela de contexto — memory.max_history_chars)
     2. Os factos que já sabe sobre ti (remember_fact)
-    3. Excertos relevantes dos PDFs indexados (RAG, se chromadb instalado)
+    3. Excertos relevantes dos PDFs indexados (RAG, pesquisa local SQLite FTS5)
 
-  Base de dados: data/helios.db (SQLite) | Vetores: data/chroma
+  Base de dados: data/helios.db (SQLite) | Indice de documentos: mesma base SQLite (FTS5)
 
   Para limpar o histórico:
     → Clica no botão "Clear" no painel de conversa
