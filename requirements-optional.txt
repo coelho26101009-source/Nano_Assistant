@@ -1,6 +1,6 @@
 # Optional capabilities. The MSI does not install these by default.
 faster-whisper>=1.0,<2
-SpeechRecognition>=3.10,<4
+SpeechRecognition>=3.17.0,<4
 beautifulsoup4>=4.12,<5
 Pillow>=12.3.0,<13
 pypdf>=5,<7
