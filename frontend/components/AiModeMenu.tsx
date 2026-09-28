@@ -33,6 +33,7 @@
 import React, { useState } from "react";
 
 import type { CloudProviderKey, ProviderInfo, ProviderPayload } from "../lib/backend";
+import Icon from "./Icon";
 import { Popover, StatusIndicator } from "./ui";
 
 export type ProviderMode = "AUTO" | "CLOUD" | "LOCAL";
@@ -41,12 +42,12 @@ export const MODES: { value: ProviderMode; label: string; hint: string }[] = [
   {
     value: "AUTO",
     label: "Automático",
-    hint: "Provedor cloud preferido primeiro. Se falhar, o Nano continua no outro provedor cloud e, por fim, no modelo local.",
+    hint: "Provedor cloud preferido primeiro. Se falhar, o NANO continua no outro provedor cloud e, por fim, no modelo local.",
   },
   {
     value: "CLOUD",
     label: "Cloud",
-    hint: "Apenas o provedor cloud escolhido. Se não estiver disponível, o Nano diz — nunca muda sozinho.",
+    hint: "Apenas o provedor cloud escolhido. Se não estiver disponível, o NANO diz — nunca muda sozinho.",
   },
   {
     value: "LOCAL",
@@ -117,16 +118,6 @@ export function providerLabel(providers: ProviderPayload | null, offline = false
   return `${name} · ${mode}`;
 }
 
-const CHECK = "M20 6 9 17l-5-5";
-const SLIDERS = "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6";
-
-const Glyph = ({ d, size = 15 }: { d: string; size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-       strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d={d} />
-  </svg>
-);
-
 /**
  * One row of the menu. Kept local so every group looks identical.
  *
@@ -159,7 +150,7 @@ function MenuItem({
       onClick={onClick}
     >
       <span className="popover__item-check" aria-hidden="true">
-        {checked ? <Glyph d={CHECK} size={14} /> : null}
+        {checked ? <Icon name="check" size={14} strokeWidth={2.2} /> : null}
       </span>
       <span className="popover__item-body">
         <span className="popover__item-label">{label}</span>
@@ -266,10 +257,7 @@ export default function AiModeMenu({
           <span className="status-pill__text">{label}</span>
           {fellBack && <span className="status-pill__tag">alternativa</span>}
           <span className="status-pill__caret" aria-hidden="true">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                 strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="m6 9 6 6 6-6" />
-            </svg>
+            <Icon name="chevronDown" size={14} strokeWidth={2} />
           </span>
         </button>
       )}
@@ -353,7 +341,7 @@ export default function AiModeMenu({
         className="popover__item popover__item--action"
         onClick={() => { setOpen(false); onOpenAiSettings(); }}
       >
-        <span className="popover__item-check" aria-hidden="true"><Glyph d={SLIDERS} size={14} /></span>
+        <span className="popover__item-check" aria-hidden="true"><Icon name="settings" size={14} /></span>
         <span className="popover__item-body">
           <span className="popover__item-label">Abrir definições de IA</span>
         </span>

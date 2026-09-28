@@ -168,7 +168,7 @@ export const RELATION_LABEL: Record<string, string> = {
 export const ORIGIN_LABEL: Record<string, string> = {
   explicit: "pedido pelo utilizador",
   manual: "criado pelo utilizador",
-  inferred: "inferido pelo Nano",
+  inferred: "inferido pelo NANO",
 };
 
 export function kindLabel(kind: string): string {

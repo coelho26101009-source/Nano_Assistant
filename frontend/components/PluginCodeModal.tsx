@@ -1,4 +1,17 @@
+/**
+ * Read-only view of one installed component's source (Ferramentas ›
+ * Componentes).
+ *
+ * Built on the shared Modal. It used to be a hand-rolled overlay whose
+ * `plugin-modal-*` classes were never defined in the stylesheet, so it
+ * rendered as unstyled text at the foot of the page -- below the fold of a
+ * window whose body does not scroll -- with no Escape, no focus trap and no
+ * backdrop. The Modal primitive already provides all three.
+ */
 import React, { useState } from "react";
+
+import Icon from "./Icon";
+import { Button, Modal } from "./ui";
 
 interface PluginCodeModalProps {
   pluginName: string;
@@ -13,53 +26,40 @@ export default function PluginCodeModal({
   code,
   tools,
   filename,
-  onClose
+  onClose,
 }: PluginCodeModalProps) {
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = () => {
-    if (navigator?.clipboard) {
-      navigator.clipboard.writeText(code);
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch { /* clipboard blocked; the code is still selectable */ }
   };
 
   return (
-    <div className="plugin-modal-overlay" onClick={onClose}>
-      <div className="plugin-modal-container" onClick={e => e.stopPropagation()}>
-        <div className="plugin-modal-header">
-          <div className="plugin-modal-title-area">
-            <span className="plugin-modal-filename">{filename || `${pluginName}.py`}</span>
-            {tools.length > 0 && (
-              <span className="plugin-card-badge">
-                {tools.length} {tools.length === 1 ? "ferramenta" : "ferramentas"}
-              </span>
-            )}
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <button
-              type="button"
-              className="topbar-btn"
-              onClick={handleCopy}
-              title="Copiar código do plugin"
-            >
-              {copied ? "Copiado" : "Copiar"}
-            </button>
-            <button
-              type="button"
-              className="plugin-modal-close-btn"
-              onClick={onClose}
-            >
-              Fechar
-            </button>
-          </div>
-        </div>
-
-        <pre className="plugin-modal-code-body">
-          <code>{code || "# Carregando código-fonte..."}</code>
-        </pre>
-      </div>
-    </div>
+    <Modal
+      open
+      onClose={onClose}
+      width="wide"
+      title={filename || `${pluginName}.py`}
+      footer={
+        <>
+          <Button onClick={handleCopy} title="Copiar código do plugin">
+            <Icon name={copied ? "check" : "copy"} size={15} />
+            {copied ? "Copiado" : "Copiar"}
+          </Button>
+          <Button variant="primary" onClick={onClose}>Fechar</Button>
+        </>
+      }
+    >
+      {tools.length > 0 && (
+        <p className="muted code-view__meta">
+          {tools.length} {tools.length === 1 ? "ferramenta" : "ferramentas"}: {tools.join(", ")}
+        </p>
+      )}
+      <pre className="code-view"><code>{code || "# A carregar o código-fonte…"}</code></pre>
+    </Modal>
   );
 }

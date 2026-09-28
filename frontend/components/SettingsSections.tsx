@@ -20,7 +20,8 @@ import { useFetch } from "../lib/backend";
 import type { CapabilityCatalogue } from "./CapabilitiesPage";
 import { VERSION } from "../lib/version";
 import DiagnosticsPanel from "./DiagnosticsPanel";
-import NanoLogo from "./NanoLogo";
+import NanoLogo, { NanoWordmark } from "./NanoLogo";
+import { BRAND_NAME } from "../lib/brand";
 import {
   Badge, Button, ConfirmDialog, MetricRow, Panel, StatusIndicator, Toggle,
 } from "./ui";
@@ -32,7 +33,7 @@ import {
 const GUARANTEES: { label: string; detail: string }[] = [
   {
     label: "Sem shell, terminal ou PowerShell",
-    detail: "O Nano não executa comandos arbitrários. Não existe ferramenta para isso e nenhuma confirmação a cria.",
+    detail: "O NANO não executa comandos arbitrários. Não existe ferramenta para isso e nenhuma confirmação a cria.",
   },
   {
     label: "Locais protegidos",
@@ -66,7 +67,7 @@ export function PcControlSection({
     <div className="stack">
       <Panel title="Controlo do computador" action={<Badge tone="accent">Ativo</Badge>}>
         <p className="muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
-          O Nano pode abrir aplicações, arrumar janelas, mexer no volume, procurar
+          O NANO pode abrir aplicações, arrumar janelas, mexer no volume, procurar
           ficheiros e abrir páginas das Definições do Windows. Cada acção passa
           por uma ferramenta específica, com argumentos verificados — nunca por
           uma linha de comandos.
@@ -84,7 +85,7 @@ export function PcControlSection({
         </div>
       </Panel>
 
-      <Panel title="Quando o Nano pergunta">
+      <Panel title="Quando o NANO pergunta">
         <p className="muted" style={{ fontSize: 13, lineHeight: 1.7, marginBottom: 10 }}>
           Ações reversíveis e de leitura acontecem de imediato. Tudo o que fecha,
           escreve, apaga, captura o ecrã ou mexe na sessão pede confirmação —
@@ -99,7 +100,7 @@ export function PcControlSection({
 
       <Panel title="Garantias de segurança">
         <p className="dim" style={{ fontSize: 12, marginBottom: 12, lineHeight: 1.6 }}>
-          Isto não são preferências. Fazem parte da arquitetura do Nano e não podem
+          Isto não são preferências. Fazem parte da arquitetura do NANO e não podem
           ser desligadas — nem por ti, nem pelo modelo.
         </p>
         <ul className="guarantee-list">
@@ -138,10 +139,10 @@ export function MemorySection({
 
   return (
     <div className="stack">
-      <Panel title="O que o Nano guarda">
+      <Panel title="O que o NANO guarda">
         <Toggle
           label="Recordar factos sobre mim"
-          hint="Preferências duradouras que o Nano aprende durante as conversas. Desligado, o Nano deixa de guardar e deixa de consultar."
+          hint="Preferências duradouras que o NANO aprende durante as conversas. Desligado, o NANO deixa de guardar e deixa de consultar."
           checked={Boolean(memory?.factsEnabled)}
           onChange={(value) => onUpdate("memory_facts_enabled", value)}
         />
@@ -152,13 +153,13 @@ export function MemorySection({
             because that is the user asking rather than Nano guessing. */}
         <Toggle
           label="Memória entre conversas"
-          hint="Deixa o Nano usar numa conversa o que aprendeu noutra. Desligado, cada conversa fica isolada e o Second Brain deixa de contribuir."
+          hint="Deixa o NANO usar numa conversa o que aprendeu noutra. Desligado, cada conversa fica isolada e o Second Brain deixa de contribuir."
           checked={Boolean(memory?.longTermEnabled)}
           onChange={(value) => onUpdate("memory_long_term_enabled", value)}
         />
         <Toggle
           label="Sugerir memórias sozinho"
-          hint="O Nano propõe guardar algo que reparou. As sugestões não são usadas nas respostas enquanto não as aprovares em Memória. Dizer “lembra-te que…” funciona sempre."
+          hint="O NANO propõe guardar algo que reparou. As sugestões não são usadas nas respostas enquanto não as aprovares em Memória. Dizer “lembra-te que…” funciona sempre."
           checked={Boolean(memory?.captureEnabled)}
           disabled={!memory?.longTermEnabled}
           disabledReason="Precisa da memória entre conversas ligada."
@@ -208,7 +209,7 @@ export function MemorySection({
 
       <ConfirmDialog
         open={confirmForget} danger
-        title="Esquecer tudo o que o Nano sabe sobre ti?"
+        title="Esquecer tudo o que o NANO sabe sobre ti?"
         confirmLabel="Esquecer tudo"
         message="Todos os factos guardados são apagados. A conversa atual não é afetada."
         onConfirm={() => { setConfirmForget(false); onForgetAll(); }}
@@ -228,18 +229,16 @@ export function AboutSection({ settings, onOpenFirstRun }: {
 
   return (
     <div className="stack">
-      <Panel title="Nano">
+      <Panel title={BRAND_NAME}>
         <div className="about-hero">
-          {/* THE SUPPLIED MARK, not a hand-drawn stand-in. This used to be two
-              SVG paths approximating a flame, and the inner one was filled with
-              `var(--bg-1)` — a token that has never existed in the stylesheet,
-              so it resolved to nothing and painted a black blob in the middle
-              of the logo on the About page. */}
+          {/* The symbol and the lettering, in the theme's own colours. The
+              product name comes from lib/brand, not from version.json, whose
+              `name` field ("Nano Assistant") is shared with the backend. */}
           <div className="about-hero__mark" aria-hidden="true">
-            <NanoLogo size={38} bare />
+            <NanoLogo size={40} />
           </div>
           <div>
-            <h3 className="about-hero__name">{VERSION.name}</h3>
+            <h3 className="about-hero__name"><NanoWordmark height={20} /></h3>
             <p className="about-hero__version">{VERSION.display}</p>
             <p className="dim" style={{ fontSize: 12, marginTop: 4 }}>
               Assistente executivo para Windows, com voz e controlo do computador.

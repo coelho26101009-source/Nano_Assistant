@@ -763,13 +763,13 @@ def test_the_ui_has_no_horizontal_overflow_at_any_desktop_size(render_report):
 
     # DRAG REGIONS, measured rather than read off the stylesheet.
     #
-    # The redesign made the whole shell draggable so the new exterior margin
-    # moves the window like a title bar would. That is only safe if the panels
-    # and every control opt back out: a control inside a drag region is not
-    # clickable at all, and the failure looks like a button that silently does
-    # nothing. Verified by hand at the time (top bar and margin drag the window,
-    # the panels do not, and the navigation still switches sections) -- this is
-    # what keeps it true.
+    # The frameless window is moved by its caption. In the Chatbot UI-style
+    # shell the panels sit flush against the window, so the caption is the top
+    # bar and the sidebar's brand row: both declare drag, the panels around
+    # them declare no-drag, and every control inside the caption opts back out.
+    # A control inside a drag region is not clickable at all, and the failure
+    # looks like a button that silently does nothing -- this is what keeps both
+    # halves true.
     for row in report["desktop"]:
         regions = row["dragRegions"]
         where = row["viewport"]
@@ -781,7 +781,16 @@ def test_the_ui_has_no_horizontal_overflow_at_any_desktop_size(render_report):
             f"{where}: the panels did not opt out of the drag region, so nothing "
             f"inside them is clickable (got {regions['app']!r})"
         )
-        for control in ("topnavItem", "statusPill", "windowControl", "railToggle"):
+        # The panels cover the whole window now, so the shell's own region is
+        # never exposed; what moves the window is the caption declared INSIDE
+        # the panels, and that is what has to be measured.
+        for caption in ("topbar", "railBrand"):
+            assert regions[caption] == "drag", (
+                f"{where}: .{caption} is the window's caption but is not a drag "
+                f"region, so the frameless window cannot be moved by it "
+                f"(got {regions[caption]!r})"
+            )
+        for control in ("statusPill", "windowControl", "topbarButton", "railToggle"):
             value = regions[control]
             if value is None:
                 continue          # not rendered at this width; nothing to check
@@ -796,6 +805,12 @@ def test_the_ui_has_no_horizontal_overflow_at_any_desktop_size(render_report):
     assert report["sections"], "the section sweep produced no measurements"
     for row in report["sections"]:
         where = f"{row['viewport']} / {row['section']}"
+        # A section that could not be opened leaves the chat on screen, and
+        # every assertion below would then pass about the wrong page.
+        assert row["opened"], (
+            f"{where}: the sweep could not open this section, so nothing it "
+            f"measured describes it"
+        )
         assert not row["horizontalOverflow"], (
             f"{where}: the page scrolls horizontally. Offenders: {row['offenders']}"
         )

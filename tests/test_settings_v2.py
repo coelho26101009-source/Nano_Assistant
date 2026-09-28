@@ -66,7 +66,8 @@ def shell() -> str:
 
 @pytest.fixture(scope="module")
 def navigation() -> str:
-    return _read(FRONTEND / "components" / "TopNav.tsx")
+    """The navigation model: the sidebar and the shell both render from it."""
+    return _read(FRONTEND / "lib" / "navigation.ts")
 
 
 @pytest.fixture(scope="module")
@@ -797,7 +798,7 @@ def test_activity_never_shows_fake_rows(drive_report):
     assert step["pass"], step["detail"]
 
 
-def test_ai_selector_does_not_hide_topnav_when_open(drive_report):
+def test_ai_selector_does_not_hide_the_navigation_when_open(drive_report):
     for label in (
         "all five destinations are still present with the popover open",
         "the nav bar itself still has real, visible dimensions",

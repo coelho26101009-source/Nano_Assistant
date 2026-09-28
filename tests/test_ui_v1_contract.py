@@ -19,6 +19,12 @@ turned the left column into the conversation list, and dissolved the fixed
 inspector column into PC > Estado. The FILES these tests read moved with it
 (Sidebar.tsx -> TopNav.tsx; the inspector column -> ContextPanels). Every
 promise they pin is unchanged, and several are now stricter.
+
+The Chatbot UI-style shell then moved the five sections into the sidebar,
+beside the conversation list, and left the top bar to the page title and the AI
+selector. Two components render the sections now, so the navigation model left
+both of them for a data module (TopNav.tsx -> lib/navigation.ts). The promises
+are the same ones, read from their new home.
 """
 from __future__ import annotations
 
@@ -31,6 +37,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 FRONTEND = REPO_ROOT / "frontend"
 COMPONENTS = FRONTEND / "components"
 PAGES = FRONTEND / "pages"
+LIB = FRONTEND / "lib"
 CSS = FRONTEND / "styles" / "globals.css"
 
 # Every view the sidebar can reach. The shell must handle all of them.
@@ -72,8 +79,10 @@ def shell() -> str:
 
 @pytest.fixture(scope="module")
 def navigation() -> str:
-    """The navigation model. It was Sidebar.tsx; it is TopNav.tsx now."""
-    return _read(COMPONENTS / "TopNav.tsx")
+    """The navigation model. It was Sidebar.tsx, then TopNav.tsx; it is a data
+    module now, lib/navigation.ts, because the sidebar and the shell both
+    render from it."""
+    return _read(LIB / "navigation.ts")
 
 
 @pytest.fixture(scope="module")
@@ -139,8 +148,8 @@ def test_keyboard_shortcuts_exist_but_are_not_the_only_route(shell):
     code = _strip_comments(shell)
     assert "key" in code and ("ctrlKey" in code or "metaKey" in code), "no keyboard shortcuts wired"
     # Every shortcut target must also have a visible control somewhere. Ctrl+B
-    # toggles the conversation rail, and TopNav renders the button that does
-    # the same thing with the mouse.
+    # toggles the sidebar, and the sidebar's own toggle (and, at phone width,
+    # the top bar's menu button) does the same thing with the mouse.
     assert "setRailOpen" in code, "Ctrl+B has no state to toggle"
     assert "onToggleRail" in code, "the rail can only be toggled from the keyboard"
 

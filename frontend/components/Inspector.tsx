@@ -16,7 +16,7 @@
  */
 import React from "react";
 import type { CommandCenterPayload, ProviderPayload, ReadinessPayload, TaskRow } from "../lib/backend";
-import type { ViewId } from "./TopNav";
+import type { ViewId } from "../lib/navigation";
 import {
   Button, EmptyState, Meter, MetricRow, Panel, Skeleton,
   StatusIndicator, ToolChip, elapsedSince, formatTime, usageTone,
@@ -53,7 +53,7 @@ export function ActivityTimeline({
   events, limit = 12,
 }: { events: CommandCenterPayload["activities"]; limit?: number }) {
   if (!events?.length) {
-    return <EmptyState title="Sem atividade" hint="Os eventos aparecem aqui assim que o Nano fizer alguma coisa." />;
+    return <EmptyState title="Sem atividade" hint="Os eventos aparecem aqui assim que o NANO fizer alguma coisa." />;
   }
   return (
     <div className="timeline">

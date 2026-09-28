@@ -115,9 +115,9 @@ const BRIDGE = `
 })();
 `;
 
-/** Click a top-bar section, then a stage sub-tab, and let it settle. */
+/** Click a sidebar section, then a stage sub-tab, and let it settle. */
 const OPEN = (section, tab) => `(() => {
-  for (const el of document.querySelectorAll('.topnav-item')) {
+  for (const el of document.querySelectorAll('.rail-nav__item')) {
     if ((el.textContent || '').trim().startsWith(${JSON.stringify(section)})) { el.click(); break; }
   }
   if (${JSON.stringify(tab || '')}) {

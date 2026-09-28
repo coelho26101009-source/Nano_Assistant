@@ -10,9 +10,11 @@
  *    README.md"), with the raw payload behind a disclosure for anyone who
  *    wants it. Raw JSON is never dumped inline.
  */
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import NanoLogo, { NanoAvatar, NanoWordmark } from "./NanoLogo";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Icon from "./Icon";
+import NanoLogo from "./NanoLogo";
 import { Button, StatusIndicator, formatTime } from "./ui";
+import { BRAND_NAME } from "../lib/brand";
 
 export type ToolEvent = {
   name: string;
@@ -184,6 +186,7 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
         <span>{lang || "código"}</span>
         <span className="code-block__spacer" />
         <Button variant="ghost" size="sm" onClick={copy} aria-label="Copiar código">
+          <Icon name={copied ? "check" : "copy"} size={14} />
           {copied ? "Copiado" : "Copiar"}
         </Button>
       </div>
@@ -427,10 +430,31 @@ function TechnicalDetails({ meta, id }: { meta: ResponseMeta; id: string }) {
 
 /* ── Messages ─────────────────────────────────────────────────────────── */
 
-function MessageBubble({ message, status }: { message: Message; status?: string }) {
+/** Initials from the name the backend actually knows, or nothing at all.
+ *  An invented "PA" would be a claim about the user that nothing measured. */
+function initialsOf(name?: string | null): string | null {
+  const parts = String(name ?? "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return null;
+  return parts.slice(0, 2).map((part) => part[0]).join("").toUpperCase();
+}
+
+/**
+ * One turn, laid out the way Chatbot UI lays out a message: a header with the
+ * speaker's avatar and name, then the content, in the same reading column for
+ * both sides.
+ *
+ * WHAT TELLS THE TWO APART. Nano's turns sit on a faint full-width band and
+ * carry the N; the user's sit on the page itself with their initials. Nothing
+ * else changes between them -- no bubble, no right alignment -- so a long
+ * exchange scans as a steady rhythm of turns rather than as two columns.
+ */
+function MessageBubble({
+  message, status, userName,
+}: { message: Message; status?: string; userName?: string | null }) {
   const [copied, setCopied] = useState(false);
   const isUser = message.role === "user";
   const text = isUser ? message.content : cleanAssistantText(message.content);
+  const initials = initialsOf(userName);
 
   const copy = async () => {
     try {
@@ -442,60 +466,60 @@ function MessageBubble({ message, status }: { message: Message; status?: string 
 
   return (
     <article className={`msg msg--${message.role}${message.error ? " msg--error" : ""}`}>
-      {/* The Nano mark IS the assistant's avatar. The user has no avatar: the
-          bubble's own colour and its right alignment already say whose it is,
-          and a second disc on the right only adds noise. */}
-      {!isUser && (
-        <NanoAvatar className="msg__avatar" size={34} active={message.streaming} title="Nano" />
-      )}
-
-      <div className="msg__main">
-        {message.tools?.length ? (
-          <div style={{ width: "100%" }}>
-            {message.tools.map((tool, index) => <ToolCard key={`${tool.name}-${index}`} event={tool} />)}
-          </div>
-        ) : null}
-
-        <div className="msg__bubble">
-          <div className="msg__body">
-            {isUser ? text : <Markdown text={text} />}
-            {/* THE ONLY THINKING INDICATOR IN THE APP.
-                There used to be a second one under the conversation, so a
-                pending turn showed "O Nano está a pensar…" in the bubble AND
-                "A pensar…" below it. The status line the other one carried is
-                not lost: it is rendered HERE, so tool activity still narrates
-                itself, in one place, inside the message it belongs to. That
-                also removes the layout jump the second element caused when the
-                first token arrived and it disappeared. */}
-            {message.streaming && !text && (
-              <span className="thinking" role="status" aria-live="polite">
-                <span className="thinking__dots" aria-hidden="true"><i /><i /><i /></span>
-                <span>{status?.trim() || "O Nano está a pensar…"}</span>
-              </span>
-            )}
-            {message.streaming && text && <span className="caret" aria-hidden="true" />}
-          </div>
-        </div>
-
-        <div className="msg__foot">
-          <span className="msg__author">{isUser ? "Você" : "Nano"}</span>
-          <span className="msg__time">{formatTime(message.timestamp)}</span>
-          {!isUser && text && !message.streaming && (
-            <span className="msg__actions">
-              <Button variant="ghost" size="sm" onClick={copy} aria-label="Copiar resposta">
-                {copied ? "Copiado" : "Copiar"}
-              </Button>
-            </span>
-          )}
-        </div>
-
-        {/* Technical details, collapsed by default so normal chat stays clean.
-            Safe metadata only: provider, model, tokens and latency — and it is
-            THIS message's, including for a message loaded from an older thread. */}
-        {!isUser && !message.streaming && message.meta?.model && (
-          <TechnicalDetails meta={message.meta} id={message.id} />
+      <header className="msg__head">
+        {isUser ? (
+          <span className="msg__avatar msg__avatar--user" aria-hidden="true">
+            {initials ?? <Icon name="user" size={14} />}
+          </span>
+        ) : (
+          <NanoLogo size={22} className="msg__avatar" />
         )}
+        <span className="msg__author">{isUser ? (userName || "Você") : BRAND_NAME}</span>
+        <span className="msg__time">{formatTime(message.timestamp)}</span>
+        {!isUser && text && !message.streaming && (
+          <span className="msg__actions">
+            <button
+              type="button" className="msg__action" onClick={copy}
+              aria-label={copied ? "Resposta copiada" : "Copiar resposta"}
+              title={copied ? "Copiado" : "Copiar resposta"}
+            >
+              <Icon name={copied ? "check" : "copy"} size={15} />
+            </button>
+          </span>
+        )}
+      </header>
+
+      {message.tools?.length ? (
+        <div className="msg__tools">
+          {message.tools.map((tool, index) => <ToolCard key={`${tool.name}-${index}`} event={tool} />)}
+        </div>
+      ) : null}
+
+      <div className="msg__body">
+        {isUser ? text : <Markdown text={text} />}
+        {/* THE ONLY THINKING INDICATOR IN THE APP.
+            There used to be a second one under the conversation, so a
+            pending turn showed "O Nano está a pensar…" in the bubble AND
+            "A pensar…" below it. The status line the other one carried is
+            not lost: it is rendered HERE, so tool activity still narrates
+            itself, in one place, inside the message it belongs to. That
+            also removes the layout jump the second element caused when the
+            first token arrived and it disappeared. */}
+        {message.streaming && !text && (
+          <span className="thinking" role="status" aria-live="polite">
+            <span className="thinking__dots" aria-hidden="true"><i /><i /><i /></span>
+            <span>{status?.trim() || `O ${BRAND_NAME} está a pensar…`}</span>
+          </span>
+        )}
+        {message.streaming && text && <span className="caret" aria-hidden="true" />}
       </div>
+
+      {/* Technical details, collapsed by default so normal chat stays clean.
+          Safe metadata only: provider, model, tokens and latency — and it is
+          THIS message's, including for a message loaded from an older thread. */}
+      {!isUser && !message.streaming && message.meta?.model && (
+        <TechnicalDetails meta={message.meta} id={message.id} />
+      )}
     </article>
   );
 }
@@ -529,8 +553,16 @@ export function needsStandaloneThinking(messages: Message[], thinking: boolean):
 }
 
 export function Conversation({
-  messages, status, thinking,
-}: { messages: Message[]; status: string; thinking: boolean }) {
+  messages, status, thinking, userName, connecting = false,
+}: {
+  messages: Message[];
+  status: string;
+  thinking: boolean;
+  /** The user's name, only when the backend actually knows it. */
+  userName?: string | null;
+  /** The bridge has not answered yet (and has not given up either). */
+  connecting?: boolean;
+}) {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => { endRef.current?.scrollIntoView({ block: "end" }); }, [messages, status]);
   const standalone = needsStandaloneThinking(messages, thinking);
@@ -538,16 +570,15 @@ export function Conversation({
   if (!messages.length && !thinking) {
     return (
       <div className="conversation conversation--hero">
-        {/* The one place the full wordmark earns its size: an empty screen is
-            the moment the product introduces itself. Everywhere else the mark
-            alone carries the identity. */}
+        {/* The home screen: the mark, one question, and the composer right
+            below it (rendered by the shell). No dashboard and no cards: the
+            one thing to do here is start talking. */}
         <div className="chat-hero">
-          <NanoLogo size={48} className="chat-hero__mark" title="Nano" />
-          <NanoWordmark height={30} />
-          <p className="chat-hero__hint">
-            Um espaço para pensar, escrever e organizar o teu dia.
-            O controlo do computador fica sempre contigo.
-          </p>
+          <NanoLogo size={56} className="chat-hero__mark" />
+          <h1 className="chat-hero__title">Como posso ajudar?</h1>
+          {connecting && (
+            <p className="chat-hero__hint" role="status">A ligar ao motor do {BRAND_NAME}…</p>
+          )}
         </div>
       </div>
     );
@@ -557,12 +588,12 @@ export function Conversation({
     <div className="conversation" role="log" aria-live="polite" aria-label="Conversa">
       <div className="conversation__inner">
         {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} status={status} />
+          <MessageBubble key={message.id} message={message} status={status} userName={userName} />
         ))}
         {standalone && (
-          <div className="thinking" role="status" aria-live="polite">
+          <div className="thinking thinking--standalone" role="status" aria-live="polite">
             <span className="thinking__dots" aria-hidden="true"><i /><i /><i /></span>
-            <span>{status?.trim() || "O Nano está a pensar…"}</span>
+            <span>{status?.trim() || `O ${BRAND_NAME} está a pensar…`}</span>
           </div>
         )}
         <div ref={endRef} />
@@ -573,29 +604,15 @@ export function Conversation({
 
 /* ── Composer ─────────────────────────────────────────────────────────── */
 
-const ICON = {
-  attach: "M21.4 11.05 12.25 20.2a5.5 5.5 0 0 1-7.78-7.78l9.19-9.19a3.67 3.67 0 0 1 5.19 5.19l-9.2 9.19a1.83 1.83 0 0 1-2.59-2.59l8.49-8.48",
-  plus: "M12 5v14M5 12h14",
-  mic: "M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3ZM19 10v1a7 7 0 0 1-14 0v-1M12 18v4",
-  send: "M12 19V5M5 12l7-7 7 7",
-  stop: "M7 7h10v10H7z",
-} as const;
-
-const Icon = ({ d, size = 17, fill = false }: { d: string; size?: number; fill?: boolean }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill={fill ? "currentColor" : "none"}
-       stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-       aria-hidden="true">
-    <path d={d} />
-  </svg>
-);
-
 /**
  * The message composer.
  *
- * The two round controls on the right are the reference's, and they are
- * deliberately different weights: the microphone is quiet glass, the send
- * button is the one saturated red object on the screen. Secondary actions sit
- * on the left as ghost buttons so they are available without competing.
+ * Shaped like Chatbot UI's input: one rounded field with the text on top and a
+ * quiet row of controls under it. The send button is the one solid object in
+ * the field, in the neutral primary colour rather than a brand colour; the
+ * microphone and the attachment slot are ghost controls beside it. The
+ * suggestions sit under the field, where they read as an offer rather than as
+ * part of the input.
  *
  * `readOnlyReason`, when set, means the user is looking at an older
  * conversation. The whole composer is disabled and says why — the Brain's
@@ -603,7 +620,7 @@ const Icon = ({ d, size = 17, fill = false }: { d: string; size?: number; fill?:
  * answered against the wrong history.
  */
 export function Composer({
-  value, onChange, onSend, onStop, onVoice, onCancelVoice, onNew,
+  value, onChange, onSend, onStop, onVoice, onCancelVoice,
   thinking, disabled, voiceState, listening, suggestions, onSuggestion,
   readOnlyReason,
 }: {
@@ -613,7 +630,6 @@ export function Composer({
   onStop: () => void;
   onVoice: () => void;
   onCancelVoice: () => void;
-  onNew: () => void;
   thinking: boolean;
   disabled: boolean;
   voiceState: string;
@@ -626,41 +642,52 @@ export function Composer({
   const locked = disabled || Boolean(readOnlyReason);
 
   useEffect(() => { if (!locked) ref.current?.focus(); }, [locked]);
-  useEffect(() => {
+
+  /* The height follows the content, and is re-measured when the field's WIDTH
+     changes as well: the same text wraps onto more lines in a narrower field.
+     Measured only on input, a field sized while the layout was still settling
+     -- the first frame, before the sidebar has taken its real shape -- kept
+     that height until the user typed. */
+  const fit = useCallback(() => {
     const node = ref.current;
     if (!node) return;
     node.style.height = "auto";
     node.style.height = `${Math.min(node.scrollHeight, 220)}px`;
-  }, [value]);
+  }, []);
+  useEffect(() => { fit(); }, [value, fit]);
+  useEffect(() => {
+    const node = ref.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    let width = node.clientWidth;
+    // Only a change of width refits. Refitting changes the height, which this
+    // observer also reports, and must not answer itself.
+    const observer = new ResizeObserver(() => {
+      if (node.clientWidth === width) return;
+      width = node.clientWidth;
+      fit();
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [fit]);
 
   const voiceReady = voiceState === "READY";
   const voiceTitle = readOnlyReason
     ? readOnlyReason
     : listening
       ? "A ouvir — clica para cancelar"
-      : voiceReady ? "Falar com o Nano (Ctrl+M)" : "Voz indisponível";
+      : voiceReady ? `Falar com o ${BRAND_NAME} (Ctrl+M)` : "Voz indisponível";
 
   // The placeholder and the line in the button bar are two halves of one
   // sentence, not the same sentence twice.
   const placeholder = readOnlyReason
     ? "Conversa anterior — só leitura."
-    : disabled ? "A aguardar o motor do Nano…" : "Envie uma mensagem para o Nano…";
+    : disabled ? `A aguardar o motor do ${BRAND_NAME}…` : `Envie uma mensagem para o ${BRAND_NAME}…`;
 
   return (
     <div className="composer-wrap">
       <div className="composer-inner">
-        {suggestions.length > 0 && !value && !readOnlyReason && (
-          <div className="suggestions">
-            {suggestions.map((text) => (
-              <button key={text} type="button" className="suggestion" onClick={() => onSuggestion(text)}>
-                {text}
-              </button>
-            ))}
-          </div>
-        )}
-
         <div className={`composer${listening ? " composer--listening" : ""}`}>
-          <label className="sr-only" htmlFor="composer-input">Mensagem para o Nano</label>
+          <label className="sr-only" htmlFor="composer-input">Mensagem para o {BRAND_NAME}</label>
           <textarea
             id="composer-input" ref={ref} className="composer__textarea" rows={1}
             value={value} disabled={locked}
@@ -673,20 +700,13 @@ export function Composer({
           />
 
           <div className="composer__bar">
-            <Button
-              variant="ghost" icon size="sm" onClick={onNew}
-              aria-label="Nova conversa" title="Nova conversa (Ctrl+N)"
-            >
-              <Icon d={ICON.plus} size={17} />
-            </Button>
-
             {/* Attachments are not supported by the backend yet. Shown disabled
                 with the reason rather than silently doing nothing when clicked. */}
             <Button
               variant="ghost" icon size="sm" disabled
               title="Anexos: brevemente" aria-label="Anexar ficheiro (brevemente)"
             >
-              <Icon d={ICON.attach} size={16} />
+              <Icon name="attach" size={17} />
             </Button>
 
             {listening && (
@@ -705,7 +725,6 @@ export function Composer({
             )}
 
             <span className="composer__spacer" />
-            {!locked && <span className="composer__hint"><kbd>Enter</kbd> enviar</span>}
 
             <button
               type="button"
@@ -714,7 +733,7 @@ export function Composer({
               disabled={locked || thinking || (!voiceReady && !listening)}
               aria-label={voiceTitle} title={voiceTitle}
             >
-              {listening ? <Icon d={ICON.stop} size={15} fill /> : <Icon d={ICON.mic} size={17} />}
+              {listening ? <Icon name="stop" size={14} fill /> : <Icon name="mic" size={18} />}
             </button>
 
             {thinking ? (
@@ -722,7 +741,7 @@ export function Composer({
                 type="button" className="composer__send" onClick={onStop}
                 aria-label="Parar a resposta" title="Parar"
               >
-                <Icon d={ICON.stop} size={16} fill />
+                <Icon name="stop" size={14} fill />
               </button>
             ) : (
               <button
@@ -731,11 +750,21 @@ export function Composer({
                 aria-label="Enviar mensagem"
                 title={readOnlyReason ?? "Enviar (Enter)"}
               >
-                <Icon d={ICON.send} size={19} />
+                <Icon name="send" size={18} strokeWidth={2.2} />
               </button>
             )}
           </div>
         </div>
+
+        {suggestions.length > 0 && !value && !readOnlyReason && (
+          <div className="suggestions">
+            {suggestions.map((text) => (
+              <button key={text} type="button" className="suggestion" onClick={() => onSuggestion(text)}>
+                {text}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

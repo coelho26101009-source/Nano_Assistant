@@ -178,7 +178,7 @@ export function MemoriesPage({
           <StatusIndicator state={migrationState}
                            label="A base de dados não pôde ser migrada" />
           <p className="muted" style={{ fontSize: 13, marginTop: 10, lineHeight: 1.7 }}>
-            O Nano continua a responder, mas não guarda conversas nem memórias nesta
+            O NANO continua a responder, mas não guarda conversas nem memórias nesta
             sessão. Nada foi apagado — a base de dados anterior está intacta.
           </p>
           {overview.migration?.error && (
@@ -212,7 +212,7 @@ export function MemoriesPage({
 
       {!overview?.longTermEnabled && (
         <div className="notice notice--warn">
-          <strong>A memória de longo prazo está desligada.</strong> O Nano não guarda
+          <strong>A memória de longo prazo está desligada.</strong> O NANO não guarda
           nem consulta nada entre conversas. O que já está guardado continua aqui.
           <Button size="sm" onClick={onOpenSettings}>Abrir definições</Button>
         </div>
@@ -242,7 +242,7 @@ export function MemoriesPage({
 
       {scope === "candidate" && counts.candidate > 0 && (
         <p className="dim memory-note">
-          Estas são coisas que o Nano <em>reparou</em> durante as conversas. Não são
+          Estas são coisas que o NANO <em>reparou</em> durante as conversas. Não são
           usadas nas respostas enquanto não as guardares.
         </p>
       )}
@@ -253,7 +253,7 @@ export function MemoriesPage({
           hint={scope === "active"
             ? "Diz “lembra-te que…” numa conversa, ou adiciona uma memória à mão."
             : scope === "candidate"
-              ? "O Nano ainda não sugeriu nada. Sugere pouco, de propósito."
+              ? "O NANO ainda não sugeriu nada. Sugere pouco, de propósito."
               : "Memórias arquivadas aparecem aqui."}
         />
       ) : (
@@ -358,7 +358,7 @@ export function MemoriesPage({
         }
       >
         <Field label="Texto da memória"
-               hint="Escrito como o Nano vai lê-lo. Chaves e palavras-passe são recusadas.">
+               hint="Escrito como o NANO vai lê-lo. Chaves e palavras-passe são recusadas.">
           <textarea className="input input--area" rows={4} value={draft}
                     onChange={(event) => setDraft(event.target.value)} />
         </Field>
@@ -378,7 +378,7 @@ export function MemoriesPage({
           </>
         }
       >
-        <Field label="O que queres que o Nano saiba"
+        <Field label="O que queres que o NANO saiba"
                hint="Uma frase. Ex.: “A minha placa gráfica é uma GTX 1660 Ti.”">
           <textarea className="input input--area" rows={3} value={newText}
                     onChange={(event) => setNewText(event.target.value)} />
@@ -396,7 +396,7 @@ export function MemoriesPage({
       <ConfirmDialog
         open={Boolean(confirmDelete)} danger title="Apagar esta memória?"
         confirmLabel="Apagar"
-        message={<>O Nano deixa de saber <strong>{confirmDelete?.text}</strong>.</>}
+        message={<>O NANO deixa de saber <strong>{confirmDelete?.text}</strong>.</>}
         onConfirm={() => { if (confirmDelete) onDelete(confirmDelete.id); setConfirmDelete(null); }}
         onCancel={() => setConfirmDelete(null)}
       />
@@ -520,7 +520,7 @@ export function KnowledgePage({
           </>
         }
       >
-        <Field label="Nome" hint="Como lhe chamas. Ex.: “Nano Assistant”, “GTX 1660 Ti”.">
+        <Field label="Nome" hint="Como lhe chamas. Ex.: “Projeto NANO”, “GTX 1660 Ti”.">
           <input className="input" value={title} maxLength={90}
                  onChange={(event) => setTitle(event.target.value)} />
         </Field>

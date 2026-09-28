@@ -7,7 +7,7 @@
  */
 import React, { useMemo, useState } from "react";
 import ContextPanels, { ActivityTimeline } from "./Inspector";
-import type { ViewId } from "./TopNav";
+import type { ViewId } from "../lib/navigation";
 import type {
   ActivityEvent, CommandCenterPayload, PcActivityCategory, PcActivityEntry,
   PcSnapshot, ProviderPayload, ReadinessPayload, TaskCounts, TaskRow,
@@ -213,7 +213,7 @@ export function ActivityPage({
         ) : totalCount === 0 ? (
           <EmptyState
             title="Ainda não há atividade recente"
-            hint="As ações do Nano neste computador aparecerão aqui."
+            hint="As ações do NANO neste computador aparecerão aqui."
           />
         ) : !entries?.length ? (
           <EmptyState
@@ -363,7 +363,7 @@ export function PermissionsPage({
       {pending.length === 0 ? (
         <EmptyState
           title="Nada à espera de decisão"
-          hint="Quando o Nano precisar de sair do que pode fazer sozinho, o pedido aparece aqui com o alvo e o scope exactos."
+          hint="Quando o NANO precisar de sair do que pode fazer sozinho, o pedido aparece aqui com o alvo e o scope exactos."
         />
       ) : (
         <div className="stack">
@@ -594,7 +594,7 @@ function PcStatusSection({ snapshot, loading, onRefresh }: {
       <>
         <h2 className="page-title">Computador</h2>
         <EmptyState title="O controlo de PC só funciona no Windows."
-                    hint="As outras funções do Nano continuam disponíveis." />
+                    hint="As outras funções do NANO continuam disponíveis." />
       </>
     );
   }
@@ -659,7 +659,7 @@ function PcStatusSection({ snapshot, loading, onRefresh }: {
 
       <h2 className="page-title">Ações recentes no computador</h2>
       {snapshot && snapshot.recentActions.length === 0 ? (
-        <EmptyState title="O Nano ainda não fez nada no computador nesta sessão." />
+        <EmptyState title="O NANO ainda não fez nada no computador nesta sessão." />
       ) : (
         <div className="stack stack--tight">
           {(snapshot?.recentActions ?? []).map((entry, index) => (
@@ -697,7 +697,7 @@ export function StatusPage({
   const [confirmStop, setConfirmStop] = useState(false);
 
   const services = [
-    { name: "Motor do Nano", state: readiness ? "READY" : "BACKEND_OFFLINE", note: "Servidor Python e ponte com a UI" },
+    { name: "Motor do NANO", state: readiness ? "READY" : "BACKEND_OFFLINE", note: "Servidor Python e ponte com a UI" },
     { name: "Groq (cloud)", state: providers?.groq.state, note: providers?.groq.detail },
     { name: "Ollama (local)", state: providers?.ollama.state, note: providers?.ollama.detail },
     { name: "Voz / STT", state: readiness?.voice.state, note: readiness?.voice.blockers?.join(" · ") || "Transcrição local" },

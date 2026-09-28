@@ -155,12 +155,14 @@ const PROBE = `(() => {
     if (shrinkable.length >= 12) break;
   }
 
-  // DRAG REGIONS. The frameless window is moved by dragging the shell, and
-  // every control has to opt out or it is not clickable at all -- a defect that
-  // looks exactly like "the button does nothing". -webkit-app-region is NOT an
-  // inherited property in Chromium, so a child reporting 'none' simply defers
-  // to the nearest ancestor that declared one; what matters is that the
-  // ancestors declare the right thing and that controls say no-drag themselves.
+  // DRAG REGIONS. The frameless window is moved by dragging its caption --
+  // the top bar and the sidebar's brand row -- and every control inside those
+  // has to opt out or it is not clickable at all, a defect that looks exactly
+  // like "the button does nothing". -webkit-app-region is NOT an inherited
+  // property in Chromium, so a child reporting 'none' simply defers to the
+  // nearest ancestor that declared one; what matters is that the caption
+  // declares drag, the panels declare no-drag, and each control inside the
+  // caption says no-drag itself.
   const appRegion = (selector) => {
     const el = document.querySelector(selector);
     if (!el) return null;
@@ -170,10 +172,12 @@ const PROBE = `(() => {
   const dragRegions = {
     shell: appRegion('.shell'),
     app: appRegion('.app'),
-    topnavItem: appRegion('.topnav-item'),
+    topbar: appRegion('.topbar'),
+    railBrand: appRegion('.rail__brand'),
     statusPill: appRegion('.status-pill'),
     windowControl: appRegion('.window-control'),
-    railToggle: appRegion('.topbar .icon-btn'),
+    topbarButton: appRegion('.topbar .icon-btn'),
+    railToggle: appRegion('.rail__brand .rail__toggle'),
   };
 
   const app = document.querySelector('.app');
@@ -212,12 +216,18 @@ const PROBE = `(() => {
   };
 })()`;
 
-/** Click a top-bar section by its label and let the stage settle. */
+/** Click a sidebar section by its label and let the stage settle. */
 const OPEN_SECTION = (label) => `(() => {
-  for (const el of document.querySelectorAll('.topnav-item')) {
+  for (const el of document.querySelectorAll('.rail-nav__item')) {
     if ((el.textContent || '').trim().startsWith(${JSON.stringify(label)})) { el.click(); return true; }
   }
   return false;
+})()`;
+
+/** Whether the section the sweep asked for is the one now open. */
+const SECTION_OPEN = (label) => `(() => {
+  const current = document.querySelector('.rail-nav__item[aria-current="page"]');
+  return !!current && (current.textContent || '').trim().startsWith(${JSON.stringify(label)});
 })()`;
 
 async function measure(window, url, viewport) {
@@ -240,10 +250,15 @@ async function measure(window, url, viewport) {
  * the chat would have left them unchecked.
  */
 async function measureSection(window, viewport, label) {
-  await window.webContents.executeJavaScript(OPEN_SECTION(label));
+  const clicked = await window.webContents.executeJavaScript(OPEN_SECTION(label));
   await new Promise((r) => setTimeout(r, 500));
+  /* WHETHER IT OPENED IS PART OF THE MEASUREMENT. A section whose control
+     could not be found used to leave the chat on screen, and the sweep then
+     measured the chat again under the section's name -- a clean result about
+     a page nobody looked at. */
+  const opened = clicked && await window.webContents.executeJavaScript(SECTION_OPEN(label));
   const result = await window.webContents.executeJavaScript(PROBE);
-  return { viewport: viewport.name, section: label, ...result };
+  return { viewport: viewport.name, section: label, opened, ...result };
 }
 
 async function main() {

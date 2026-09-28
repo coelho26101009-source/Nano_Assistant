@@ -22,7 +22,7 @@ export default function FirstRunGuide({ providers, readiness, saving, onSettings
       <div className="first-run__inner stack">
         <header>
           <Badge tone="accent">{VERSION.display} · Beta</Badge>
-          <h2 id="first-run-title" className="page-title">Bem-vindo ao Nano</h2>
+          <h2 id="first-run-title" className="page-title">Bem-vindo ao NANO</h2>
           <p className="muted">Escolhe uma forma de conversar. Basta um provedor disponível; podes configurar o resto mais tarde.</p>
         </header>
 
@@ -44,7 +44,7 @@ export default function FirstRunGuide({ providers, readiness, saving, onSettings
           <p className="muted">As ações sensíveis no PC pedem autorização com a ação, o alvo e o âmbito. Este guia não concede permissões.</p>
           <details className="first-run__details">
             <summary>Onde ficam os meus dados?</summary>
-            <p className="muted">Conversas, Memória, definições e permissões ficam neste computador. A desinstalação preserva os dados. O Nano não envia relatórios de diagnóstico automaticamente.</p>
+            <p className="muted">Conversas, Memória, definições e permissões ficam neste computador. A desinstalação preserva os dados. O NANO não envia relatórios de diagnóstico automaticamente.</p>
             {location?.data_dir && <code className="first-run__path">{location.data_dir}</code>}
             <p className="dim">Beta: pode haver falhas. Não existe atualização automática; consulta a versão em Definições → Sobre.</p>
           </details>

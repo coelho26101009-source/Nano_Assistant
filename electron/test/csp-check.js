@@ -111,8 +111,8 @@ app.whenReady().then(async () => {
   const rendered = await win.webContents.executeJavaScript(`
     (() => ({
       hasTopbar: !!document.querySelector('.topbar'),
-      navCount: document.querySelectorAll('.topnav-item').length,
-      hasBrand: !!document.querySelector('.topbar__brand'),
+      navCount: document.querySelectorAll('.rail-nav__item').length,
+      hasBrand: !!document.querySelector('.rail__brand'),
       hasStage: !!document.querySelector('.app'),
       stylesApplied: getComputedStyle(document.body).backgroundColor,
       textLength: (document.body.textContent || '').trim().length,

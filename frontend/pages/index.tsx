@@ -1,14 +1,16 @@
 /**
- * Nano application shell.
+ * NANO application shell.
  *
- * Layout: top bar · conversation rail · stage.
+ * Layout: sidebar · main column (top bar, then the stage).
  *
- * The bar carries the five sections (Chat, Ferramentas, PC, Memória,
- * Definições) and, in the desktop shell, doubles as the window caption. The
- * rail on the left lists real conversations. The stage on the right holds the
- * conversation or the page of whichever section is open. There is no longer a
- * fixed inspector column: its panels moved to PC › Estado, where they answer a
- * question instead of permanently occupying the main screen.
+ * Follows the Chatbot UI layout. The sidebar carries the brand, a new
+ * conversation, search, the five sections (Chat, Ferramentas, PC, Memória,
+ * Definições) and the list of real conversations; it collapses to a column of
+ * icons, and becomes a drawer at narrow widths. The top bar names the open page
+ * and holds the AI selector and, in the desktop shell, the window caption. The
+ * stage holds the conversation or the page of whichever section is open. There
+ * is no fixed inspector column: its panels live in PC › Estado, where they
+ * answer a question instead of permanently occupying the main screen.
  *
  * All state shown here is read from the Python backend through lib/backend.
  * Nothing is mocked and nothing defaults to "ready".
@@ -19,12 +21,14 @@ import Head from "next/head";
 import CommandPalette, { Command } from "../components/CommandPalette";
 import ConfirmModal from "../components/Confirm";
 import PluginCodeModal from "../components/PluginCodeModal";
-import Rail from "../components/Rail";
+import Rail, { type RailMode } from "../components/Rail";
 import CapabilitiesPage from "../components/CapabilitiesPage";
 import SettingsPage, { type Section as SettingsSection } from "../components/SettingsPage";
 import TaskDetailModal from "../components/TaskDetailModal";
-import TopNav, { SECTIONS, ViewId, sectionEntry, sectionOf, viewEntry } from "../components/TopNav";
-import NanoLogo from "../components/NanoLogo";
+import TopBar from "../components/TopBar";
+import Icon from "../components/Icon";
+import { SECTIONS, ViewId, sectionEntry, sectionOf } from "../lib/navigation";
+import { BRAND_NAME } from "../lib/brand";
 import FirstRunGuide from "../components/FirstRunGuide";
 import DiagnosticsPanel from "../components/DiagnosticsPanel";
 import { Composer, Conversation, Message, ToolEvent } from "../components/Conversation";
@@ -65,12 +69,14 @@ export interface ConfirmRequest {
 const userMessageId = (requestId: string) => `user:${requestId}`;
 
 /**
- * Whether the window is narrow enough that the rail has to become a drawer.
+ * Whether the window matches a width query -- narrow enough that the sidebar
+ * starts collapsed and expands as a drawer, or so narrow that it leaves the
+ * layout entirely.
  *
  * Resolved in an effect, never during render: the statically exported HTML and
  * the first client render must agree or React logs a hydration mismatch.
  */
-function useNarrow(query = "(max-width: 1080px)"): boolean {
+function useNarrow(query = "(max-width: 1024px)"): boolean {
   const [narrow, setNarrow] = useState(false);
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;
@@ -90,6 +96,9 @@ export default function Home() {
   // and the window controls are simply never rendered.
   const isDesktop = useIsDesktop();
   const narrow = useNarrow();
+  // Below this the collapsed icon column no longer fits either; the sidebar
+  // leaves the layout and the top bar carries the button that opens it.
+  const mobile = useNarrow("(max-width: 640px)");
 
   /* ── Shell state ────────────────────────────────────────────────────── */
   const [view, setView] = useState<ViewId>("chat");
@@ -97,9 +106,16 @@ export default function Home() {
      definições de IA" in the AI pill can land on IA directly instead of on
      whichever category happened to be open last. */
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
+  /* Two sidebar states, because they answer two different questions. At
+     narrow widths the sidebar is a drawer, and `railOpen` is whether it is
+     open over the page right now -- it closes again as soon as something in it
+     is chosen. At desktop widths it is docked, and `railCollapsed` is whether
+     the user folded it down to its icon column, a choice that holds for the
+     session. */
   const [railOpen, setRailOpen] = useState(false);
+  const [railCollapsed, setRailCollapsed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [theme, setTheme] = useState<"dark" | "light">("light");
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [reduceMotion, setReduceMotion] = useState(false);
 
   /* ── Conversation ───────────────────────────────────────────────────── */
@@ -123,7 +139,6 @@ export default function Home() {
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [chatQuery, setChatQuery] = useState("");
   const [profileName, setProfileName] = useState<string | null>(null);
-  const [messageCount, setMessageCount] = useState<number | null>(null);
   const [memoryReady, setMemoryReady] = useState(true);
   const [showFirstRun, setShowFirstRun] = useState(false);
   const [savingFirstRun, setSavingFirstRun] = useState(false);
@@ -231,6 +246,23 @@ export default function Home() {
     document.documentElement.style.setProperty("--transition", reduceMotion ? "0ms" : "140ms cubic-bezier(0.4, 0, 0.2, 1)");
   }, [reduceMotion]);
 
+  /* ── Sidebar ────────────────────────────────────────────────────────────
+   * Folding the docked sidebar lasts for the session and the sidebar opens
+   * expanded on the next launch. It is deliberately NOT kept in browser
+   * storage: the frontend uses none at all (tests/test_providers_and_secrets.py
+   * holds that line, so nothing a secret could reach is ever readable back from
+   * the page), and the desktop's localhost port can change between launches
+   * anyway, which would give the page a new, empty origin. Remembering it
+   * across launches is a backend setting's job. */
+
+  // A drawer left open at one width must not pop open again at the next.
+  useEffect(() => { setRailOpen(false); }, [narrow]);
+
+  const toggleRail = useCallback(() => {
+    if (narrow) setRailOpen((open) => !open);
+    else setRailCollapsed((collapsed) => !collapsed);
+  }, [narrow]);
+
   /* ── The thread list ────────────────────────────────────────────────────
    * Re-read after anything that appends to a thread, so the rail is never a
    * stale picture of what is on disk. It is a bounded, indexed query over the
@@ -242,9 +274,6 @@ export default function Home() {
     setMemoryReady(true);
     setThreads(payload.conversations ?? []);
     if (payload.activeId) setActiveThreadId(payload.activeId);
-    setMessageCount(
-      (payload.conversations ?? []).reduce(
-        (total: number, thread: Thread) => total + (thread.messageCount ?? 0), 0));
   }, []);
 
   /** Render one thread's stored messages into the chat view.
@@ -402,12 +431,14 @@ export default function Home() {
     expose((_msgId: string, info: any) => {
       const wait = Math.max(1, Math.round(Number(info?.wait_seconds ?? 0)));
       // The provider comes WITH the numbers, so the banner names the account
-      // whose quota actually ran out instead of always saying "Groq".
+      // whose quota actually ran out instead of always saying "Groq". Only its
+      // id is kept here: this handler is registered once, before the provider
+      // list has loaded, so a display name looked up now is the raw id. The
+      // name is resolved where it is shown -- see rateLimitProvider.
       setRateLimit({
         message: info?.message ?? "Limite temporário atingido.",
         waitSeconds: wait,
-        provider: providers?.[info?.provider as CloudProviderKey]?.name
-          ?? String(info?.provider ?? "Cloud"),
+        provider: String(info?.provider ?? ""),
       });
       setStatus("");
       setThinking(false);
@@ -512,7 +543,7 @@ export default function Home() {
       setStatus("");
       const transportDown = ack === null || ack === undefined;
       const answer = transportDown
-        ? "**Sem resposta do motor do Nano.** A ligação ao backend caiu ou expirou. Confirma que a janela do Nano continua aberta e recarrega a página."
+        ? "**Sem resposta do motor do NANO.** A ligação ao backend caiu ou expirou. Confirma que a janela do NANO continua aberta e recarrega a página."
         : `**O pedido não foi aceite.** ${ack?.error ?? "motivo desconhecido"}.`;
       notify(transportDown ? "Motor offline" : "Pedido recusado", "error");
       setMessages((prev) => prev.map((m) => m.id === msgId
@@ -548,7 +579,7 @@ export default function Home() {
       setListening(false);
       setThinking(false);
       setStatus("");
-      if (result?.busy) notify("O Nano já está a ouvir");
+      if (result?.busy) notify("O NANO já está a ouvir");
       else notify(`Voz: ${result?.error ?? "não foi possível iniciar"}`, "error");
     });
     setListening(true);
@@ -840,21 +871,20 @@ export default function Home() {
       if (!mod) return;
       const key = event.key.toLowerCase();
       if (key === "k") { event.preventDefault(); setPaletteOpen((v) => !v); }
-      else if (key === "b") { event.preventDefault(); setRailOpen((v) => !v); }
+      else if (key === "b") { event.preventDefault(); toggleRail(); }
       else if (key === "n") { event.preventDefault(); newConversation(); }
       else if (key === "m") { event.preventDefault(); startVoice(); }
       else if (key === ",") { event.preventDefault(); setView("settings"); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [newConversation, startVoice]);
+  }, [newConversation, startVoice, toggleRail]);
 
   /* ── Derived ────────────────────────────────────────────────────────── */
   const pendingCount = commandCenter?.permissions?.length ?? 0;
   const agentState = readiness?.agent.state ?? (gaveUp ? "BACKEND_OFFLINE" : "UNKNOWN");
   const section = sectionOf(view);
   const sectionDef = sectionEntry(section);
-  const meta = viewEntry(view);
 
   /** The thread currently on screen, from the real list. */
   const activeThread = useMemo(
@@ -937,9 +967,14 @@ export default function Home() {
     permissions: pendingCount,
   }), [counts, pendingCount]);
 
+  /** The rate-limited provider as a person names it, from the live list. */
+  const rateLimitProvider = rateLimit
+    ? (providers?.[rateLimit.provider as CloudProviderKey]?.name ?? (rateLimit.provider || "Cloud"))
+    : "";
+
   const healthLabel = useMemo(() => {
     if (gaveUp) return "Motor offline";
-    if (rateLimit) return `${rateLimit.provider}: espera ~${rateLimit.waitSeconds}s`;
+    if (rateLimit) return `${rateLimitProvider}: espera ~${rateLimit.waitSeconds}s`;
     if (readiness?.emergencyStop) return "Execução bloqueada";
     if (pendingCount > 0) return `${pendingCount} por autorizar`;
     if (providers?.route?.usable === false) return "Sem provedor de IA";
@@ -947,7 +982,7 @@ export default function Home() {
     // Saying "operacional" then would be untrue.
     if (readiness?.wakePhrase?.state === "MIC_SILENT") return "Microfone sem áudio";
     return "Todos os serviços operacionais";
-  }, [gaveUp, rateLimit, readiness, pendingCount, providers]);
+  }, [gaveUp, rateLimit, rateLimitProvider, readiness, pendingCount, providers]);
 
   /** What is actually answering, in the few words the top-bar pill can hold. */
   const routeLabel = useMemo(() => {
@@ -999,287 +1034,282 @@ export default function Home() {
       label: entry.views.length > 1 ? `Ir para ${entry.label} › ${v.label}` : `Ir para ${v.label}`,
       run: () => setView(v.id),
     }))),
-    { id: "rail", label: "Mostrar/ocultar conversas", hint: "Ctrl+B", run: () => setRailOpen((v) => !v) },
+    { id: "rail", label: "Mostrar/ocultar barra lateral", hint: "Ctrl+B", run: toggleRail },
     { id: "copy", label: "Copiar conversa", run: () => { copyConversation(); } },
     { id: "theme", label: "Alternar tema", run: () => setTheme((t) => (t === "dark" ? "light" : "dark")) },
-    { id: "voice", label: "Falar com o Nano", hint: "Ctrl+M", run: startVoice },
+    { id: "voice", label: "Falar com o NANO", hint: "Ctrl+M", run: startVoice },
     {
       id: "estop",
       label: readiness?.emergencyStop ? "Retomar execução" : "Paragem de emergência",
       run: () => toggleEmergencyStop(!readiness?.emergencyStop),
     },
-  ], [newConversation, startVoice, copyConversation, readiness, toggleEmergencyStop]);
+  ], [newConversation, startVoice, copyConversation, readiness, toggleEmergencyStop, toggleRail]);
 
   /* ── Chat presentation ──────────────────────────────────────────────── */
   const isChat = view === "chat";
-  const railDocked = isChat && !narrow;
-  const railVisible = isChat && (railDocked || railOpen);
+
+  /* The sidebar's shape, from the width and the user's choice. See Rail.tsx.
+     At the narrowest widths the collapsed column is hidden by the stylesheet
+     and the top bar carries the button that opens the drawer instead. */
+  const railMode: RailMode = narrow
+    ? (railOpen ? "drawer" : "collapsed")
+    : (railCollapsed ? "collapsed" : "expanded");
+
+  /* The home screen: nothing said yet and nothing pending. It names itself
+     ("Como posso ajudar?"), so the top bar carries no title there. */
+  const hero = isChat && !showFirstRun && messages.length === 0 && !thinking;
 
   /* Every thread is writable now, so there is exactly one set of messages on
      screen and no read-only mode to explain. `readOnlyReason` is gone with it. */
-  const chatTitle = activeThread?.title
-    ?? (messages.length ? "Conversa" : "Nova conversa");
-
-  const chatSubtitle = messages.length
-    ? (activityLabel || `${messages.length} mensagens`)
-    : "Escreve, ou diz “Ei Nano”";
+  const chatTitle = activeThread?.title ?? (messages.length ? "Conversa" : "");
+  const pageTitle = isChat ? (hero ? "" : chatTitle) : sectionDef.label;
 
   return (
     <>
       <Head>
-        <title>Nano</title>
+        <title>{BRAND_NAME}</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <meta name="theme-color" content={theme === "light" ? "#EDE7DF" : "#201F1D"} />
-        {/* The real mark, so the taskbar and the tab carry the brand rather
-            than a hand-drawn stand-in. */}
-        <link rel="icon" href="/branding/nano-mark-alpha.png" />
+        <meta name="application-name" content={BRAND_NAME} />
+        {/* The page background of each theme, so the frame and the page agree. */}
+        <meta name="theme-color" content={theme === "light" ? "#FFFFFF" : "#181818"} />
+        <link rel="icon" type="image/png" href="/branding/nano-symbol-original.png" />
       </Head>
 
       <div className="shell">
-        <TopNav
-          view={view} onView={(next) => { setView(next); if (narrow) setRailOpen(false); }}
-          counts={navCounts}
-          agentState={agentState}
-          healthLabel={healthLabel}
-          providers={providers}
-          offline={gaveUp}
-          busy={busy}
-          onSetMode={setMode}
-          onSetPreferredCloud={setPreferredCloud}
-          onSetCloudModel={setCloudModel}
-          onOpenAiSettings={() => openSettingsSection("ai")}
-          pendingCount={pendingCount}
-          profileName={profileName}
-          isDesktop={isDesktop}
-          railOpen={railOpen}
-          onToggleRail={() => setRailOpen((v) => !v)}
-          showRailToggle={isChat && narrow}
-          version={APP_VERSION}
-        />
-
-        <div className="app" data-rail={railDocked ? "true" : "false"}>
-          {railVisible && (
-            <Rail
-              threads={threads ?? []}
-              activeId={activeThreadId}
-              query={chatQuery} onQuery={setChatQuery}
-              onNew={newConversation}
-              onOpen={(id) => { setShowFirstRun(false); openThread(id); }}
-              onRename={renameThread}
-              onDelete={deleteThread}
-              onDeleteMany={deleteThreads}
-              loading={threads === null}
-              messageCount={messageCount}
-              onOpenMemory={() => setView("memory")}
-              drawer={railDocked ? "docked" : "open"}
-              onCloseDrawer={() => setRailOpen(false)}
-              unavailable={!memoryReady}
-            />
-          )}
-          {railVisible && !railDocked && (
+        <div className="app" data-rail={railMode}>
+          <Rail
+            mode={railMode}
+            onToggle={toggleRail}
+            view={view}
+            onView={(next) => { setView(next); if (narrow) setRailOpen(false); }}
+            counts={navCounts}
+            version={APP_VERSION}
+            threads={threads ?? []}
+            activeId={activeThreadId}
+            query={chatQuery} onQuery={setChatQuery}
+            onNew={() => { newConversation(); if (narrow) setRailOpen(false); }}
+            onOpen={(id) => { setShowFirstRun(false); openThread(id); }}
+            onRename={renameThread}
+            onDelete={deleteThread}
+            onDeleteMany={deleteThreads}
+            loading={threads === null}
+            unavailable={!memoryReady}
+          />
+          {railMode === "drawer" && (
             <div className="drawer-scrim" onClick={() => setRailOpen(false)} aria-hidden="true" />
           )}
 
-          <main className="stage surface-panel">
-            <header className="stage__header">
-              {isChat ? (
-                <>
-                  <span className="stage__title">
-                    <NanoLogo size={22} />
-                    <span className="stage__title-text">
-                      <span className="stage__name">{chatTitle}</span>
-                      <span className="stage__sub">{chatSubtitle}</span>
-                    </span>
-                  </span>
-                  <span className="stage__spacer" />
-                  <span className="stage__actions">
-                    <Button variant="ghost" size="sm" onClick={copyConversation}
-                            title="Copiar a conversa para a área de transferência">
-                      Copiar
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => setPaletteOpen(true)}
-                            title="Paleta de comandos (Ctrl+K)">
-                      ⌘K
-                    </Button>
-                  </span>
-                </>
-              ) : (
-                <>
-                  <span className="stage__title">
-                    <span className="stage__title-text">
-                      <span className="stage__name">{sectionDef.label}</span>
-                      <span className="stage__sub">{meta.hint}</span>
-                    </span>
-                  </span>
-                  {sectionDef.views.length > 1 && (
-                    <nav className="stage__tabs" aria-label={`Secções de ${sectionDef.label}`}>
-                      {sectionDef.views.map((entry) => (
-                        <button
-                          key={entry.id} type="button" className="subtab"
-                          aria-current={view === entry.id ? "page" : undefined}
-                          onClick={() => setView(entry.id)}
-                          title={entry.hint}
-                        >
-                          {entry.label}
-                          {(navCounts as Record<string, number>)[entry.id] > 0 && (
-                            <span className="subtab__count">
-                              {(navCounts as Record<string, number>)[entry.id]}
-                            </span>
-                          )}
-                        </button>
-                      ))}
-                    </nav>
-                  )}
-                  <span className="stage__spacer" />
-                </>
+          <div className="main">
+            <TopBar
+              title={pageTitle}
+              actions={isChat && messages.length > 0 ? (
+                <button
+                  type="button" className="icon-btn" onClick={copyConversation}
+                  aria-label="Copiar conversa" title="Copiar a conversa para a área de transferência"
+                >
+                  <Icon name="copy" size={17} />
+                </button>
+              ) : undefined}
+              showMenu={mobile}
+              railOpen={railOpen}
+              onToggleRail={toggleRail}
+              providers={providers}
+              agentState={agentState}
+              healthLabel={healthLabel}
+              offline={gaveUp}
+              busy={busy}
+              onSetMode={setMode}
+              onSetPreferredCloud={setPreferredCloud}
+              onSetCloudModel={setCloudModel}
+              onOpenAiSettings={() => openSettingsSection("ai")}
+              pendingCount={pendingCount}
+              onOpenPermissions={() => setView("permissions")}
+              isDesktop={isDesktop}
+            />
+
+            <main className="stage">
+              {!isChat && sectionDef.views.length > 1 && (
+                <nav className="stage__tabs" aria-label={`Secções de ${sectionDef.label}`}>
+                  {sectionDef.views.map((entry) => (
+                    <button
+                      key={entry.id} type="button" className="subtab"
+                      aria-current={view === entry.id ? "page" : undefined}
+                      onClick={() => setView(entry.id)}
+                      title={entry.hint}
+                    >
+                      {entry.label}
+                      {(navCounts as Record<string, number>)[entry.id] > 0 && (
+                        <span className="subtab__count">
+                          {(navCounts as Record<string, number>)[entry.id]}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </nav>
               )}
-            </header>
 
-            {gaveUp && (
-              <div style={{ padding: 16 }}>
-                <ErrorState
-                  error={{
-                    message: "O motor do Nano não respondeu.",
-                    component: "ponte eel",
-                    detail: isDesktop
-                      ? "Fecha o Nano através do ícone junto ao relógio e volta a abri-lo. Se o problema continuar, copia o diagnóstico para o relatório de erro."
-                      : "Verifica se o motor está a correr e recarrega esta página.",
-                  }}
-                  onRetry={() => window.location.reload()}
-                />
-                {isDesktop && <DiagnosticsPanel />}
-              </div>
-            )}
+              {gaveUp && (
+                <div className="stage__offline">
+                  <ErrorState
+                    error={{
+                      message: "O motor do NANO não respondeu.",
+                      component: "ponte eel",
+                      detail: isDesktop
+                        ? "Fecha o NANO através do ícone junto ao relógio e volta a abri-lo. Se o problema continuar, copia o diagnóstico para o relatório de erro."
+                        : "Verifica se o motor está a correr e recarrega esta página.",
+                    }}
+                    onRetry={() => window.location.reload()}
+                  />
+                  {isDesktop && <DiagnosticsPanel />}
+                </div>
+              )}
 
-            {view === "chat" && (
-              <>
-                {showFirstRun ? (
-                  <FirstRunGuide providers={providers} readiness={readiness}
-                    saving={savingFirstRun} onFinish={finishFirstRun}
-                    onSettings={openSettingsSection}
-                    onRefresh={() => { refreshProviders(); refreshReadiness(); }} />
-                ) : (
-                  <Conversation messages={messages} status={activityLabel} thinking={thinking} />
-                )}
-                {!showFirstRun && providers?.route?.usable === false && (
-                  <div className="setup-notice" role="status">
-                    <span>Configura um provedor cloud ou um modelo local para conversar.</span>
-                    {/* Primary: with no provider this is the ONE action that
-                        unblocks the app, and it was styled as a neutral
-                        secondary button sitting beside the sentence explaining
-                        the block. */}
-                    <Button size="sm" variant="primary" onClick={() => openSettingsSection("ai")}>Configurar IA</Button>
-                  </div>
-                )}
-                {!showFirstRun && <Composer
-                  value={input} onChange={setInput}
-                  onSend={() => { setShowFirstRun(false); sendMessage(); }} onStop={stopWork}
-                  onVoice={startVoice} onCancelVoice={cancelVoice}
-                  onNew={newConversation}
-                  thinking={thinking} disabled={!ready}
-                  voiceState={readiness?.voice.state ?? "UNKNOWN"}
-                  listening={listening}
-                  suggestions={suggestions}
-                  onSuggestion={(text) => { setShowFirstRun(false); sendMessage(text); }}
-                />}
-                <p className="stage__footer">
-                  O Nano pode cometer erros. Ações sensíveis pedem sempre a tua autorização.
-                </p>
-              </>
-            )}
+              {view === "chat" && (
+                <div className={`chat${hero ? " chat--hero" : ""}`}>
+                  {showFirstRun ? (
+                    <FirstRunGuide providers={providers} readiness={readiness}
+                      saving={savingFirstRun} onFinish={finishFirstRun}
+                      onSettings={openSettingsSection}
+                      onRefresh={() => { refreshProviders(); refreshReadiness(); }} />
+                  ) : (
+                    <Conversation
+                      messages={messages} status={activityLabel} thinking={thinking}
+                      userName={profileName} connecting={!ready && !gaveUp}
+                    />
+                  )}
+                  {/* The provider's own wait, counted down, until it is over. It
+                      used to reach the screen only as a tooltip on the AI
+                      selector, so a limited turn said "limit" and never "when". */}
+                  {!showFirstRun && rateLimit && (
+                    <div className="chat-notice rate-limit" role="status">
+                      <span>
+                        <strong>{rateLimitProvider}:</strong> {rateLimit.message}{" "}
+                        Tenta de novo dentro de ~{rateLimit.waitSeconds} s.
+                      </span>
+                    </div>
+                  )}
+                  {!showFirstRun && providers?.route?.usable === false && (
+                    <div className="chat-notice setup-notice" role="status">
+                      <span>Configura um provedor cloud ou um modelo local para conversar.</span>
+                      {/* Primary: with no provider this is the ONE action that
+                          unblocks the app, and it was styled as a neutral
+                          secondary button sitting beside the sentence explaining
+                          the block. */}
+                      <Button size="sm" variant="primary" onClick={() => openSettingsSection("ai")}>Configurar IA</Button>
+                    </div>
+                  )}
+                  {!showFirstRun && <Composer
+                    value={input} onChange={setInput}
+                    onSend={() => { setShowFirstRun(false); sendMessage(); }} onStop={stopWork}
+                    onVoice={startVoice} onCancelVoice={cancelVoice}
+                    thinking={thinking} disabled={!ready}
+                    voiceState={readiness?.voice.state ?? "UNKNOWN"}
+                    listening={listening}
+                    suggestions={suggestions}
+                    onSuggestion={(text) => { setShowFirstRun(false); sendMessage(text); }}
+                  />}
+                  {/* Weighs the home screen's group -- mark, headline, composer
+                      -- slightly above the middle, where the eye lands. */}
+                  {hero && <div className="chat__balance" aria-hidden="true" />}
+                  <p className="stage__footer">
+                    O {BRAND_NAME} pode cometer erros. Ações sensíveis pedem sempre a tua autorização.
+                  </p>
+                </div>
+              )}
 
-            {view !== "chat" && (
-              <div className="page-scroll">
-                {view === "tasks" && (
-                  <TasksPage
-                    tasks={tasks} counts={counts} scope={taskScope} onScope={setTaskScope}
-                    loading={tasksLoading} onOpenTask={openTask} onCancelTask={cancelTask}
-                    onArchive={archiveTasks} query={taskQuery} onQuery={setTaskQuery}
-                  />
-                )}
-                {view === "activity" && (
-                  <ActivityPage
-                    entries={pcActivityFiltered}
-                    category={activityCategory} onCategory={setActivityCategory}
-                    loading={pcActivityLoading}
-                    totalCount={pcActivity?.length ?? null}
-                  />
-                )}
-                {view === "permissions" && (
-                  <PermissionsPage
-                    pending={commandCenter?.permissions ?? []} policies={policies}
-                    auditEvents={permissionAuditEvents} onResolve={resolvePermission} busy={resolving}
-                  />
-                )}
-                {view === "agents" && <AgentsPage agents={agents} />}
-                {view === "memory" && (
-                  <MemoriesPage
-                    overview={memoryData} loading={memoryLoading}
-                    onCreate={createMemory} onUpdate={updateMemory}
-                    onDelete={deleteMemory} onClearAll={clearMemories}
-                    onOpenSettings={() => openSettingsSection("memory")}
-                  />
-                )}
-                {view === "knowledge" && (
-                  <KnowledgePage
-                    nodes={knowledgeData?.nodes ?? null}
-                    types={knowledgeData?.types ?? []}
-                    stats={knowledgeData?.stats ?? null}
-                    loading={knowledgeLoading}
-                    onOpenNode={openNode}
-                    onCreate={createNode}
-                    overview={memoryData}
-                  />
-                )}
-                {view === "graph" && (
-                  <GraphPage
-                    graph={graphData}
-                    types={graphData?.types ?? []}
-                    loading={graphLoading}
-                    onOpenNode={openNode}
-                    onRefresh={setGraphType}
-                    overview={memoryData}
-                  />
-                )}
-                {view === "capabilities" && <CapabilitiesPage enabled={ready} />}
-                {view === "integrations" && (
-                  <IntegrationsPage
-                    providers={providers} plugins={plugins} readiness={readiness}
-                    onOpenSettings={() => setView("settings")} onOpenPlugin={openPluginCode}
-                  />
-                )}
-                {view === "status" && (
-                  <StatusPage readiness={readiness} providers={providers}
-                              commandCenter={commandCenter} loading={ccLoading}
-                              pcSnapshot={pcSnapshot} pcLoading={pcLoading}
-                              onRefreshPc={refreshPc}
-                              onToggleEmergencyStop={toggleEmergencyStop}
-                              onOpenTask={openTask} onCancelTask={cancelTask}
-                              onNavigate={setView} />
-                )}
-                {view === "settings" && (
-                  <SettingsPage
-                    settings={settings} providers={providers}
-                    diagnostics={voiceDiag}
-                    loading={settingsLoading} busy={busy}
-                    onSetMode={setMode} onSetPreferredCloud={setPreferredCloud}
-                    onSaveCloudKey={saveCloudKey} onRemoveCloudKey={removeCloudKey}
-                    onTestCloud={testCloud} onSetCloudModel={setCloudModelTier}
-                    onSetLocalModel={setLocalModel} onUpdate={updateSetting}
-                    onTestSpeaker={testSpeaker} onTestMicrophone={testMicrophone}
-                    onToggleEmergencyStop={toggleEmergencyStop}
-                    onClearConversation={newConversation}
-                    onForgetAllMemory={forgetAllMemory}
-                    onNavigate={setView}
-                    onOpenFirstRun={() => { setShowFirstRun(true); setView("chat"); }}
-                    section={settingsSection} onSection={setSettingsSection}
-                    theme={theme} onTheme={setTheme}
-                    reduceMotion={reduceMotion} onReduceMotion={setReduceMotion}
-                  />
-                )}
-              </div>
-            )}
-          </main>
+              {view !== "chat" && (
+                <div className="page-scroll">
+                  {view === "tasks" && (
+                    <TasksPage
+                      tasks={tasks} counts={counts} scope={taskScope} onScope={setTaskScope}
+                      loading={tasksLoading} onOpenTask={openTask} onCancelTask={cancelTask}
+                      onArchive={archiveTasks} query={taskQuery} onQuery={setTaskQuery}
+                    />
+                  )}
+                  {view === "activity" && (
+                    <ActivityPage
+                      entries={pcActivityFiltered}
+                      category={activityCategory} onCategory={setActivityCategory}
+                      loading={pcActivityLoading}
+                      totalCount={pcActivity?.length ?? null}
+                    />
+                  )}
+                  {view === "permissions" && (
+                    <PermissionsPage
+                      pending={commandCenter?.permissions ?? []} policies={policies}
+                      auditEvents={permissionAuditEvents} onResolve={resolvePermission} busy={resolving}
+                    />
+                  )}
+                  {view === "agents" && <AgentsPage agents={agents} />}
+                  {view === "memory" && (
+                    <MemoriesPage
+                      overview={memoryData} loading={memoryLoading}
+                      onCreate={createMemory} onUpdate={updateMemory}
+                      onDelete={deleteMemory} onClearAll={clearMemories}
+                      onOpenSettings={() => openSettingsSection("memory")}
+                    />
+                  )}
+                  {view === "knowledge" && (
+                    <KnowledgePage
+                      nodes={knowledgeData?.nodes ?? null}
+                      types={knowledgeData?.types ?? []}
+                      stats={knowledgeData?.stats ?? null}
+                      loading={knowledgeLoading}
+                      onOpenNode={openNode}
+                      onCreate={createNode}
+                      overview={memoryData}
+                    />
+                  )}
+                  {view === "graph" && (
+                    <GraphPage
+                      graph={graphData}
+                      types={graphData?.types ?? []}
+                      loading={graphLoading}
+                      onOpenNode={openNode}
+                      onRefresh={setGraphType}
+                      overview={memoryData}
+                    />
+                  )}
+                  {view === "capabilities" && <CapabilitiesPage enabled={ready} />}
+                  {view === "integrations" && (
+                    <IntegrationsPage
+                      providers={providers} plugins={plugins} readiness={readiness}
+                      onOpenSettings={() => setView("settings")} onOpenPlugin={openPluginCode}
+                    />
+                  )}
+                  {view === "status" && (
+                    <StatusPage readiness={readiness} providers={providers}
+                                commandCenter={commandCenter} loading={ccLoading}
+                                pcSnapshot={pcSnapshot} pcLoading={pcLoading}
+                                onRefreshPc={refreshPc}
+                                onToggleEmergencyStop={toggleEmergencyStop}
+                                onOpenTask={openTask} onCancelTask={cancelTask}
+                                onNavigate={setView} />
+                  )}
+                  {view === "settings" && (
+                    <SettingsPage
+                      settings={settings} providers={providers}
+                      diagnostics={voiceDiag}
+                      loading={settingsLoading} busy={busy}
+                      onSetMode={setMode} onSetPreferredCloud={setPreferredCloud}
+                      onSaveCloudKey={saveCloudKey} onRemoveCloudKey={removeCloudKey}
+                      onTestCloud={testCloud} onSetCloudModel={setCloudModelTier}
+                      onSetLocalModel={setLocalModel} onUpdate={updateSetting}
+                      onTestSpeaker={testSpeaker} onTestMicrophone={testMicrophone}
+                      onToggleEmergencyStop={toggleEmergencyStop}
+                      onClearConversation={newConversation}
+                      onForgetAllMemory={forgetAllMemory}
+                      onNavigate={setView}
+                      onOpenFirstRun={() => { setShowFirstRun(true); setView("chat"); }}
+                      section={settingsSection} onSection={setSettingsSection}
+                      theme={theme} onTheme={setTheme}
+                      reduceMotion={reduceMotion} onReduceMotion={setReduceMotion}
+                    />
+                  )}
+                </div>
+              )}
+            </main>
+          </div>
         </div>
       </div>
 

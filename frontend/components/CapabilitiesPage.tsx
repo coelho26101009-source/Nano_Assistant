@@ -123,7 +123,7 @@ export default function CapabilitiesPage({ enabled }: { enabled: boolean }) {
       <div className="page__inner">
         <EmptyState
           title="Não foi possível ler as capacidades"
-          hint="O motor do Nano não respondeu. Nada é mostrado por omissão para não inventar uma lista."
+          hint="O motor do NANO não respondeu. Nada é mostrado por omissão para não inventar uma lista."
         />
       </div>
     );
@@ -133,8 +133,8 @@ export default function CapabilitiesPage({ enabled }: { enabled: boolean }) {
     <div className="page__inner">
       <h2 className="page-title">Capacidades</h2>
       <p className="dim" style={{ marginBottom: 14, maxWidth: "72ch" }}>
-        Tudo o que o Nano sabe fazer neste computador, lido diretamente do motor.
-        As acções sensíveis pedem sempre confirmação — e as que o Nano não faz
+        Tudo o que o NANO sabe fazer neste computador, lido diretamente do motor.
+        As acções sensíveis pedem sempre confirmação — e as que o NANO não faz
         estão listadas também, porque nenhuma autorização as torna possíveis.
       </p>
 
@@ -172,7 +172,7 @@ export default function CapabilitiesPage({ enabled }: { enabled: boolean }) {
 
         {filter === "all" && data.unsupported.length > 0 && (
           <Panel
-            title="O que o Nano não faz"
+            title="O que o NANO não faz"
             action={<Badge tone="neutral">{data.unsupported.length}</Badge>}
           >
             <p className="dim" style={{ fontSize: 12, marginBottom: 10 }}>

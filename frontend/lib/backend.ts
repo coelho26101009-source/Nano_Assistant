@@ -391,7 +391,7 @@ export function usePolled<T>(name: string, intervalMs: number, enabled: boolean,
       const value = await call<T>(name, ...JSON.parse(argsKey));
       if (!mounted.current) return;
       setData(value);
-      setError(value === null ? "Sem resposta do motor do Nano." : null);
+      setError(value === null ? "Sem resposta do motor do NANO." : null);
     } finally {
       inFlight.current = false;
       if (mounted.current) setLoading(false);

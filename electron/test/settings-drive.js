@@ -274,8 +274,10 @@ app.whenReady().then(async () => {
   window.dispatchEvent(new Event('resize'));
   await sleep(1500);
 
-  /* ---- 1. every top-level destination opens real content ---------------- */
-  const navButtons = qa('.topnav-item');
+  /* ---- 1. every top-level destination opens real content ----------------
+     The five sections live in the sidebar: four in its navigation, Definições
+     at its foot. */
+  const navButtons = qa('.rail-nav__item');
   ok('the five destinations are present', navButtons.length === 5,
      navButtons.map((b) => b.textContent.trim()).join(' / '));
 
@@ -286,7 +288,7 @@ app.whenReady().then(async () => {
     ['Definições', 'Definições'],
     ['Chat', null],
   ]) {
-    const btn = byText('.topnav-item', label);
+    const btn = byText('.rail-nav__item', label);
     if (!btn) { ok('destination ' + label + ' exists', false); continue; }
     btn.click();
     await sleep(700);
@@ -298,7 +300,7 @@ app.whenReady().then(async () => {
   }
 
   /* ---- 2. the AI pill opens the selector -------------------------------- */
-  byText('.topnav-item', 'Chat')?.click();
+  byText('.rail-nav__item', 'Chat')?.click();
   await sleep(500);
   const pill = q('.status-pill--menu');
   ok('the AI pill is an interactive menu trigger',
@@ -339,13 +341,14 @@ app.whenReady().then(async () => {
   ok('the active mode is marked',
      q('.popover [role="menuitemradio"][aria-checked="true"]')?.textContent?.includes('Automático'));
 
-  /* ---- 2b. the human retest's exact regression: TopNav must stay visible,
-     and the popover must not be clipped -- with the popover OPEN.
+  /* ---- 2b. the human retest's exact regression: the navigation must stay
+     visible, and the popover must not be clipped -- with the popover OPEN.
      This is the direct check for the bug: opening the pill used to hide most
-     of the top navigation and clip the popover near the top/right edge of the
+     of the navigation and clip the popover near the top/right edge of the
      window. Both were symptoms of the popover living INSIDE .topbar, whose
-     own overflow:hidden and backdrop-filter (kept there deliberately, to hold
-     the active-tab glow inside the bar) clipped it and composited badly. */
+     own overflow and compositing clipped it. The navigation has moved to the
+     sidebar since, and the pill still lives in .topbar, so both halves of the
+     check still mean what they meant. */
   {
     const openPopover = q('.popover[role="menu"]');
     const topbar = q('.topbar');
@@ -353,15 +356,15 @@ app.whenReady().then(async () => {
        !!openPopover && !topbar.contains(openPopover),
        openPopover ? (topbar.contains(openPopover) ? 'still inside .topbar' : 'outside .topbar') : 'no popover found');
 
-    const navLabels = qa('.topnav-item').map((el) => el.textContent.trim());
+    const navLabels = qa('.rail-nav__item').map((el) => el.textContent.trim());
     ok('all five destinations are still present with the popover open',
        navLabels.length === 5 && navLabels.every((label) => label.length > 0),
        navLabels.join(' / '));
-    const navRect = q('.topbar__nav')?.getBoundingClientRect();
+    const navRect = q('.rail-nav')?.getBoundingClientRect();
     ok('the nav bar itself still has real, visible dimensions',
        !!navRect && navRect.width > 100 && navRect.height > 0,
-       navRect ? (navRect.width + 'x' + navRect.height) : 'no .topbar__nav');
-    const brand = q('.topbar__brand');
+       navRect ? (navRect.width + 'x' + navRect.height) : 'no .rail-nav');
+    const brand = q('.rail__brand');
     const brandStyle = brand ? getComputedStyle(brand) : null;
     ok('the Nano brand lockup is not hidden',
        !!brand && brandStyle.visibility !== 'hidden' && brandStyle.display !== 'none'
@@ -470,7 +473,7 @@ app.whenReady().then(async () => {
   byText('button', 'Configurar IA')?.click();
   await sleep(400);
   ok('the guide opens existing provider settings', !!q('.settings-body') && /Groq/.test(q('.settings-body').textContent));
-  byText('.topnav-item', 'Chat')?.click();
+  byText('.rail-nav__item', 'Chat')?.click();
   await sleep(300);
   byText('button', 'Começar a conversar')?.click();
   await sleep(300);
@@ -478,7 +481,7 @@ app.whenReady().then(async () => {
     !q('#first-run-title') && report.calls.some(c => c.name === 'update_setting' &&
       c.args[0] === 'onboarding_completed' && c.args[1] === true));
 
-  byText('.topnav-item', 'Definições')?.click();
+  byText('.rail-nav__item', 'Definições')?.click();
   await sleep(300);
   railItem('Sobre')?.click();
   await sleep(300);
@@ -513,7 +516,7 @@ app.whenReady().then(async () => {
      get_pc_activity, with categories the audit trail actually distinguishes
      (Tudo / Ações / Permissões / Erros) and no fourth tab standing in for
      something the data cannot tell apart. */
-  byText('.topnav-item', 'PC')?.click();
+  byText('.rail-nav__item', 'PC')?.click();
   await sleep(600);
   const openSubtab = (label) => qa('.subtab').find((el) => el.textContent.trim().startsWith(label))?.click();
   openSubtab('Atividade');
@@ -548,7 +551,7 @@ app.whenReady().then(async () => {
      taskTabLabels.join(' / '));
 
   /* ---- 10. Ferramentas is a real catalogue ------------------------------ */
-  byText('.topnav-item', 'Ferramentas')?.click();
+  byText('.rail-nav__item', 'Ferramentas')?.click();
   await sleep(900);
   ok('the catalogue renders capability rows', qa('.cap-item').length >= 2,
      qa('.cap-item').length + ' rows');
@@ -561,7 +564,7 @@ app.whenReady().then(async () => {
      !/"type":\s*"object"|input_schema|properties/.test(catalogueText), '');
 
   /* ---- 11. keyboard reachability --------------------------------------- */
-  const focusables = qa('.topnav-item, .status-pill--menu, .settings-rail__item')
+  const focusables = qa('.rail-nav__item, .status-pill--menu, .settings-rail__item')
     .filter((el) => el.tabIndex >= 0 || el.tagName === 'BUTTON');
   ok('navigation and the pill are keyboard reachable',
      focusables.length >= 6, focusables.length + ' focusable controls');
@@ -622,7 +625,7 @@ app.whenReady().then(async () => {
   const withinViewport =
     rect.left >= 0 && rect.top >= 0 &&
     rect.right <= window.innerWidth + 1 && rect.bottom <= window.innerHeight + 1;
-  const navLabels = Array.from(document.querySelectorAll('.topnav-item')).map((el) => el.textContent.trim());
+  const navLabels = Array.from(document.querySelectorAll('.rail-nav__item')).map((el) => el.textContent.trim());
   return {
     ok: withinViewport && rect.width > 100 && rect.height > 50 && navLabels.length === 5,
     withinViewport, width: rect.width, height: rect.height,

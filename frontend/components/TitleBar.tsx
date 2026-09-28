@@ -16,7 +16,7 @@
  *     every button, link and input inside `.topbar`, so a new control cannot
  *     forget it.
  *
- *  2. IT ONLY EXISTS IN THE DESKTOP SHELL. TopNav renders it from capability
+ *  2. IT ONLY EXISTS IN THE DESKTOP SHELL. TopBar renders it from capability
  *     detection, so the same bundle opened in a browser during development
  *     simply has no caption buttons — no dead controls, no crash.
  *
@@ -85,7 +85,7 @@ export default function WindowControls() {
         aria-label="Fechar para o tabuleiro"
         // Says exactly what happens. A close button that does not close is
         // only acceptable if it never surprises anyone.
-        title="Fechar para o tabuleiro — o Nano continua a correr"
+        title="Fechar para o tabuleiro — o NANO continua a correr"
       >
         <Close />
       </button>

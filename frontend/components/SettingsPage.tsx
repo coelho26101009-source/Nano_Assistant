@@ -36,8 +36,8 @@ const SECTIONS: { value: Section; label: string; hint: string }[] = [
   { value: "general", label: "Geral", hint: "Arranque, janela e aparência" },
   { value: "ai", label: "IA", hint: "Modo, provedores e modelos" },
   { value: "voice", label: "Voz", hint: "Microfone, atalho e resposta falada" },
-  { value: "pccontrol", label: "PC Control", hint: "O que o Nano pode fazer no computador" },
-  { value: "memory", label: "Memória", hint: "O que o Nano guarda sobre ti" },
+  { value: "pccontrol", label: "PC Control", hint: "O que o NANO pode fazer no computador" },
+  { value: "memory", label: "Memória", hint: "O que o NANO guarda sobre ti" },
   { value: "privacy", label: "Privacidade", hint: "Onde correm os teus dados" },
   { value: "about", label: "Sobre", hint: "Versão e projeto" },
 ];
@@ -82,10 +82,10 @@ function DesktopPanel() {
         <p className="muted" style={{ fontSize: 13 }}>
           Esta janela está a correr no <strong>navegador</strong>, não na aplicação
           de ambiente de trabalho. O atalho global, o tabuleiro do sistema e o painel
-          de voz só existem no Nano Desktop.
+          de voz só existem no NANO Desktop.
         </p>
         <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>
-          Abre o Nano com <code>NANO_DESKTOP.bat</code> para os ativar.
+          Abre o NANO com <code>NANO_DESKTOP.bat</code> para os ativar.
         </p>
       </Panel>
     );
@@ -119,7 +119,7 @@ function DesktopPanel() {
           </p>
           <p className="dim" style={{ fontSize: 11, marginTop: 6 }}>
             Outra aplicação está a usar esta combinação. Fecha-a e tenta novamente —
-            o resto do Nano continua a funcionar, incluindo o botão de microfone.
+            o resto do NANO continua a funcionar, incluindo o botão de microfone.
           </p>
           <div className="inline" style={{ marginTop: 10 }}>
             <Button size="sm" disabled={busy} onClick={() => run(retryShortcut)}>
@@ -133,7 +133,7 @@ function DesktopPanel() {
 
       <Toggle
         label="Mostrar o painel de voz"
-        hint="Uma pequena janela sobre as outras aplicações a dizer o que o Nano está a fazer durante um turno de voz."
+        hint="Uma pequena janela sobre as outras aplicações a dizer o que o NANO está a fazer durante um turno de voz."
         checked={status.overlayEnabled}
         onChange={(value) => run(() => setOverlayEnabled(value))}
       />
@@ -141,8 +141,8 @@ function DesktopPanel() {
         label="Iniciar com o Windows"
         hint={
           status.autoLaunch.supported
-            ? "O Nano arranca minimizado no tabuleiro, pronto para o atalho global."
-            : "Disponível apenas na aplicação instalada — em desenvolvimento o atalho de arranque apontaria para o Electron, não para o Nano."
+            ? "O NANO arranca minimizado no tabuleiro, pronto para o atalho global."
+            : "Disponível apenas na aplicação instalada — em desenvolvimento o atalho de arranque apontaria para o Electron, não para o NANO."
         }
         checked={status.autoLaunch.enabled}
         disabled={!status.autoLaunch.supported || busy}
@@ -152,7 +152,7 @@ function DesktopPanel() {
 
       <div style={{ height: 12 }} />
       <p className="dim" style={{ fontSize: 11, lineHeight: 1.6 }}>
-        Fechar a janela esconde o Nano no tabuleiro para que o atalho continue a
+        Fechar a janela esconde o NANO no tabuleiro para que o atalho continue a
         funcionar. Para o encerrar mesmo, usa <strong>Sair do Nano</strong> no menu do
         tabuleiro.
       </p>
@@ -186,7 +186,7 @@ function WakePhraseTester({ phrase }: { phrase: string }) {
   return (
     <Panel title="Testar frase de ativação">
       <p className="dim" style={{ fontSize: 12, marginBottom: 10 }}>
-        Carrega numa frase e di-la em voz alta. O Nano mostra o que ouviu, sem
+        Carrega numa frase e di-la em voz alta. O NANO mostra o que ouviu, sem
         acordar nem responder. Repete algumas vezes para veres se é fiável.
       </p>
       <div className="inline" style={{ flexWrap: "wrap", gap: 8 }}>
@@ -507,7 +507,7 @@ export default function SettingsPage({
           <div className="stack">
             <Panel title="Modo">
               <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
-                A cloud é o cérebro normal do Nano: é rápida e não consome RAM local.
+                A cloud é o cérebro normal do NANO: é rápida e não consome RAM local.
                 O Ollama fica como alternativa local e de privacidade.
               </p>
               <SegmentedControl<"AUTO" | "CLOUD" | "LOCAL">
@@ -579,7 +579,7 @@ export default function SettingsPage({
                 <>
                   <div style={{ height: 10 }} />
                   <Field label="Modelo local"
-                         hint="Apenas modelos já instalados. O Nano não descarrega modelos por ti.">
+                         hint="Apenas modelos já instalados. O NANO não descarrega modelos por ti.">
                     <select className="select" value={ollama.model}
                             onChange={(e) => onSetLocalModel(e.target.value)}
                             disabled={busy}>
@@ -596,7 +596,7 @@ export default function SettingsPage({
 
               {ollama?.detail && <p className="dim" style={{ fontSize: 12, marginTop: 6 }}>{ollama.detail}</p>}
               <p className="dim" style={{ fontSize: 11, marginTop: 10 }}>
-                O Nano arranca o servidor Ollama se ainda não estiver a correr, mas nunca
+                O NANO arranca o servidor Ollama se ainda não estiver a correr, mas nunca
                 carrega o modelo antecipadamente: só é carregado quando um pedido precisa
                 mesmo dele.
               </p>
@@ -610,7 +610,7 @@ export default function SettingsPage({
             <Panel title="Ativação por voz (experimental)"
                    action={<Badge tone="neutral">Experimental</Badge>}>
               <p className="muted" style={{ fontSize: 13, marginBottom: 10 }}>
-                A forma normal de falar com o Nano é o atalho global{" "}
+                A forma normal de falar com o NANO é o atalho global{" "}
                 <code>Ctrl + Shift + Space</code>, que é instantâneo e não gasta nada
                 enquanto não é usado.
               </p>
@@ -626,7 +626,7 @@ export default function SettingsPage({
               <div style={{ height: 8 }} />
               <Toggle
                 label={`Ativar "${voice.wakePhrase}"`}
-                hint="O Nano ouve continuamente à espera da frase, localmente."
+                hint="O NANO ouve continuamente à espera da frase, localmente."
                 checked={voice.wakePhraseEnabled}
                 onChange={(v) => onUpdate("wake_phrase_enabled", v)}
               />
@@ -638,13 +638,13 @@ export default function SettingsPage({
               />
               <div style={{ height: 12 }} />
               <Field label={`Tempo de espera pelo comando: ${voice.commandTimeoutSeconds}s`}
-                     hint="Depois do chime, quanto tempo o Nano espera por um comando antes de voltar a escutar.">
+                     hint="Depois do chime, quanto tempo o NANO espera por um comando antes de voltar a escutar.">
                 <input type="range" min={3} max={15} step={1} value={voice.commandTimeoutSeconds}
                        onChange={(e) => onUpdate("wake_command_timeout_seconds", Number(e.target.value))}
                        aria-label="Tempo de espera pelo comando" />
               </Field>
               <Field label={`Intervalo entre activações: ${voice.cooldownSeconds}s`}
-                     hint="Impede que a mesma frase active o Nano várias vezes seguidas.">
+                     hint="Impede que a mesma frase active o NANO várias vezes seguidas.">
                 <input type="range" min={1} max={10} step={0.5} value={voice.cooldownSeconds}
                        onChange={(e) => onUpdate("wake_phrase_cooldown_seconds", Number(e.target.value))}
                        aria-label="Intervalo entre activações" />
@@ -675,19 +675,19 @@ export default function SettingsPage({
             <Panel title="Resposta falada">
               <Toggle
                 label="Ler as respostas em voz alta"
-                hint="Interruptor geral. Desligado, o Nano nunca fala."
+                hint="Interruptor geral. Desligado, o NANO nunca fala."
                 checked={voice.ttsEnabled}
                 onChange={(v) => onUpdate("tts_enabled", v)}
               />
               <Toggle
                 label="Falar respostas do chat escrito"
-                hint="Desligado por omissão: escreveres no chat não faz o Nano falar."
+                hint="Desligado por omissão: escreveres no chat não faz o NANO falar."
                 checked={voice.typedChatTts}
                 onChange={(v) => onUpdate("typed_chat_tts", v)}
               />
               <Toggle
                 label="Falar respostas às perguntas por voz"
-                hint="Se falaste com o Nano, ouves a resposta."
+                hint="Se falaste com o NANO, ouves a resposta."
                 checked={voice.voiceReplyTts}
                 onChange={(v) => onUpdate("voice_reply_tts", v)}
               />
@@ -751,7 +751,7 @@ export default function SettingsPage({
             <DesktopPanel />
             <Panel title="Arranque">
               <p className="muted" style={{ fontSize: 13 }}>
-                O Nano Desktop arranca com o <code>NANO_DESKTOP.bat</code>: o Electron
+                O NANO Desktop arranca com o <code>NANO_DESKTOP.bat</code>: o Electron
                 valida o Python, arranca o motor, espera que fique realmente pronto e só
                 então abre a janela. Nenhum separador do navegador é aberto.
               </p>
@@ -773,7 +773,7 @@ export default function SettingsPage({
                 options={[{ value: "dark", label: "Escuro" }, { value: "light", label: "Claro" }]}
               />
               <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>
-                O Nano foi desenhado para o tema escuro; o claro é funcional mas secundário.
+                Os dois temas cobrem toda a aplicação; o escuro é o predefinido.
               </p>
             </Panel>
             <Panel title="Movimento">
@@ -829,7 +829,7 @@ export default function SettingsPage({
                 Local nada sai do computador" without this would be false. */}
             <Panel title="Resposta falada" action={<Badge tone="info">sai do computador</Badge>}>
               <p className="muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
-                Quando o Nano lê uma resposta em voz alta, usa o serviço de voz da
+                Quando o NANO lê uma resposta em voz alta, usa o serviço de voz da
                 Microsoft (<code>edge-tts</code>). O <strong>texto que vai ser lido</strong> é
                 enviado à Microsoft para gerar o áudio — <strong>em qualquer modo,
                 incluindo Local</strong>.
@@ -933,7 +933,7 @@ export default function SettingsPage({
         open={confirmClear} danger
         title="Limpar a conversa?"
         confirmLabel="Limpar"
-        message="A conversa atual é apagada da memória do Nano. Isto não apaga os factos guardados."
+        message="A conversa atual é apagada da memória do NANO. Isto não apaga os factos guardados."
         onConfirm={() => { setConfirmClear(false); onClearConversation(); }}
         onCancel={() => setConfirmClear(false)}
       />

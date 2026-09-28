@@ -512,11 +512,20 @@ app.whenReady().then(async () => {
         await sleep(450);
         ok('a rate-limited turn stops showing a thinking indicator',
            countThinking() === 0, 'indicators=' + countThinking());
+        /* READ FROM THE NOTICE, NOT FROM THE WHOLE PAGE. This used to test the
+           body text for "30" -- which the fixture's completion_tokens: 30,
+           sitting in a closed technical-details panel, satisfied on its own;
+           the real wait never reached the screen at all. The notice has to
+           carry the provider's own name and a wait counting down from the 30
+           seconds the provider sent: nothing outside 25-30 can appear this
+           soon after the event, and a generic banner shows no number. */
+        const limitNotice = q('.rate-limit');
+        const limitText = (limitNotice?.textContent || '').replace(/\s+/g, ' ');
+        const shownWait = Number((/~\s*(\d+)\s*s\b/.exec(limitText) || [])[1]);
         ok('the rate limit is announced with its real wait, not a generic error',
-           /30/.test(document.body.textContent || '')
-             && /limite/i.test(document.body.textContent || ''),
-           (q('.rate-limit, .banner, .notice')?.textContent
-             || document.body.textContent || '').slice(0, 120));
+           !!limitNotice && /limite/i.test(limitText) && /Groq/.test(limitText)
+             && shownWait >= 25 && shownWait <= 30,
+           (limitText || 'no .rate-limit notice').slice(0, 160));
       }
     } else {
       ok('another conversation is available to switch to', false,
@@ -1000,18 +1009,19 @@ app.whenReady().then(async () => {
   await sleep(200);
 
   /* B. the rail in selection mode, with rows selected.
-     BELOW 1080px THE RAIL IS A DRAWER, by design, so it has to be opened
-     before it can be measured. Measuring it closed would report "not rendered"
-     and read as a clipping failure -- which is a harness bug dressed up as a
-     product one. */
-  if (!q('.rail')) {
-    document.querySelector('[aria-label="Abrir conversas"]')?.click();
+     AT NARROW WIDTHS THE SIDEBAR IS ITS ICON COLUMN, by design, and the list
+     only exists once it is opened as a drawer. Measuring it collapsed would
+     report "not rendered" and read as a clipping failure -- which is a harness
+     bug dressed up as a product one. */
+  const listShown = () => q('.rail[data-mode="expanded"], .rail[data-mode="drawer"]');
+  if (!listShown()) {
+    document.querySelector('[aria-label="Abrir barra lateral"]')?.click();
     /* The drawer animates open. A fixed 500ms missed it at 940x620, so
        nothing below found a rail to click, the toolbar measured as "not
        rendered", and a clean page reported a clipping failure. */
-    await waitFor(() => q('.rail'));
+    await waitFor(listShown);
   }
-  state.railOpened = !!q('.rail');
+  state.railOpened = !!listShown();
   byText('.rail__select-action', 'Selecionar')?.click();
   await waitFor(() => qa('.chat-item-row .chat-item').length > 0);
   qa('.chat-item-row .chat-item')[0]?.click();
