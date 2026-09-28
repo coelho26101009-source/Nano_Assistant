@@ -31,6 +31,26 @@ imports, a single test module. The rules:
 
 The header of every run names the profile in use.
 
+NO DEVELOPER .env, EVER
+-----------------------
+Loading the repository ``.env`` is production's way of finding credentials,
+and nothing a test needs. It is switched off here, at import, by setting
+``NANO_SKIP_DOTENV=1`` -- the switch every loader consults (core.dotenv_gate)
+-- before pytest has imported anything that could load it. Setting it in a
+fixture would be too late: ``scripts/benchmark_providers.py`` loads the file at
+IMPORT, and a test module imports it while pytest is still collecting. That is
+exactly how a bare ``pytest`` used to put the developer's real Groq and Mistral
+keys into ``os.environ`` before the first test ran, so timing and routing tests
+ran against one machine's configuration while CI, which has no ``.env``, ran
+another.
+
+* It is unconditional. There is no switch to let a test run read ``.env``.
+* It blocks only the implicit file. A test that needs a credential sets a
+  fake one itself -- ``monkeypatch.setenv`` for its own process, ``env=`` for a
+  subprocess -- and that keeps working, as does anything the invoking shell
+  exported on purpose.
+* Child processes inherit it, so a spawned backend does not load it either.
+
 ORDER INDEPENDENCE
 ------------------
 core/main.py builds its world at import time -- `brain`, `memory`,
@@ -120,6 +140,17 @@ def _isolate_nano_profile() -> tuple[Path, bool]:
     return profile, True
 
 
+def _disable_dotenv_loading() -> None:
+    """Keep the developer's ``.env`` out of this process and its children.
+
+    Checked against the same import boundary as the profile: every module that
+    can load ``.env`` imports ``core.app_paths``, so the guard in
+    ``_isolate_nano_profile`` also proves none of them ran before this did.
+    """
+    os.environ["NANO_SKIP_DOTENV"] = "1"
+
+
+_disable_dotenv_loading()
 NANO_TEST_PROFILE, _PROFILE_CREATED = _isolate_nano_profile()
 
 

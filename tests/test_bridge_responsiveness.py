@@ -146,7 +146,19 @@ def fake_pyaudio(monkeypatch):
 
 @pytest.fixture(scope="module")
 def main_module():
+    """core.main as it is when eel starts serving.
+
+    main() runs audio_feedback.prewarm() before eel.start: a UI request must
+    never be the first thing to load a native extension (see its docstring).
+    Without it, the first get_settings of a test process imported pygame,
+    numpy and PortAudio -- 29 extension modules -- on the hub, inside the very
+    latency it was asserting on, so its verdict depended on the disk cache and
+    on whether an earlier test had happened to import them. The startup
+    snapshot warm-up is deliberately NOT replayed: these tests measure the cold
+    snapshot, and each gets its own cache.
+    """
     import core.main as module
+    module.audio_feedback.prewarm()
     return module
 
 
@@ -1148,6 +1160,31 @@ def test_an_expired_device_list_is_refreshed_off_the_bridge(bridge, main_module,
     _wait_until(lambda: provider_cls._device_cache[0]["name"] == "Fake Mic",
                 message="the refreshed device list never arrived")
     assert fake_pyaudio.constructed == 1, "more than one enumeration for one expiry"
+
+
+def _native_extensions() -> set[str]:
+    return {name for name, module in list(sys.modules.items())
+            if str(getattr(module, "__file__", "") or "").lower().endswith((".pyd", ".so"))}
+
+
+def test_settings_is_never_the_first_to_load_a_native_extension(bridge, main_module):
+    """The harness starts where production starts serving.
+
+    Anything get_settings imports for the first time is imported on the hub,
+    where a heavy native load stops every bridge call. Production rules that
+    out by prewarming before eel serves; this holds the harness -- and any new
+    import in the settings path -- to the same line. LOCAL mode keeps any cloud
+    refresh, and whatever it might import on its own thread, out of the count.
+    """
+    bridge.use_mode(ProviderMode.LOCAL)
+    # The hub itself first: gevent loads its libuv loop (_cffi_backend,
+    # gevent.libuv._corecffi) on the first spawn, which in production is
+    # eel.start, long before any call. Counted from here, only the call is.
+    dispatch(("get_voice_diagnostics", []))
+    before = _native_extensions()
+    dispatch(("get_settings", []))
+    assert sorted(_native_extensions() - before) == [], (
+        "get_settings loaded native extensions on the hub; prewarm them before serving")
 
 
 def test_settings_never_waits_for_the_microphone(bridge, main_module, fake_pyaudio):

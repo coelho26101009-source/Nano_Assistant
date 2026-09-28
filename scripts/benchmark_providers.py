@@ -70,12 +70,20 @@ if str(ROOT) not in sys.path:
 # -- and a benchmark that cannot see what production sees measures a different
 # installation. The encrypted store still wins over the environment; see
 # core.secret_store.get_secret.
-try:
-    from dotenv import load_dotenv                                            # noqa: E402
+#
+# And it obeys the same switch core.main does. This line used to be
+# unconditional, and because a test imports this module, every bare pytest run
+# loaded the developer's real .env while collecting. NANO_SKIP_DOTENV=1, which
+# tests/conftest.py sets, now keeps it out; see core/dotenv_gate.py.
+from core.dotenv_gate import dotenv_allowed                                   # noqa: E402
 
-    load_dotenv(ROOT / ".env")
-except ImportError:                                # pragma: no cover - optional
-    pass
+if dotenv_allowed():
+    try:
+        from dotenv import load_dotenv                                        # noqa: E402
+
+        load_dotenv(ROOT / ".env")
+    except ImportError:                            # pragma: no cover - optional
+        pass
 
 import httpx                                                              # noqa: E402
 

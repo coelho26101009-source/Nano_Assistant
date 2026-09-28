@@ -31,6 +31,7 @@ import eel
 import psutil
 from dotenv import load_dotenv
 from core.app_paths import DATA_DIR, FRONTEND_DIR, PLUGINS_DIR, ROOT, default_data_root
+from core.dotenv_gate import dotenv_allowed
 from core import data_migration
 from core import capability_catalogue, local_control_plane
 from core import version as nano_version
@@ -62,8 +63,10 @@ from core import (audio_feedback, desktop_bridge, google_provider, mistral_provi
                   provider_failures, provider_status, providers, response_meta,
                   secret_store, speech_filter, user_settings)
 
-if (not getattr(sys, "frozen", False) and os.getenv("NANO_SKIP_DOTENV") != "1"
-        and DATA_DIR.resolve() == default_data_root().resolve()):
+# The repository .env, for the default profile only: an explicit profile is an
+# isolation boundary. dotenv_allowed() is False in a frozen build and under
+# NANO_SKIP_DOTENV=1 (which the test suite sets); see core/dotenv_gate.py.
+if dotenv_allowed() and DATA_DIR.resolve() == default_data_root().resolve():
     load_dotenv(ROOT / ".env")
 
 setup_logger()
