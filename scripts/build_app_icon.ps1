@@ -1,5 +1,5 @@
 <#
-    Renders electron/assets/icon.ico, icon.png and tray.png from Nano's own mark.
+    Renders Electron icons and the voice overlay mark from the approved N symbol.
 
     WHY A SCRIPT AND NOT A CHECKED-IN BINARY
     The source of truth for the Nano identity is the supplied artwork in
@@ -7,13 +7,9 @@
     taskbar icon, the tray icon and the mark inside the window cannot drift
     apart. Replace the artwork, re-run this, all three agree again.
 
-    It reads nano-mark-alpha.png -- the transparent variant produced by
-    scripts/derive_brand_assets.py -- because the supplied master has no alpha
-    channel and would paste as a black square on the tray.
-
-    It used to REDRAW an older, different mark from primitives. That mark no
-    longer exists, and a script that invents its own logo is exactly how a
-    desktop icon ends up disagreeing with the application it launches.
+    The symbol already has transparency. Every output composites its original
+    pixels, preserving its silhouette and proportions. Only the small tile
+    behind the Windows icon is generated here.
 
     Requires only System.Drawing, which ships with Windows PowerShell.
 
@@ -25,20 +21,21 @@ Add-Type -AssemblyName System.Drawing
 $ErrorActionPreference = 'Stop'
 $repoRoot   = Split-Path -Parent $PSScriptRoot
 $assetsDir  = Join-Path $repoRoot 'electron\assets'
-$markPath   = Join-Path $repoRoot 'frontend\public\branding\nano-mark-alpha.png'
+$markPath   = Join-Path $repoRoot 'frontend\public\branding\nano-symbol-original.png'
 $icoPath    = Join-Path $assetsDir 'icon.ico'
 $pngPath    = Join-Path $assetsDir 'icon.png'
 $trayPath   = Join-Path $assetsDir 'tray.png'
+$overlayPath = Join-Path $repoRoot 'electron\overlay\nano-mark.png'
 
 if (-not (Test-Path $markPath)) {
-    throw "the transparent mark is missing: $markPath. Run scripts/derive_brand_assets.py first."
+    throw "the approved N symbol is missing: $markPath"
 }
 if (-not (Test-Path $assetsDir)) { New-Item -ItemType Directory -Path $assetsDir | Out-Null }
 
 # Design tokens, copied from frontend/styles/globals.css.
-$cBase = [System.Drawing.ColorTranslator]::FromHtml('#0A0706')   # --bg-base
-$cEdge = [System.Drawing.ColorTranslator]::FromHtml('#1C1010')
-$cGlow = [System.Drawing.Color]::FromArgb(70, 244, 1, 1)         # --brand-red, dimmed
+$cBase = [System.Drawing.ColorTranslator]::FromHtml('#101419')
+$cEdge = [System.Drawing.ColorTranslator]::FromHtml('#202B3A')
+$cGlow = [System.Drawing.Color]::FromArgb(48, 47, 111, 237)
 
 $source = [System.Drawing.Bitmap]::FromFile($markPath)
 
@@ -49,7 +46,7 @@ function New-NanoBitmap {
     )
 
     # Supersample, then downscale: compositing straight to 16 px leaves the
-    # flame's cutouts ragged, and a tray icon lives at exactly that size.
+    # the symbol's contour ragged, and a tray icon lives at exactly that size.
     $ss = 4
     $big = $Size * $ss
     $bmp = New-Object System.Drawing.Bitmap($big, $big, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
@@ -80,13 +77,12 @@ function New-NanoBitmap {
         $g.FillPath($brush, $tile)
         $brush.Dispose()
 
-        # A soft flame-coloured bloom behind the mark, the same idea as the
-        # ambient glow in the shell.
+        # A restrained blue light behind the original mark.
         $glow = New-Object System.Drawing.Drawing2D.GraphicsPath
         $glow.AddEllipse($big * 0.12, $big * 0.18, $big * 0.76, $big * 0.76)
         $bloom = New-Object System.Drawing.Drawing2D.PathGradientBrush($glow)
         $bloom.CenterColor = $cGlow
-        $bloom.SurroundColors = @([System.Drawing.Color]::FromArgb(0, 244, 1, 1))
+        $bloom.SurroundColors = @([System.Drawing.Color]::FromArgb(0, 47, 111, 237))
         $g.FillPath($bloom, $glow)
         $bloom.Dispose(); $glow.Dispose()
 
@@ -94,8 +90,7 @@ function New-NanoBitmap {
         $tile.Dispose()
     }
 
-    # The artwork is taller than it is wide; fit it inside the square without
-    # distorting it, which is the one thing a logo may never do.
+    # Fit the wider N inside the square without distorting it.
     $box = $big - (2 * $inset)
     $scale = [Math]::Min($box / $source.Width, $box / $source.Height)
     $w = $source.Width * $scale
@@ -163,8 +158,13 @@ $tray = New-NanoBitmap -Size 32 -NoBadge
 $tray.Save($trayPath, [System.Drawing.Imaging.ImageFormat]::Png)
 $tray.Dispose()
 
+$overlay = New-NanoBitmap -Size 128 -NoBadge
+$overlay.Save($overlayPath, [System.Drawing.Imaging.ImageFormat]::Png)
+$overlay.Dispose()
+
 $source.Dispose()
 
 Write-Output ("icon.ico  {0} bytes, {1} frames: {2}" -f (Get-Item $icoPath).Length, $frames.Count, ($sizes -join ', '))
 Write-Output ("icon.png  {0} bytes (256x256)" -f (Get-Item $pngPath).Length)
 Write-Output ("tray.png  {0} bytes (32x32, no tile)" -f (Get-Item $trayPath).Length)
+Write-Output ("overlay mark  {0} bytes (128x128, no tile)" -f (Get-Item $overlayPath).Length)

@@ -147,7 +147,11 @@
   --chat-max:         816px;
   --page-max:         1120px;
 
-  --transition: 140ms cubic-bezier(0.4, 0, 0.2, 1);
+  --motion-fast: 120ms;
+  --motion-base: 180ms;
+  --motion-slow: 260ms;
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --transition: var(--motion-base) var(--motion-ease);
 }
 
 /* ── Reset ─────────────────────────────────────────────────────────────── */
@@ -197,6 +201,14 @@ a { color: var(--accent-ink); text-decoration: none; }
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+:root[data-reduce-motion="true"] *,
+:root[data-reduce-motion="true"] *::before,
+:root[data-reduce-motion="true"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
 }
 
 /* ============================================================================
@@ -458,14 +470,14 @@ a { color: var(--accent-ink); text-decoration: none; }
   position: fixed; inset: 0; z-index: 1000;
   background: var(--surface-overlay);
   display: flex; align-items: center; justify-content: center;
-  padding: var(--sp-6); animation: fadeIn 120ms ease-out;
+  padding: var(--sp-6); animation: fadeIn var(--motion-fast) var(--motion-ease);
 }
 .modal {
   background: var(--surface-raised); border: 1px solid var(--border);
   border-radius: var(--r-xl); box-shadow: var(--shadow-lg);
   width: min(720px, 100%); max-height: min(86vh, 900px);
   display: flex; flex-direction: column; min-width: 0;
-  animation: modalIn 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: modalIn var(--motion-base) var(--motion-ease);
 }
 .modal--wide { width: min(1020px, 100%); }
 .modal--narrow { width: min(460px, 100%); }
@@ -634,7 +646,7 @@ kbd {
   position: fixed; z-index: 100; top: 0; bottom: 0; left: 0;
   width: min(var(--rail-w), 86vw);
   box-shadow: var(--shadow-lg);
-  animation: drawerIn 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: drawerIn var(--motion-base) var(--motion-ease);
 }
 @keyframes drawerIn { from { transform: translateX(-12px); opacity: 0; } to { transform: none; opacity: 1; } }
 
@@ -945,6 +957,7 @@ kbd {
 }
 .page__inner {
   padding: var(--sp-5) var(--sp-6) var(--sp-8);
+  animation: nano-enter var(--motion-base) var(--motion-ease) both;
   /* A max, never a floor: `min()` guarantees the column can always shrink to
      the window, so a narrow window can never clip a page. */
   width: 100%; max-width: min(var(--page-max), 100%); min-width: 0; margin: 0 auto;
@@ -1044,6 +1057,12 @@ kbd {
   line-height: 1.25; color: var(--text); margin: 0;
 }
 .chat-hero__hint { font-size: var(--fs-sm); color: var(--text-muted); }
+.chat-hero__mark {
+  filter: drop-shadow(0 14px 12px rgba(47, 111, 237, .12));
+  animation: nano-enter var(--motion-slow) var(--motion-ease) both;
+}
+.chat-hero__title { animation: nano-enter var(--motion-slow) var(--motion-ease) 45ms both; }
+@keyframes nano-enter { from { opacity: 0; transform: translateY(7px) scale(.98); } to { opacity: 1; transform: none; } }
 
 /* ── Messages ─────────────────────────────────────────────────────────────
    Chatbot UI's rows: every turn has a header with an avatar and a name, and
@@ -1052,6 +1071,7 @@ kbd {
    box-shadow and clipped to the row's own height, so the reading column
    itself never widens. */
 .msg { position: relative; padding: 18px 0 20px; min-width: 0; }
+.msg { animation: nano-enter var(--motion-base) var(--motion-ease) both; }
 .msg--assistant {
   background: var(--msg-band);
   box-shadow: 0 0 0 100vmax var(--msg-band);
@@ -1213,11 +1233,20 @@ kbd {
 
 .thinking { display: inline-flex; align-items: center; gap: var(--sp-2); color: var(--text-muted); font-size: var(--fs-sm); }
 .thinking--standalone { display: flex; padding: var(--sp-4) 0; }
-.thinking__dots { display: inline-flex; gap: 3px; }
-.thinking__dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--text-dim); animation: think 1.2s ease-in-out infinite; }
-.thinking__dots i:nth-child(2) { animation-delay: 0.15s; }
-.thinking__dots i:nth-child(3) { animation-delay: 0.3s; }
-@keyframes think { 0%, 60%, 100% { opacity: 0.3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-2px); } }
+.thinking__mark {
+  position: relative; display: inline-grid; place-items: center; width: 27px; height: 24px;
+  flex: none; overflow: hidden;
+}
+.thinking__mark .nano-mark { width: 27px; height: 22px; }
+.thinking__mark::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(105deg, transparent 30%, rgba(155, 199, 255, .35) 50%, transparent 70%) 100% 0 / 250% 100%;
+  -webkit-mask: url('/branding/nano-symbol-original.png') center / contain no-repeat;
+  mask: url('/branding/nano-symbol-original.png') center / contain no-repeat;
+  animation: nano-light 2.8s var(--motion-ease) infinite;
+  pointer-events: none;
+}
+@keyframes nano-light { 0%, 25% { background-position: 100% 0; } 65%, 100% { background-position: -100% 0; } }
 
 /* The caret follows the last word rather than dropping under the paragraph:
    the paragraph it trails becomes inline while the caret is there. */
@@ -1276,7 +1305,7 @@ kbd {
 }
 /* Focus uses a quiet blue-grey border. The composer may hold focus from page
    load, so a full-strength outline would be permanent decoration. */
-.composer:focus-within { border-color: var(--border-accent); }
+.composer:focus-within { border-color: var(--border-accent); box-shadow: 0 0 0 2px var(--focus-ring), var(--shadow-md); }
 /* THE MICROPHONE IS OPEN, and that is a privacy state, not a style. It gets
    the same ring weight as focus in its own colour, and it is never carried by
    colour alone: the mic button fills, and the wave indicator appears. */
@@ -1463,7 +1492,7 @@ kbd {
   border-radius: var(--r-lg); border: 1px solid var(--border);
   background: var(--surface-raised);
   box-shadow: var(--shadow-lg);
-  animation: popover-in 120ms cubic-bezier(0.4, 0, 0.2, 1);
+  animation: popover-in var(--motion-fast) var(--motion-ease);
 }
 @keyframes popover-in {
   from { opacity: 0; transform: translateY(-4px) scale(0.98); }
@@ -1586,6 +1615,11 @@ kbd {
 .stat-chip strong { font-size: var(--fs-md); font-weight: 650; color: var(--text); font-variant-numeric: tabular-nums; }
 
 .memory-toolbar { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin-bottom: var(--sp-4); }
+.memory-views { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; margin: 0 0 var(--sp-4); }
+.memory-views__count { margin-left: auto; color: var(--text-dim); font-size: var(--fs-xs); }
+.memory-detail { display: grid; gap: var(--sp-4); }
+.memory-detail__text { font-size: var(--fs-md); line-height: 1.65; color: var(--text); overflow-wrap: anywhere; }
+.memory-detail .kv dd { overflow-wrap: anywhere; }
 .memory-note { font-size: var(--fs-sm); line-height: 1.6; margin: 0 0 var(--sp-3); }
 .memory-footnote { font-size: var(--fs-xs); line-height: 1.6; margin-top: var(--sp-6); padding-top: var(--sp-3); border-top: 1px solid var(--border); }
 
@@ -1712,39 +1746,48 @@ kbd {
 .graph-page { display: flex; flex-direction: column; min-height: 0; }
 .graph-canvas {
   position: relative; border-radius: var(--r-lg);
-  border: 1px solid var(--border); background: var(--bg-sunken);
+  border: 1px solid #33445c;
+  background: radial-gradient(ellipse at 50% 42%, #19283f 0%, #111a29 55%, #0c121d 100%);
   overflow: hidden; min-height: 380px; height: min(62vh, 640px);
+}
+.graph-canvas::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  opacity: .34;
+  background: linear-gradient(rgba(127, 165, 221, .08) 1px, transparent 1px),
+              linear-gradient(90deg, rgba(127, 165, 221, .08) 1px, transparent 1px);
+  background-size: 54px 54px; transform: perspective(600px) rotateX(14deg) scale(1.15);
 }
 .graph-svg { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
 .graph-svg:active { cursor: grabbing; }
 
 /* EDGES ARE THE POINT OF THE VIEW, so they are drawn strongly enough to be
    read at rest, not only when something is selected. */
-.graph-edge { stroke: var(--border-strong); fill: none; transition: stroke var(--transition), opacity var(--transition); }
+.graph-edge { stroke: #526b8b; fill: none; transition: stroke var(--transition), opacity var(--transition); }
 /* Unrelated elements FADE, they do not vanish: the shape of the rest of the
    graph is context for the part being read. */
 .graph-edge.is-dim { opacity: 0.14; }
-.graph-edge.is-lit { stroke: var(--accent); opacity: 1; }
+.graph-edge.is-lit { stroke: #91baff; opacity: 1; }
 
 .graph-node { cursor: grab; transition: opacity var(--transition); }
 .graph-node:active { cursor: grabbing; }
 .graph-node.is-dim { opacity: 0.26; }
 .graph-node.is-focus .graph-node__dot { stroke: var(--accent); stroke-width: 2.5; }
-.graph-node.is-focus .graph-node__label { fill: var(--text); font-weight: 600; }
+.graph-node.is-focus .graph-node__label { fill: #fff; font-weight: 600; }
 .graph-node__dot {
-  fill: var(--surface-raised); stroke: var(--border-strong); stroke-width: 1.5;
+  fill: url(#nano-graph-node); stroke: #b5d0ff; stroke-width: 1.5;
   transition: fill var(--transition), stroke var(--transition);
 }
+.graph-node__halo { fill: rgba(79, 147, 255, .16); stroke: rgba(142, 188, 255, .34); }
 .graph-node:hover .graph-node__dot { stroke: var(--accent); }
-.graph-node.is-selected .graph-node__dot { fill: var(--accent); stroke: var(--accent-hover); stroke-width: 2.5; }
+.graph-node.is-selected .graph-node__dot { fill: url(#nano-graph-selected); stroke: #e6f1ff; stroke-width: 2.5; }
 .graph-node:focus-visible { outline: none; }
 .graph-node:focus-visible .graph-node__dot { stroke: var(--focus); stroke-width: 3; }
 .graph-node__label {
-  fill: var(--text-muted); font-size: 13px; text-anchor: middle;
-  paint-order: stroke; stroke: var(--bg-sunken); stroke-width: 3px;
+  fill: #d5e1f2; font-size: 14px; text-anchor: middle;
+  paint-order: stroke; stroke: #111a29; stroke-width: 3px;
   pointer-events: none; font-family: var(--font-ui);
 }
-.graph-node.is-selected .graph-node__label { fill: var(--text); font-weight: 600; }
+.graph-node.is-selected .graph-node__label { fill: #fff; font-weight: 600; }
 
 /* The dots follow the node-type colours. */
 .graph-node[data-type="device"]   .graph-node__dot { stroke: var(--information); }
@@ -1767,13 +1810,17 @@ kbd {
 
 .graph-selected {
   position: absolute; right: var(--sp-3); top: var(--sp-3);
-  display: flex; align-items: center; gap: var(--sp-3);
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md);
   background: var(--surface-raised); border: 1px solid var(--border-strong);
   box-shadow: var(--shadow-md); font-size: var(--fs-sm); color: var(--text);
-  max-width: min(320px, 50%);
+  max-width: min(300px, 50%);
 }
 .graph-selected strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-selected__type { color: var(--accent-ink); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; }
+.graph-selected__summary { font-size: var(--fs-xs); line-height: 1.5; color: var(--text-muted); max-height: 4.5em; overflow: hidden; }
+.graph-selected__links { font-size: var(--fs-xs); color: var(--text-dim); }
+.graph-selected__link { font-size: var(--fs-xs); color: var(--text-secondary); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .graph-foot { padding-top: var(--sp-3); font-size: var(--fs-xs); line-height: 1.6; }
 
 @media (prefers-reduced-motion: reduce) {

@@ -243,7 +243,7 @@ export default function Home() {
     document.documentElement.setAttribute("data-desktop", isDesktop ? "true" : "false");
   }, [isDesktop]);
   useEffect(() => {
-    document.documentElement.style.setProperty("--transition", reduceMotion ? "0ms" : "140ms cubic-bezier(0.4, 0, 0.2, 1)");
+    document.documentElement.setAttribute("data-reduce-motion", reduceMotion ? "true" : "false");
   }, [reduceMotion]);
 
   /* ── Sidebar ────────────────────────────────────────────────────────────

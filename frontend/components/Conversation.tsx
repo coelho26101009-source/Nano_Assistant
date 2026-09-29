@@ -507,7 +507,7 @@ function MessageBubble({
             first token arrived and it disappeared. */}
         {message.streaming && !text && (
           <span className="thinking" role="status" aria-live="polite">
-            <span className="thinking__dots" aria-hidden="true"><i /><i /><i /></span>
+            <span className="thinking__mark" aria-hidden="true"><NanoLogo size={22} /></span>
             <span>{status?.trim() || `O ${BRAND_NAME} está a pensar…`}</span>
           </span>
         )}
@@ -592,7 +592,7 @@ export function Conversation({
         ))}
         {standalone && (
           <div className="thinking thinking--standalone" role="status" aria-live="polite">
-            <span className="thinking__dots" aria-hidden="true"><i /><i /><i /></span>
+            <span className="thinking__mark" aria-hidden="true"><NanoLogo size={22} /></span>
             <span>{status?.trim() || `O ${BRAND_NAME} está a pensar…`}</span>
           </div>
         )}

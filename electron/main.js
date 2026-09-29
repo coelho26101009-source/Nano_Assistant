@@ -65,10 +65,9 @@ const ICON_PATH = path.join(ASSETS, 'icon.ico');
 const TRAY_ICON_PATH = path.join(ASSETS, 'tray.png');
 const MAIN_PY = path.join(APP_ROOT, 'core', 'main.py');
 
-// Wide enough for the longest real label plus the visualiser, and no wider:
-// the panel is inset 14 px inside this window for its shadow, so the visible
-// card is 384x84.
-const OVERLAY_SIZE = { width: 412, height: 112 };
+// Room for the real status labels and a capped detail line. The panel is inset
+// 10 px horizontally and 8 px vertically for its shadow: 528 x 68 at full size.
+const OVERLAY_SIZE = { width: 548, height: 84 };
 
 /* ── Process state ──────────────────────────────────────────────────────── */
 
@@ -79,6 +78,7 @@ let backend = null;
 let isQuitting = false;
 let startedHidden = process.argv.includes('--hidden');
 let overlayHideTimer = null;
+let overlayExitTimer = null;
 let saveBoundsTimer = null;
 /** The overlay renderer has loaded and can be sent a state. */
 let overlayReady = false;
@@ -651,8 +651,14 @@ function positionOverlay() {
   // The display under the cursor is the one the user is looking at.
   const cursor = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(cursor);
-  const { x, y } = windowState.overlayPosition(display.workArea, OVERLAY_SIZE);
-  overlayWindow.setBounds({ ...OVERLAY_SIZE, x, y });
+  // Electron uses display work-area DIPs here, including on scaled monitors.
+  // Keep the capsule reachable on unusually narrow secondary displays.
+  const size = {
+    width: Math.min(OVERLAY_SIZE.width, Math.max(1, display.workArea.width - 24)),
+    height: OVERLAY_SIZE.height,
+  };
+  const { x, y } = windowState.overlayPosition(display.workArea, size);
+  overlayWindow.setBounds({ ...size, x, y });
 }
 
 /**
@@ -681,8 +687,12 @@ function applyOverlayView(view) {
     // simply never appeared and nothing anywhere said why.
     log('overlay: SUPPRESSED - "Mostrar o painel de voz" is off '
       + '(tray menu, or Settings > Geral > Modo desktop)');
+    hideOverlay();
     return;
   }
+  // A new real phase can arrive during the short exit. Keep that window alive.
+  clearTimeout(overlayExitTimer);
+  overlayExitTimer = null;
   if (!overlayWindow || overlayWindow.isDestroyed()) createOverlayWindow();
 
   if (!overlayReady) {
@@ -710,12 +720,22 @@ function applyOverlayView(view) {
 
 function hideOverlay(destroy = false) {
   clearTimeout(overlayHideTimer);
+  clearTimeout(overlayExitTimer);
+  overlayExitTimer = null;
   pendingOverlayView = null;
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
-  overlayWindow.hide();
-  // Stop the renderer animating a window nobody can see.
+  // Fade out in the renderer before hiding the transparent native window.
+  // The renderer also stops its state animations as soon as visible is false.
   overlayWindow.webContents.send('nano:overlay-state', overlayState.HIDDEN);
-  if (destroy) { overlayWindow.destroy(); overlayWindow = null; overlayReady = false; }
+  if (destroy) {
+    overlayWindow.destroy(); overlayWindow = null; overlayReady = false;
+    return;
+  }
+  const exitingWindow = overlayWindow;
+  overlayExitTimer = setTimeout(() => {
+    if (!exitingWindow.isDestroyed()) exitingWindow.hide();
+    overlayExitTimer = null;
+  }, 190);
 }
 
 /* ── Global activation shortcut ─────────────────────────────────────────── */
@@ -1145,6 +1165,8 @@ module.exports = {
     state: () => ({ overlayWindow, mainWindow, overlayReady, shellState }),
     setOverlayEnabled: (value) => { shellState.overlayEnabled = value; },
     reset: () => {
+      clearTimeout(overlayHideTimer); clearTimeout(overlayExitTimer);
+      overlayHideTimer = null; overlayExitTimer = null;
       overlayWindow = null; mainWindow = null; overlayReady = false;
       pendingOverlayView = null; isQuitting = false;
       frontendReady = false; lastErrorCode = null;

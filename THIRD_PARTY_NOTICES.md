@@ -141,7 +141,7 @@ contacted at runtime.
 
 | Asset | Source | Status |
 | --- | --- | --- |
-| Nano flame mark and wordmark (`frontend/public/branding/*.png`) | Supplied by the project owner | Project-owned. **REVIEW:** confirm provenance and that no third-party stock or AI-generated asset with its own terms is embedded. |
+| NANO symbol and wordmark (`frontend/public/branding/*.png`) | Supplied by the project owner | Project-owned. **REVIEW:** confirm provenance and that no third-party stock or AI-generated asset with its own terms is embedded. |
 | Application and tray icons (`electron/assets/*`) | Derived from the branding mark by `scripts/build_app_icon.ps1` | Derivative of the above; same status. |
 | `docs/design/nano-ui-reference.png` | Internal design reference | Project-owned. |
 

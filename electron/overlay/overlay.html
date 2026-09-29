@@ -5,12 +5,12 @@
 <!--
   NANO VOICE OVERLAY
 
-  A small, quiet status card that appears bottom-centre while Nano is listening
+  A quiet status capsule that appears bottom-centre while Nano is listening
   and disappears when it is done. It is NOT a window the user interacts with:
   it is click-through, never takes focus, and has no controls.
 
-  Design: the Ember language of the main window, scaled down — warm near-black
-  glass, the flame mark, one hairline of the brand red, and motion that says
+  Design: the NANO language of the main window, scaled down — charcoal
+  glass, the approved N symbol, one hairline of blue, and motion that says
   which phase the turn is in without shouting. It has to sit on top of a game
   or a document, so every animation is small, slow, and stops the moment the
   overlay hides.
@@ -30,16 +30,15 @@
      separate Electron window with its own CSP and cannot import that file, so
      the few values it needs are restated here — and only those. */
   :root {
-    --brand-red:  #F40101;
-    --accent:     #A64D38;
-    --accent-hot: #E9AE94;
+    --accent:     #2F6FED;
+    --accent-hot: #8EB5FF;
     --danger: #F49BB4;
-    --surface:    #292826;
-    --border:     #817365;
-    --hairline:   rgba(255, 240, 240, 0.06);
-    --text:       #F6F2F1;
-    --text-dim:   #D0C6BB;
-    --quiet:      #B9ADA0;
+    --surface:    rgba(19, 24, 32, .97);
+    --border:     rgba(192, 211, 239, .27);
+    --hairline:   rgba(224, 236, 255, 0.12);
+    --text:       #F4F7FC;
+    --text-dim:   #C7D0DD;
+    --quiet:      #AEB9C8;
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -55,32 +54,32 @@
   }
 
   #panel {
-    position: absolute; inset: 14px;
-    display: flex; align-items: center; gap: 14px;
-    padding: 0 18px;
+    position: absolute; inset: 8px 10px;
+    display: flex; align-items: center; gap: 12px;
+    padding: 0 22px;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 14px;
+    border-radius: 999px;
     /* One shadow, one hairline border, nothing else. The overlay stays a dark
        floating panel in both themes — it is drawn over whatever the user is
        doing, so it never adopts the workspace's cream. Its identity comes from
-       the mark and the coral accent text, not from a glow. */
-    box-shadow: 0 8px 24px -10px rgba(0, 0, 0, .45);
+       the mark and blue state line. */
+    box-shadow: 0 9px 24px -8px rgba(0, 0, 0, .55), 0 2px 7px rgba(0, 0, 0, .2);
     backdrop-filter: none;
     opacity: 0;
-    transform: translateY(10px) scale(0.97);
-    transition: opacity 170ms ease, transform 190ms cubic-bezier(0.22, 1, 0.36, 1);
+    transform: translateY(7px);
+    transition: opacity 160ms ease, transform 190ms cubic-bezier(0.22, 1, 0.36, 1);
   }
-  #panel[data-visible="true"] { opacity: 1; transform: translateY(0) scale(1); }
+  #panel[data-visible="true"] { opacity: 1; transform: translateY(0); }
 
   /* ── The mark and its state ring ───────────────────────────────────── */
-  #orb { position: relative; width: 40px; height: 40px; flex: none; display: grid; place-items: center; }
+  #orb { position: relative; width: 36px; height: 36px; flex: none; display: grid; place-items: center; }
 
   /* The disc the mark sits on, matching .mark-disc in the shell. */
   #disc {
     position: absolute; inset: 0; border-radius: 50%;
-    background: radial-gradient(circle at 50% 30%, rgba(166, 77, 56, .12), rgba(166, 77, 56, .12) 70%);
-    border: 1px solid rgba(233, 174, 148, .3);
+    background: radial-gradient(circle at 50% 30%, rgba(90, 153, 255, .20), rgba(47, 111, 237, .06) 70%);
+    border: 1px solid rgba(142, 181, 255, .3);
   }
 
   /* No ambient glow; the status label and stateful indicator carry feedback. */
@@ -90,25 +89,25 @@
      One arc with a gap, not a full ring: a closed ring reads as a progress
      circle, and there is no progress to report. */
   #ring {
-    position: absolute; inset: -5px; border-radius: 50%;
+    position: absolute; inset: -3px; border-radius: 50%;
     border: 1.5px solid transparent;
     border-top-color: var(--accent-hot);
-    border-right-color: rgba(233, 174, 148, .3);
+    border-right-color: rgba(142, 181, 255, .3);
     opacity: 0;
     transition: opacity 200ms ease;
   }
 
-  #mark { width: 23px; height: 23px; object-fit: contain; position: relative; }
+  #mark { width: 21px; height: 21px; object-fit: contain; position: relative; }
 
   /* ── Text ──────────────────────────────────────────────────────────── */
   #text { flex: 1; min-width: 0; }
   #label {
-    font-size: 14.5px; font-weight: 600; letter-spacing: -0.01em;
+    font-size: 14px; font-weight: 600; letter-spacing: -0.01em;
     color: var(--text); white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis;
   }
   #detail {
-    font-size: 11.5px; color: var(--text-dim); margin-top: 2px;
+    font-size: 11px; color: var(--text-dim); margin-top: 2px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   #detail:empty { display: none; }
@@ -128,7 +127,7 @@
 
   /* ── Progress rail ─────────────────────────────────────────────────── */
   #rail {
-    position: absolute; left: 20px; right: 20px; bottom: 9px;
+    position: absolute; left: 70px; right: 64px; bottom: 5px;
     height: 2px; border-radius: 2px;
     background: var(--hairline);
     overflow: hidden; opacity: 0;
@@ -141,7 +140,7 @@
   }
 
   /* ══ STATE: LISTENING ═══════════════════════════════════════════════
-     A slow red breath plus a live wave. This is the only state where the
+     A slow blue breath plus a live wave. This is the only state where the
      microphone is genuinely open, so it is the loudest of the six. */
   #panel[data-state="activated"] #viz,
   #panel[data-state="listening"] #viz { opacity: 1; }
@@ -187,7 +186,7 @@
     animation: travel 2100ms ease-in-out infinite;
   }
   #panel[data-state="busy"] #disc,
-  #panel[data-state="quiet"] #disc { border-color: rgba(255, 240, 240, 0.10); background: rgba(255, 240, 240, 0.04); }
+  #panel[data-state="quiet"] #disc { border-color: rgba(224, 236, 255, 0.10); background: rgba(224, 236, 255, 0.04); }
   #panel[data-state="busy"] #mark,
   #panel[data-state="quiet"] #mark { opacity: 0.65; }
   #panel[data-state="busy"] #label,
@@ -226,12 +225,11 @@
     0%, 100% { opacity: 0.25; }
     50%      { opacity: 1; }
   }
-  /* The completion flare is the accent, not the old scarlet: a bright red
-     burst was the last piece of the previous identity left in the overlay. */
+  /* One brief accent acknowledgement at completion. */
   @keyframes flare {
-    0%   { filter: drop-shadow(0 0 0 rgba(233, 174, 148, 0)); }
-    35%  { filter: drop-shadow(0 0 9px rgba(233, 174, 148, 0.75)); }
-    100% { filter: drop-shadow(0 0 0 rgba(233, 174, 148, 0)); }
+    0%   { filter: drop-shadow(0 0 0 rgba(142, 181, 255, 0)); }
+    35%  { filter: drop-shadow(0 0 7px rgba(142, 181, 255, 0.55)); }
+    100% { filter: drop-shadow(0 0 0 rgba(142, 181, 255, 0)); }
   }
 
   /* Delays span roughly half the cycle, so the five bars form one travelling
@@ -264,8 +262,8 @@
       <div id="halo"></div>
       <div id="disc"></div>
       <div id="ring"></div>
-      <!-- The approved mark, generated from the same master as the app icon by
-           scripts/derive_brand_assets.py. Never redrawn here. -->
+      <!-- The approved N, generated from the same master as the app icon by
+           scripts/build_app_icon.ps1. Never redrawn here. -->
       <img id="mark" src="nano-mark.png" alt="" aria-hidden="true" draggable="false" />
     </div>
 

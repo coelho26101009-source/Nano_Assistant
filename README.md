@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="frontend/public/branding/nano-mark-alpha.png" alt="Nano" width="96" />
+  <img src="frontend/public/branding/nano-symbol-original.png" alt="Nano" width="96" />
 </p>
 
 <p align="center">
-  <img src="frontend/public/branding/nano-wordmark-alpha.png" alt="NANO" width="340" />
+  <img src="frontend/public/branding/nano-wordmark-original.png" alt="NANO" width="340" />
 </p>
 
 <p align="center">
@@ -634,7 +634,7 @@ Para instalação e configuração da Beta, consulta o [guia da Beta](docs/BETA_
 ---
 
 <p align="center">
-  <img src="frontend/public/branding/nano-mark-alpha.png" alt="Nano mark" width="52" />
+  <img src="frontend/public/branding/nano-symbol-original.png" alt="Nano mark" width="52" />
 </p>
 
 <p align="center">

@@ -1,11 +1,11 @@
 @echo off
-cd /d "%~dp0"
+cd /d "%~dp0\..\.."
 chcp 65001 >nul
-title HELIOS  Instalar Electron
+title NANO  Instalar Electron
 
 echo.
 echo  ==========================================
-echo   HELIOS V7  CONFIGURAR APP ELECTRON
+echo   NANO  CONFIGURAR APP ELECTRON
 echo  ==========================================
 echo.
 
@@ -33,41 +33,12 @@ if errorlevel 1 (
 )
 
 echo.
-echo  [2/2] A gerar icone HELIOS...
+echo  [2/2] A gerar icones NANO...
 cd ..
 
-REM Gera icone simples se nao existir
-if not exist "electron\assets\icon.ico" (
-    py -c "
-from PIL import Image, ImageDraw
-import os
-
-os.makedirs('electron/assets', exist_ok=True)
-
-# Cria icone 256x256 com o sol HELIOS
-img = Image.new('RGBA', (256, 256), (0, 0, 0, 0))
-draw = ImageDraw.Draw(img)
-
-# Background circular escuro
-draw.ellipse([8, 8, 248, 248], fill=(3, 5, 8, 255))
-
-# Glow externo
-for r in range(30, 0, -5):
-    alpha = int(40 * (1 - r/30))
-    draw.ellipse([128-80-r, 128-80-r, 128+80+r, 128+80+r],
-                 fill=(255, 184, 0, alpha))
-
-# Sol principal
-draw.ellipse([48, 48, 208, 208], fill=(255, 140, 0, 255))
-draw.ellipse([60, 60, 196, 196], fill=(255, 184, 0, 255))
-draw.ellipse([80, 80, 176, 176], fill=(255, 210, 80, 255))
-draw.ellipse([100, 100, 156, 156], fill=(255, 240, 180, 255))
-
-# Salva como ICO
-img.save('electron/assets/icon.ico', format='ICO', sizes=[(256,256),(128,128),(64,64),(32,32),(16,16)])
-print('Icone criado!')
-" 2>nul || echo  [AVISO] PIL nao instalado, icone padrao sera usado
-)
+REM Um so master aprovado gera os icones de janela, tray e overlay.
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\build_app_icon.ps1"
+if errorlevel 1 exit /b 1
 
 echo.
 echo  ==========================================

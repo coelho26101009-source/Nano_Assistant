@@ -96,7 +96,7 @@ test('showing the overlay never restores or focuses the main window', () => {
     'the overlay must appear with showInactive(), never taking focus');
 });
 
-test('repeated voice turns while the main window is hidden all show it', () => {
+test('repeated voice turns while the main window is hidden all show it', async () => {
   const { api, main, overlay } = bootedShell();
   main.hide();
 
@@ -104,6 +104,7 @@ test('repeated voice turns while the main window is hidden all show it', () => {
     api.applyOverlayView(LISTENING);
     assert.strictEqual(overlay.isVisible(), true, `turn ${turn} did not show the overlay`);
     api.applyOverlayView(overlayState.HIDDEN);
+    await new Promise((resolve) => setTimeout(resolve, 220));
     assert.strictEqual(overlay.isVisible(), false, `turn ${turn} did not hide the overlay`);
   }
   assert.strictEqual(main.isVisible(), false);
@@ -121,6 +122,15 @@ test('the overlay stays out of the taskbar and off the focus path', () => {
   assert.strictEqual(overlay.options.show, false, 'it must start hidden');
 });
 
+test('the voice capsule is wider and lower without changing window behavior', () => {
+  const { shell, overlay } = bootedShell();
+  assert.deepStrictEqual(shell.OVERLAY_SIZE, { width: 548, height: 84 });
+  assert.strictEqual(overlay.options.width, shell.OVERLAY_SIZE.width);
+  assert.strictEqual(overlay.options.height, shell.OVERLAY_SIZE.height);
+  assert.strictEqual(overlay.options.resizable, false);
+  assert.strictEqual(overlay.options.movable, false);
+});
+
 test('the overlay keeps those properties while the main window is hidden', () => {
   const { api, main, overlay } = bootedShell();
   main.hide();
@@ -131,7 +141,7 @@ test('the overlay keeps those properties while the main window is hidden', () =>
 
 suite('overlay lifecycle');
 
-test('a turn ending hides the overlay', () => {
+test('a turn ending fades and then hides the overlay', async () => {
   const { api, overlay } = bootedShell();
   api.applyOverlayView(LISTENING);
   assert.strictEqual(overlay.isVisible(), true);
@@ -139,16 +149,29 @@ test('a turn ending hides the overlay', () => {
   api.onBackendEvent('voice_turn_ended', { ok: false, cancelled: true, error: 'no_speech' });
   api.applyOverlayView(overlayState.HIDDEN);
 
+  assert.strictEqual(overlay.isVisible(), true, 'exit should paint before native hide');
+  await new Promise((resolve) => setTimeout(resolve, 220));
   assert.strictEqual(overlay.isVisible(), false);
 });
 
-test('the resting phases hide it through the real event path', () => {
+test('the resting phases hide it through the real event path', async () => {
   const { api, overlay } = bootedShell();
   api.onBackendEvent('voice_phase', { phase: 'COMMAND_LISTENING' });
   assert.strictEqual(overlay.isVisible(), true);
 
   api.onBackendEvent('voice_phase', { phase: 'IDLE' });
+  await new Promise((resolve) => setTimeout(resolve, 220));
   assert.strictEqual(overlay.isVisible(), false);
+});
+
+test('a new phase during the exit keeps the overlay visible', async () => {
+  const { api, overlay } = bootedShell();
+  api.applyOverlayView(LISTENING);
+  api.applyOverlayView(overlayState.HIDDEN);
+  api.applyOverlayView(overlayState.fromPhase('PROCESSING'));
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  assert.strictEqual(overlay.isVisible(), true);
+  assert.strictEqual(overlay.sent.at(-1).payload.state, 'processing');
 });
 
 test('hiding the main window does not destroy or hide the overlay', () => {
@@ -191,6 +214,15 @@ test('re-enabling it makes the very next turn show again', () => {
   api.setOverlayEnabled(true);
   api.applyOverlayView(LISTENING);
   assert.strictEqual(overlay.isVisible(), true);
+});
+
+test('disabling during a visible turn still closes the overlay', async () => {
+  const { api, overlay } = bootedShell();
+  api.applyOverlayView(LISTENING);
+  api.setOverlayEnabled(false);
+  api.applyOverlayView(overlayState.fromPhase('PROCESSING'));
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  assert.strictEqual(overlay.isVisible(), false);
 });
 
 suite('overlay readiness');

@@ -130,6 +130,8 @@ export function MemoriesPage({
   const [scope, setScope] = useState<MemoryScope>("active");
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState("");
+  const [viewMode, setViewMode] = useState<"all" | "pinned" | "recent">("all");
+  const [inspectingId, setInspectingId] = useState<string | null>(null);
   const [editing, setEditing] = useState<Memory | null>(null);
   const [draft, setDraft] = useState("");
   const [creating, setCreating] = useState(false);
@@ -141,16 +143,21 @@ export function MemoriesPage({
   const memories = overview?.memories ?? [];
   const kinds = overview?.kinds ?? [];
   const profileEntries = Object.entries(overview?.profile ?? {});
+  const inspecting = memories.find((memory) => memory.id === inspectingId) ?? null;
 
   const rows = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return memories
       .filter((memory) => memory.status === scope)
       .filter((memory) => !kind || memory.kind === kind)
+      .filter((memory) => viewMode !== "pinned" || memory.pinned)
       .filter((memory) => !needle
         || memory.text.toLowerCase().includes(needle)
-        || memory.tags.some((tag) => tag.toLowerCase().includes(needle)));
-  }, [memories, scope, kind, query]);
+        || memory.tags.some((tag) => tag.toLowerCase().includes(needle)))
+      .sort((a, b) => viewMode === "recent"
+        ? Date.parse(b.updatedAt) - Date.parse(a.updatedAt)
+        : 0);
+  }, [memories, scope, kind, query, viewMode]);
 
   const counts = useMemo(() => ({
     active: memories.filter((m) => m.status === "active").length,
@@ -240,6 +247,16 @@ export function MemoriesPage({
                      placeholder="Procurar nas memórias…" />
       </div>
 
+      <div className="memory-views" aria-label="Vista das memórias">
+        <button className="chip" type="button" aria-pressed={viewMode === "all"}
+                onClick={() => setViewMode("all")}>Todas</button>
+        <button className="chip" type="button" aria-pressed={viewMode === "recent"}
+                onClick={() => setViewMode("recent")}>Recentes</button>
+        <button className="chip" type="button" aria-pressed={viewMode === "pinned"}
+                onClick={() => setViewMode("pinned")}>Fixadas</button>
+        <span className="memory-views__count" role="status">{rows.length} nesta vista</span>
+      </div>
+
       {scope === "candidate" && counts.candidate > 0 && (
         <p className="dim memory-note">
           Estas são coisas que o NANO <em>reparou</em> durante as conversas. Não são
@@ -249,7 +266,7 @@ export function MemoriesPage({
 
       {rows.length === 0 ? (
         <EmptyState
-          title={query || kind ? "Nada corresponde a esse filtro" : "Nada guardado aqui"}
+          title={query || kind || viewMode === "pinned" ? "Nada corresponde a esse filtro" : "Nada guardado aqui"}
           hint={scope === "active"
             ? "Diz “lembra-te que…” numa conversa, ou adiciona uma memória à mão."
             : scope === "candidate"
@@ -274,12 +291,15 @@ export function MemoriesPage({
                     <span className="tag-chip" key={tag}>{tag}</span>
                   ))}
                   <span className="dim">
-                    {formatDateTime(memory.updatedAt)}
+                    Atualizada {formatDateTime(memory.updatedAt)}
                     {memory.useCount > 0 && ` · usada ${memory.useCount}×`}
                   </span>
                 </div>
               </div>
               <div className="memory-card__actions">
+                <Button size="sm" onClick={() => setInspectingId(memory.id)}>
+                  Detalhes
+                </Button>
                 {memory.status === "candidate" ? (
                   <Button size="sm" variant="primary"
                           onClick={() => onUpdate(memory.id, { status: "active" })}
@@ -343,6 +363,29 @@ export function MemoriesPage({
       </div>
 
       <RetrievalFooter overview={overview} />
+
+      <Modal open={Boolean(inspecting)} onClose={() => setInspectingId(null)}
+             title="Detalhes da memória" width="narrow"
+             footer={<Button onClick={() => setInspectingId(null)}>Fechar</Button>}>
+        {inspecting && (
+          <div className="memory-detail">
+            <p className="memory-detail__text">{inspecting.text}</p>
+            <dl className="kv">
+              <dt>Tipo</dt><dd>{kindLabel(inspecting.kind)}</dd>
+              <dt>Origem</dt><dd>{originLabel(String(inspecting.origin))}</dd>
+              <dt>Estado</dt><dd>{inspecting.status === "candidate" ? "Sugestão" : inspecting.status === "active" ? "Ativa" : "Arquivada"}</dd>
+              <dt>Criada</dt><dd>{formatDateTime(inspecting.createdAt)}</dd>
+              <dt>Atualizada</dt><dd>{formatDateTime(inspecting.updatedAt)}</dd>
+              {inspecting.lastUsedAt && <><dt>Último uso</dt><dd>{formatDateTime(inspecting.lastUsedAt)}</dd></>}
+              <dt>Utilizações</dt><dd>{inspecting.useCount}</dd>
+              <dt>Importância</dt><dd>{inspecting.importance}</dd>
+              <dt>Contexto</dt><dd>{inspecting.pinned ? "Sempre incluída" : "Recuperada quando relevante"}</dd>
+              {inspecting.sourceConversationId && <><dt>Conversa de origem</dt><dd className="mono">{inspecting.sourceConversationId}</dd></>}
+              {inspecting.sourceMessageId != null && <><dt>Mensagem de origem</dt><dd>#{inspecting.sourceMessageId}</dd></>}
+            </dl>
+          </div>
+        )}
+      </Modal>
 
       <Modal
         open={Boolean(editing)} onClose={() => setEditing(null)} title="Editar memória"
@@ -816,6 +859,7 @@ export function GraphPage({
 
   const nodes = graph?.nodes ?? [];
   const edges = graph?.edges ?? [];
+  const nodeTitles = useMemo(() => new Map(nodes.map((node) => [node.id, node.title])), [nodes]);
 
   const computed = useMemo(() => layout(nodes, edges), [nodes, edges]);
   const positions = useMemo(() => {
@@ -838,6 +882,9 @@ export function GraphPage({
      Hover is transient and selection is sticky, so hover wins while it lasts —
      that is what makes sweeping the pointer across a graph a way to READ it. */
   const focus = hovered ?? selected;
+  const selectedNode = nodes.find((node) => node.id === selected);
+  const selectedLinks = selected ? edges.filter((edge) =>
+    edge.source === selected || edge.target === selected) : [];
 
   const neighbours = useMemo(() => {
     if (!focus) return null;
@@ -999,6 +1046,18 @@ export function GraphPage({
           onPointerUp={() => { panning.current = null; draggingNode.current = null; }}
           onPointerLeave={() => { panning.current = null; draggingNode.current = null; }}
         >
+          <defs>
+            <radialGradient id="nano-graph-node" cx="32%" cy="28%" r="76%">
+              <stop offset="0%" stopColor="#f8fbff" />
+              <stop offset="45%" stopColor="#9ec4ff" />
+              <stop offset="100%" stopColor="#356fcd" />
+            </radialGradient>
+            <radialGradient id="nano-graph-selected" cx="35%" cy="25%" r="75%">
+              <stop offset="0%" stopColor="#ffffff" />
+              <stop offset="50%" stopColor="#91bcff" />
+              <stop offset="100%" stopColor="#2870eb" />
+            </radialGradient>
+          </defs>
           <g transform={`translate(${view.x} ${view.y}) scale(${view.scale})`}>
             {edges.map((edge) => {
               const a = positions.get(edge.source);
@@ -1014,13 +1073,15 @@ export function GraphPage({
               return (
                 <line key={edge.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
                       className={`graph-edge${dimmed ? " is-dim" : ""}${lit ? " is-lit" : ""}`}
-                      strokeWidth={Math.min(3, 1 + edge.weight * 0.4)} />
+                      strokeWidth={Math.min(3, 1 + edge.weight * 0.4)}>
+                  <title>{`${edge.sourceTitle ?? nodeTitles.get(edge.source) ?? edge.source} — ${relationLabel(edge.relation)} — ${edge.targetTitle ?? nodeTitles.get(edge.target) ?? edge.target}`}</title>
+                </line>
               );
             })}
             {nodes.map((node) => {
               const point = positions.get(node.id);
               if (!point) return null;
-              const radius = 9 + Math.min(10, node.mentionCount * 1.4);
+              const radius = 14 + Math.min(12, node.mentionCount * 1.8);
               const dimmed = (matches && !matches.has(node.id))
                 || (neighbours && !neighbours.has(node.id));
               return (
@@ -1054,8 +1115,10 @@ export function GraphPage({
                      if (event.key === "Enter") onOpenNode(node.id);
                      if (event.key === " ") { event.preventDefault(); setSelected(node.id); }
                    }}>
+                  {selected === node.id && <circle r={radius + 9} className="graph-node__halo" />}
                   <circle r={radius} className="graph-node__dot" />
                   <text y={radius + 15} className="graph-node__label">{node.title}</text>
+                  <title>{`${node.title} · ${nodeTypeLabel(node.type)} · ${node.mentionCount} menções`}</title>
                 </g>
               );
             })}
@@ -1071,13 +1134,22 @@ export function GraphPage({
           ))}
         </div>
 
-        {selected && (
+        {selectedNode && (
           <div className="graph-selected">
-            <strong>{nodes.find((node) => node.id === selected)?.title}</strong>
-            <span className="dim" style={{ fontSize: 11 }}>
-              {Math.max(0, (neighbours?.size ?? 1) - 1)} ligado(s)
+            <span className="graph-selected__type">{nodeTypeLabel(selectedNode.type)}</span>
+            <strong>{selectedNode.title}</strong>
+            {selectedNode.summary && <span className="graph-selected__summary">{selectedNode.summary}</span>}
+            <span className="graph-selected__links">
+              {selectedLinks.length} {selectedLinks.length === 1 ? "ligação real" : "ligações reais"}
             </span>
-            <Button size="sm" onClick={() => onOpenNode(selected)}>Abrir detalhe</Button>
+            {selectedLinks.slice(0, 3).map((edge) => (
+              <span className="graph-selected__link" key={edge.id}>
+                {relationLabel(edge.relation)} · {edge.source === selectedNode.id
+                  ? edge.targetTitle ?? nodeTitles.get(edge.target) ?? edge.target
+                  : edge.sourceTitle ?? nodeTitles.get(edge.source) ?? edge.source}
+              </span>
+            ))}
+            <Button size="sm" onClick={() => onOpenNode(selectedNode.id)}>Abrir detalhe</Button>
           </div>
         )}
       </div>

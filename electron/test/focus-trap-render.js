@@ -115,17 +115,10 @@ const BRIDGE = `
 })();
 `;
 
-/** Click a sidebar section, then a stage sub-tab, and let it settle. */
-const OPEN = (section, tab) => `(() => {
+/** Navigate only after each level has rendered. */
+const OPEN = (section) => `(() => {
   for (const el of document.querySelectorAll('.rail-nav__item')) {
     if ((el.textContent || '').trim().startsWith(${JSON.stringify(section)})) { el.click(); break; }
-  }
-  if (${JSON.stringify(tab || '')}) {
-    setTimeout(() => {
-      for (const el of document.querySelectorAll('.subtab')) {
-        if ((el.textContent || '').trim().startsWith(${JSON.stringify(tab || '')})) { el.click(); break; }
-      }
-    }, 120);
   }
   return true;
 })()`;
@@ -133,20 +126,11 @@ const OPEN = (section, tab) => `(() => {
 /** Click the first element matching `selector` whose text starts with `text`. */
 const CLICK_BY_TEXT = (selector, text) => `(() => {
   for (const el of document.querySelectorAll(${JSON.stringify(selector)})) {
-    if ((el.textContent || '').trim().startsWith(${JSON.stringify(text)})) { el.click(); return true; }
-  }
-  return false;
-})()`;
-
-/** Bounding rect of the first element matching `selector` whose text starts with `text`. */
-const RECT_BY_TEXT = (selector, text) => `(() => {
-  for (const el of document.querySelectorAll(${JSON.stringify(selector)})) {
     if ((el.textContent || '').trim().startsWith(${JSON.stringify(text)})) {
-      const r = el.getBoundingClientRect();
-      return { x: r.left, y: r.top, width: r.width, height: r.height };
+      el.focus(); el.click(); return true;
     }
   }
-  return null;
+  return false;
 })()`;
 
 /** What has focus right now, plus the title input's current value. */
@@ -188,22 +172,6 @@ function typeChar(window, ch) {
   window.webContents.sendInputEvent({ type: 'keyUp', keyCode: ch });
 }
 
-/**
- * A real mouse click at the element's on-screen position, routed through
- * Chromium's input pipeline -- unlike a scripted `el.click()`, this is what
- * actually gives the clicked element focus, which the focus-restoration
- * assertion below depends on.
- */
-async function realClick(window, rectScript) {
-  const rect = await window.webContents.executeJavaScript(rectScript);
-  if (!rect) return false;
-  const x = Math.round(rect.x + rect.width / 2);
-  const y = Math.round(rect.y + rect.height / 2);
-  window.webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
-  window.webContents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
-  return true;
-}
-
 async function main() {
   if (!fs.existsSync(path.join(OUT_DIR, 'index.html'))) {
     console.log(JSON.stringify({ ok: false, error: 'frontend/out is not built' }));
@@ -231,16 +199,32 @@ async function main() {
     await window.webContents.executeJavaScript(BRIDGE);
     await wait(2500);
 
-    await window.webContents.executeJavaScript(OPEN('Mem', 'Second Brain'));
+    await window.webContents.executeJavaScript(OPEN('Mem'));
+    await wait(250);
+    await window.webContents.executeJavaScript(CLICK_BY_TEXT('.subtab', 'Second Brain'));
     await wait(900);
 
-    const opened = await realClick(window, RECT_BY_TEXT('button', 'Novo nó'));
-    if (!opened) { fail('open-modal', 'could not find the "Novo nó" button'); throw new Error('setup failed'); }
+    // The focus contract concerns typing and restoration after the dialog is
+    // invoked. A DOM click is deterministic on Windows where sendInputEvent
+    // mouse coordinates can diverge from a scaled frameless window.
+    const opened = await window.webContents.executeJavaScript(CLICK_BY_TEXT('button', 'Novo nó'));
+    if (!opened) {
+      const state = await window.webContents.executeJavaScript(`({
+        nav: [...document.querySelectorAll('.rail-nav__item')].map(el => el.textContent?.trim()),
+        tabs: [...document.querySelectorAll('.subtab')].map(el => el.textContent?.trim()),
+        buttons: [...document.querySelectorAll('button')].map(el => el.textContent?.trim()).filter(Boolean).slice(0, 25)
+      })`);
+      fail('open-modal', state); throw new Error('setup failed');
+    }
     await wait(150);
 
     let state = await window.webContents.executeJavaScript(PROBE_FOCUS);
     if (!state.modalOpen) { fail('modal-open', state); throw new Error('setup failed'); }
     pass('modal-open', state);
+
+    window.show();
+    window.focus();
+    window.webContents.focus();
 
     // Click the title input explicitly, the way a real user would, rather
     // than relying on the dialog's own initial-focus choice.
