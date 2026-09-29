@@ -45,7 +45,7 @@ a generic bridge for running anything on the system. See
 
 ### 1. Interaction
 
-The Ember interface (Next.js + React), served locally and reached over eel; the
+The NANO interface (Next.js + React), served locally and reached over eel; the
 voice overlay as a separate Electron window; the global hotkey; event streaming
 to the UI. Every voice activation path — hotkey, microphone button, wake phrase
 — calls the same `VoiceRuntime.run_voice_turn(source)`. There is no second voice

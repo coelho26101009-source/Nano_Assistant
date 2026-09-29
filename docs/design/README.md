@@ -63,6 +63,20 @@ been removed from the runtime tree. Regenerate the set with:
 powershell -ExecutionPolicy Bypass -File scripts/build_app_icon.ps1
 ```
 
+## External voice capsule
+
+The independent Electron overlay has a 548 × 84 DIP window and a 528 × 68 DIP
+visible capsule at full width. It centers over the active display's work area
+and narrows on smaller displays. Charcoal fill, a fine border, the approved N,
+and restrained blue state indicators keep it legible over light and dark
+desktop backgrounds. Errors use a separate pink tone. The renderer only shows
+backend voice phases; it does not invent transcript text or audio levels.
+
+The entrance and exit are short fades with a small vertical movement. The
+renderer honors the operating system's reduced-motion preference. The app's
+in-window reduced-motion preference is currently local to the main renderer
+and is not sent to the overlay.
+
 ## `nano-ui-reference.png`
 
 The reference for the previous shell (warm near-black surfaces, dark-glass

@@ -11,14 +11,14 @@
 </p>
 
 <p align="center">
-  <img alt="Windows" src="https://img.shields.io/badge/Windows-Desktop-111111?style=for-the-badge&logo=windows11&logoColor=F40101" />
-  <img alt="Python" src="https://img.shields.io/badge/Python-3.12%2B-111111?style=for-the-badge&logo=python&logoColor=F40101" />
-  <img alt="Electron" src="https://img.shields.io/badge/Electron-44-111111?style=for-the-badge&logo=electron&logoColor=F40101" />
-  <img alt="Next.js" src="https://img.shields.io/badge/Next.js-14-111111?style=for-the-badge&logo=nextdotjs&logoColor=F40101" />
+  <img alt="Windows" src="https://img.shields.io/badge/Windows-Desktop-111111?style=for-the-badge&logo=windows11&logoColor=8EB5FF" />
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.12%2B-111111?style=for-the-badge&logo=python&logoColor=8EB5FF" />
+  <img alt="Electron" src="https://img.shields.io/badge/Electron-44-111111?style=for-the-badge&logo=electron&logoColor=8EB5FF" />
+  <img alt="Next.js" src="https://img.shields.io/badge/Next.js-15-111111?style=for-the-badge&logo=nextdotjs&logoColor=8EB5FF" />
 </p>
 
 <p align="center">
-  <a href="https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.1.0-beta.1"><img alt="Beta publica" src="https://img.shields.io/badge/Beta%20p%C3%BAblica-v0.1.0--beta.1-A64D38?style=for-the-badge" /></a>
+  <a href="https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.1.0-beta.1"><img alt="Beta publica" src="https://img.shields.io/badge/Beta%20p%C3%BAblica-v0.1.0--beta.1-2F6FED?style=for-the-badge" /></a>
   <img alt="Licenca" src="https://img.shields.io/badge/Licen%C3%A7a-Apache%202.0-111111?style=for-the-badge" />
 </p>
 
@@ -84,21 +84,36 @@ O valor tem de coincidir com a linha correspondente em `SHA256SUMS.txt`.
 
 ## Como é
 
-<p align="center">
-  <img src="docs/assets/screenshots/nano-chat.png" alt="O ecra inicial do Nano" width="900" />
-</p>
+Capturas da aplicação atual, feitas num perfil isolado com conteúdo de
+demonstração. A Beta continua em desenvolvimento.
+
+### Ambiente de trabalho
 
 <p align="center">
-  <img src="docs/assets/screenshots/nano-conversation.png" alt="Uma conversa no Nano" width="900" />
+  <img src="docs/assets/screenshots/nano-home.png" alt="Ecrã inicial escuro do NANO, com o símbolo N e o compositor" width="900" />
 </p>
 
-<p align="center">
-  <img src="docs/assets/screenshots/nano-pc-control.png" alt="Definicoes de PC Control, com as garantias de seguranca" width="900" />
-</p>
+### Conversa local
 
 <p align="center">
-  <img src="docs/assets/screenshots/nano-first-run.png" alt="O guia da primeira execucao" width="900" />
+  <img src="docs/assets/screenshots/nano-thinking.png" alt="NANO a processar um pedido real num perfil de demonstração" width="440" />
+  <img src="docs/assets/screenshots/nano-conversation.png" alt="Resposta real do modelo local Ollama no NANO" width="440" />
 </p>
+
+### NANO Brain
+
+<p align="center">
+  <img src="docs/assets/screenshots/nano-brain.png" alt="Grafo do NANO Brain com três nós de demonstração e duas ligações reais" width="900" />
+</p>
+
+### Overlay de voz
+
+<p align="center">
+  <img src="docs/assets/screenshots/nano-overlay.png" alt="Cápsula de voz NANO no estado de escuta, simulada em Electron sobre fundo claro" width="760" />
+</p>
+
+O estado de escuta na última captura foi simulado no renderer Electron para
+verificar a apresentação; não representa um teste humano do microfone.
 
 ## O que é o Nano?
 
@@ -111,16 +126,15 @@ de modelos cloud e um modelo local, voz global através de
 ferramentas extensíveis e controlo seguro do Windows. O modelo pode pedir
 ações, mas **não recebe autoridade direta sobre o sistema operativo**.
 
-A interface é um espaço de trabalho desktop em tons quentes: superfícies
-creme, um rail de conversas em carvão, e um acento terracota usado com
-parcimónia. Navegação superior, rail de conversas à esquerda e um overlay de
-voz independente da janela principal.
+A interface é escura por omissão, com tema claro opcional: superfícies em
+carvão, o símbolo N branco com luz azul e acentos azuis contidos. O rail de
+conversas fica à esquerda, e a cápsula de voz funciona fora da janela principal.
 
 ## O que já existe
 
 | Área | Estado atual |
 |---|---|
-| **Desktop** | Electron, tray, single-instance, interface clara/escura e shell responsiva |
+| **Desktop** | Electron, tray, single-instance, tema escuro por omissão, tema claro opcional e shell responsiva |
 | **IA cloud** | **Groq**, **Mistral** e **Google (Gemini)** |
 | **IA local** | Ollama, por omissão `qwen3:8b` |
 | **Modos** | AUTO / CLOUD / LOCAL, com uma única autoridade de routing |
@@ -190,13 +204,15 @@ overlay de voz desktop.
 
 ## Experiência Desktop
 
-- top bar flutuante com navegação por **Chat · Ferramentas · PC · Memória · Definições**
+- rail de navegação por **Chat · Ferramentas · PC · Memória · Definições**
 - rail de conversas à esquerda, com pesquisa, seleção múltipla e eliminação
-- superfícies creme sobre um rail em carvão, com acento terracota
-- tema claro e escuro, com o mesmo sistema de tokens semânticos
-- wordmark e marca oficial em toda a aplicação
+- superfícies em carvão, com azul suave reservado para foco e estados ativos
+- tema escuro por omissão e tema claro opcional, com tokens semânticos
+- símbolo N e wordmark aprovados na aplicação
 - ícone próprio no Windows, taskbar e tray
 - composer flutuante e responsivo
+- Memória, Second Brain e grafo com nós e relações guardados localmente
+- cápsula de voz independente da janela principal
 - animações com suporte para `prefers-reduced-motion`
 - layout validado desde 1920×1080 até ao mínimo da janela Electron
 
@@ -324,10 +340,11 @@ nada saia. Ver [PRIVACY.md](PRIVACY.md).
 
 ### Overlay de voz
 
-O overlay de voz é uma janela Electron própria, sempre no topo e independente da
-janela principal. Mostra estados distintos para Listening, Transcribing,
-Processing, Speaking, Busy e Error, e continua a funcionar quando a janela
-principal está minimizada ou escondida no tray.
+O overlay de voz é uma cápsula Electron própria, sempre no topo e independente
+da janela principal. Mostra fases reais de escuta, transcrição, processamento,
+fala, ocupação e erro; continua a funcionar quando a janela principal está
+minimizada ou escondida no tray. A janela recebe estados do backend, sem
+inventar uma transcrição ou progresso que ele não tenha enviado.
 
 Documentação: [Voice](docs/VOICE.md) · [Speech Accuracy](docs/architecture/SPEECH_ACCURACY.md)
 
@@ -526,7 +543,7 @@ ou chaves no repositório.
 ## Testes
 
 ```bat
-python -m pytest -q          :: backend (1845 testes)
+python -m pytest -q          :: backend e contratos da interface
 cd electron && npm test      :: shell desktop
 cd frontend && npm run build :: bundle de produção
 ```
@@ -550,8 +567,9 @@ Isto não é cobertura de todo o comportamento possível da UI. O que o job de
 Chromium cobre são quatro harnesses conduzidos a partir do pytest —
 `render-check` (layout de 1920 até 940×620), `chat-drive`, `settings-drive` e
 `memory-render` — mais os contratos de UI que os acompanham. O que **não** corre
-no CI: `csp-check`, `overlay-live` e `focus-trap-render`, que pertencem ao gate
-manual de release, o caminho de renderização em Windows, e a verificação da
+no CI: `csp-check`, `overlay-live`, `overlay-visual` e
+`focus-trap-render`, que pertencem ao gate manual de release, o caminho de
+renderização em Windows, e a verificação da
 aplicação real. Ver [`docs/RELEASING.md`](docs/RELEASING.md).
 
 ---
