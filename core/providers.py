@@ -40,7 +40,7 @@ from typing import Any
 
 import httpx
 
-from core import (google_provider, model_defaults, mistral_provider,
+from core import (google_provider, http_tls, model_defaults, mistral_provider,
                   ollama_service, secret_store)
 
 logger = logging.getLogger("nano.providers")
@@ -229,6 +229,10 @@ def list_groq_models(api_key: str | None = None, *, timeout: float = 10.0) -> tu
             f"{GROQ_API_BASE}/models",
             headers={"Authorization": f"Bearer {key}"},
             timeout=timeout,
+            # The shared context, not a fresh CA-bundle parse per probe: ~200 ms
+            # of every status refresh, and of every key validation the user
+            # waits on. See core.http_tls.
+            verify=http_tls.shared_context(),
         )
     except Exception as exc:
         return [], f"network_error: {type(exc).__name__}"
@@ -455,19 +459,37 @@ def _is_ready(payload: dict | None) -> bool:
 
 def _route(provider: str, model: str, *, usable: bool, fallback: bool,
            mode: ProviderMode, tier: str, reason: str,
-           alternatives: list[str] | None = None) -> dict[str, Any]:
+           alternatives: list[str] | None = None,
+           passed_over: list[dict] | None = None) -> dict[str, Any]:
     """One routing decision, in the single shape every caller reads.
 
     ``alternatives`` is the ordered list of OTHER cloud providers that were
     ready at decision time. The Brain uses it to fail over inside a turn
     without re-probing, and it is what makes "o Gemini atingiu o limite, a usar
     o Groq" a decision rather than a retry loop.
+
+    ``passed_over`` is the AUTO candidates that came BEFORE the one chosen,
+    each with the state that ruled it out. "Mistral answered" is true and
+    useless when the user prefers Groq; "Groq was UNKNOWN -- its status probe
+    had not answered" is the fact that explains the turn.
     """
     return {
         "provider": provider, "model": model, "usable": usable,
         "fallback": fallback, "mode": mode.value, "tier": tier,
         "reason": reason, "alternatives": list(alternatives or []),
+        "passed_over": list(passed_over or []),
     }
+
+
+def _passed_over(clouds: list[tuple[str, dict]], chosen: str | None = None) -> list[dict]:
+    """The candidates tried before ``chosen`` (all of them when None), with state."""
+    passed: list[dict] = []
+    for provider_id, payload in clouds:
+        if provider_id == chosen:
+            break
+        passed.append({"provider": provider_id,
+                       "state": str((payload or {}).get("state") or ProviderState.UNKNOWN.value)})
+    return passed
 
 
 def resolve_route(mode: ProviderMode, groq: dict, ollama: dict, *,
@@ -525,7 +547,8 @@ def resolve_route(mode: ProviderMode, groq: dict, ollama: dict, *,
         return _route(chosen_id, cloud_model_for(_chosen, tier),
                       usable=True, fallback=False, mode=mode, tier=tier,
                       reason=f"{provider_name(chosen_id)} disponível (sem custo de RAM local).",
-                      alternatives=[pid for pid, _ in rest])
+                      alternatives=[pid for pid, _ in rest],
+                      passed_over=_passed_over(clouds, chosen_id))
     if ollama_ready:
         details = " ".join(str(p.get("detail") or "") for _, p in clouds).strip()
         return _route("ollama", ollama["model"], usable=True,
@@ -535,11 +558,13 @@ def resolve_route(mode: ProviderMode, groq: dict, ollama: dict, *,
                       # had fallen back -- the case the diagnostics panel most
                       # needs to explain.
                       fallback=True, mode=mode, tier=tier,
-                      reason=f"Cloud indisponível — a usar o Ollama local. {details}")
+                      reason=f"Cloud indisponível — a usar o Ollama local. {details}",
+                      passed_over=_passed_over(clouds))
 
     cloud_detail = " ".join(f"{provider_name(pid)}: {p.get('detail')}" for pid, p in clouds)
     return _route("none", "", usable=False, fallback=False, mode=mode, tier=tier,
-                  reason=f"Nenhum provedor disponível. {cloud_detail} Ollama: {ollama['detail']}")
+                  reason=f"Nenhum provedor disponível. {cloud_detail} Ollama: {ollama['detail']}",
+                  passed_over=_passed_over(clouds))
 
 
 def _unmeasured(payload: dict | None) -> bool:
@@ -548,8 +573,13 @@ def _unmeasured(payload: dict | None) -> bool:
 
 def route_pending(mode: ProviderMode, groq: dict, ollama: dict, *,
                   google: dict | None = None, mistral: dict | None = None,
-                  preferred: str | None = None) -> bool:
+                  preferred: str | None = None, local: bool = True) -> bool:
     """Whether ``resolve_route``'s decision still hinges on an UNMEASURED provider.
+
+    ``local=False`` asks about the CLOUD half only -- whether any cloud
+    provider's status can still change the decision -- and treats Ollama as
+    decided. The chat router asks it that way: it measures Ollama itself,
+    afterwards, with the waiting rule routing needs (Brain._measured_ollama).
 
     resolve_route never routes TO an UNKNOWN provider -- UNKNOWN is not READY
     -- but it does decide AROUND one: in AUTO an unmeasured preferred provider
@@ -565,7 +595,7 @@ def route_pending(mode: ProviderMode, groq: dict, ollama: dict, *,
     say "not decided yet" instead of presenting the decision.
     """
     if mode == ProviderMode.LOCAL:
-        return _unmeasured(ollama)
+        return local and _unmeasured(ollama)
     payloads = {ProviderId.GROQ.value: groq}
     if google:
         payloads[ProviderId.GOOGLE.value] = google
@@ -580,7 +610,7 @@ def route_pending(mode: ProviderMode, groq: dict, ollama: dict, *,
             return False
         if _unmeasured(payload):
             return True
-    return _unmeasured(ollama)
+    return local and _unmeasured(ollama)
 
 
 def parse_rate_limit(headers: Any) -> dict[str, Any]:

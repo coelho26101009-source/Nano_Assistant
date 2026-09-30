@@ -31,6 +31,7 @@ returns it to a caller; the only thing that ever leaves is
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import time
@@ -38,7 +39,7 @@ from typing import Any, AsyncIterator, Iterable
 
 import httpx
 
-from core import model_defaults, secret_store
+from core import http_tls, model_defaults, secret_store
 
 logger = logging.getLogger("nano.google")
 
@@ -233,7 +234,7 @@ def list_google_models(api_key: str | None = None, *, timeout: float = 10.0
     records: list[dict[str, Any]] = []
     page_token = ""
     try:
-        with httpx.Client(timeout=timeout) as client:
+        with httpx.Client(timeout=timeout, verify=http_tls.shared_context()) as client:
             for _ in range(10):                     # bounded: never loop forever
                 params: dict[str, Any] = {"pageSize": 200}
                 if page_token:
@@ -641,6 +642,16 @@ class GoogleChat:
     def configured(self) -> bool:
         return bool(self._api_key)
 
+    def holds_key(self, candidate: str) -> bool:
+        """Whether this transport was built for exactly ``candidate``.
+
+        Lets the Brain keep a client whose credential did not change without
+        the key ever leaving this object. Constant-time, and never logged.
+        """
+        wanted = (candidate or "").strip()
+        return bool(wanted) and hmac.compare_digest(self._api_key.encode("utf-8"),
+                                                    wanted.encode("utf-8"))
+
     async def stream(self, model: str, body: dict, collector: dict | None = None
                      ) -> AsyncIterator[str]:
         """Yield answer text as it arrives; collect tool calls and usage.
@@ -661,7 +672,11 @@ class GoogleChat:
         url = f"{self.base_url}/models/{model}:streamGenerateContent"
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            # The shared TLS context: a fresh one parses the CA bundle ON THE
+            # EVENT LOOP, once per round -- measured 269 ms of stalled loop a
+            # time. See core.http_tls.
+            async with httpx.AsyncClient(timeout=self.timeout,
+                                         verify=http_tls.shared_context()) as client:
                 async with client.stream("POST", url, headers=_headers(self._api_key),
                                          params={"alt": "sse"}, json=body) as response:
                     if response.status_code >= 400:

@@ -193,7 +193,10 @@ def build_brain(monkeypatch, *, mode="AUTO", groq_script=None, ollama_script=Non
     brain.tool_executor = executor
 
     ollama = FakeOllamaClient(ollama_script or [local_text("resposta local")])
-    monkeypatch.setattr("core.brain.httpx.AsyncClient", lambda **kw: ollama)
+    # THIS Brain's local client, not httpx.AsyncClient for the whole process:
+    # replacing the class also broke the Groq SDK's type check on the client
+    # the next Brain built hands it.
+    monkeypatch.setattr(brain, "_local_http_client", lambda **kw: ollama)
     brain._fake_ollama = ollama                       # type: ignore[attr-defined]
 
     async def _route(_message):

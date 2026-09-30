@@ -243,17 +243,46 @@ def test_conversation_never_reserves_the_whole_minute_budget():
 # The SDK slept 30-46 s through a 429 without telling anyone.
 # ---------------------------------------------------------------------------
 
-def test_the_groq_client_is_constructed_without_hidden_retries():
-    source = (ROOT / "core" / "brain.py").read_text(encoding="utf-8")
-    # Strip comments so the explanatory prose above the call cannot satisfy it.
-    code = "\n".join(line.split("#")[0] for line in source.splitlines())
-    assert "AsyncGroq(" in code
-    for call in code.split("AsyncGroq(")[1:]:
-        head = call[:120]
-        assert "max_retries=0" in head, (
-            "AsyncGroq is built without max_retries=0; the SDK default of 2 "
-            "sleeps silently through a 429"
-        )
+def test_the_groq_client_is_constructed_without_hidden_retries(monkeypatch):
+    """Every Groq client the Brain builds has retries off. Checked two ways.
+
+    On the CALLS, not the text: this used to split brain.py on the string
+    "AsyncGroq(" with only `#` comments stripped, so a docstring explaining
+    what the constructor costs matched as if it were a call. The AST sees
+    only real calls, including one added somewhere this test does not drive.
+
+    And on the CLIENTS: a real Brain is built with a key and has its key
+    replaced, and each client it ends up holding is asked for its setting.
+    Nothing is sent anywhere -- building a client makes no request.
+    """
+    import ast
+
+    from core.brain import Brain
+    from core.guardrails import GuardrailsEngine
+    from core.memory import MemoryEngine
+
+    tree = ast.parse((ROOT / "core" / "brain.py").read_text(encoding="utf-8"))
+    calls = [node for node in ast.walk(tree)
+             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+             and node.func.id == "AsyncGroq"]
+    assert calls, "no AsyncGroq construction found in brain.py"
+    for call in calls:
+        retries = {kw.arg: kw.value for kw in call.keywords}.get("max_retries")
+        assert isinstance(retries, ast.Constant) and retries.value == 0, (
+            f"AsyncGroq built at line {call.lineno} without max_retries=0; the "
+            "SDK default of 2 sleeps silently through a 429")
+
+    for name in ("NANO_API_KEY", "HELIOS_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_" + "1" * 48)
+    brain = Brain(api_key="gsk_" + "1" * 48, guardrails=GuardrailsEngine(),
+                  memory=MemoryEngine(), config={"local": {"enabled": False}})
+    assert brain.client.max_retries == 0, "the constructor's client retries"
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_" + "2" * 48)
+    monkeypatch.setattr("core.secret_store._read_store", lambda: {})
+    brain.reload_cloud_credentials()
+    assert brain.client.api_key == "gsk_" + "2" * 48
+    assert brain.client.max_retries == 0, "a reloaded client retries"
 
 
 def test_retry_after_in_plain_seconds_is_parsed():

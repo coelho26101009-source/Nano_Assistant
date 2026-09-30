@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import json
 import logging
 import time
@@ -58,7 +59,7 @@ from typing import Any, AsyncIterator, Iterable
 
 import httpx
 
-from core import model_defaults, secret_store
+from core import http_tls, model_defaults, secret_store
 
 logger = logging.getLogger("nano.mistral")
 
@@ -255,7 +256,7 @@ def list_mistral_models(api_key: str | None = None, *, timeout: float = 10.0
         return [], "no_api_key"
 
     try:
-        with httpx.Client(timeout=timeout) as client:
+        with httpx.Client(timeout=timeout, verify=http_tls.shared_context()) as client:
             response = client.get(f"{MISTRAL_API_BASE}/models", headers=_headers(key))
     except httpx.HTTPError as exc:
         # The exception TYPE only: httpx puts the full request URL in its
@@ -540,6 +541,16 @@ class MistralChat:
     def configured(self) -> bool:
         return bool(self._api_key)
 
+    def holds_key(self, candidate: str) -> bool:
+        """Whether this transport was built for exactly ``candidate``.
+
+        Lets the Brain keep a client whose credential did not change without
+        the key ever leaving this object. Constant-time, and never logged.
+        """
+        wanted = (candidate or "").strip()
+        return bool(wanted) and hmac.compare_digest(self._api_key.encode("utf-8"),
+                                                    wanted.encode("utf-8"))
+
     async def stream(self, model: str, body: dict, collector: dict | None = None
                      ) -> AsyncIterator[str]:
         """Yield answer text as it arrives; collect tool calls and usage.
@@ -563,7 +574,11 @@ class MistralChat:
         url = f"{self.base_url}/chat/completions"
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            # The shared TLS context: a fresh one parses the CA bundle ON THE
+            # EVENT LOOP, once per round -- measured 204 ms of stalled loop a
+            # time. See core.http_tls.
+            async with httpx.AsyncClient(timeout=self.timeout,
+                                         verify=http_tls.shared_context()) as client:
                 async with client.stream("POST", url, headers=_headers(self._api_key),
                                          json=body) as response:
                     if response.status_code >= 400:

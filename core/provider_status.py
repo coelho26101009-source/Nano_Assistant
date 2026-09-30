@@ -23,18 +23,38 @@ by every caller, refreshed off-thread, and never recomputed on the hot path.
 Sharing it also *reduces* outbound calls, because the Brain and the UI no longer
 probe the same account separately.
 
-THREE ACCESS PATTERNS, ONE CACHE, ONE REFRESH
----------------------------------------------
-``get_async``    awaits a worker thread on a miss. For the chat path: the loop
-                 keeps turning while the probe runs.
+FOUR ACCESS PATTERNS, ONE CACHE, ONE REFRESH
+--------------------------------------------
+``get_async``    awaits a worker thread on a miss.
 ``get_fresh``    blocks on a miss. For threads that are allowed to block --
-                 startup's warm-up, the router's synchronous variant.
+                 startup's warm-up, tests.
+``get_within``   blocks on a miss FOR AT MOST ``wait_seconds``, and returns
+                 early once the caller has what it needs. For the chat
+                 router, on a worker thread: see "What the router waits for".
 ``get_stale_ok`` NEVER waits. Fresh: the snapshot. Expired: the expired
                  snapshot, and a refresh starts in the background. Nothing
                  cached at all: the caller's ``placeholder`` -- a status built
                  without asking anyone, in which every provider that would
                  have to be asked is UNKNOWN -- and a refresh starts in the
                  background. The only form eel's hub may use.
+
+WHAT THE ROUTER WAITS FOR
+-------------------------
+The router used ``get_async``, so a cold or expired snapshot made a chat turn
+wait for EVERY configured cloud provider's probe -- the slowest one included,
+whether or not it could change the decision. Measured with one configured
+provider that accepted connections and never answered: every such turn waited
+its full 10 s probe timeout -- 10.5 s in AUTO and 10.6 s in CLOUD, where that
+provider can never be used at all -- although the preferred provider had
+answered READY at once and was the one that answered.
+
+``get_within`` bounds that. Each probe publishes its result the moment it
+lands (``describe_all`` reports into the refresh it is producing), so the
+router can stop waiting as soon as its decision is determined -- CLOUD needs
+only the preferred provider -- and stops at ``ROUTE_WAIT_SECONDS`` at the
+latest. Whatever has not answered by then is UNKNOWN for that one turn, which
+routing already never treats as ready; the refresh itself keeps running in
+the background and lands in the snapshot for the next turn and for the UI.
 
 The cold case is the one that used to go wrong. ``get_stale_ok`` ran the
 producer inline when nothing was cached, so the first Settings poll after
@@ -64,7 +84,7 @@ import asyncio
 import logging
 import threading
 import time
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 
 from core import model_defaults, providers, secret_store
 
@@ -74,6 +94,14 @@ logger = logging.getLogger("nano.provider_status")
 # or starting Ollama shows up almost immediately; long enough that an active
 # conversation does not re-probe on every message.
 DEFAULT_TTL_SECONDS = 45.0
+
+#: The longest a chat turn waits for provider status before deciding on what
+#: has been measured (see "What the router waits for" above). Healthy probes
+#: answer in 0.3-0.6 s here -- the figure the settings path's wait was chosen
+#: from, before ~200 ms of each was removed by core.http_tls -- so this only
+#: ever cuts off a provider that is not answering, and it caps what one such
+#: provider can add to a turn at this instead of its 10 s probe timeout.
+ROUTE_WAIT_SECONDS = 3.0
 
 #: How long a caller that is allowed to block waits for a refresh SOMEONE ELSE
 #: started. The producer is bounded by the providers' own HTTP timeouts, so
@@ -86,13 +114,60 @@ _MISSING = object()
 class _Refresh:
     """One producer run for one key. Everyone who asks while it runs shares it."""
 
-    __slots__ = ("done", "generation", "value", "error")
+    __slots__ = ("done", "generation", "value", "error", "parts", "changed", "version")
 
     def __init__(self, generation: int):
         self.done = threading.Event()
         self.generation = generation
         self.value: Any = _MISSING
         self.error: BaseException | None = None
+        #: Results the producer published before it finished, by name -- one
+        #: per cloud provider, as each probe lands. See get_within.
+        self.parts: dict[str, Any] = {}
+        #: Signalled on every publish and once more when the run ends; version
+        #: counts those signals, so a reader that looked away cannot miss one.
+        self.changed = threading.Condition()
+        self.version = 0
+
+    def publish(self, name: str, value: Any) -> None:
+        with self.changed:
+            self.parts[name] = value
+            self.version += 1
+            self.changed.notify_all()
+
+    def finished(self) -> None:
+        with self.changed:
+            self.version += 1
+            self.changed.notify_all()
+
+
+#: The refresh the CURRENT THREAD is producing, if any. Set by
+#: ProviderStatusCache._run around the producer call, so describe_all can
+#: report each probe into the refresh it belongs to without every producer
+#: having to pass it along; module-private on purpose.
+_PRODUCING = threading.local()
+
+
+def _producing() -> _Refresh | None:
+    return getattr(_PRODUCING, "refresh", None)
+
+
+class Reading(NamedTuple):
+    """What ``get_within`` found.
+
+    ``source`` is one of:
+
+    ``cached``    a snapshot inside its TTL; ``age_seconds`` says how old.
+    ``measured``  a refresh that completed while the caller waited.
+    ``partial``   the wait ended first: ``value`` is None, and ``parts`` holds
+                  what had been measured by then.
+    """
+
+    value: Any
+    parts: dict
+    source: str
+    age_seconds: float | None
+    waited_seconds: float
 
 
 class ProviderStatusCache:
@@ -135,6 +210,8 @@ class ProviderStatusCache:
             return refresh, True
 
     def _run(self, key: str, producer: Callable[[], Any], refresh: _Refresh) -> None:
+        outer = _producing()
+        _PRODUCING.refresh = refresh
         try:
             refresh.value = producer()
         except Exception as exc:
@@ -143,6 +220,7 @@ class ProviderStatusCache:
             refresh.error = exc
             logger.debug("Provider refresh failed for %r", key, exc_info=True)
         finally:
+            _PRODUCING.refresh = outer
             with self._lock:
                 self.refresh_count += 1
                 if refresh.value is not _MISSING and refresh.generation == self._generation:
@@ -150,6 +228,7 @@ class ProviderStatusCache:
                 if self._refreshes.get(key) is refresh:
                     del self._refreshes[key]
             refresh.done.set()
+            refresh.finished()
 
     def _start_in_background(self, key: str, producer: Callable[[], Any]) -> _Refresh:
         refresh, owner = self._claim(key)
@@ -199,6 +278,70 @@ class ProviderStatusCache:
         if fresh:
             return value
         return await asyncio.to_thread(self._join, key, producer)
+
+    def get_within(self, key: str, producer: Callable[[], Any], *,
+                   wait_seconds: float,
+                   enough: Callable[[dict], bool] | None = None,
+                   start: bool = True) -> Reading:
+        """The snapshot, waiting for a refresh AT MOST ``wait_seconds``. MAY BLOCK.
+
+        Fresh: the snapshot, at once. Otherwise the refresh in flight is shared
+        -- or one is started in the background -- and waited for until it
+        completes, until ``enough(parts)`` says the caller has what it needs,
+        or until ``wait_seconds`` have passed, whichever is first. The refresh
+        is never run on this thread, so ending the wait never abandons it: it
+        finishes and is cached as usual.
+
+        ``start=False`` never starts a refresh, so it can never make a
+        provider be contacted: it shares the one in flight, or else answers
+        with whatever is cached -- at any age -- or with nothing. For a caller
+        acting on a decision already taken (failover inside a turn), which
+        must not probe on its own account.
+
+        The partial answer is the caller's to interpret; this cache never
+        stores it, for the same reason it never stores a placeholder.
+        """
+        with self._lock:
+            entry = self._entries.get(key)
+            in_flight = self._refreshes.get(key)
+            if in_flight is not None and in_flight.generation != self._generation:
+                in_flight = None
+        age = max(0.0, self._clock() - entry[0]) if entry is not None else None
+        if entry is not None and age < self.ttl_seconds:
+            return Reading(entry[1], {}, "cached", age, 0.0)
+        if not start and in_flight is None:
+            if entry is not None:
+                return Reading(entry[1], {}, "cached", age, 0.0)
+            return Reading(None, {}, "partial", None, 0.0)
+
+        started = time.monotonic()
+        deadline = started + max(0.0, float(wait_seconds))
+        refresh = self._start_in_background(key, producer) if start else in_flight
+        # The caller's predicate runs OUTSIDE the refresh's lock, so a slow one
+        # can never hold up a probe that is trying to publish. The version it
+        # was evaluated against is what makes that safe: a publish that lands
+        # in between is seen at the next check instead of being slept through.
+        with refresh.changed:
+            parts, seen = dict(refresh.parts), refresh.version
+        while not refresh.done.is_set():
+            if enough is not None and enough(parts):
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            with refresh.changed:
+                if refresh.version == seen and not refresh.done.is_set():
+                    refresh.changed.wait(remaining)
+                parts, seen = dict(refresh.parts), refresh.version
+        with refresh.changed:
+            parts = dict(refresh.parts)
+        waited = time.monotonic() - started
+        if refresh.done.is_set():
+            if refresh.error is not None:
+                raise refresh.error
+            if refresh.value is not _MISSING:
+                return Reading(refresh.value, parts, "measured", 0.0, waited)
+        return Reading(None, parts, "partial", None, waited)
 
     def get_stale_ok(self, key: str, producer: Callable[[], Any],
                      placeholder: Callable[[], Any] | None = None) -> Any:
@@ -375,12 +518,20 @@ def describe_all(
     if wanted:
         results: dict[str, Any] = {}
         errors: dict[str, BaseException] = {}
+        # When this runs as a cache refresh, each probe reports into it the
+        # moment it lands, so a reader bounded by get_within can decide on the
+        # providers that have answered without waiting for the one that has
+        # not. Outside a refresh there is nobody to tell.
+        sink = _producing()
 
         def _describe(provider_id: str, fast: str, strong: str) -> None:
             try:
                 results[provider_id] = providers.describe_cloud(provider_id, fast, strong)
             except BaseException as exc:  # noqa: BLE001 - re-raised below, in order
                 errors[provider_id] = exc
+            else:
+                if sink is not None:
+                    sink.publish(provider_id, results[provider_id])
 
         probes = []
         for provider_id in wanted:
@@ -534,6 +685,8 @@ __all__ = [
     "CACHE",
     "DEFAULT_TTL_SECONDS",
     "ProviderStatusCache",
+    "ROUTE_WAIT_SECONDS",
+    "Reading",
     "cache_key",
     "describe_all",
     "describe_pair",

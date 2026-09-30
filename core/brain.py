@@ -32,12 +32,13 @@ result instead of touching Windows again.
 
 from __future__ import annotations
 import asyncio
+import hmac
 import json
 import logging
 import time
-from typing import AsyncIterator, Any
+from typing import AsyncIterator, Any, NamedTuple
 import httpx
-from groq import AsyncGroq
+from groq import AsyncGroq, DefaultAsyncHttpxClient
 from core.config import load_config
 from core.local_runtime import choose_model
 from core.plugin_loader import get_all_tools
@@ -45,7 +46,7 @@ from core.guardrails import GuardrailsEngine
 from core.memory import MemoryEngine
 from core.errors import ToolExecutionError, GuardrailError
 from core.model_router import ModelRequest, ModelRouter, PrivacyLevel, TaskType
-from core import (capabilities, google_provider, mistral_provider, model_selection,
+from core import (capabilities, google_provider, http_tls, mistral_provider, model_selection,
                   provider_failures, provider_status, providers, schema_validation)
 from core.trust import TRUST_BOUNDARY_SYSTEM_RULES, TrustLevel, wrap_untrusted
 
@@ -53,6 +54,69 @@ logger = logging.getLogger("nano.brain")
 GROQ_MODEL = providers.DEFAULT_FAST_MODEL
 OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 MAX_TOOL_ROUNDS = 8
+
+#: How long the local model may take to produce one non-streamed answer.
+#:
+#: The tool round posts ``stream: false``, so no byte arrives until the whole
+#: generation is done, and httpx's read timeout is the budget for ALL of it.
+#: It was 60 s. The provider benchmark sends Ollama exactly this request shape
+#: (see scripts/benchmark_providers.run_ollama), and on the workstation it was
+#: measured on, 6 of 53 qwen3:8b turns took longer: 67.6, 73.6, 75.8, 115.6,
+#: 117.9 and 123.7 s (benchmarks/provider_routing, 2026-09-09). Each of those
+#: timed out at 60 s, and the except branch below then asked AGAIN -- streamed,
+#: without tools and without the conversation -- so the user waited for two
+#: generations and received the worse one. 180 s is the budget under which that
+#: benchmark completed every turn. It is the user's own machine answering:
+#: there is no quota to protect and nothing to fail over to after it.
+LOCAL_READ_TIMEOUT_SECONDS = 180.0
+
+
+class _ProviderView(NamedTuple):
+    """What the router decides from: every cloud payload, Ollama's, and how
+    fresh the cloud half was. Indexable as the ``(clouds, ollama)`` pair it
+    used to be, so code that reads it that way keeps working."""
+
+    clouds: dict
+    ollama: dict
+    status: dict | None = None
+
+
+def _groq_client(api_key: str) -> AsyncGroq:
+    """A Groq client whose construction costs microseconds, not a CA-bundle parse.
+
+    ``AsyncGroq(api_key=...)`` builds its own httpx client, and with it a fresh
+    SSL context: ~200 ms measured, ~430-530 ms with a proxy configured. The
+    Brain builds one whenever a credential changes, and that happens inside an
+    eel bridge call -- on the hub every other bridge call is waiting on. The
+    SDK's own default client class, handed the process-wide context, is the
+    same client minus that parse (core.http_tls). ``max_retries=0`` as before:
+    the SDK's retries slept through a 429 without telling anyone.
+    """
+    return AsyncGroq(api_key=api_key, max_retries=0,
+                     http_client=DefaultAsyncHttpxClient(verify=http_tls.shared_context()))
+
+
+def _built_for(client: Any, key: str) -> bool:
+    """Whether ``client`` was built for exactly ``key``. Constant-time; never logs it.
+
+    Our own transports answer through ``holds_key`` so the key never leaves
+    them; the Groq SDK keeps ``api_key`` public. Anything else -- including a
+    test double -- is treated as not matching, so the reload rebuilds it,
+    which is what always happened before.
+    """
+    if client is None or not key:
+        return False
+    check = getattr(client, "holds_key", None)
+    if callable(check):
+        return check(key) is True
+    held = getattr(client, "api_key", None)
+    return isinstance(held, str) and hmac.compare_digest(held.encode("utf-8"),
+                                                         key.encode("utf-8"))
+
+
+def _is_connection_failure(exc: BaseException) -> bool:
+    """The local server could not be reached at all -- refused, or no answer to connect."""
+    return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, ConnectionError))
 
 # Provider status costs an HTTP round trip per provider. Routing every message
 # through a fresh probe was adding four Ollama /api/tags calls (~400-600 ms) to
@@ -301,7 +365,7 @@ class Brain:
         # max_retries=0 is deliberate. The SDK default of 2 sleeps through a
         # 429 without telling anyone, which is what produced the measured
         # 30-46 second freezes. Nano handles 429 itself and surfaces it.
-        self.client = AsyncGroq(api_key=api_key, max_retries=0) if self.groq_enabled else None
+        self.client = _groq_client(api_key.strip()) if self.groq_enabled else None
         self.guardrails, self.memory = guardrails, memory
         # The threads / long-term-memory / Second Brain stack. Optional: the
         # Brain answers perfectly well without it (with the legacy flat history),
@@ -412,6 +476,46 @@ class Brain:
             self.local_profile.reason, self.local_profile.ram_gb
         )
 
+    # ------------------------------------------------------ credentials
+    #
+    # THE CLIENT LIFECYCLE, IN FOUR RULES.
+    #
+    # 1. A client is built for exactly one key, and only when that key changes.
+    #    Reloading after the user edits ONE provider's key used to rebuild all
+    #    three clients; an unchanged key now keeps its client, and with it the
+    #    connection it already has open.
+    # 2. A removed key leaves no client behind, at once, in the same call: the
+    #    attribute is None before the reload returns, and every round reads the
+    #    client afresh (see _cloud_round), so the next request cannot reach the
+    #    old one.
+    # 3. Building a client costs microseconds. These run inside eel bridge
+    #    calls, on the hub every other bridge call waits on; they read the
+    #    secret store and assign attributes, and the one expensive thing a
+    #    client construction used to do -- parse the CA bundle -- is done once
+    #    per process instead (core.http_tls).
+    # 4. Nothing is built in the background, so there is no late result that
+    #    could put a client back after a removal, and no window in which a key
+    #    has been saved but its client does not exist yet.
+    #
+    # Assignment order keeps the pair consistent for a turn reading it from the
+    # event-loop thread: the client is replaced or cleared first, the flag
+    # second, and _cloud_provider_ready requires both.
+
+    def reload_groq_credentials(self) -> bool:
+        """Re-read the Groq key. Never logs it, never returns it."""
+        try:
+            key = (providers.groq_api_key() or "").strip()
+        except Exception:
+            logger.exception("Could not read the stored Groq credentials")
+            key = ""
+
+        if not key:
+            self.client = None
+        elif not _built_for(self.client, key):
+            self.client = _groq_client(key)
+        self.groq_enabled = bool(key)
+        return self.groq_enabled
+
     def reload_google_credentials(self) -> bool:
         """Re-read the Google key. Never logs it, never returns it.
 
@@ -420,13 +524,16 @@ class Brain:
         that has never set a Gemini key at all.
         """
         try:
-            key = google_provider.google_api_key()
+            key = (google_provider.google_api_key() or "").strip()
         except Exception:
             logger.exception("Could not read the stored Google credentials")
             key = ""
 
-        self.google_enabled = bool(key.strip())
-        self.google_client = google_provider.GoogleChat(key) if self.google_enabled else None
+        if not key:
+            self.google_client = None
+        elif not _built_for(self.google_client, key):
+            self.google_client = google_provider.GoogleChat(key)
+        self.google_enabled = bool(key)
         logger.info("Credenciais Google recarregadas (configurado=%s)", self.google_enabled)
         return self.google_enabled
 
@@ -438,13 +545,16 @@ class Brain:
         every machine that has never set a Mistral key at all.
         """
         try:
-            key = mistral_provider.mistral_api_key()
+            key = (mistral_provider.mistral_api_key() or "").strip()
         except Exception:
             logger.exception("Could not read the stored Mistral credentials")
             key = ""
 
-        self.mistral_enabled = bool(key.strip())
-        self.mistral_client = mistral_provider.MistralChat(key) if self.mistral_enabled else None
+        if not key:
+            self.mistral_client = None
+        elif not _built_for(self.mistral_client, key):
+            self.mistral_client = mistral_provider.MistralChat(key)
+        self.mistral_enabled = bool(key)
         logger.info("Credenciais Mistral recarregadas (configurado=%s)", self.mistral_enabled)
         return self.mistral_enabled
 
@@ -453,22 +563,18 @@ class Brain:
 
         Without this the user would have to restart Nano for a newly saved key
         to take effect, which is exactly the friction the Settings flow exists
-        to remove. Both providers are refreshed together because the snapshot
-        they share is invalidated once, at the end.
+        to remove. Every provider is re-read together because the snapshot
+        they share is invalidated once, at the end -- but only a provider whose
+        key actually changed gets a new client (see the lifecycle rules above).
+
+        Runs on eel's hub, so it must stay cheap: it used to build a new
+        ``AsyncGroq`` here unconditionally, and the CA-bundle parse inside that
+        held every other bridge call for 200-530 ms.
 
         Returns whether ANY cloud provider is now configured -- the question
         every caller actually asks ("can Nano still reach the cloud?").
         """
-        try:
-            from core import secret_store
-
-            key = secret_store.get_secret("groq_api_key")
-        except Exception:
-            logger.exception("Could not read the stored Groq credentials")
-            key = ""
-
-        self.groq_enabled = bool(key.strip())
-        self.client = AsyncGroq(api_key=key, max_retries=0) if self.groq_enabled else None
+        self.reload_groq_credentials()
         self.reload_google_credentials()
         self.reload_mistral_credentials()
         # A new key must be reflected immediately, not after the cache expires.
@@ -750,13 +856,16 @@ class Brain:
                                                  self.mistral_complex_model),
         }
 
-    def _provider_query(self, mode: providers.ProviderMode) -> tuple[str, Any]:
-        """The cache key and the producer for this Brain's provider snapshot."""
+    def _provider_query(self, mode: providers.ProviderMode) -> tuple[str, Any, Any]:
+        """The cache key, the producer and the no-contact placeholder for this
+        Brain's provider snapshot."""
         local_cfg = (load_config().get("local") or {})
         base_url = str(local_cfg.get("url") or OLLAMA_BASE_URL)
         tiers = self.cloud_tiers()
         key = provider_status.cache_key(mode, tiers, self.ollama_model,
                                         self.preferred_cloud)
+        options = dict(cloud_tiers=tiers, ollama_model=self.ollama_model,
+                       ollama_base_url=base_url, local_enabled=self.local_enabled)
 
         def _produce() -> tuple[dict[str, dict], dict]:
             # ollama_wait=False, exactly as the UI's producer for the same key:
@@ -767,41 +876,115 @@ class Brain:
             # Brain started wait ~2 s on a stopped Ollama for nothing -- and it
             # starts no probe either, since this may finish after the mode it
             # captured has changed (see provider_status.describe_all).
-            return provider_status.describe_all(
-                mode,
-                cloud_tiers=tiers,
-                ollama_model=self.ollama_model,
-                ollama_base_url=base_url,
-                local_enabled=self.local_enabled,
-                ollama_wait=False,
-            )
+            return provider_status.describe_all(mode, ollama_wait=False, **options)
 
-        return key, _produce
+        def _unmeasured() -> tuple[dict[str, dict], dict]:
+            # What a provider that has not answered yet is described as: UNKNOWN
+            # (never routed to), with every mode's privacy rule intact -- LOCAL
+            # asks no cloud, CLOUD asks no Ollama, and nothing is contacted.
+            return provider_status.describe_unmeasured(mode, **options)
 
-    def _describe_providers(self, mode: providers.ProviderMode) -> tuple[dict[str, dict], dict]:
-        """Blocking provider status, as ``({provider_id: payload}, ollama)``.
+        return key, _produce, _unmeasured
 
-        Only for callers allowed to block. The chat path must use
-        ``_describe_providers_async``; this variant runs the synchronous httpx
-        probes on the calling thread.
+    def _describe_for_route(self, mode: providers.ProviderMode) -> _ProviderView:
+        """Provider status for ONE routing decision: the bounded cloud half
+        (see _cloud_view), then Ollama's own measurement. Blocking."""
+        clouds, ollama, status = self._cloud_view(mode)
+        return _ProviderView(clouds, self._measured_ollama(mode, ollama, clouds), status)
+
+    def _cloud_view(self, mode: providers.ProviderMode, *, start: bool = True,
+                    need: tuple[str, ...] | None = None,
+                    wait_seconds: float | None = None) -> tuple[dict[str, dict], dict, dict]:
+        """The cloud half of provider status for ONE decision. Blocking, and bounded.
+
+        A fresh snapshot is used as it is. Otherwise the shared refresh is
+        waited for only until the DECISION is settled -- the rule
+        ``providers.route_pending`` states, asked about the cloud half: CLOUD
+        needs its preferred provider's answer and no other; AUTO needs every
+        candidate up to the first READY one -- and never longer than
+        ``provider_status.ROUTE_WAIT_SECONDS``. A provider that has not
+        answered by then is UNKNOWN for this turn: AUTO never routes to it,
+        CLOUD still tries its preferred provider as it always has. The refresh
+        carries on in the background and is cached for the next turn; a
+        provider that answers READY meanwhile can still take the turn over if
+        the chosen one fails (see _late_alternatives).
+
+        Waiting for everything cost 10.5 s per turn with one hung provider that
+        was not even the one answering.
+
+        ``start=False`` never starts a refresh: see ProviderStatusCache.get_within.
+        ``need`` replaces "the decision is settled" with "these providers have
+        answered", and ``wait_seconds`` replaces the route budget -- both for
+        _late_alternatives, which asks a different question later in the turn.
         """
-        key, produce = self._provider_query(mode)
-        clouds, ollama = provider_status.CACHE.get_fresh(key, produce)
-        return clouds, self._measured_ollama(mode, ollama, clouds)
+        key, produce, unmeasured = self._provider_query(mode)
+        preferred = self.preferred_cloud
+        placeholder: list = []
 
-    async def _describe_providers_async(self, mode: providers.ProviderMode
-                                        ) -> tuple[dict[str, dict], dict]:
+        def merged(parts: dict) -> dict[str, dict]:
+            # The no-contact description, with what has answered laid over it.
+            # Built once, and only when a wait is actually needed.
+            if not placeholder:
+                placeholder.append(unmeasured())
+            return {**placeholder[0][0], **parts}
+
+        def enough(parts: dict) -> bool:
+            if need is not None:
+                return all(provider_id in parts for provider_id in need)
+            clouds = merged(parts)
+            return not providers.route_pending(
+                mode, clouds.get(providers.ProviderId.GROQ.value) or {}, {},
+                google=clouds.get(providers.ProviderId.GOOGLE.value),
+                mistral=clouds.get(providers.ProviderId.MISTRAL.value),
+                preferred=preferred, local=False)
+
+        # LOCAL asks no cloud provider anything, so its refresh contacts nobody
+        # and completes at once: it is simply waited for.
+        reading = provider_status.CACHE.get_within(
+            key, produce,
+            wait_seconds=(provider_status.ROUTE_WAIT_SECONDS if wait_seconds is None
+                          else max(0.0, wait_seconds)),
+            enough=None if mode == providers.ProviderMode.LOCAL else enough, start=start)
+        if reading.source == "partial":
+            clouds = merged(reading.parts)
+            # What DID answer replaces its placeholder; the rest stays UNKNOWN.
+            ollama = placeholder[0][1]
+        else:
+            clouds, ollama = reading.value
+        not_answered = [pid for pid in providers.CLOUD_PROVIDER_IDS
+                        if (clouds.get(pid) or {}).get("state")
+                        == providers.ProviderState.UNKNOWN.value]
+        status = {
+            # Named for what the decision KNEW: a wait that ended once every
+            # cloud provider had answered decided on a complete measurement.
+            "source": ("measured" if reading.source == "partial" and not not_answered
+                       else reading.source),
+            "age_seconds": (round(reading.age_seconds, 1)
+                            if reading.age_seconds is not None else None),
+            "waited_ms": int(reading.waited_seconds * 1000),
+            "unmeasured": not_answered,
+        }
+        return clouds, ollama, status
+
+    def _describe_providers(self, mode: providers.ProviderMode) -> _ProviderView:
+        """Blocking provider status, as ``({provider_id: payload}, ollama, status)``.
+
+        Only for callers allowed to block; the same bounded read the chat path
+        makes, run on the calling thread.
+        """
+        return self._describe_for_route(mode)
+
+    async def _describe_providers_async(self, mode: providers.ProviderMode) -> _ProviderView:
         """Provider status without occupying the calling event loop.
 
         describe_groq/describe_ollama are synchronous httpx calls. Running them
         inline from ``async def chat`` froze the shared loop for the whole round
         trip -- up to 10 seconds -- once per TTL window, which in an active
-        conversation is roughly every third message. The probe itself is
-        unchanged; only where it runs is.
+        conversation is roughly every third message. Everything here runs on a
+        worker thread: the bounded wait, the placeholder's local credential
+        reads and the Ollama measurement.
         """
-        key, produce = self._provider_query(mode)
-        clouds, ollama = await provider_status.CACHE.get_async(key, produce)
-        return clouds, await asyncio.to_thread(self._measured_ollama, mode, ollama, clouds)
+        return await asyncio.to_thread(self._describe_for_route, mode)
 
     def _measured_ollama(self, mode: providers.ProviderMode, cached: dict,
                          clouds: dict[str, dict] | None = None) -> dict:
@@ -839,7 +1022,7 @@ class Brain:
 
     def _finish_route(self, task: model_selection.TaskClass, tier: model_selection.ModelTier,
                       mode: providers.ProviderMode, clouds: dict[str, dict],
-                      ollama: dict) -> dict[str, Any]:
+                      ollama: dict, *, status: dict | None = None) -> dict[str, Any]:
         google = clouds.get(providers.ProviderId.GOOGLE.value) or {}
         groq = clouds.get(providers.ProviderId.GROQ.value) or {}
         mistral = clouds.get(providers.ProviderId.MISTRAL.value) or {}
@@ -847,6 +1030,11 @@ class Brain:
                                         google=google, mistral=mistral,
                                         preferred=self.preferred_cloud)
         route["task"] = task.value
+        # How fresh the cloud half of this decision was: a cached snapshot and
+        # its age, a refresh waited for, or a partial one cut off by the route
+        # wait -- with the providers that had not answered. None when the
+        # status came from somewhere that does not say.
+        route["status"] = status
         # The model each cloud provider would use for THIS tier, and the state
         # it was in, resolved once from the same snapshot the decision was made
         # on. Failover inside a turn reads these instead of re-probing, so
@@ -887,16 +1075,29 @@ class Brain:
         task = model_selection.classify(user_message)
         tier = model_selection.tier_for(task)
         mode = providers.ProviderMode.parse(getattr(self, "provider_mode", "AUTO"))
-        clouds, ollama = self._describe_providers(mode)
-        return self._finish_route(task, tier, mode, clouds, ollama)
+        deadline = time.monotonic() + provider_status.ROUTE_WAIT_SECONDS
+        view = self._describe_providers(mode)
+        route = self._finish_route(task, tier, mode, view[0], view[1],
+                                   status=getattr(view, "status", None))
+        route["_status_deadline"] = deadline
+        return route
 
     async def route_for_async(self, user_message: str) -> dict[str, Any]:
         """route_for without blocking the event loop. Same decision, same order."""
         task = model_selection.classify(user_message)
         tier = model_selection.tier_for(task)
         mode = providers.ProviderMode.parse(getattr(self, "provider_mode", "AUTO"))
-        clouds, ollama = await self._describe_providers_async(mode)
-        return self._finish_route(task, tier, mode, clouds, ollama)
+        # The status budget covers the WHOLE turn: what routing does not spend
+        # waiting for a probe, failover may (see _late_alternatives).
+        deadline = time.monotonic() + provider_status.ROUTE_WAIT_SECONDS
+        # Indexed rather than unpacked: a view carries its freshness as a third
+        # field, and a bare (clouds, ollama) pair -- what a stand-in returns --
+        # simply has none.
+        view = await self._describe_providers_async(mode)
+        route = self._finish_route(task, tier, mode, view[0], view[1],
+                                   status=getattr(view, "status", None))
+        route["_status_deadline"] = deadline
+        return route
 
     def _legacy_route_model(self, *, task_type: str = "chat", requires_tools: bool = False, requires_vision: bool = False, requires_coding: bool = False, requires_reasoning: bool = False, privacy_level: str | PrivacyLevel = PrivacyLevel.NORMAL, latency_preference: str = "balanced", local_only: bool = False):
         if not self.model_router:
@@ -925,6 +1126,12 @@ class Brain:
         arguments a few characters at a time), so they are reassembled by index
         into ``collector['tool_calls']``.
         """
+        # Read ONCE per round. A key removed while this turn was running leaves
+        # None here, and that must end this provider's part in the turn as the
+        # typed failure it is -- not as an AttributeError classified "unknown".
+        client = self.client
+        if client is None:
+            raise provider_failures.ProviderNotConfigured(providers.ProviderId.GROQ.value)
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -943,7 +1150,7 @@ class Brain:
         _simulated_groq_failure()
 
         try:
-            response = await self.client.chat.completions.create(**kwargs)
+            response = await client.chat.completions.create(**kwargs)
         except Exception as exc:
             raise self._as_rate_limit(exc) from exc
 
@@ -1005,12 +1212,15 @@ class Brain:
         what keeps Mistral and SambaNova a new adapter rather than a new branch
         in here.
         """
-        if self.google_client is None:
-            raise google_provider.GoogleAPIError(401, "no_api_key")
+        # A missing client is a REMOVED key, not a refused one: a synthetic 401
+        # here told the user "a chave foi recusada" about a key that was gone.
+        client = self.google_client
+        if client is None:
+            raise provider_failures.ProviderNotConfigured(providers.ProviderId.GOOGLE.value)
         body = google_provider.build_request(
             model, messages, tools, temperature=0.65, max_tokens=max_tokens,
             task=task, metadata=self._google_metadata(model))
-        async for piece in self.google_client.stream(model, body, collector):
+        async for piece in client.stream(model, body, collector):
             yield piece
 
     def _mistral_metadata(self, model: str) -> dict:
@@ -1028,12 +1238,14 @@ class Brain:
         learns none of it: that is what kept adding a third provider an adapter
         rather than a third branch through this file.
         """
-        if self.mistral_client is None:
-            raise mistral_provider.MistralAPIError(401, "no_api_key")
+        # A missing client is a REMOVED key, not a refused one -- see _google_round.
+        client = self.mistral_client
+        if client is None:
+            raise provider_failures.ProviderNotConfigured(providers.ProviderId.MISTRAL.value)
         body = mistral_provider.build_request(
             model, messages, tools, temperature=0.65, max_tokens=max_tokens,
             task=task, metadata=self._mistral_metadata(model))
-        async for piece in self.mistral_client.stream(model, body, collector):
+        async for piece in client.stream(model, body, collector):
             yield piece
 
     async def _cloud_round(self, provider: str, model: str, messages: list[dict],
@@ -1275,6 +1487,14 @@ class Brain:
         # safe for the technical-details panel and for the log.
         if self.last_context_meta:
             self.last_metadata["memory"] = dict(self.last_context_meta)
+        # Why the route is what it is: how fresh the status behind it was, and
+        # which earlier candidates it passed over in what state. Diagnostics
+        # only -- response_meta's allow-list keeps both off the message row.
+        if route.get("status") is not None:
+            self.last_metadata["route_status"] = dict(route["status"])
+        if route.get("passed_over"):
+            self.last_metadata["route_passed_over"] = list(route["passed_over"])
+        self._log_route(route)
 
         if route.get("provider") == providers.ProviderId.OLLAMA.value:
             self.last_provider_used = "ollama"
@@ -1324,8 +1544,14 @@ class Brain:
         # step earlier: CLOUD never substitutes a provider, an auth or bad-request
         # failure must reach the user, and a half-streamed answer is never
         # replaced by a second complete one.
-        for position, (provider_id, model) in enumerate(chain):
-            remaining = chain[position + 1:]
+        #
+        # The chain can GROW, once, at its end: a provider whose status had not
+        # arrived when the turn was routed may have answered READY since. See
+        # _late_alternatives. Hence an index rather than a for-loop over a list
+        # that changes underneath it.
+        position = 0
+        while position < len(chain):
+            provider_id, model = chain[position]
             self.last_metadata["provider"] = provider_id
             self.last_metadata["model"] = model
             attempt: dict[str, Any] = {"provider": provider_id, "model": model}
@@ -1349,6 +1575,13 @@ class Brain:
                 return
             attempt["outcome"] = failure.type.value
 
+            remaining = chain[position + 1:]
+            if (not remaining and mode == "AUTO" and failure.may_fall_back
+                    and not outcome.get("emitted_text")):
+                chain.extend(await self._late_alternatives(
+                    route, tried={pid for pid, _model in chain}))
+                remaining = chain[position + 1:]
+
             # `mode != "CLOUD"` is REDUNDANT here and kept on purpose: in CLOUD
             # mode `_cloud_chain` already returns a single entry, so `remaining`
             # is empty. It is stated again because this is the line a reader
@@ -1365,6 +1598,7 @@ class Brain:
                 self.last_metadata["fallback_reason"] = failure.type.value
                 yield (f"_thinking_:\🔄 {failure.user_message()} "
                        f"A usar {next_name}...")
+                position += 1
                 continue
 
             async for token in self._handle_provider_failure(
@@ -1374,6 +1608,97 @@ class Brain:
                     did_work=self._turn_has_tool_results()):
                 yield token
             return
+
+    async def _late_alternatives(self, route: dict, *, tried: set[str]) -> list[tuple[str, str]]:
+        """Cloud providers that could not be alternatives when this turn was
+        routed -- their status had not arrived -- and are READY now.
+
+        THE OTHER HALF OF NOT WAITING FOR EVERY PROBE. The router stops waiting
+        once its decision is settled (see _cloud_view), so a slower provider can
+        still be UNKNOWN when the turn starts, and UNKNOWN is never an
+        alternative. Without this, "Groq answered its probe first, then hit a
+        429" would skip a perfectly healthy Mistral whose probe landed 200 ms
+        later and go straight to the local model -- the one failover the
+        declared order exists for. Waiting for every probe up front would keep
+        it, at the price of a hung provider holding every turn for the whole
+        route wait. This asks only when the chain has run out.
+
+        It never starts a probe (``start=False``): the refresh this turn's
+        route began is shared if it is still out, otherwise what it cached is
+        read. It asks at most once per turn, waits at most the route budget,
+        and does nothing if the user has left AUTO meanwhile -- a turn that
+        began in AUTO must not reach a cloud provider it had not chosen after
+        the user asked for LOCAL. The usual chain rules still apply, cooldowns
+        included.
+        """
+        status = route.get("status") or {}
+        pending = [pid for pid in status.get("unmeasured") or () if pid not in tried]
+        if route.get("_late_checked") or not pending:
+            return []
+        route["_late_checked"] = True
+        mode = providers.ProviderMode.parse(getattr(self, "provider_mode", "AUTO"))
+        if mode != providers.ProviderMode.AUTO:
+            return []
+
+        # What is left of THIS TURN's status budget, not a fresh one: however a
+        # turn divides it between routing and failing over, a provider that
+        # does not answer its probe costs it ROUTE_WAIT_SECONDS at most.
+        deadline = route.get("_status_deadline")
+        budget = (max(0.0, deadline - time.monotonic()) if isinstance(deadline, (int, float))
+                  else provider_status.ROUTE_WAIT_SECONDS)
+        clouds, _ollama, _status = await asyncio.to_thread(
+            self._cloud_view, mode, start=False, need=tuple(pending), wait_seconds=budget)
+        tier = str(route.get("tier") or model_selection.ModelTier.FAST.value)
+        preferred = self.last_metadata.get("preferred_cloud") or self.preferred_cloud
+        ready = [pid for pid, payload in providers.cloud_candidates(preferred, clouds)
+                 if pid in pending and (payload or {}).get("state")
+                 == providers.ProviderState.READY.value]
+        if not ready:
+            return []
+        late_route = {
+            "provider": ready[0], "alternatives": ready[1:],
+            "cloud_models": {pid: providers.cloud_model_for(clouds.get(pid) or {}, tier)
+                             for pid in providers.CLOUD_PROVIDER_IDS},
+            "cloud_states": {pid: str((clouds.get(pid) or {}).get("state") or "")
+                             for pid in providers.CLOUD_PROVIDER_IDS},
+        }
+        chain, skipped = self._cloud_chain(late_route, "AUTO")
+        if skipped:
+            self.last_metadata.setdefault("cloud_skipped", []).extend(skipped)
+        # Discovery metadata for a provider that joins late comes from the same
+        # measurement that made it READY.
+        for pid, _model in chain:
+            if pid == providers.ProviderId.GOOGLE.value:
+                self._google_records = self._records_from(clouds.get(pid) or {})
+            elif pid == providers.ProviderId.MISTRAL.value:
+                self._mistral_records = self._records_from(clouds.get(pid) or {})
+        if chain:
+            logger.info("Late alternatives for this turn: %s",
+                        ",".join(pid for pid, _model in chain))
+        return chain
+
+    @staticmethod
+    def _log_route(route: dict) -> None:
+        """ONE line per turn: where it was routed, on what evidence, past whom.
+
+        Enough to answer "why did this turn not go to my preferred provider?"
+        from the log alone. Names, states and timings only -- never the prompt,
+        never a key, never a provider's own error text.
+        """
+        status = route.get("status") or {}
+        evidence = str(status.get("source") or "unknown")
+        if status.get("age_seconds") is not None:
+            evidence += f" age={status['age_seconds']}s"
+        if status.get("waited_ms"):
+            evidence += f" waited={status['waited_ms']}ms"
+        if status.get("unmeasured"):
+            evidence += " unmeasured=" + ",".join(status["unmeasured"])
+        passed = ",".join(f"{entry.get('provider')}:{entry.get('state')}"
+                          for entry in route.get("passed_over") or [])
+        logger.info("Route: mode=%s provider=%s model=%s tier=%s fallback=%s status=[%s]%s",
+                    route.get("mode"), route.get("provider"), route.get("model") or "-",
+                    route.get("tier"), bool(route.get("fallback")), evidence,
+                    f" passed_over=[{passed}]" if passed else "")
 
     def _turn_has_tool_results(self) -> bool:
         """True when this turn already executed a tool and recorded its result.
@@ -1819,6 +2144,17 @@ class Brain:
                                         "arguments": arguments}})
         return shaped
 
+    def _local_http_client(self, **kwargs: Any) -> httpx.AsyncClient:
+        """The HTTP client one local turn talks to Ollama through.
+
+        A seam, so a test can stand in for Ollama on THIS Brain. The suite used
+        to replace ``httpx.AsyncClient`` itself, which is the class for the
+        whole process: a Brain built while that was in place handed the Groq
+        SDK a client its own ``isinstance(..., httpx.AsyncClient)`` check could
+        no longer evaluate.
+        """
+        return httpx.AsyncClient(**kwargs)
+
     async def _ollama_fallback(self, message: str, reason: str = "",
                                system_prompt: str | None = None,
                                *, continue_turn: bool = False) -> AsyncIterator[str]:
@@ -1889,8 +2225,12 @@ class Brain:
                                   or local_messages[-1].get("content") != message):
             local_messages.append({"role": "user", "content": message})
 
-        client_timeout = httpx.Timeout(60.0, connect=10.0)
-        async with httpx.AsyncClient(timeout=client_timeout) as client:
+        client_timeout = httpx.Timeout(LOCAL_READ_TIMEOUT_SECONDS, connect=10.0)
+        # The shared TLS context: a fresh client parses the CA bundle on the
+        # event loop -- ~200 ms of stalled loop per local turn, for a plain
+        # http:// request to 127.0.0.1 that never uses TLS. See core.http_tls.
+        async with self._local_http_client(timeout=client_timeout,
+                                           verify=http_tls.shared_context()) as client:
             for round_num in range(MAX_TOOL_ROUNDS):
                 payload: dict = {
                     "model": selected_model,
@@ -1941,6 +2281,21 @@ class Brain:
                         self.conversation.append(tool_msg)
 
                 except Exception as exc:
+                    if _is_connection_failure(exc):
+                        # NOBODY ANSWERED, so there is nobody to ask again. The
+                        # retry below exists for a server that REFUSED what it
+                        # was sent -- a model that takes no tools -- and asking
+                        # a stopped Ollama a second time only doubled the wait
+                        # (a refused connection takes ~2 s on Windows) before
+                        # saying what the first attempt already knew. Same
+                        # outcome, same rollback, same sentence as that retry
+                        # failing.
+                        logger.warning("Ollama unreachable (round %d): %s; not retrying.",
+                                       round_num, type(exc).__name__)
+                        local_attempt["outcome"] = "unavailable"
+                        self._rollback_turn()
+                        yield "O modelo local ainda não está disponível. Abre as definições do Nano para verificar o estado local."
+                        return
                     logger.warning("Ollama com tools falhou (round %d): %s. A tentar stream sem tools.", round_num, exc)
                     stream_payload = {
                         "model": selected_model,

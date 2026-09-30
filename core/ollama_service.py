@@ -35,6 +35,8 @@ from typing import Callable
 
 import httpx
 
+from core import http_tls
+
 logger = logging.getLogger("nano.ollama")
 
 DEFAULT_BASE_URL = "http://127.0.0.1:11434"
@@ -105,10 +107,6 @@ def find_executable() -> str | None:
     return None
 
 
-_TLS_CONTEXT: ssl.SSLContext | None = None
-_TLS_LOCK = threading.Lock()
-
-
 def _tls() -> ssl.SSLContext:
     """httpx's default verification context, built once instead of per request.
 
@@ -117,12 +115,11 @@ def _tls() -> ssl.SSLContext:
     Windows, for a request to plain http://127.0.0.1 that never uses TLS. That
     was most of what a status check cost with Ollama RUNNING. Verification is
     unchanged: this is exactly the context httpx would otherwise rebuild.
+
+    It is the PROCESS-WIDE context now (core.http_tls), shared with every cloud
+    client, rather than a second copy that only this module used.
     """
-    global _TLS_CONTEXT
-    with _TLS_LOCK:
-        if _TLS_CONTEXT is None:
-            _TLS_CONTEXT = httpx.create_ssl_context()
-        return _TLS_CONTEXT
+    return http_tls.shared_context()
 
 
 def api_available(base_url: str = DEFAULT_BASE_URL, *, timeout: float = 2.0) -> bool:

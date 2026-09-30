@@ -60,7 +60,30 @@ class FailureType(str, Enum):
     BAD_REQUEST = "BAD_REQUEST"
     MODEL_UNAVAILABLE = "MODEL_UNAVAILABLE"
     CANCELLED = "CANCELLED"
+    # No credential in this process any more: the user removed the key while
+    # a turn was already on its way to the provider. Not AUTH_ERROR -- nothing
+    # was refused, and "a chave foi recusada" would send them to fix a key that
+    # is not there. See ProviderNotConfigured.
+    NOT_CONFIGURED = "NOT_CONFIGURED"
     UNKNOWN_PROVIDER_ERROR = "UNKNOWN_PROVIDER_ERROR"
+
+
+class ProviderNotConfigured(RuntimeError):
+    """A turn reached a provider for which this process holds no client.
+
+    Routing never STARTS a turn on such a provider -- the chain skips it as
+    ``not_configured`` -- so this only happens when the credential is removed
+    while the turn is in flight: the round that follows finds the client gone.
+    Raising this instead of reaching for the old client is what makes removing
+    a key final; raising it instead of a synthetic 401 is what keeps the
+    sentence the user reads true.
+
+    Carries nothing but the provider id.
+    """
+
+    def __init__(self, provider: str):
+        super().__init__(f"{provider}: no credential configured in this process")
+        self.provider = str(provider or "")
 
 
 #: Failures where trying the other provider is the right answer: the request
@@ -71,12 +94,18 @@ class FailureType(str, Enum):
 #: on it would be a regression -- AUTO already recovered from arbitrary
 #: exceptions before this module existed. CLOUD mode still never falls back, so
 #: a user who asked for cloud-only keeps getting the honest error.
+#:
+#: NOT_CONFIGURED is eligible for the same reason the chain SKIPS a provider
+#: with no credential before a turn starts: the request is fine and another
+#: provider can serve it. Refusing here would make the outcome depend on
+#: whether the key disappeared a moment before the turn or a moment into it.
 FALLBACK_ELIGIBLE: frozenset[FailureType] = frozenset({
     FailureType.RATE_LIMIT,
     FailureType.TIMEOUT,
     FailureType.CONNECTION_ERROR,
     FailureType.SERVER_ERROR,
     FailureType.MODEL_UNAVAILABLE,
+    FailureType.NOT_CONFIGURED,
     FailureType.UNKNOWN_PROVIDER_ERROR,
 })
 
@@ -113,6 +142,9 @@ _DEFAULT_COOLDOWNS: dict[FailureType, float] = {
     FailureType.AUTH_ERROR: 0.0,
     FailureType.BAD_REQUEST: 0.0,
     FailureType.CANCELLED: 0.0,
+    # Local state, already known to routing: the chain skips a provider with
+    # no client. A cooldown would only outlive a key the user re-adds at once.
+    FailureType.NOT_CONFIGURED: 0.0,
 }
 
 
@@ -180,6 +212,7 @@ class ProviderFailure:
                                      "Verifica-a em Definições → Inteligência Artificial."),
             FailureType.BAD_REQUEST: f"O pedido enviado ao {name} foi recusado.",
             FailureType.MODEL_UNAVAILABLE: f"O modelo pedido não está disponível no {name}.",
+            FailureType.NOT_CONFIGURED: f"O {name} já não tem uma chave de API configurada.",
             FailureType.CANCELLED: "O pedido foi cancelado.",
             FailureType.UNKNOWN_PROVIDER_ERROR: f"O {name} não respondeu.",
         }.get(self.type, f"O {name} não respondeu.")
@@ -234,6 +267,8 @@ def classify(exc: BaseException, *, provider: str = "groq") -> ProviderFailure:
 
     if isinstance(exc, asyncio.CancelledError):
         return ProviderFailure(FailureType.CANCELLED, provider, None, message)
+    if isinstance(exc, ProviderNotConfigured):
+        return ProviderFailure(FailureType.NOT_CONFIGURED, provider, None, message)
 
     status = _status_code(exc)
     if status == 429:
@@ -403,6 +438,7 @@ __all__ = [
     "FailureType",
     "ProviderCooldown",
     "ProviderFailure",
+    "ProviderNotConfigured",
     "all_cooldowns",
     "classify",
     "cooldown_for",

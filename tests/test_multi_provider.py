@@ -199,7 +199,9 @@ def build_brain(monkeypatch, *, mode="AUTO", preferred="google",
     brain.mistral_enabled = mistral_state is not SETUP
 
     ollama = FakeOllamaClient(ollama_script or [local_text("resposta local")])
-    monkeypatch.setattr("core.brain.httpx.AsyncClient", lambda **kw: ollama)
+    # THIS Brain's local client, not httpx.AsyncClient for the whole process
+    # (see tests/test_provider_fallback.build_brain).
+    monkeypatch.setattr(brain, "_local_http_client", lambda **kw: ollama)
     brain._fake_ollama = ollama                       # type: ignore[attr-defined]
 
     async def _describe(_mode):
@@ -1053,7 +1055,7 @@ def test_the_local_hop_is_not_reported_ok_before_the_local_model_answers(monkeyp
     brain = build_brain(monkeypatch, preferred="google",
                         google_script=[GoogleAPIError(503, "unavailable")],
                         groq_script=[FakeGroqError(500, message="server error")])
-    monkeypatch.setattr("core.brain.httpx.AsyncClient", lambda **kw: dead)
+    monkeypatch.setattr(brain, "_local_http_client", lambda **kw: dead)
     run(collect(brain, "olá"))
 
     shaped = response_meta.for_message(brain.last_metadata)

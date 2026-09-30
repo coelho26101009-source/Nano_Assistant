@@ -79,6 +79,9 @@ _FAILURE_CATEGORY: dict[str, str] = {
     "BAD_REQUEST": "bad_request",
     "MODEL_UNAVAILABLE": "model_unavailable",
     "CANCELLED": "cancelled",
+    # The key was removed while the turn was in flight: the same fact the
+    # chain reports as setup_required when it is known before the turn starts.
+    "NOT_CONFIGURED": "setup_required",
     "UNKNOWN_PROVIDER_ERROR": "other",
 }
 

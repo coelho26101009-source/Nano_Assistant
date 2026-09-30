@@ -156,9 +156,17 @@ def main_module():
     on whether an earlier test had happened to import them. The startup
     snapshot warm-up is deliberately NOT replayed: these tests measure the cold
     snapshot, and each gets its own cache.
+
+    main() also builds the shared TLS context before eel serves (core.http_tls),
+    so the first key saved in a session does not parse the CA bundle on the
+    hub. Replayed for the same reason: without it, whether a key change paid
+    that parse depended on whether some earlier test had already made an HTTP
+    client. test_a_key_change_parses_no_ca_bundle_on_the_hub pins that no key
+    change parses one either way.
     """
     import core.main as module
     module.audio_feedback.prewarm()
+    module.http_tls.prewarm()
     return module
 
 
@@ -414,6 +422,51 @@ def test_no_status_call_waits_on_a_hung_cloud_provider(bridge, main_module, hung
         assert payload["groq"]["secret"]["configured"] is True
         if payload["groq"]["state"] == ProviderState.UNKNOWN.value:
             assert payload["route"] is None and payload["routePending"] is True
+
+
+_VALID = {"ok": True, "detail": "ok", "models": ["m-1"], "suggested_model": "m-1"}
+
+KEY_CHANGES = [
+    ("set_cloud_api_key", ["mistral", "mistral-" + "1" * 24]),
+    ("remove_cloud_api_key", ["mistral"]),
+    ("set_groq_api_key", ["gsk_" + "1" * 48]),
+    ("remove_groq_api_key", []),
+]
+
+
+@pytest.mark.parametrize("name,args", KEY_CHANGES, ids=[name for name, _ in KEY_CHANGES])
+def test_a_key_change_parses_no_ca_bundle_on_the_hub(bridge, main_module, monkeypatch,
+                                                     hung_endpoint, name, args):
+    """The CAUSE of the intermittent 0.53-0.60 s above, pinned without a clock.
+
+    A key change reloads the Brain's credentials on eel's hub, and that used
+    to build a new AsyncGroq -- whose fresh SSL context parses certifi's whole
+    CA bundle: ~200 ms, and twice with a proxy configured, which is exactly
+    this module's hung-provider set-up. A timing threshold can only notice
+    that when the machine is slow enough; counting the parses on the hub
+    notices it every time, on every OS.
+
+    The provider's answer to the validation is faked: this is about what the
+    hub does, and the real request would go to the hung endpoint.
+    """
+    import ssl
+
+    bridge.configure_cloud("GROQ_API_KEY", via=hung_endpoint.url)
+    monkeypatch.setattr(providers, "test_mistral", lambda key=None: dict(_VALID))
+    monkeypatch.setattr(providers, "test_groq", lambda key=None: dict(_VALID))
+    hub = threading.current_thread()
+    parses: list[bool] = []
+    real = ssl.SSLContext.load_verify_locations
+
+    def counting(self, *a, **k):
+        parses.append(threading.current_thread() is hub)
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(ssl.SSLContext, "load_verify_locations", counting)
+    (_slow_s, value), (cheap_s, _) = dispatch((name, args), ("get_voice_diagnostics", []))
+    assert value["ok"] is True, value
+    assert sum(parses) == 0, f"{sum(parses)} CA-bundle parse(s) on eel's hub during {name}"
+    assert cheap_s < CHEAP_LIMIT, f"get_voice_diagnostics waited {cheap_s:.2f}s behind {name}"
 
 
 def test_choosing_a_cloud_model_waits_for_the_account_off_the_hub(bridge, main_module,

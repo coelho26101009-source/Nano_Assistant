@@ -58,7 +58,7 @@ from core.agent_orchestrator import AgentOrchestrator
 from core.agent_registry import AgentRegistry
 from core.tool_execution import ToolExecutor
 from core.background_worker import BackgroundTaskWorker
-from core import (audio_feedback, desktop_bridge, google_provider, mistral_provider,
+from core import (audio_feedback, desktop_bridge, google_provider, http_tls, mistral_provider,
                   ollama_service,
                   provider_failures, provider_status, providers, response_meta,
                   secret_store, speech_filter, user_settings)
@@ -3709,6 +3709,12 @@ def main():
         "READY" if audio_ready.get("mixer") or audio_ready.get("pyaudio") else "DEGRADED",
         ", ".join(name for name in ("pygame", "pyaudio") if audio_ready.get(name)) or "no backend",
     )
+
+    # The same rule for the one TLS context every HTTP client shares: its CA
+    # bundle parse (~200 ms) must happen before eel serves, never inside the
+    # bridge call that saves the first key. Usually free by now -- the Ollama
+    # and provider warm-up threads above ask for it first. See core.http_tls.
+    http_tls.prewarm()
 
     voice_state = voice_runtime.status()
     _report(

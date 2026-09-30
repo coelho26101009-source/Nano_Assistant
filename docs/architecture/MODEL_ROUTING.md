@@ -54,7 +54,13 @@ One deliberate exception to *not attempting*: a provider in `SETUP_REQUIRED`
 (no credential, or no model chosen) is skipped, because the request cannot
 succeed and the right output is the setup message. Every other unhealthy state
 is still attempted, because the status snapshot behind it can be up to 45
-seconds old and a stale probe must not become a refusal to work.
+seconds old and a stale probe must not become a refusal to work. That includes
+`UNKNOWN`: a preferred provider whose status probe has not answered within the
+route wait (below) is still tried with its configured model.
+
+A CLOUD turn waits for the preferred provider's status and **no other**. The
+other cloud providers can never serve it, so their probes -- however slow --
+cannot delay it.
 
 ### AUTO — preferred cloud first, remaining clouds next, Ollama last
 
@@ -66,7 +72,11 @@ preferred cloud provider
 
 A hop is dropped from the chain, and the reason recorded, when the provider has
 no credential, no model, no client in this process, or is inside a cooldown from
-a recent rate limit.
+a recent rate limit. A provider whose status probe had not answered when the
+turn was routed is `UNKNOWN` and never a first choice; the route records it in
+`passed_over` when it came before the provider chosen. If the chain then runs
+out on a fallback-eligible failure, a provider whose status has **since**
+answered `READY` may still finish the turn -- see *Late alternatives* below.
 
 ### LOCAL — Ollama only
 
@@ -187,6 +197,117 @@ chain, because asking a provider we know is rate-limited costs latency, fails,
 and spends a budget that has not come back yet. In CLOUD it is still attempted —
 the user asked for that provider specifically.
 
+### What a chat turn waits for
+
+Status is evidence for a decision, not a prerequisite for sending. A fresh
+snapshot is used as it is. Otherwise the turn shares the one refresh in flight
+(or starts it) and waits **only until its decision is settled** — the rule
+`providers.route_pending` states, asked about the cloud half:
+
+| Mode | The turn stops waiting when |
+|---|---|
+| LOCAL | at once: no cloud provider is asked anything, so there is nothing to wait for |
+| CLOUD | the preferred provider has answered |
+| AUTO | every candidate up to the first `READY` one has answered |
+
+and never later than `provider_status.ROUTE_WAIT_SECONDS` (3 s). Each probe
+reports into the refresh the moment it lands, which is what makes stopping
+early possible. The refresh itself always completes in the background and is
+cached for the next turn and for the Settings page.
+
+Before this, a cold or expired snapshot made every turn wait for **every**
+configured provider's probe. Measured with one configured provider that
+accepted connections and never answered: 10.5 s per turn in AUTO and 10.6 s in
+CLOUD, although the preferred provider had answered at once and was the one
+that answered. Both are now ~0 s; a hung *preferred* provider in AUTO costs the
+route wait and is then passed over.
+
+### Late alternatives
+
+Stopping early means a provider can still be `UNKNOWN` when a turn starts, and
+`UNKNOWN` is never an alternative. So when the chain runs out on a
+fallback-eligible failure in AUTO, the Brain looks once more
+(`Brain._late_alternatives`): a provider whose probe has **since** answered
+`READY` joins the chain, under every usual rule (credential, model, cooldown).
+This is what keeps *Groq rate-limited → Mistral finishes* working when Groq's
+probe happened to land first. The lookup:
+
+* never **starts** a probe — it shares the refresh the turn's route began, or
+  reads what that refresh cached;
+* waits only for what is left of the same per-turn budget, so a hung provider
+  costs a turn `ROUTE_WAIT_SECONDS` at most, however the turn divides it;
+* happens at most once per turn;
+* does nothing if the user has switched away from AUTO meanwhile: a turn that
+  began in AUTO does not reach a cloud provider it had not already chosen after
+  the user asked for LOCAL.
+
+## Failover policy
+
+`core/provider_failures.py` classifies every provider exception once; the class
+decides whether another provider may finish the turn.
+
+| Failure | AUTO | CLOUD | Cooldown |
+|---|---|---|---|
+| `RATE_LIMIT` (429) | next provider | honest error | the longer of `Retry-After` and the token reset, 2-120 s |
+| `TIMEOUT` (408, read/connect timeout) | next provider | honest error | 15 s |
+| `CONNECTION_ERROR` (DNS, refused, offline) | next provider | honest error | 15 s |
+| `SERVER_ERROR` (5xx) | next provider | honest error | 20 s |
+| `MODEL_UNAVAILABLE` (404) | next provider | honest error | 60 s |
+| `NOT_CONFIGURED` (key removed mid-turn) | next provider | honest error | none |
+| `UNKNOWN_PROVIDER_ERROR` | next provider | honest error | 10 s |
+| `AUTH_ERROR` (401/403) | **stops**: the user must fix the key | honest error | none |
+| `BAD_REQUEST` (other 4xx) | **stops**: our request was wrong | honest error | none |
+| `CANCELLED` | **stops**, nothing else is started | — | none |
+
+Three rules sit above the table. **CLOUD never substitutes a provider.** **A
+half-streamed answer is never replaced** by a second one. **No provider is
+retried within a turn**: each is asked at most once, and the chain is bounded by
+the number of providers. Failure sentences name the provider that failed and
+never carry its raw error text.
+
+The local model follows the same spirit. If Ollama cannot be **reached** at all
+(connection refused or not answering the connect), the turn says so after one
+attempt; the retry without tools exists for a server that rejected what it was
+sent, and asking a stopped server twice only doubled the wait. A non-streamed
+local answer gets `LOCAL_READ_TIMEOUT_SECONDS` (180 s): 6 of the 53 local turns
+in the committed benchmark, sent in exactly this shape, took 67-124 s, and the
+old 60 s budget cut each of them off and re-asked without tools or history.
+
+## Client lifecycle and credentials
+
+* **One TLS context per process** (`core/http_tls.py`), shared by every HTTP
+  client Nano builds. httpx otherwise parses certifi's CA bundle for every
+  client: ~200 ms each on Windows, twice with a proxy. That parse used to run
+  on eel's hub whenever a key was saved or removed (the Groq client was rebuilt
+  there: 200-530 ms during which every other bridge call waited) and on the
+  chat event loop once per streamed Gemini/Mistral round and per local turn
+  (204-269 ms each). Verification is unchanged: it is httpx's own default
+  context, built once. `core.main` builds it before eel serves.
+* **A client is built for exactly one key, and only when that key changes.**
+  `reload_cloud_credentials` re-reads all three keys; an unchanged key keeps
+  its client and its open connection, a changed one gets a new client, and a
+  removed one leaves `None` before the call returns.
+* **A key removed mid-turn is final.** Every round reads its client afresh, so
+  the round after a removal fails as `NOT_CONFIGURED` — "the key is no longer
+  configured", never "the key was refused" — and AUTO continues on the next
+  provider under the table above.
+* Nothing is built in the background, so there is no late result that could
+  reinstate a client after a removal. Keys are compared in constant time and
+  never logged.
+
+## Offline and degraded networks
+
+| Situation | What happens |
+|---|---|
+| No internet, Ollama running, AUTO | probes fail fast (UNAVAILABLE); the turn answers locally, marked as a fallback |
+| No internet, Ollama running, CLOUD | the preferred provider is tried and the honest error shown; Ollama is not contacted |
+| No internet, Ollama down | "no provider available": one local attempt, then the plain sentence |
+| Network that accepts but never answers | status costs a turn at most `ROUTE_WAIT_SECONDS`; the chat request itself is bounded by the provider's own timeout (Groq: connect 5 s / read 60 s; Gemini and Mistral: connect 10 s / read 90 s) |
+| LOCAL, whatever the network | nothing leaves the machine; no cloud status probe either |
+
+No bridge call waits on any of these: status reads on eel's hub never touch the
+network (see `get_stale_ok`), and every wait above happens on a worker thread.
+
 ## Attribution: what the user is told
 
 A single "provider: groq (fallback)" is a true statement that answers the wrong
@@ -202,6 +323,18 @@ the remaining cooldown in seconds), `tier`, `task` and the memory accounting.
 `tier` is set on every branch. It was once dropped on both AUTO branches, so the
 diagnostics panel read `None` for it exactly when Nano had fallen back — the
 case the panel most needs to explain.
+
+The decision's own evidence travels beside it: `route_status` (was the status
+`cached` — with its age — `measured` while the turn waited, or `partial`, with
+the providers that had not answered) and `route_passed_over` (the AUTO
+candidates before the chosen one, each with the state that ruled it out). Both
+stay in the diagnostics scratchpad; the message allow-list does not persist
+them. Each turn also logs one line in this shape, with names, states and
+timings only — never a prompt, a key or a provider's error text:
+
+```
+Route: mode=AUTO provider=mistral model=… tier=FAST fallback=False status=[partial waited=3001ms unmeasured=groq] passed_over=[groq:UNKNOWN]
+```
 
 ## The Execution Ledger: failover must not repeat an effect
 
@@ -243,8 +376,13 @@ To add a cloud provider:
    evidence decision — see the benchmark);
 2. add a `describe_<provider>` returning the standard payload shape;
 3. register it in `_CLOUD_DESCRIBER_NAMES` / `_CLOUD_TESTER_NAMES`;
-4. add an adapter that fills the shared collector in `Brain._cloud_round`;
-5. add its secret slot to `core/secret_store.py`.
+4. add an adapter that fills the shared collector in `Brain._cloud_round`,
+   reading its client once per round and raising `ProviderNotConfigured` when
+   it is gone;
+5. build every httpx client it uses with `verify=http_tls.shared_context()`,
+   and give its transport a constant-time `holds_key()` so an unchanged key
+   keeps its client;
+6. add its secret slot to `core/secret_store.py`.
 
 The router, the cooldown registry, the settings surface and the diagnostics all
 key on the same id and need no further change.
