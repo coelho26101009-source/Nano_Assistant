@@ -27,6 +27,7 @@ If startup fails, the window stays open and prints the reason.
 | [design/README.md](design/README.md) | Visual identity and design decisions |
 | [PUBLIC_RELEASE_CHECKLIST.md](PUBLIC_RELEASE_CHECKLIST.md) | What is done and what genuinely blocks a public beta |
 | [RELEASING.md](RELEASING.md) | Versioning and the release process that does not exist yet |
+| [DEPENDENCIES.md](DEPENDENCIES.md) | Python dependency manifests, the hashed locks generated from them, and how to change either |
 
 The provider fallback order is backed by a committed measurement:
 [`../benchmarks/provider_routing/README.md`](../benchmarks/provider_routing/README.md).

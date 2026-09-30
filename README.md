@@ -156,13 +156,18 @@ conversas fica à esquerda, e a cápsula de voz funciona fora da janela principa
 - **Windows 10/11 x64**
 - **Python 3.12** — a versão testada no CI e a que o instalador embute
 - **Node.js 22.12 ou superior + npm** para Electron/frontend na primeira execução
-- dependências Python instaladas com `requirements.txt`
+- dependências Python instaladas a partir dos locks com hashes em `requirements/`
 - **Ollama** apenas se quiseres usar os modos AUTO/LOCAL
 - uma chave de API de pelo menos um provedor cloud, para AUTO/CLOUD
 
 ```bat
-python -m pip install -r requirements.txt
+python -m pip install --require-hashes -r requirements\build.lock
+python -m pip install --require-hashes --no-build-isolation -r requirements\runtime.lock
 ```
+
+Os locks fixam a versão exata e o hash de cada pacote, e são os mesmos que o CI
+testa e que o instalador embute. `requirements.txt` continua a ser o manifesto
+editado à mão; ver [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
 
 Para preparar o modelo local usado por omissão:
 
@@ -171,7 +176,12 @@ ollama pull qwen3:8b
 ```
 
 Capacidades opcionais (transcrição local, PDF, automação de browser, wake word)
-vivem em `requirements-optional.txt` e não são instaladas por omissão.
+vivem em `requirements-optional.txt` e não são instaladas por omissão. Para as
+instalar no Windows, com as mesmas garantias:
+
+```bat
+python -m pip install --require-hashes --no-build-isolation -r requirements\optional.lock
+```
 
 ### Abrir o Nano Desktop
 

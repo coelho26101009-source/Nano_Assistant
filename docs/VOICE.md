@@ -294,20 +294,21 @@ Optional voice setup dependencies:
 
 ## PyAudio setup
 
-Install with:
+PyAudio is part of the runtime lock, so the standard install already provides it
+(after `requirements/build.lock`; see [DEPENDENCIES.md](DEPENDENCIES.md)):
 
 ```bash
-pip install PyAudio
+python -m pip install --require-hashes --no-build-isolation -r requirements/runtime.lock
 ```
 
-If the package fails to build on Windows, check whether the Python version matches the available build dependencies and try a compatible Python interpreter.
+The lock pins a prebuilt wheel for CPython 3.12 on Windows. On any other interpreter or platform pip has to build PyAudio from source, which needs the PortAudio headers.
 
 ## STT setup
 
-For local recognition install:
+For local recognition install faster-whisper, pinned and hash-checked by the optional lock:
 
 ```bash
-pip install faster-whisper
+python -m pip install --require-hashes --no-build-isolation -c requirements/optional.lock faster-whisper
 ```
 
 If that dependency is not available, the system will report:
@@ -320,11 +321,7 @@ Reason: Required package is not installed.
 
 ## TTS setup
 
-For local speech output install:
-
-```bash
-pip install edge-tts
-```
+edge-tts is part of the runtime lock too, installed by the same command as PyAudio above.
 
 If unavailable, TTS stays disabled and the rest of the Nano continues to work in text mode.
 

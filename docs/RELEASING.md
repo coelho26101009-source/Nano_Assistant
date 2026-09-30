@@ -229,8 +229,10 @@ node test/packaged-smoke.js 'dist-electron/win-unpacked/Nano Assistant.exe'
 Pop-Location
 ```
 
-The runtime preparer stages a fresh embedded interpreter, verifies pinned
-download hashes and dependency imports, then replaces only `runtime/python`.
+The runtime preparer stages a fresh embedded interpreter, installs exactly
+`requirements/build.lock` and `requirements/runtime.lock` with every download
+hash-checked (see [DEPENDENCIES.md](DEPENDENCIES.md)), verifies dependency
+imports, then replaces only `runtime/python`.
 The package gate rejects missing resources, mismatched frontend version and
 private files. It never copies the broader `runtime/` developer-data tree.
 

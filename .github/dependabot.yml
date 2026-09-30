@@ -6,7 +6,7 @@
 # actually has -- confirmed against the dependency graph, which resolves 315 npm
 # packages, 20 PyPI packages and 10 actions:
 #
-#   /            requirements.txt, requirements-test.txt, requirements-optional.txt
+#   /            requirements*.txt (the manifests; hashed locks in requirements/)
 #   /frontend    the Next.js renderer
 #   /electron    the desktop shell and its build tooling
 #   /            .github/workflows/*.yml
@@ -44,7 +44,12 @@ updates:
 
   # -------------------------------------------------------------------- Python
   # The backend, the test suite and the optional extras all live in
-  # requirements*.txt at the repository root.
+  # requirements*.txt at the repository root. Those are the human-maintained
+  # manifests, and they are all this entry updates. Every install reads the
+  # hashed locks in requirements/*.lock instead, which
+  # scripts/lock_python_deps.py generates from the manifests; Dependabot does
+  # not regenerate them, so its Python pull requests fail the "Python
+  # dependency locks" CI job until someone does (docs/DEPENDENCIES.md).
   - package-ecosystem: pip
     directory: /
     schedule:

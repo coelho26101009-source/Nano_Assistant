@@ -1,0 +1,15 @@
+# Installers and the build backend. Installed into an interpreter BEFORE any
+# other Nano lock; generated lock: requirements/build.lock.
+#
+# Every Nano install runs with --no-build-isolation, and this is why. eel and
+# bottle-websocket are published only as source distributions, so pip has to
+# build them, and by default it does that in a throwaway environment into which
+# it downloads the newest setuptools -- unpinned, and outside --require-hashes,
+# which never reaches that download. Installing this locked backend first and
+# switching isolation off means every byte pip fetches is hash-verified. The
+# embedded runtime cannot use isolation at all: its ._pth ignores PYTHONPATH,
+# which is how pip hands an isolated environment to a build backend (see
+# scripts/prepare_windows_runtime.ps1).
+pip
+setuptools
+wheel

@@ -10,6 +10,7 @@ measurement, so `pytest` remains the single command that verifies everything.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -568,8 +569,15 @@ def test_prewarm_loads_the_audio_backends_itself():
     )
     if result.get("pygame"):
         assert "pygame" in sys.modules
-        # numpy is the expensive one, and pygame is what drags it in.
-        assert "numpy" in sys.modules
+        # numpy is the expensive one, and pygame is what drags it in -- when
+        # numpy is installed. It ships only with the optional voice stack
+        # (requirements/optional.lock), never with the runtime, and pygame
+        # skips it when it is absent. Asserting it unconditionally measured the
+        # machine instead of prewarm: it passed wherever the optional layer
+        # happened to be installed and failed on a clean runtime + test
+        # install, which has no numpy for a UI request to be first to load.
+        if importlib.util.find_spec("numpy") is not None:
+            assert "numpy" in sys.modules
 
 
 def test_prewarm_never_raises_even_with_no_audio_backend(monkeypatch):

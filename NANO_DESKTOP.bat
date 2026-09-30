@@ -71,7 +71,8 @@ if errorlevel 1 (
     echo  Startup failed.
     echo  Reason:    Required Python packages are missing in this interpreter.
     echo  Component: Dependencies
-    echo  Fix:       "%NANO_PY%" -m pip install -r requirements.txt
+    echo  Fix:       "%NANO_PY%" -m pip install --require-hashes -r requirements\build.lock
+    echo             "%NANO_PY%" -m pip install --require-hashes --no-build-isolation -r requirements\runtime.lock
     echo.
     goto :fail
 )

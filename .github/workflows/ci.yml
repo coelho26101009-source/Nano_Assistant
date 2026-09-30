@@ -49,12 +49,22 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-          cache-dependency-path: requirements-test.txt
+          cache-dependency-path: |
+            requirements/build.lock
+            requirements/test.lock
 
+      # EXACT VERSIONS, EVERY BYTE HASH-CHECKED. The locks are generated from
+      # the requirements*.txt manifests (docs/DEPENDENCIES.md), and test.lock
+      # shares every pin with runtime.lock, so this job tests the gevent, httpx
+      # and groq the packaged app ships rather than whatever was newest today.
+      # build.lock goes first because the test lock installs with
+      # --no-build-isolation: eel and bottle-websocket are source-only, and an
+      # isolated build would download an unpinned setuptools that
+      # --require-hashes never sees.
       - name: Install test dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements-test.txt
+          python -m pip install --require-hashes -r requirements/build.lock
+          python -m pip install --require-hashes --no-build-isolation -r requirements/test.lock
 
       - name: Run tests
         # -ra surfaces the skip reasons, which is how a silently-skipped
@@ -174,7 +184,9 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-          cache-dependency-path: requirements-test.txt
+          cache-dependency-path: |
+            requirements/build.lock
+            requirements/test.lock
 
       # The harnesses drive the bundle the frontend job already exported, so
       # the build happens once in this workflow rather than twice.
@@ -215,10 +227,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends xvfb
 
+      # The same two locked installs as the python job above, for the same
+      # reasons.
       - name: Install test dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements-test.txt
+          python -m pip install --require-hashes -r requirements/build.lock
+          python -m pip install --require-hashes --no-build-isolation -r requirements/test.lock
 
       # THE SCREEN MUST BE AT LEAST 1920x1080. chat-drive.js resizes the window
       # to 1920x1080 and asserts nothing is clipped there; on a smaller virtual
@@ -312,3 +326,28 @@ jobs:
               sys.exit(1)
           print("Every workflow declares an explicit permissions block.")
           PY
+
+  # ------------------------------------------------------- dependency locks
+  # Every Python install -- the jobs above, the packaged runtime, a developer
+  # setup -- reads the hashed locks in requirements/, which
+  # scripts/lock_python_deps.py generates from the requirements*.txt manifests.
+  # This regenerates all of them from scratch with the pinned compiler and
+  # fails on any difference: a manifest edited without regenerating, a lock
+  # edited by hand (a changed hash included), or a pin the anchor no longer
+  # allows. Resolution is anchored to a fixed upload date, so a release
+  # published after the anchor cannot turn this red on its own.
+  dependency-locks:
+    name: Python dependency locks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install the pinned lock compiler
+        run: python -m pip install --require-hashes -r requirements/tools.lock
+
+      - name: Locks match their manifests
+        run: python scripts/lock_python_deps.py --check

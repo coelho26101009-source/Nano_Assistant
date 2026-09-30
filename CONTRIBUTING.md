@@ -14,9 +14,11 @@ Nano needs **Windows** for the PC Control features, **Python 3.12** and
 tests skip elsewhere.
 
 ```bash
-# Backend
-python -m pip install -r requirements.txt
-python -m pip install -r requirements-test.txt   # test-only, no audio/GUI wheels
+# Backend: exact, hash-checked versions from the locks (docs/DEPENDENCIES.md).
+# build.lock goes first; the other locks install with --no-build-isolation.
+python -m pip install --require-hashes -r requirements/build.lock
+python -m pip install --require-hashes --no-build-isolation -r requirements/runtime.lock
+python -m pip install --require-hashes --no-build-isolation -r requirements/test.lock   # test-only
 
 # Frontend
 cd frontend && npm ci && npm run build
@@ -36,6 +38,22 @@ NANO.bat             # the same UI in a browser, for development
 
 An API key is not required to develop: Nano runs in LOCAL mode against Ollama,
 and the whole test suite runs without any credential.
+
+### Changing a Python dependency
+
+Edit the manifest — `requirements.txt`, `requirements-test.txt`,
+`requirements-optional.txt` or `requirements-build.txt` — then regenerate the
+locks with the pinned compiler and commit the manifest and its locks together:
+
+```bash
+python -m pip install --require-hashes -r requirements/tools.lock
+python scripts/lock_python_deps.py
+```
+
+Never edit `requirements/*.lock` by hand. CI's *Python dependency locks* job
+regenerates every lock from scratch and fails on any difference. How to refresh
+versions or take a single security fix is in
+[`docs/DEPENDENCIES.md`](docs/DEPENDENCIES.md).
 
 ## Testing
 

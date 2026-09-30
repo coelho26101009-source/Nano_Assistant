@@ -53,8 +53,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12.10'
-      - run: python -m pip install --upgrade pip
-      - run: python -m pip install -r requirements-test.txt
+      # The same hashed locks as ci.yml and the embedded runtime below; see
+      # docs/DEPENDENCIES.md for why build.lock is installed first.
+      - run: python -m pip install --require-hashes -r requirements/build.lock
+      - run: python -m pip install --require-hashes --no-build-isolation -r requirements/test.lock
       - run: pytest -q
 
   build:

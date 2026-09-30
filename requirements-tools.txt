@@ -1,0 +1,12 @@
+# The lock compiler; generated lock: requirements/tools.lock.
+#
+# uv turns the requirements*.txt manifests into the hashed locks in
+# requirements/ and does nothing else. Every install -- CI, the packaged Windows
+# runtime, a developer machine -- is plain pip reading those locks, so nobody
+# needs uv to install or run Nano, and it is never installed into Nano's
+# runtime.
+#
+# Pinned exactly, to a release older than the resolution anchor in
+# scripts/lock_python_deps.py. Another uv version may write the same resolution
+# differently, and the CI drift check would rightly report that as drift.
+uv==0.12.17

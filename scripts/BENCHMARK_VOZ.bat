@@ -43,8 +43,10 @@ if errorlevel 1 (
 if errorlevel 1 (
     echo.
     echo  Faltam dependencias do benchmark neste interpretador.
-    echo  Instala com:
-    echo      "%NANO_PY%" -m pip install faster-whisper PyAudio psutil
+    echo  Instala com as versoes fixadas nos locks:
+    echo      "%NANO_PY%" -m pip install --require-hashes -r requirements\build.lock
+    echo      "%NANO_PY%" -m pip install --require-hashes --no-build-isolation -r requirements\runtime.lock
+    echo      "%NANO_PY%" -m pip install --require-hashes --no-build-isolation -c requirements\optional.lock faster-whisper
     echo.
     pause
     exit /b 1

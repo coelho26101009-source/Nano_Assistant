@@ -77,8 +77,14 @@ if ((Get-FileHash -LiteralPath $getPip -Algorithm SHA256).Hash.ToLowerInvariant(
 if ($LASTEXITCODE -ne 0) { throw 'Failed to bootstrap pip into the embedded runtime.' }
 Remove-Item $getPip -Force -ErrorAction SilentlyContinue
 
-# setuptools and wheel have to be present in the interpreter itself, because
-# the install below cannot use pip's build isolation.
+# EXACT VERSIONS, EVERY BYTE HASH-CHECKED. Both installs below read the locks
+# that scripts/lock_python_deps.py generates from requirements-build.txt and
+# requirements.txt -- the same locks CI tests against -- so a runtime built today
+# and one built next month hold identical packages, and a download that does
+# not match its recorded sha256 stops the build (docs/DEPENDENCIES.md).
+#
+# pip, setuptools and wheel have to be present in the interpreter itself,
+# because the runtime install cannot use pip's build isolation.
 #
 # THE TRAP: eel is published only as a source distribution, so pip has to build
 # a wheel for it, and it normally does that in an isolated environment which it
@@ -87,15 +93,18 @@ Remove-Item $getPip -Force -ErrorAction SilentlyContinue
 # so the isolated environment is invisible and the build dies with
 # "Cannot import 'setuptools.build_meta'". Supplying the backend directly and
 # turning isolation off is the fix; the two are a pair and neither works alone.
+# Locking the backend is what makes that build reproducible too: an isolated
+# build would have downloaded whatever setuptools was newest, unhashed.
 & $python -m pip install --disable-pip-version-check --no-warn-script-location `
-    --no-cache-dir --index-url https://pypi.org/simple setuptools wheel
+    --no-cache-dir --index-url https://pypi.org/simple --require-hashes `
+    -r (Join-Path $root 'requirements\build.lock')
 if ($LASTEXITCODE -ne 0) { throw 'Failed to install the build backend into the embedded runtime.' }
 
 # The public index is named explicitly: a mirror configured on the build
 # machine has reported eel as unavailable before.
 & $python -m pip install --disable-pip-version-check --no-warn-script-location `
     --no-cache-dir --no-build-isolation --index-url https://pypi.org/simple `
-    -r (Join-Path $root 'requirements.txt')
+    --require-hashes -r (Join-Path $root 'requirements\runtime.lock')
 if ($LASTEXITCODE -ne 0) { throw 'Failed to install Nano runtime dependencies.' }
 
 # Caches are build-host droppings: they are large, they are not reproducible,
