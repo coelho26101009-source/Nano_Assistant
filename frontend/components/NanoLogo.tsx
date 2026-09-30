@@ -1,11 +1,11 @@
-/** The supplied NANO artwork, cropped and given transparency without redrawing it. */
+/** The supplied NANO artwork, resized from the unchanged master without redrawing it. */
 import React from "react";
 
 import { BRAND_NAME } from "../lib/brand";
 
-const SYMBOL = "/branding/nano-symbol-original.png";
+const SYMBOL = "/branding/nano-symbol.png";
 const WORDMARK = "/branding/nano-wordmark-original.png";
-const SYMBOL_RATIO = 870 / 685;
+const SYMBOL_RATIO = 360 / 289;
 const WORDMARK_RATIO = 334 / 103;
 
 export default function NanoLogo({

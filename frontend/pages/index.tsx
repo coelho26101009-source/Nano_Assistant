@@ -1072,7 +1072,7 @@ export default function Home() {
         <meta name="application-name" content={BRAND_NAME} />
         {/* The page background of each theme, so the frame and the page agree. */}
         <meta name="theme-color" content={theme === "light" ? "#FFFFFF" : "#181818"} />
-        <link rel="icon" type="image/png" href="/branding/nano-symbol-original.png" />
+        <link rel="icon" type="image/png" href="/branding/nano-symbol.png" />
       </Head>
 
       <div className="shell">

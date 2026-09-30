@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="frontend/public/branding/nano-symbol-original.png" alt="Nano" width="96" />
+  <img src="frontend/public/branding/nano-symbol.png" alt="Nano" width="96" />
 </p>
 
 <p align="center">
@@ -662,7 +662,7 @@ Para instalação e configuração da Beta, consulta o [guia da Beta](docs/BETA_
 ---
 
 <p align="center">
-  <img src="frontend/public/branding/nano-symbol-original.png" alt="Nano mark" width="52" />
+  <img src="frontend/public/branding/nano-symbol.png" alt="Nano mark" width="52" />
 </p>
 
 <p align="center">
