@@ -1,9 +1,9 @@
 # Support
 
-Nano is in active development and has **not had a public release**. There is no
-public installer download, no released build and no support contract. Local
-`0.1.0-beta.1` installers are available to build for validation. What follows is where to
-put each kind of message so it reaches the right place.
+Nano is in active development. The current public pre-release is
+[`0.2.0-beta.1`](https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.2.0-beta.1)
+for Windows x64. There is no support contract. What follows is where to put each
+kind of message so it reaches the right place.
 
 ## Choose the right channel
 

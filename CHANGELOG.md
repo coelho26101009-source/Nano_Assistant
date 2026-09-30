@@ -18,6 +18,35 @@ versioning policy.
 
 ---
 
+## [0.2.0-beta.1] - 2026-09-30
+
+The second public Beta. This remains a pre-release, with an unsigned Windows
+installer and manual updates.
+
+### Changed
+
+- Rebuilt the desktop interface around a dark-first NANO design, with clearer
+  navigation, conversation layout and responsive behavior.
+- Introduced the new NANO symbol and Windows app, tray and installer branding.
+  Replaced the symbol derivatives with ones generated from the supplied master
+  to remove bright edge artifacts on dark backgrounds.
+- Refined the Brain and Memory presentation and redesigned the external voice
+  overlay. Motion is more restrained and respects reduced-motion preferences.
+- Improved AUTO provider routing and bounded status waits and failover. LOCAL
+  and CLOUD modes remain isolated from the opposite provider path, and changes
+  to provider credentials refresh status more promptly.
+
+### Reliability and maintenance
+
+- Pinned Python build, runtime and test dependencies in hash-verified locks for
+  reproducible installs and packaged builds.
+- Removed an unused dependency, updated optional dependency ranges, upgraded
+  Next.js and Electron, and added stability and security test coverage.
+- Reduced startup and provider-status blocking, including stale Ollama probes
+  and work on the UI bridge and audio startup path.
+
+---
+
 ## [0.1.0-beta.1] - 2026-09-18
 
 The first public Beta. Pre-release: not a stable version, not 1.0.

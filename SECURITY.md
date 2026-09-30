@@ -6,18 +6,16 @@ not abstract. Reports are taken seriously and are welcome.
 
 ## Project status
 
-Nano is in **active development and has not had a public release**. There is no
-released version, no installer and no published build. Everything below
-describes the `main` branch.
+Nano is in **active development**. The current public release is a Beta;
+security fixes land on `main` and can be included in later Beta releases.
 
 | Version | Supported |
 | --- | --- |
 | `main` (development) | Yes — fixes land here |
-| Any tagged release | None exist yet |
+| `0.2.0-beta.1` | Current public Beta; update manually when a fix is released |
+| `0.1.0-beta.1` | Previous Beta; update to the current Beta |
 
-Because there is no release channel yet, there is also no backporting policy.
-When the first public beta ships, this table will list the versions that
-actually receive fixes.
+There is no automatic updater or promised backport schedule.
 
 ## Reporting a vulnerability
 

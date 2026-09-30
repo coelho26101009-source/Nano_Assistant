@@ -1,13 +1,14 @@
 # Releasing Nano
 
-**Current public release: [`0.1.0-beta.1`](https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.1.0-beta.1)**,
-published on 2026-09-18 as a GitHub **pre-release**. Only the unsigned NSIS x64
+**Current public release: [`0.2.0-beta.1`](https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.2.0-beta.1)**,
+published on 2026-09-30 as a GitHub **pre-release**. Only the unsigned NSIS x64
 installer and `SHA256SUMS.txt` are attached; the MSI is built by the workflow but
 not published. There is no automatic updater: Beta updates are manual.
 
-The Beta shipped with the open items in
+The first Beta shipped with the open items in
 [`PUBLIC_RELEASE_CHECKLIST.md`](PUBLIC_RELEASE_CHECKLIST.md) still unchecked,
-including clean Windows validation. They carry forward to the next release.
+including clean Windows validation. Clean-machine validation remains open for
+this Beta; local NSIS install, launch and uninstall were exercised instead.
 
 ## Versioning
 
@@ -31,7 +32,7 @@ automatically, which keeps a beta from looking like a finished product.
 `version.json` at the repository root is the single source of truth:
 
 ```json
-{ "product": "0.1.0-beta.1", "display": "v0.1.0-beta.1", "name": "Nano Assistant", "channel": "beta" }
+{ "product": "0.2.0-beta.1", "display": "v0.2.0-beta.1", "name": "Nano Assistant", "channel": "beta" }
 ```
 
 `core/version.py` and `frontend/lib/version.ts` read it. Before this existed
@@ -70,13 +71,14 @@ Then `cd electron && npm test` — the packaging suite checks all six files agre
 
 Windows Installer's `ProductVersion` field accepts only numeric
 `major.minor.build`, so the MSI records the numeric version and drops `-beta.1`.
-The executable's Windows `ProductVersion` metadata is also numeric `0.1.0.0`.
-Its readable `FileVersion`, the version displayed throughout Nano, package
-manifests and installer filenames retain the product identity `0.1.0-beta.1`.
+For the first Beta, the executable's Windows `ProductVersion` metadata was
+numeric `0.1.0.0`; for this Beta it is `0.2.0.0`. Its readable `FileVersion`,
+the version displayed throughout Nano, package manifests and installer
+filenames retain the product identity `0.2.0-beta.1`.
 Do not interpret numeric Windows metadata as a stable-release claim. The
 practical consequence: **Windows would not consider `0.1.0-beta.2` an upgrade
-over `0.1.0-beta.1` via MSI**, because both are `0.1.0.0`. Bump the numeric part
-for any MSI a user is expected to upgrade over.
+over `0.1.0-beta.1` via MSI**, because both would be `0.1.0.0`. The next Beta
+therefore uses `0.2.0-beta.1`; bump the numeric part for any later MSI upgrade.
 
 ## Release flow
 
@@ -89,8 +91,8 @@ for any MSI a user is expected to upgrade over.
   full test gate, green            ← required; see below
         │
         ▼
-  git tag -a v0.1.0-beta.1 -m "…"  ← annotated, signed if a key exists
-  git push origin v0.1.0-beta.1
+  git tag -a v0.2.0-beta.1 -m "…"  ← annotated, signed if a key exists
+  git push origin v0.2.0-beta.1
         │
         ▼
   CI (manual dispatch, publish_release: true)
@@ -98,7 +100,7 @@ for any MSI a user is expected to upgrade over.
         ├─ tests
         ├─ frontend build
         ├─ embedded Python runtime
-        ├─ electron-builder → Nano-Setup-0.1.0-beta.1-x64.exe, .msi
+        ├─ electron-builder → Nano-Setup-0.2.0-beta.1-x64.exe, .msi
         ├─ SHA256SUMS.txt
         │
         ▼
@@ -138,15 +140,15 @@ The `nano-test-gate` project skill is the canonical checklist.
 
 | Artifact | Purpose |
 | --- | --- |
-| `Nano-Setup-0.1.0-beta.1-x64.exe` | NSIS installer (primary, per user) |
-| `Nano-Setup-0.1.0-beta.1-x64.msi` | MSI, for managed environments |
-| `SHA256SUMS.txt` | Checksums for both |
+| `Nano-Setup-0.2.0-beta.1-x64.exe` | NSIS installer (primary, per user) |
+| `Nano-Setup-0.2.0-beta.1-x64.msi` | MSI, for managed environments |
+| `SHA256SUMS.txt` | Checksum for the published NSIS installer |
 
 Checksums are generated in CI and attached to the release, so a download can be
 verified independently of the transport:
 
 ```powershell
-Get-FileHash Nano-Setup-0.1.0-beta.1-x64.exe -Algorithm SHA256
+Get-FileHash Nano-Setup-0.2.0-beta.1-x64.exe -Algorithm SHA256
 ```
 
 ### Release notes
@@ -206,7 +208,8 @@ Stated plainly so nothing here reads as more finished than it is:
 * No code signing.
 * No update mechanism — a user with `0.1.0` will not learn that `0.2.0` exists.
 * A developer-host smoke does not prove installation on a clean Windows machine.
-* MSI prerelease-only upgrades need a numeric-version policy before Beta 2.
+* MSI prerelease upgrades require a numeric-version increment; this Beta uses
+  `0.2.0` so it is newer than the first Beta's `0.1.0`.
 
 ## Building and validating locally
 

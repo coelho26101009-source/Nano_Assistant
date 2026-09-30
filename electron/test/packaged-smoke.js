@@ -11,6 +11,7 @@ const os = require('os');
 const path = require('path');
 const net = require('net');
 const { spawn, execFileSync } = require('child_process');
+const expectedVersion = require('../../version.json').product;
 
 const executable = path.resolve(process.argv[2] || '');
 assert.ok(process.argv[2] && fs.statSync(executable).isFile(), 'Supply the packaged executable');
@@ -96,7 +97,7 @@ async function phase(restart) {
     assert.ok(ready, 'preload, backend bridge and production UI initialize');
     const status = await client.evaluate('window.nanoApp.getDesktopStatus()');
     assert.strictEqual(status.packaged, true);
-    assert.strictEqual(status.version, '0.1.0-beta.1');
+    assert.strictEqual(status.version, expectedVersion);
     assert.strictEqual(status.backend.running, true);
     assert.strictEqual(status.frontendReady, true);
     const onboarding = await client.evaluate('window.eel.get_onboarding_status()()');
@@ -117,6 +118,45 @@ async function phase(restart) {
       const conversations = await client.evaluate("window.eel.list_conversations('', 60, false)()");
       assert.ok(conversations.conversations.some((entry) => entry.title === 'Synthetic Beta smoke'), 'conversation survives restart');
       assert.ok(!await client.evaluate("Boolean(document.querySelector('#first-run-title'))"), 'completed guide does not return');
+      const branding = await client.evaluate("(() => { const mark = document.querySelector('.rail__brand .nano-mark'); return Boolean(mark && mark.complete && mark.naturalWidth > 0 && mark.src.endsWith('/branding/nano-symbol.png')); })()");
+      assert.ok(branding, 'corrected NANO symbol loads in the real packaged app');
+      const home = await client.call('Page.captureScreenshot', { format: 'png' });
+      fs.writeFileSync(path.join(profile, 'home.png'), Buffer.from(home.data, 'base64'));
+      assert.ok(await client.evaluate("(() => { const button = document.querySelector('button[aria-label=\"Recolher barra lateral\"]'); if (!button) return false; button.click(); return true; })()"), 'expanded rail can collapse');
+      await sleep(250);
+      assert.ok(await client.evaluate("Boolean(document.querySelector('button[aria-label=\"Abrir barra lateral\"]'))"), 'collapsed rail is visible');
+      await client.evaluate("document.querySelector('button[aria-label=\"Abrir barra lateral\"]').click()");
+      await client.evaluate("document.querySelector('button[data-section=\"memory\"]').click()");
+      await sleep(500);
+      assert.ok(await client.evaluate("Boolean(document.querySelector('button[data-section=\"memory\"][aria-current=\"page\"]'))"), 'Memory opens');
+      assert.ok(await client.evaluate("(() => { const tab = [...document.querySelectorAll('.stage__tabs .subtab')].find(e => e.textContent.includes('Second Brain')); if (!tab) return false; tab.click(); return true; })()"), 'Brain tab opens');
+      await sleep(500);
+      assert.ok(await client.evaluate("Boolean([...document.querySelectorAll('.stage__tabs .subtab')].find(e => e.textContent.includes('Second Brain') && e.getAttribute('aria-current') === 'page'))"), 'Brain renders');
+      const brain = await client.call('Page.captureScreenshot', { format: 'png' });
+      fs.writeFileSync(path.join(profile, 'brain.png'), Buffer.from(brain.data, 'base64'));
+      await client.evaluate("document.querySelector('button[data-section=\"settings\"]').click()");
+      await sleep(500);
+      assert.ok(await client.evaluate("Boolean(document.querySelector('.settings-layout'))"), 'Settings renders');
+      if (process.env.NANO_SMOKE_LOCAL_MODEL) {
+        const selected = await client.evaluate(`window.eel.set_local_model(${JSON.stringify(process.env.NANO_SMOKE_LOCAL_MODEL)})()`);
+        assert.ok(selected.ok, `local model selection failed: ${selected.error || 'unknown'}`);
+        const mode = await client.evaluate("window.eel.set_provider_mode('LOCAL')()");
+        assert.ok(mode.ok && mode.mode === 'LOCAL', 'LOCAL mode activates');
+        const thread = await client.evaluate("window.eel.create_conversation('Local Beta smoke')()");
+        assert.ok(thread.ok, 'local smoke conversation starts');
+        const ack = await client.evaluate("window.eel.send_message('Reply with one short greeting.', 'nano-local-smoke')()");
+        assert.ok(ack.ok && ack.accepted, 'LOCAL turn is accepted');
+        let answered = false;
+        for (let i = 0; i < 120; i++) {
+          const history = await client.evaluate("window.eel.get_conversation_history()()");
+          if (history.some((entry) => entry.role === 'assistant')) { answered = true; break; }
+          await sleep(1000);
+        }
+        assert.ok(answered, 'LOCAL turn receives an answer');
+        const meta = await client.evaluate("window.eel.get_last_response_meta()()");
+        assert.strictEqual(meta.provider, 'ollama', 'LOCAL answer came from Ollama');
+        report.localTurn = { ok: true, provider: meta.provider, model: meta.model };
+      }
     }
     ids = family(child.pid);
     report.phases.push({ restart, packaged: status.packaged, version: status.version,
