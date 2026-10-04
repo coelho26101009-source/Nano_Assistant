@@ -29,6 +29,31 @@ EDGES CARRY NO AUTHORITY
 Like memories, nodes are text. Nothing in this module can grant a permission,
 and no relation type here is consulted by the policy engine. ``depends_on`` is a
 note about the user's world, not a capability.
+
+WHO OWNS WHAT: DERIVED STATE FOLLOWS ITS SOURCE
+-----------------------------------------------
+The graph holds two kinds of state, and forgetting depends on telling them
+apart.
+
+* ``origin='manual'`` -- a node the user created, or one whose content they
+  edited, and an edge drawn through :meth:`KnowledgeGraph.link`. It is the
+  user's own data: it survives without any memory behind it, and derivation
+  never writes over its summary.
+* ``origin='derived'`` -- a node or edge that exists BECAUSE active memories
+  imply it. It is a cache, not a copy: :meth:`KnowledgeGraph.sync_derived`
+  makes it equal to what the active memories support, so a derived node lives
+  exactly as long as one of them names it, carries the text of one of them,
+  counts them rather than the times it was re-derived, and goes when the last
+  one is deleted, archived, demoted or edited away. Its evidence is the
+  ``knowledge_links`` rows of kind ``memory``.
+
+A manual node can still have memory evidence -- a memory may name what the user
+created -- and the sync keeps that evidence exact without touching the text.
+
+When the user deletes a node, renames one, or removes an edge that memories
+still imply, ``knowledge_suppressions`` records which memory's derivation they
+removed, so rebuilding from the memories does not undo them. It holds a memory
+id and a slug, never text, and goes with the memory (``ON DELETE CASCADE``).
 """
 from __future__ import annotations
 
@@ -36,8 +61,9 @@ import json
 import logging
 import sqlite3
 import threading
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Sequence
+from typing import Any, Iterable, Sequence
 
 from core import text_normalize
 from core.memory_schema import new_id
@@ -79,6 +105,55 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def node_target(slug: str) -> str:
+    """The suppression key for a node one memory would derive."""
+    return f"node:{slug}"
+
+
+def edge_target(source_slug: str, relation: str, target_slug: str) -> str:
+    """The suppression key for an edge one memory would derive.
+
+    In slug space, not id space: a node that is deleted and later re-derived
+    gets a new id, and the suppression must still recognise it.
+    """
+    if relation in SYMMETRIC_RELATIONS and target_slug < source_slug:
+        source_slug, target_slug = target_slug, source_slug
+    return f"edge:{source_slug}|{relation}|{target_slug}"
+
+
+@dataclass
+class DerivedNode:
+    """One node the active memories support, as the sync must leave it."""
+
+    title: str
+    node_type: str
+    summary: str
+    #: Supporting memory ids, the representative one first.
+    evidence: list[str] = field(default_factory=list)
+    #: Source conversations of that evidence. Filtered to live ones on apply.
+    conversations: set[str] = field(default_factory=set)
+
+
+@dataclass
+class DerivedGraph:
+    """Everything the active memories support, keyed by slug.
+
+    ``edges`` maps ``(source slug, target slug, relation)`` to the number of
+    distinct memories behind the edge. ``targets`` lists, per active memory,
+    every node and edge it derives BEFORE suppressions are applied, which is
+    how a suppression that no longer matches anything is recognised as stale.
+    """
+
+    nodes: dict[str, DerivedNode] = field(default_factory=dict)
+    edges: dict[tuple[str, str, str], int] = field(default_factory=dict)
+    targets: dict[str, set[str]] = field(default_factory=dict)
+
+
+def derived_edge_weight(support: int) -> float:
+    """1.0 for one memory, +0.5 for each further one: the scale ``link`` uses."""
+    return 1.0 + 0.5 * (max(1, int(support)) - 1)
+
+
 def _tags(value: Any) -> list[str]:
     if isinstance(value, str):
         parts = value.split(",")
@@ -108,7 +183,7 @@ class KnowledgeGraph:
     # -------------------------------------------------------------- nodes
 
     def upsert_node(self, title: str, *, node_type: str = "topic", summary: str = "",
-                    body: str = "", tags: Any = None, origin: str = "derived",
+                    body: str = "", tags: Any = None, origin: str = "manual",
                     bump: bool = True) -> dict | None:
         """Create the node, or recognise the one that is already there.
 
@@ -116,6 +191,13 @@ class KnowledgeGraph:
         Project", "nano project" and "Nano  Project" are one node rather than
         three. That is the single most important line of defence against a
         graph that grows a near-duplicate every time the user rephrases.
+
+        A call here is an explicit act, so the node is ``manual`` unless the
+        caller says otherwise; derivation goes through :meth:`sync_derived`.
+        Creating by hand a node that memories derived ADOPTS it -- and the
+        memory's sentence it carried does not become the user's summary. The
+        reverse never happens: ``origin='derived'`` writes nothing over a node
+        the user owns.
         """
         clean_title = text_normalize.shorten(str(title or "").strip(), 90)
         if not clean_title:
@@ -125,18 +207,24 @@ class KnowledgeGraph:
         try:
             with self._lock:
                 existing = self.conn.execute(
-                    "SELECT id, mention_count FROM knowledge_nodes WHERE slug=?", (slug,)
+                    "SELECT id, origin FROM knowledge_nodes WHERE slug=?", (slug,)
                 ).fetchone()
                 if existing:
                     node_id = existing[0]
+                    owned = existing[1] == "manual"
+                    writes_content = origin == "manual" or not owned
                     fields = ["updated_at=?"]
                     params: list = [stamp]
                     if bump:
                         fields.append("mention_count = mention_count + 1")
-                    if summary:
+                    if origin == "manual" and not owned:
+                        fields.append("origin='manual'")
+                        if not summary:
+                            fields.append("summary=''")
+                    if summary and writes_content:
                         fields.append("summary=?")
                         params.append(text_normalize.shorten(summary, 400))
-                    if body:
+                    if body and writes_content:
                         fields.append("body=?")
                         params.append(str(body)[:4000])
                     params.append(node_id)
@@ -221,11 +309,27 @@ class KnowledgeGraph:
                     node_type: str | None = None, summary: str | None = None,
                     body: str | None = None, tags: Any = None,
                     pinned: bool | None = None) -> dict:
+        """Edit a node from the Second Brain.
+
+        Changing what a DERIVED node says -- its title, summary or body -- makes
+        it the user's (``origin='manual'``): what they typed must outlive the
+        memory that first produced the node, and a later sync must not
+        overwrite it. The memory's sentence does not come along: when the edit
+        leaves the summary alone, the derived copy is cleared. Saving the text
+        unchanged is not an edit. Type, tags and pinning are presentation and
+        leave the node derived.
+
+        A rename also records that the memories behind the node no longer
+        derive its OLD name, or rebuilding from them would bring it back as a
+        second node beside the renamed one.
+        """
         node = self.get_node(node_id)
         if node is None:
             return {"ok": False, "error": "unknown_node"}
         fields: list[str] = []
         params: list = []
+        renamed_from: str | None = None
+        content_changed = False
         if title is not None:
             clean = text_normalize.shorten(str(title).strip(), 90)
             if not clean:
@@ -240,15 +344,21 @@ class KnowledgeGraph:
                         "detail": "já existe um nó com este nome"}
             fields += ["title=?", "slug=?"]
             params += [clean, slug]
+            content_changed = clean != node["title"]
+            if slug != node["slug"]:
+                renamed_from = node["slug"]
         if node_type is not None:
             fields.append("type=?")
             params.append(str(node_type))
         if summary is not None:
+            clean_summary = text_normalize.shorten(summary, 400)
             fields.append("summary=?")
-            params.append(text_normalize.shorten(summary, 400))
+            params.append(clean_summary)
+            content_changed = content_changed or clean_summary != node["summary"]
         if body is not None:
             fields.append("body=?")
             params.append(str(body)[:4000])
+            content_changed = content_changed or str(body)[:4000] != node["body"]
         if tags is not None:
             fields.append("tags=?")
             params.append(json.dumps(_tags(tags), ensure_ascii=False))
@@ -257,14 +367,21 @@ class KnowledgeGraph:
             params.append(1 if pinned else 0)
         if not fields:
             return {"ok": False, "error": "nothing_to_update"}
+        if content_changed and node["origin"] != "manual":
+            fields.append("origin='manual'")
+            if summary is None:
+                fields.append("summary=''")
         fields.append("updated_at=?")
         params += [_now(), str(node_id)]
         try:
             with self._lock:
+                if renamed_from is not None:
+                    self._suppress(self._evidence(node_id), node_target(renamed_from))
                 self.conn.execute(
                     f"UPDATE knowledge_nodes SET {', '.join(fields)} WHERE id=?", params)
                 self.conn.commit()
         except sqlite3.Error as exc:
+            self.conn.rollback()
             logger.exception("Falha a atualizar o nó %s", node_id)
             return {"ok": False, "error": "write_failed", "detail": str(exc)}
         updated = self.get_node(node_id)
@@ -279,11 +396,17 @@ class KnowledgeGraph:
         the cascade only fires while ``PRAGMA foreign_keys`` is on, and a graph
         with an edge pointing at a node that no longer exists is a graph that
         renders a line into empty space.
+
+        The memories that still name the node are recorded as suppressed for
+        it, so the next sync does not derive it straight back from them. A
+        memory that names it AFTER the deletion is new evidence and may.
         """
-        if self.get_node(node_id) is None:
+        node = self.get_node(node_id)
+        if node is None:
             return {"ok": False, "error": "unknown_node"}
         try:
             with self._lock:
+                self._suppress(self._evidence(node_id), node_target(node["slug"]))
                 edges = self.conn.execute(
                     "DELETE FROM knowledge_edges WHERE source_id=? OR target_id=?",
                     (str(node_id), str(node_id))).rowcount or 0
@@ -293,6 +416,7 @@ class KnowledgeGraph:
                 self.conn.execute("DELETE FROM knowledge_nodes WHERE id=?", (str(node_id),))
                 self.conn.commit()
         except sqlite3.Error as exc:
+            self.conn.rollback()
             logger.exception("Falha a apagar o nó %s", node_id)
             return {"ok": False, "error": "delete_failed", "detail": str(exc)}
         if self.index is not None:
@@ -318,6 +442,10 @@ class KnowledgeGraph:
     def link(self, source_id: str, target_id: str, *, relation: str = DEFAULT_RELATION,
              weight: float = 1.0) -> dict:
         """Connect two nodes. Self-links and dangling ends are refused.
+
+        A call here is an explicit act, so the edge is ``manual`` and survives
+        any sync; derived edges are written by :meth:`sync_derived` alone.
+        Linking over a derived edge makes it the user's.
 
         TWO RULES THAT KEEP THE EDGE SET HONEST, both enforced here so no caller
         has to remember them.
@@ -349,9 +477,11 @@ class KnowledgeGraph:
             with self._lock:
                 self.conn.execute(
                     "INSERT INTO knowledge_edges (id, source_id, target_id, relation,"
-                    " weight, created_at, updated_at) VALUES (?,?,?,?,?,?,?)"
+                    " weight, created_at, updated_at, origin)"
+                    " VALUES (?,?,?,?,?,?,?,'manual')"
                     " ON CONFLICT(source_id, target_id, relation) DO UPDATE SET"
-                    "  weight = knowledge_edges.weight + 0.5, updated_at=excluded.updated_at",
+                    "  weight = knowledge_edges.weight + 0.5, updated_at=excluded.updated_at,"
+                    "  origin = 'manual'",
                     (new_id("edge"), str(source_id), str(target_id), relation,
                      float(weight), stamp, stamp))
                 self.conn.commit()
@@ -397,7 +527,8 @@ class KnowledgeGraph:
         counted twice because it was stored twice has not been mentioned twice.
 
         A row that is merely pointing the wrong way, with no twin, is turned
-        round rather than deleted.
+        round rather than deleted. If either twin was drawn by the user, the
+        survivor is the user's.
 
         Returns how many rows were removed, so a caller can log a measured
         number instead of announcing a cleanup it did not verify.
@@ -409,7 +540,7 @@ class KnowledgeGraph:
         try:
             with self._lock:
                 rows = self.conn.execute(
-                    "SELECT id, source_id, target_id, relation, weight"
+                    "SELECT id, source_id, target_id, relation, weight, origin"
                     f" FROM knowledge_edges WHERE relation IN ({placeholders})",
                     tuple(sorted(SYMMETRIC_RELATIONS))).fetchall()
                 groups: dict[tuple[str, str, str], list] = {}
@@ -430,13 +561,16 @@ class KnowledgeGraph:
                                 "DELETE FROM knowledge_edges WHERE id=?", (member[0],))
                             removed += 1
                     weight = max(float(member[4] or 0.0) for member in members)
+                    origin = ("manual" if any(member[5] == "manual" for member in members)
+                              else keeper[5])
                     if len(members) > 1 or str(keeper[1]) != left:
                         self.conn.execute(
                             "UPDATE knowledge_edges SET source_id=?, target_id=?,"
-                            " weight=?, updated_at=? WHERE id=?",
-                            (left, right, weight, stamp, keeper[0]))
+                            " weight=?, origin=?, updated_at=? WHERE id=?",
+                            (left, right, weight, origin, stamp, keeper[0]))
                 self.conn.commit()
         except sqlite3.Error:
+            self.conn.rollback()
             logger.exception("Falha a colapsar ligações simétricas duplicadas")
             return 0
         if removed:
@@ -444,19 +578,36 @@ class KnowledgeGraph:
         return removed
 
     def unlink(self, source_id: str, target_id: str, relation: str | None = None) -> dict:
+        """Remove an edge. A derived one stays removed for the memories behind it.
+
+        Any memory linked to BOTH ends is one that could derive the edge, so
+        each of them is suppressed for it; suppressing one that never did is
+        harmless, missing one that did would let the next sync draw it again.
+        """
         params: list = [str(source_id), str(target_id)]
-        clause = "source_id=? AND target_id=?"
+        clause = "e.source_id=? AND e.target_id=?"
         if relation:
-            clause += " AND relation=?"
+            clause += " AND e.relation=?"
             params.append(str(relation))
         try:
             with self._lock:
-                removed = self.conn.execute(
-                    f"DELETE FROM knowledge_edges WHERE {clause}", params).rowcount or 0
+                rows = self.conn.execute(
+                    "SELECT e.id, e.relation, e.origin, s.slug, t.slug"
+                    "  FROM knowledge_edges e"
+                    "  LEFT JOIN knowledge_nodes s ON s.id = e.source_id"
+                    "  LEFT JOIN knowledge_nodes t ON t.id = e.target_id"
+                    f" WHERE {clause}", params).fetchall()
+                shared = set(self._evidence(source_id)) & set(self._evidence(target_id))
+                for edge_id, edge_relation, origin, source_slug, target_slug in rows:
+                    if origin != "manual" and source_slug and target_slug:
+                        self._suppress(shared, edge_target(source_slug, edge_relation,
+                                                           target_slug))
+                    self.conn.execute("DELETE FROM knowledge_edges WHERE id=?", (edge_id,))
                 self.conn.commit()
         except sqlite3.Error as exc:
+            self.conn.rollback()
             return {"ok": False, "error": "delete_failed", "detail": str(exc)}
-        return {"ok": True, "removed": removed}
+        return {"ok": True, "removed": len(rows)}
 
     def edges_for(self, node_id: str, *, limit: int = 60) -> list[dict]:
         try:
@@ -540,6 +691,309 @@ class KnowledgeGraph:
             return removed
         except sqlite3.Error:
             return 0
+
+    # ------------------------------------------------------- derived state
+
+    def _evidence(self, node_id: str) -> list[str]:
+        """Memories recorded as evidence for a node. The caller holds the lock."""
+        return [str(row[0]) for row in self.conn.execute(
+            "SELECT ref_id FROM knowledge_links WHERE node_id=? AND kind='memory'",
+            (str(node_id),))]
+
+    def _suppress(self, memory_ids: Iterable[str], target: str) -> None:
+        """Record that these memories must not derive ``target`` again.
+
+        Runs inside the caller's transaction, under the caller's lock. Only a
+        memory that exists is recorded: the row is deleted with the memory, so
+        it can never outlive what it refers to.
+        """
+        stamp = _now()
+        for memory_id in sorted({str(value) for value in memory_ids if value}):
+            self.conn.execute(
+                "INSERT OR IGNORE INTO knowledge_suppressions (memory_id, target, created_at)"
+                " SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM memories WHERE id=?)",
+                (memory_id, target, stamp, memory_id))
+
+    def suppressions(self) -> dict[str, set[str]]:
+        """Every recorded suppression, grouped by memory id.
+
+        A read failure propagates: deriving without them would rebuild exactly
+        what the user deleted, so the caller must not proceed as if there were
+        none.
+        """
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT memory_id, target FROM knowledge_suppressions").fetchall()
+        grouped: dict[str, set[str]] = {}
+        for memory_id, target in rows:
+            grouped.setdefault(str(memory_id), set()).add(str(target))
+        return grouped
+
+    def sync_derived(self, desired: DerivedGraph, *, grow: bool = True) -> dict:
+        """Make the derived half of the graph exactly what ``desired`` says.
+
+        One transaction, under the store's lock from the first read to the last
+        index write: no other writer can change the graph between what was read
+        and what is written, no reader sees a node and its index disagree, and
+        a failure rolls back to the graph as it was.
+
+        * A derived node ``desired`` does not name is deleted, with its edges,
+          links and index entry. A manual node is kept and only loses evidence.
+        * A derived node's summary is its representative evidence's text, and
+          every mention count is the number of memories behind the node (plus
+          one for a manual node, the user's own mention). Recomputed, never
+          incremented, so a second pass changes nothing.
+        * Memory and conversation links equal the evidence; a conversation that
+          no longer exists is not linked again.
+        * Derived edges equal ``desired``, weighted by their evidence; manual
+          edges are never touched.
+        * A suppression an active memory no longer matches is dropped.
+
+        ``grow=False`` creates nothing new -- no node, no edge. That is how
+        forgetting still runs while long-term memory is switched off.
+
+        Nothing is written when nothing differs, timestamps included.
+        """
+        report = dict.fromkeys(
+            ("nodesCreated", "nodesRemoved", "nodesUpdated", "edgesCreated",
+             "edgesRemoved", "edgesUpdated", "linksAdded", "linksRemoved",
+             "suppressionsDropped"), 0)
+        stamp = _now()
+        reindex: set[str] = set()
+        removed: list[str] = []
+        with self._lock:
+            try:
+                ids = self._sync_nodes(desired, grow, stamp, report, reindex, removed)
+                self._sync_edges(desired, ids, grow, stamp, report)
+                self._drop_stale_suppressions(desired, report)
+                self.conn.commit()
+            except sqlite3.Error:
+                self.conn.rollback()
+                logger.exception("Falha a sincronizar o Second Brain com as memórias")
+                return {"ok": False, "error": "sync_failed"}
+            if self.index is not None and (removed or reindex):
+                for node_id in removed:
+                    self.index.remove(f"node:{node_id}", commit=False)
+                for node_id in sorted(reindex):
+                    node = self.get_node(node_id)
+                    if node:
+                        self._index(node, commit=False)
+                self._commit_index()
+        return {"ok": True, **report}
+
+    def _sync_nodes(self, desired: DerivedGraph, grow: bool, stamp: str, report: dict,
+                    reindex: set[str], removed: list[str]) -> dict[str, str]:
+        """Bring nodes and their links in line. Returns slug -> id for edges."""
+        rows = self.conn.execute(
+            "SELECT id, slug, summary, origin, mention_count FROM knowledge_nodes").fetchall()
+        links: dict[tuple[str, str], set[str]] = {}
+        for node_id, kind, ref_id in self.conn.execute(
+                "SELECT node_id, kind, ref_id FROM knowledge_links"):
+            links.setdefault((str(node_id), str(kind)), set()).add(str(ref_id))
+        live = self._live_conversations(
+            {ref for node in desired.nodes.values() for ref in node.conversations})
+
+        ids: dict[str, str] = {}
+        for node_id, slug, summary, origin, mentions in rows:
+            want = desired.nodes.get(slug)
+            manual = origin == "manual"
+            if want is None and not manual:
+                self.conn.execute("DELETE FROM knowledge_edges WHERE source_id=? OR target_id=?",
+                                  (node_id, node_id))
+                self.conn.execute("DELETE FROM knowledge_links WHERE node_id=?", (node_id,))
+                self.conn.execute("DELETE FROM knowledge_nodes WHERE id=?", (node_id,))
+                removed.append(node_id)
+                report["nodesRemoved"] += 1
+                continue
+            ids[slug] = node_id
+            evidence = set(want.evidence) if want else set()
+            conversations = (want.conversations & live) if want else set()
+            self._set_links(node_id, "memory", links.get((node_id, "memory"), set()),
+                            evidence, stamp, report)
+            self._set_links(node_id, "conversation",
+                            links.get((node_id, "conversation"), set()),
+                            conversations, stamp, report)
+            new_summary = summary if manual else want.summary
+            new_mentions = len(evidence) + (1 if manual else 0)
+            if new_summary != summary or new_mentions != int(mentions or 0):
+                self.conn.execute(
+                    "UPDATE knowledge_nodes SET summary=?, mention_count=?, updated_at=?"
+                    " WHERE id=?", (new_summary, new_mentions, stamp, node_id))
+                report["nodesUpdated"] += 1
+                if new_summary != summary:
+                    reindex.add(node_id)
+
+        if grow:
+            for slug, want in desired.nodes.items():
+                if slug in ids:
+                    continue
+                node_id = new_id("node")
+                self.conn.execute(
+                    "INSERT INTO knowledge_nodes (id, slug, title, type, summary, body, tags,"
+                    " pinned, mention_count, origin, created_at, updated_at)"
+                    " VALUES (?,?,?,?,?,'','[]',0,?,'derived',?,?)",
+                    (node_id, slug, want.title, want.node_type, want.summary,
+                     len(want.evidence), stamp, stamp))
+                self._set_links(node_id, "memory", set(), set(want.evidence), stamp, report)
+                self._set_links(node_id, "conversation", set(), want.conversations & live,
+                                stamp, report)
+                ids[slug] = node_id
+                reindex.add(node_id)
+                report["nodesCreated"] += 1
+        return ids
+
+    def _set_links(self, node_id: str, kind: str, have: set[str], want: set[str],
+                   stamp: str, report: dict) -> None:
+        for ref_id in sorted(have - want):
+            self.conn.execute(
+                "DELETE FROM knowledge_links WHERE node_id=? AND kind=? AND ref_id=?",
+                (node_id, kind, ref_id))
+            report["linksRemoved"] += 1
+        for ref_id in sorted(want - have):
+            self.conn.execute(
+                "INSERT OR IGNORE INTO knowledge_links (id, node_id, kind, ref_id, created_at)"
+                " VALUES (?,?,?,?,?)", (new_id("link"), node_id, kind, ref_id, stamp))
+            report["linksAdded"] += 1
+
+    def _live_conversations(self, conversation_ids: set[str]) -> set[str]:
+        """Which of these conversations still exist. A deleted one is not evidence."""
+        ids = sorted(str(value) for value in conversation_ids if value)
+        live: set[str] = set()
+        for start in range(0, len(ids), 400):
+            chunk = ids[start:start + 400]
+            marks = ",".join("?" * len(chunk))
+            live.update(str(row[0]) for row in self.conn.execute(
+                f"SELECT id FROM conversations WHERE id IN ({marks})", chunk))
+        return live
+
+    def _sync_edges(self, desired: DerivedGraph, ids: dict[str, str], grow: bool,
+                    stamp: str, report: dict) -> None:
+        """Make derived edges equal what the memories support. Manual ones stay."""
+        rows = self.conn.execute(
+            "SELECT id, source_id, target_id, relation, weight, origin FROM knowledge_edges"
+        ).fetchall()
+        manual = {(str(r[1]), str(r[2]), str(r[3])) for r in rows if r[5] == "manual"}
+        derived = {(str(r[1]), str(r[2]), str(r[3])): (r[0], float(r[4] or 0.0))
+                   for r in rows if r[5] != "manual"}
+
+        wanted: dict[tuple[str, str, str], int] = {}
+        for (left, right, relation), support in desired.edges.items():
+            source, target = ids.get(left), ids.get(right)
+            if not source or not target or source == target:
+                continue
+            # The same canonical direction ``link`` stores.
+            if relation in SYMMETRIC_RELATIONS and str(target) < str(source):
+                source, target = target, source
+            key = (source, target, relation)
+            wanted[key] = max(wanted.get(key, 0), int(support))
+        # And the same rule: a generic relation never lands on top of a
+        # specific one for the same pair, whoever drew the specific one.
+        specific = {frozenset(key[:2]) for key in (*wanted, *manual)
+                    if key[2] != DEFAULT_RELATION}
+        wanted = {key: support for key, support in wanted.items()
+                  if not (key[2] == DEFAULT_RELATION and frozenset(key[:2]) in specific)}
+
+        for key, (edge_id, _weight) in derived.items():
+            if key not in wanted:
+                self.conn.execute("DELETE FROM knowledge_edges WHERE id=?", (edge_id,))
+                report["edgesRemoved"] += 1
+        for key, support in wanted.items():
+            if key in manual:
+                continue
+            weight = derived_edge_weight(support)
+            if key in derived:
+                edge_id, current = derived[key]
+                if current != weight:
+                    self.conn.execute(
+                        "UPDATE knowledge_edges SET weight=?, updated_at=? WHERE id=?",
+                        (weight, stamp, edge_id))
+                    report["edgesUpdated"] += 1
+            elif grow:
+                self.conn.execute(
+                    "INSERT INTO knowledge_edges (id, source_id, target_id, relation, weight,"
+                    " created_at, updated_at, origin) VALUES (?,?,?,?,?,?,?,'derived')",
+                    (new_id("edge"), key[0], key[1], key[2], weight, stamp, stamp))
+                report["edgesCreated"] += 1
+
+    def _drop_stale_suppressions(self, desired: DerivedGraph, report: dict) -> None:
+        """Forget a suppression once its memory no longer derives the target.
+
+        An edit that stops naming the entity has nothing left to suppress, and
+        keeping the row would keep a fragment of the old sentence (its slug).
+        Archived and candidate memories keep theirs: restoring one must not
+        bring back what the user deleted.
+        """
+        for memory_id, target in self.conn.execute(
+                "SELECT memory_id, target FROM knowledge_suppressions").fetchall():
+            targets = desired.targets.get(str(memory_id))
+            if targets is not None and str(target) not in targets:
+                self.conn.execute(
+                    "DELETE FROM knowledge_suppressions WHERE memory_id=? AND target=?",
+                    (memory_id, target))
+                report["suppressionsDropped"] += 1
+        # The foreign key already does this while it is enforced; this covers
+        # a connection that has it switched off.
+        report["suppressionsDropped"] += self.conn.execute(
+            "DELETE FROM knowledge_suppressions"
+            " WHERE memory_id NOT IN (SELECT id FROM memories)").rowcount or 0
+
+    def repair_index(self) -> dict:
+        """Make every node's retrieval entry match the node, and drop the rest.
+
+        Both index tables are checked -- the row ``search`` returns and the FTS
+        row it MATCHes against -- because a stale FTS row still selects a node
+        by text the node no longer has. An entry already correct is not
+        rewritten, so a repair over a consistent index writes nothing.
+        """
+        if self.index is None:
+            return {"updated": 0, "removed": 0}
+        updated = removed = 0
+        with self._lock:
+            try:
+                nodes = [_row_to_node(row) for row in self.conn.execute(
+                    f"SELECT {_NODE_COLUMNS} FROM knowledge_nodes").fetchall()]
+                entries = {str(row[0]): (str(row[1] or ""), str(row[2] or ""), row[3])
+                           for row in self.conn.execute(
+                               "SELECT entry_id, title, body, metadata FROM retrieval_entries"
+                               " WHERE kind='node'").fetchall()}
+                fts: dict[str, list[tuple[str, str]]] = {}
+                if self.index.fts_available:
+                    for entry_id, title, body in self.conn.execute(
+                            "SELECT entry_id, title, body FROM retrieval_fts"
+                            " WHERE entry_id LIKE 'node:%'").fetchall():
+                        fts.setdefault(str(entry_id), []).append(
+                            (str(title or ""), str(body or "")))
+            except sqlite3.Error:
+                logger.exception("Falha a verificar o índice do Second Brain")
+                return {"updated": 0, "removed": 0}
+            alive: set[str] = set()
+            for node in nodes:
+                entry_id = f"node:{node['id']}"
+                alive.add(entry_id)
+                title, body, metadata = _index_fields(node)
+                stored = entries.get(entry_id)
+                current = (stored is not None and stored[:2] == (title, body)
+                           and _json_dict(stored[2]) == metadata)
+                if current and self.index.fts_available:
+                    current = fts.get(entry_id) == [(title, body)]
+                if not current:
+                    self._index(node, commit=False)
+                    updated += 1
+            for entry_id in sorted((set(entries) | set(fts)) - alive):
+                self.index.remove(entry_id, commit=False)
+                removed += 1
+            if updated or removed:
+                self._commit_index()
+        return {"updated": updated, "removed": removed}
+
+    def _commit_index(self) -> None:
+        """Commit a batch of index writes. The index is derived: a failure costs
+        retrieval until the next repair, never data, so it is logged, not raised."""
+        try:
+            self.conn.commit()
+        except sqlite3.Error:
+            self.conn.rollback()
+            logger.exception("Falha a gravar o índice do Second Brain")
 
     # -------------------------------------------------------------- graph
 
@@ -641,14 +1095,28 @@ class KnowledgeGraph:
         return {"nodes": nodes, "edges": edges,
                 "byType": {str(k): int(v) for k, v in by_type.items()}}
 
-    def _index(self, node: dict) -> bool:
+    def _index(self, node: dict, *, commit: bool = True) -> bool:
         if self.index is None:
             return False
-        body = " ".join(part for part in (node.get("summary"), node.get("body")) if part)
+        title, body, metadata = _index_fields(node)
         return self.index.upsert(
-            f"node:{node['id']}", kind="node", scope="", title=node["title"],
-            body=body or node["title"], created_at=node.get("createdAt") or _now(),
-            metadata={"nodeId": node["id"], "type": node.get("type")})
+            f"node:{node['id']}", kind="node", scope="", title=title, body=body,
+            created_at=node.get("createdAt") or _now(), metadata=metadata, commit=commit)
+
+
+def _index_fields(node: dict) -> tuple[str, str, dict]:
+    """(title, body, metadata) of a node's retrieval entry, as the index stores them."""
+    body = " ".join(part for part in (node.get("summary"), node.get("body")) if part)
+    return (str(node["title"]).strip(), str(body or node["title"]).strip(),
+            {"nodeId": node["id"], "type": node.get("type")})
+
+
+def _json_dict(raw: Any) -> dict:
+    try:
+        value = json.loads(raw) if raw else {}
+    except (ValueError, TypeError):
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 _NODE_COLUMNS = (
@@ -690,5 +1158,10 @@ __all__ = [
     "MAX_GRAPH_NODES",
     "NODE_TYPES",
     "RELATIONS",
+    "DerivedGraph",
+    "DerivedNode",
     "KnowledgeGraph",
+    "derived_edge_weight",
+    "edge_target",
+    "node_target",
 ]

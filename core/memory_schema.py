@@ -39,10 +39,12 @@ import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from core import text_normalize
+
 logger = logging.getLogger("nano.memory_schema")
 
 #: Bump this when a new step is added to ``_STEPS``.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 #: The silence that separates two conversations in the back-fill. Identical to
 #: SESSION_GAP_MS in frontend/lib/conversations.ts, which is the rule the rail
@@ -391,9 +393,61 @@ def _apply_v2(conn: sqlite3.Connection) -> dict:
     return {"conversations_created": conversations, "facts_imported": facts}
 
 
+# ---------------------------------------------------------------------- v3
+
+def _clear_copied_manual_summaries(conn: sqlite3.Connection) -> int:
+    """Remove memory sentences that v2 promotion wrote over MANUAL node summaries.
+
+    Under v2, deriving a node from a memory whose entity happened to share a
+    manual node's title overwrote that node's summary with the memory's
+    sentence. The user's own text was already gone, and what replaced it was a
+    copy of a memory the Memória page could later forget -- leaving the copy
+    behind, presented as the user's note.
+
+    The signature is exact: the summary is character for character the
+    shortened text of a memory the node is linked to. Nothing else is touched,
+    so a summary the user typed survives even when it mentions the same thing.
+    """
+    rows = conn.execute(
+        "SELECT n.id, n.summary, m.text FROM knowledge_nodes n"
+        "  JOIN knowledge_links l ON l.node_id = n.id AND l.kind = 'memory'"
+        "  JOIN memories m ON m.id = l.ref_id"
+        " WHERE n.origin = 'manual' AND n.summary <> ''").fetchall()
+    copied = {node_id for node_id, summary, text in rows
+              if summary == text_normalize.shorten(text, 400)}
+    for node_id in copied:
+        conn.execute("UPDATE knowledge_nodes SET summary='' WHERE id=?", (node_id,))
+    return len(copied)
+
+
+def _apply_v3(conn: sqlite3.Connection) -> dict:
+    """Give derived graph state a provenance it can be rebuilt from.
+
+    v2 could not tell an edge the user drew from an edge a memory implied, and
+    had no way to remember that the user deleted a node a memory still names,
+    so the graph could neither forget a memory nor respect a deletion. Every
+    edge an existing install holds is classified ``derived``: v2 offered no
+    interface for drawing an edge, so promotion is the only thing that wrote
+    one. See ``core.knowledge_graph`` for how both columns are used.
+    """
+    _add_column(conn, "knowledge_edges", "origin", "TEXT NOT NULL DEFAULT 'derived'")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS knowledge_suppressions (
+            memory_id  TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+            target     TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (memory_id, target)
+        )
+        """
+    )
+    return {"manual_summaries_cleared": _clear_copied_manual_summaries(conn)}
+
+
 #: (target version, description, step). Ordered, applied in sequence.
 _STEPS: tuple[tuple[int, str, object], ...] = (
     (2, "conversation threads, long-term memory and the knowledge graph", _apply_v2),
+    (3, "provenance for derived Second Brain state", _apply_v3),
 )
 
 

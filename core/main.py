@@ -2394,7 +2394,12 @@ def delete_memory(memory_id: str) -> dict:
 
 @eel.expose
 def clear_memories() -> dict:
-    """Forget every long-term memory. Conversations are NOT touched."""
+    """Forget every long-term memory. Conversations are NOT touched.
+
+    What the Second Brain derived from those memories goes with them before
+    this returns (see MemoryStack._memory_changed); nodes the user created or
+    edited by hand stay, without the memories' sentences.
+    """
     if not memory_stack.ready:
         return {"ok": False, "error": "memory_unavailable"}
     result = memory_stack.memories.clear()
@@ -2536,9 +2541,11 @@ def forget_all_memory_facts() -> dict:
 
     Conversation history is NOT touched. That is a separate decision with its
     own control: a user who wants Nano to stop knowing their preferences does
-    not necessarily want yesterday's chat destroyed. The Second Brain is left
-    standing for the same reason -- its nodes are deleted individually or
-    through their own "apagar tudo".
+    not necessarily want yesterday's chat destroyed. For the same reason the
+    Second Brain keeps the nodes the user created or edited by hand -- they are
+    deleted individually. What it DERIVED from the cleared memories does not
+    survive them: those nodes, edges and their index entries go before this
+    returns, or the forgotten sentences would still reach the model.
     """
     try:
         keys = list(memory.get_facts().keys())

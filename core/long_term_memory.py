@@ -54,7 +54,7 @@ import logging
 import sqlite3
 import threading
 from datetime import datetime, timezone
-from typing import Any, Iterable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 from core import memory_extraction, memory_safety, text_normalize
 from core.memory_schema import new_id
@@ -104,14 +104,39 @@ def _clean_tags(tags: Any) -> list[str]:
     return seen
 
 
+#: ``on_change(change, before, after)``: what changed ("remember", "update",
+#: "delete" or "clear") and the memory as it was and as it is now, ``None`` for
+#: absent. ``clear`` passes ``None`` for both.
+ChangeListener = Callable[[str, "dict | None", "dict | None"], None]
+
+
 class LongTermMemory:
-    """The store. Every write passes ``memory_safety.evaluate`` first."""
+    """The store. Every write passes ``memory_safety.evaluate`` first.
+
+    WHY THE STORE ANNOUNCES ITS CHANGES. The Second Brain is derived from the
+    active memories here, so every write that adds, removes or rewrites one has
+    to reach it -- including a write made directly on this object rather than
+    through the facade, which is exactly how the Memória page's edit and
+    "Esquecer tudo" reach it. Announcing from the store means no caller can
+    forget a memory and leave its derived copy behind.
+    """
 
     def __init__(self, conn: sqlite3.Connection, lock: threading.RLock,
-                 index: RetrievalIndex | None = None):
+                 index: RetrievalIndex | None = None, *,
+                 on_change: ChangeListener | None = None):
         self.conn = conn
         self._lock = lock
         self.index = index
+        self.on_change = on_change
+
+    def _changed(self, change: str, before: dict | None, after: dict | None) -> None:
+        """Tell the listener. Its failure never undoes the write that happened."""
+        if self.on_change is None:
+            return
+        try:
+            self.on_change(change, before, after)
+        except Exception:  # noqa: BLE001 - the memory write itself succeeded
+            logger.exception("Falha a propagar a alteração de memória (%s)", change)
 
     # ------------------------------------------------------------------ write
 
@@ -148,16 +173,18 @@ class LongTermMemory:
             0.55 if origin == "inferred" else 0.92)
         stamp = _now()
 
+        before: dict | None = None
         try:
             with self._lock:
                 existing = self.conn.execute(
-                    "SELECT id, importance, confidence, status FROM memories WHERE normalized=?",
+                    f"SELECT {_COLUMNS} FROM memories WHERE normalized=?",
                     (normalized,)).fetchone()
                 if existing:
-                    memory_id = existing[0]
+                    before = _row_to_memory(existing)
+                    memory_id = before["id"]
                     # Restating a fact makes it more certain, never less, and an
                     # explicit restatement promotes a candidate.
-                    new_confidence = max(float(existing[2] or 0.0), float(score))
+                    new_confidence = max(before["confidence"], float(score))
                     # THE MERGE RULE, AND THE ONE THING IT MUST NOT DO.
                     #
                     # An automatic capture may promote a CANDIDATE it now has
@@ -167,10 +194,10 @@ class LongTermMemory:
                     # resurrected it would be Nano overruling a decision it was
                     # told about. Only the user, or an explicit request in their
                     # own words, brings an archived memory back.
-                    new_status = existing[3]
+                    new_status = before["status"]
                     if origin != "inferred":
                         new_status = "active"
-                    elif resolved_status == "active" and existing[3] == "candidate":
+                    elif resolved_status == "active" and before["status"] == "candidate":
                         new_status = "active"
                     self.conn.execute(
                         "UPDATE memories SET text=?, kind=?, confidence=?, importance=?,"
@@ -202,6 +229,7 @@ class LongTermMemory:
             self._index(stored)
         logger.info("Memória %s (%s/%s): %s", "criada" if created else "atualizada",
                     kind, origin, memory_safety.redact(clean))
+        self._changed("remember", before, stored)
         return {"ok": True, "created": created, "memory": stored}
 
     def update(self, memory_id: str, *, text: str | None = None, kind: str | None = None,
@@ -267,10 +295,12 @@ class LongTermMemory:
         stored = self.get(memory_id)
         if stored:
             self._index(stored)
+        self._changed("update", current, stored)
         return {"ok": True, "memory": stored}
 
     def delete(self, memory_id: str) -> dict:
-        if self.get(memory_id) is None:
+        before = self.get(memory_id)
+        if before is None:
             return {"ok": False, "error": "unknown_memory"}
         try:
             with self._lock:
@@ -284,6 +314,7 @@ class LongTermMemory:
             return {"ok": False, "error": "delete_failed", "detail": str(exc)}
         if self.index is not None:
             self.index.remove(f"memory:{memory_id}")
+        self._changed("delete", before, None)
         return {"ok": True, "id": memory_id}
 
     def clear(self) -> dict:
@@ -300,6 +331,7 @@ class LongTermMemory:
             return {"ok": False, "error": "delete_failed", "detail": str(exc)}
         removed_index = self.index.clear_kind("memory") if self.index is not None else 0
         logger.info("Memória de longo prazo limpa: %d registo(s)", total)
+        self._changed("clear", None, None)
         return {"ok": True, "removed": total, "indexEntries": removed_index}
 
     def touch(self, memory_ids: Sequence[str]) -> None:
@@ -361,6 +393,24 @@ class LongTermMemory:
             memories = [m for m in memories
                         if needle in text_normalize.normalize(f"{m['text']} {' '.join(m['tags'])}")]
         return memories
+
+    def derivation_sources(self) -> list[dict]:
+        """EVERY active memory, in the order the Memória page lists them.
+
+        Deliberately uncapped. The Second Brain is rebuilt from this list, and
+        a node whose only evidence fell beyond a cap would be deleted as if
+        that evidence had been forgotten. The order decides which memory's
+        sentence a shared node shows: the one the user ranks first.
+        """
+        try:
+            with self._lock:
+                rows = self.conn.execute(
+                    f"SELECT {_COLUMNS} FROM memories WHERE status='active'"
+                    " ORDER BY pinned DESC, importance DESC, updated_at DESC, id").fetchall()
+        except sqlite3.Error:
+            logger.exception("Falha a ler as memórias ativas")
+            raise
+        return [_row_to_memory(row) for row in rows]
 
     def pinned(self, limit: int = 8) -> list[dict]:
         try:

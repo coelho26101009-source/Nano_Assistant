@@ -179,15 +179,20 @@ class RetrievalIndex:
 
     def upsert(self, entry_id: str, *, kind: str, title: str = "", body: str = "",
                scope: str = "", metadata: dict | None = None,
-               created_at: str | None = None) -> bool:
-        """Index one entry. Never raises: indexing must not fail a real write."""
+               created_at: str | None = None, commit: bool = True) -> bool:
+        """Index one entry. Never raises: indexing must not fail a real write.
+
+        ``commit=False`` leaves the write in the caller's transaction, for a
+        caller re-indexing many entries under the lock: one commit instead of
+        one fsync per entry.
+        """
         entry_id = str(entry_id or "").strip()
         if not entry_id:
             return False
         text = str(body or "").strip()
         heading = str(title or "").strip()
         if not text and not heading:
-            return self.remove(entry_id)
+            return self.remove(entry_id, commit=commit)
         stamp = created_at or _now()
         payload = json.dumps(metadata or {}, ensure_ascii=False)
         try:
@@ -207,19 +212,21 @@ class RetrievalIndex:
                         "INSERT INTO retrieval_fts (entry_id, title, body) VALUES (?,?,?)",
                         (entry_id, heading, text),
                     )
-                self.conn.commit()
+                if commit:
+                    self.conn.commit()
             return True
         except sqlite3.Error:
             logger.exception("Falha a indexar a entrada '%s'", entry_id)
             return False
 
-    def remove(self, entry_id: str) -> bool:
+    def remove(self, entry_id: str, *, commit: bool = True) -> bool:
         try:
             with self._lock:
                 self.conn.execute("DELETE FROM retrieval_entries WHERE entry_id=?", (entry_id,))
                 if self.fts_available:
                     self.conn.execute("DELETE FROM retrieval_fts WHERE entry_id=?", (entry_id,))
-                self.conn.commit()
+                if commit:
+                    self.conn.commit()
             return True
         except sqlite3.Error:
             logger.exception("Falha a remover a entrada '%s' do índice", entry_id)

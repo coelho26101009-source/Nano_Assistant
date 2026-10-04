@@ -496,15 +496,27 @@ def test_collapsing_leaves_a_directed_relation_alone(stack):
 
 def test_reconciling_collapses_the_duplicates_an_older_build_left(stack):
     """Wired into the pass that already exists to make derivation fixes visible
-    on a database that predates them."""
+    on a database that predates them.
+
+    The pair is one a memory really supports, plus the mirrored twin an older
+    build wrote beside it. Two evidence-less nodes joined by legacy rows -- the
+    first version of this test -- are now ghost state that reconciliation
+    REMOVES, so that setup could only pass by deleting both rows, which is the
+    opposite of what this test protects.
+    """
     stack.new_conversation()
-    left = stack.knowledge.upsert_node("Alfa", node_type="software")
-    right = stack.knowledge.upsert_node("Beta", node_type="software")
-    _legacy_edge(stack, "edge_a", left["id"], right["id"], "related_to")
-    _legacy_edge(stack, "edge_b", right["id"], left["id"], "related_to")
+    stack.remember("Uso Groq e Ollama.", kind="software")
+    left = stack.knowledge.node_by_title("Groq")
+    right = stack.knowledge.node_by_title("Ollama")
+    edges = stack.knowledge.graph()["edges"]
+    assert len(edges) == 1
+    _legacy_edge(stack, "edge_b", edges[0]["target"], edges[0]["source"], "related_to")
+    assert len(stack.knowledge.graph()["edges"]) == 2
 
     stack.reconcile_knowledge()
-    assert len(stack.knowledge.graph()["edges"]) == 1
+    edges = stack.knowledge.graph()["edges"]
+    assert len(edges) == 1
+    assert {edges[0]["source"], edges[0]["target"]} == {left["id"], right["id"]}
 
 
 # ================================== re-deriving the graph for memories that exist
@@ -520,9 +532,14 @@ def test_reconciling_gives_existing_memories_the_edges_the_new_rule_supports(sta
     kept showing them until new memories happened to arrive.
     """
     # A memory stored by the OLD rule: node derived, no subject, so no edge.
+    # Today the store announces every write and the memory is derived at once,
+    # so the announcement is switched off for this one write -- which is the
+    # state an older build left behind.
     stack.new_conversation()
+    listener, stack.memories.on_change = stack.memories.on_change, None
     stack.memories.remember("O meu PC tem uma GTX 1660 Ti.", kind="hardware",
                             origin="explicit")
+    stack.memories.on_change = listener
     node = stack.knowledge.upsert_node("GTX 1660 Ti", node_type="device",
                                        origin="derived")
     assert node is not None
@@ -531,6 +548,8 @@ def test_reconciling_gives_existing_memories_the_edges_the_new_rule_supports(sta
     stack.reconcile_knowledge()
 
     assert (memory_extraction.MACHINE_NODE_TITLE, "has", "GTX 1660 Ti") in _edges(stack)
+    # The node the old rule made is the one that gained the edge, not a twin.
+    assert stack.knowledge.node_by_title("GTX 1660 Ti")["id"] == node["id"]
 
 
 def test_reconciling_twice_changes_nothing(stack):

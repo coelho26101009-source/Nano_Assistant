@@ -211,7 +211,7 @@ existing installs are not stranded; see [`docs/README.md`](docs/README.md).
 | Conversation threads and messages | SQLite (`conversations`, `messages`) | Until you delete them | **Yes** — per thread, several at once, or all, from the conversation rail |
 | Thread summaries and per-thread facts | Same database | Deleted with their thread | Yes, with the thread |
 | Long-term memories | Same database (`memories`) | Until you forget them | **Yes** — Memória page, or Definições → Memória → "Esquecer tudo" |
-| Second Brain nodes and edges | Same database (`knowledge_nodes`, `knowledge_edges`, `knowledge_links`) | Until deleted | **Yes** — per node, on the Memória → Second Brain page |
+| Second Brain nodes and edges | Same database (`knowledge_nodes`, `knowledge_edges`, `knowledge_links`, `knowledge_suppressions`) | Derived ones: as long as an active memory supports them. Yours: until deleted | **Yes** — per node, on the Memória → Second Brain page; derived ones also go with their memories |
 | Retrieval index | Same database (`retrieval_entries`) | Follows its source row | Yes, by deleting the source |
 | Settings | `user_settings.json` in the data directory | Until changed | Yes, by editing or resetting |
 | API keys | `secrets.dat`, OS-encrypted (**DPAPI** on Windows) | Until removed | **Yes** — Definições → IA, per provider |
@@ -236,6 +236,21 @@ one still is discarded. Nothing here is sent anywhere to be classified.
 an explicit action of yours — never from raw message text — and writes an edge
 only when two nodes appear in the same memory. It is a store of entities derived
 from what you chose to keep, not a second copy of your conversation.
+
+What a memory contributed to it does not outlive the memory. When you delete,
+archive, edit, demote to candidate or forget a memory ("Esquecer tudo" on either
+page), every node and connection that existed only because of it is removed, a
+node another memory still supports is kept but stops showing the forgotten
+sentence, and their search-index entries change in the same operation — before
+the action returns, so the forgotten text is not sent to any provider in any
+mode. A node you created yourself, or whose summary you edited, is yours: it
+stays, without the memory's sentence. If you delete a node a memory still
+names, Nano records that (`knowledge_suppressions`: a memory id and the node's
+name key, never text, removed together with the memory) so it is not rebuilt
+from that memory. Each start re-checks the graph against your active memories,
+which also cleans up what older versions of Nano left behind; one exception it
+cannot detect is a node summary of yours that an older version overwrote with a
+memory that was then deleted, since nothing records what it said.
 
 **Screenshots** are written to disk because a person may want to look at them.
 They are deleted once they are older than an hour or once they are past the ten
@@ -303,7 +318,7 @@ link-local addresses, `file://` and other schemes are refused.
 | One conversation | Conversation rail → the thread's menu → "Apagar conversa" |
 | Several conversations at once | Conversation rail → selection mode → "Apagar N conversas" |
 | The messages of the conversation you are in | Definições → Privacidade → "Limpar conversa atual" |
-| Everything Nano remembers about you | Definições → Memória → "Esquecer tudo" |
+| Everything Nano remembers about you | Definições → Memória → "Esquecer tudo" (also removes what the Second Brain derived from those memories; nodes you created stay) |
 | One remembered fact | Memória page |
 | One Second Brain node | Memória → Second Brain → the node → "Apagar nó" |
 | An API key | Definições → IA, per provider |
