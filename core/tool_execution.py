@@ -229,11 +229,20 @@ def _pc_control_target(tool_name: str, args: dict) -> str | None:
         return f"power:{tool_name.rsplit('_', 1)[-1]}"
 
     # --------------------------------------------------------------- screen
-    if tool_name == "pc_screenshot_capture":
-        mode = str(args.get("mode") or "desktop").strip().lower()
+    if tool_name in {"pc_screenshot_capture", "pc_screen_read_text"}:
+        default = "desktop" if tool_name == "pc_screenshot_capture" else "active_window"
+        mode = str(args.get("mode") or default).strip().lower()
+        prefix = "screen" if tool_name == "pc_screenshot_capture" else "screen-text"
         if mode == "window":
-            return clamp(f"screen:{_window_target(args)}")
-        return f"screen:{mode}"
+            return clamp(f"{prefix}:{_window_target(args)}")
+        # A grant for monitor 1 must not capture monitor 2, and a grant for one
+        # rectangle must not read a different one.
+        if mode == "monitor":
+            return f"{prefix}:monitor:{args.get('monitor') or 'primary'}"
+        if mode == "region":
+            parts = ",".join(str(args.get(k)) for k in ("x", "y", "width", "height"))
+            return clamp(f"{prefix}:region:{parts}")
+        return f"{prefix}:{mode}"
 
     return tool_name
 

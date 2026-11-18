@@ -88,6 +88,7 @@ _APPROVAL_GATED_CAPABILITIES = frozenset({
     "pc.window.close",
     "pc.window.batch_close",
     "pc.screen.capture",
+    "pc.screen.read_text",
     "pc.clipboard.read",
     "pc.clipboard.write",
     "pc.clipboard.clear",

@@ -22,6 +22,15 @@ versioning policy.
 
 ### Added
 
+- **Read the text on screen, locally and only if you allow it.** New
+  `pc_screen_read_text` uses Windows' own OCR on the active window, a window, a
+  monitor or a region. It is off until Definições → Privacidade → "Ler texto
+  do ecrã" is on, always asks, refuses password managers and authenticators,
+  masks keys, passwords, card numbers and IBANs, returns at most 4000
+  characters, keeps no image, and its output is fenced as untrusted content.
+  Needs the optional pywinrt packages (added to `requirements/optional.lock`).
+- Screenshots can now capture **one monitor** (`mode=monitor`) or **a region**
+  (`mode=region`, clipped to the monitor), each bound to its own grant.
 - **Work modes are back, safely** (PC → Modos). A mode in `config/modes/*.yaml`
   compiles into ordinary PC Control actions (close apps, open apps and sites,
   set the volume, open a Windows Settings page); the page shows every step

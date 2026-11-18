@@ -721,7 +721,7 @@ def test_get_pc_activity_reports_confirmation_requirement_honestly(main_module, 
     # KeyError instead of testing the thing this test is actually about:
     # whether requiresConfirmation reflects the real per-capability policy.
     monkeypatch.setattr(windows, "list_windows", lambda **kw: [])
-    monkeypatch.setattr(screen, "capture", lambda mode, window=None: {
+    monkeypatch.setattr(screen, "capture", lambda mode, window=None, **_kw: {
         "subject": "ecrã", "path": "captura.png", "width": 1, "height": 1, "size_bytes": 0})
 
     manager = PermissionManager(confirmation_callback=lambda *a, **k: True)

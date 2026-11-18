@@ -1952,8 +1952,24 @@ def get_settings() -> dict:
             "stats": memory_stack.memories.stats() if memory_stack.ready else {},
             "knowledge": memory_stack.knowledge.stats() if memory_stack.ready else {},
         },
+        "screenText": _screen_text_settings(),
         "stored": user_settings.all_settings(),
         "runtime": get_runtime_info(),
+    }
+
+
+def _screen_text_settings() -> dict:
+    """Privacidade -> Ler texto do ecrã: the switch, and whether OCR can run here."""
+    try:
+        from core.pc_control import ocr
+        status = ocr.engine_status()
+    except Exception:
+        status = {"available": False, "reason": "error", "message": "Não consegui verificar o OCR."}
+    return {
+        "enabled": user_settings.get("screen_text_enabled", False) is True,
+        "available": bool(status.get("available")),
+        "reason": str(status.get("reason") or ""),
+        "message": str(status.get("message") or ""),
     }
 
 

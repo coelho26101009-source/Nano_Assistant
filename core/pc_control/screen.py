@@ -112,7 +112,9 @@ def cleanup(*, retention_seconds: float = RETENTION_SECONDS,
     return removed
 
 
-CAPTURE_MODES = ("desktop", "active_window", "window")
+CAPTURE_MODES = ("desktop", "active_window", "window", "monitor", "region")
+#: A region smaller than this is a mis-click, not a capture.
+MIN_REGION = 8
 #: What a capture with no `mode` means. Declared in the tool schema too,
 #: so an omitted mode and an explicit "desktop" are one identity.
 DEFAULT_CAPTURE_MODE = "desktop"
@@ -230,12 +232,54 @@ def _save(rows: list[bytes], width: int, height: int, *, scaled: bool,
     return payload
 
 
-def capture(mode: str = "desktop", *, window: dict | None = None) -> dict:
-    """Capture to a PNG and return its METADATA ONLY -- never any pixels.
+def _int(value, field: str) -> int:
+    if isinstance(value, bool):
+        raise PCControlError("invalid_input", f"'{field}' tem de ser um número.")
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise PCControlError("invalid_input", f"'{field}' tem de ser um número.") from None
+    if number != number or number in (float("inf"), float("-inf")):
+        raise PCControlError("invalid_input", f"'{field}' tem de ser um número.")
+    return int(round(number))
 
-    ``window`` is a window description from ``windows.resolve_window``; the
-    caller resolves it, because target binding for the permission grant has to
-    happen before this runs.
+
+def clamp_region(region: dict | None, monitors: list[dict]) -> tuple[int, int, int, int, bool]:
+    """(left, top, width, height, clamped) for a requested rectangle.
+
+    The rectangle is in screen pixels and is clipped to the monitor it starts
+    on, so a region can never reach past the visible screen into coordinates
+    that mean nothing. Pure, so it is tested without Windows.
+    """
+    region = region or {}
+    x, y = _int(region.get("x"), "x"), _int(region.get("y"), "y")
+    width, height = _int(region.get("width"), "width"), _int(region.get("height"), "height")
+    if width < MIN_REGION or height < MIN_REGION:
+        raise PCControlError("invalid_input",
+                             f"A região tem de ter pelo menos {MIN_REGION}x{MIN_REGION} pixéis.")
+    if not monitors:
+        raise PCControlError("unsupported", "Não consegui enumerar os monitores.")
+    home = None
+    for monitor in monitors:
+        left, top, right, bottom = monitor["bounds"]
+        if left <= x < right and top <= y < bottom:
+            home = monitor
+            break
+    if home is None:
+        raise PCControlError("invalid_input", "Esse ponto não está em nenhum monitor.")
+    left, top, right, bottom = home["bounds"]
+    clipped_right, clipped_bottom = min(x + width, right), min(y + height, bottom)
+    clamped = (clipped_right, clipped_bottom) != (x + width, y + height)
+    return x, y, clipped_right - x, clipped_bottom - y, clamped
+
+
+def grab(mode: str = "desktop", *, window: dict | None = None,
+         monitor: int | None = None, region: dict | None = None) -> dict:
+    """Capture pixels into MEMORY. Nothing is written to disk here.
+
+    Returns ``rows`` (PNG-ready RGB), dimensions, a human ``subject``, the
+    capture ``method``, the screen ``rect`` that was read, and ``extra``
+    metadata. ``capture()`` saves this; OCR reads it and lets it go.
     """
     if not winapi.IS_WINDOWS:
         raise PCControlError("unsupported_platform", "As capturas de ecrã só funcionam no Windows.")
@@ -245,16 +289,35 @@ def capture(mode: str = "desktop", *, window: dict | None = None) -> dict:
                              f"'{mode}' não é um modo de captura conhecido.",
                              allowed=list(CAPTURE_MODES))
 
-    removed = cleanup()
-    SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
-
     if key == "desktop":
         width, height = winapi.screen_size()
         if width <= 0 or height <= 0:
             raise PCControlError("failed", "Não consegui determinar o tamanho do ecrã.")
         rows, out_width, out_height, scaled = _capture_screen_region(0, 0, width, height)
-        return _save(rows, out_width, out_height, scaled=scaled, removed=removed,
-                     subject="ecrã completo", method="screen")
+        return {"rows": rows, "width": out_width, "height": out_height, "scaled": scaled,
+                "subject": "ecrã completo", "method": "screen",
+                "rect": (0, 0, width, height), "extra": {}}
+
+    if key in ("monitor", "region"):
+        from core.pc_control import geometry
+
+        if key == "monitor":
+            target = geometry.resolve_monitor(monitor)
+            left, top, right, bottom = target["bounds"]
+            x, y, width, height, clamped = left, top, right - left, bottom - top, False
+            subject = f"monitor {target['number']}"
+            extra = {"monitor": {"number": target["number"], "primary": target["primary"],
+                                 "width": target["width"], "height": target["height"]}}
+        else:
+            x, y, width, height, clamped = clamp_region(region, geometry.monitors())
+            subject = f"região {width}x{height} em ({x}, {y})"
+            extra = {"region": {"x": x, "y": y, "width": width, "height": height}}
+            if clamped:
+                extra["clamped"] = True
+        rows, out_width, out_height, scaled = _capture_screen_region(x, y, width, height)
+        return {"rows": rows, "width": out_width, "height": out_height, "scaled": scaled,
+                "subject": subject, "method": "screen", "rect": (x, y, width, height),
+                "extra": extra}
 
     if key == "active_window":
         hwnd = winapi.foreground_window()
@@ -291,12 +354,30 @@ def capture(mode: str = "desktop", *, window: dict | None = None) -> dict:
             left, top, width, height)
         method = "screen_region"
 
-    return _save(rows, out_width, out_height, scaled=scale < 1.0, removed=removed,
-                 subject=window["title"], method=method,
-                 extra={"window": {"window_id": hwnd, "title": window["title"],
-                                   "process": window.get("process")}})
+    return {"rows": rows, "width": out_width, "height": out_height, "scaled": scale < 1.0,
+            "subject": window["title"], "method": method, "rect": (left, top, width, height),
+            "extra": {"window": {"window_id": hwnd, "title": window["title"],
+                                 "process": window.get("process")}}}
+
+
+def capture(mode: str = "desktop", *, window: dict | None = None,
+            monitor: int | None = None, region: dict | None = None) -> dict:
+    """Capture to a PNG and return its METADATA ONLY -- never any pixels.
+
+    ``window`` is a window description from ``windows.resolve_window``; the
+    caller resolves it, because target binding for the permission grant has to
+    happen before this runs.
+    """
+    if not winapi.IS_WINDOWS:
+        raise PCControlError("unsupported_platform", "As capturas de ecrã só funcionam no Windows.")
+    removed = cleanup()
+    SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    shot = grab(mode, window=window, monitor=monitor, region=region)
+    return _save(shot["rows"], shot["width"], shot["height"], scaled=shot["scaled"],
+                 removed=removed, subject=shot["subject"], method=shot["method"],
+                 extra=shot["extra"])
 
 
 __all__ = ["CAPTURE_MODES", "DEFAULT_CAPTURE_MODE", "MAX_DIMENSION",
-           "MAX_RETAINED", "RETENTION_SECONDS", "SCREENSHOT_DIR",
-           "capture", "cleanup"]
+           "MAX_RETAINED", "MIN_REGION", "RETENTION_SECONDS", "SCREENSHOT_DIR",
+           "capture", "clamp_region", "cleanup", "grab"]

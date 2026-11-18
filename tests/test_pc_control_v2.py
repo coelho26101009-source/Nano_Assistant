@@ -1296,17 +1296,25 @@ def test_nothing_in_pc_control_uploads_anything():
                     assert network not in dumped, f"{source.name} imports {network}"
 
 
-def test_ocr_is_not_claimed_anywhere():
+def test_only_the_opt_in_ocr_tool_claims_to_read_the_screen():
     """Audit item 29 and PART S: Nano must not imply it can see the screen.
 
-    OCR is deferred (see docs/architecture/PC_CONTROL.md). Until it exists, no
-    tool may be named or described as if it read the screen, because "I can see
-    what is on your screen" is a claim a screenshot path does not support.
+    Screen text now exists, as ONE tool -- ``pc_screen_read_text`` -- which is
+    opt-in, always confirmed and local (see core/pc_control/ocr.py). Every other
+    tool, the screenshot tool included, must still not be named or described as
+    if it read the screen: a screenshot path is not "I can see your screen".
     """
-    for name, function in _tool_schemas().items():
+    schemas = _tool_schemas()
+    assert "pc_screen_read_text" in schemas
+    description = str(schemas["pc_screen_read_text"].get("description") or "").lower()
+    for promise in ("local", "privacidade", "confirmação"):
+        assert promise in description, f"pc_screen_read_text must say '{promise}'"
+    for name, function in schemas.items():
+        if name == "pc_screen_read_text":
+            continue
         assert "ocr" not in name.lower()
         description = str(function.get("description") or "").lower()
-        for claim in ("ler o ecrã", "lê o ecrã", "vê o ecrã", "consigo ver"):
+        for claim in ("ler o ecrã", "lê o ecrã", "vê o ecrã", "consigo ver", "ocr"):
             assert claim not in description, f"{name}: {description}"
 
 

@@ -89,6 +89,7 @@ become part of a shipped build.
 | `playwright` | — | **NOT INSTALLED — verify before shipping** |
 | `google-api-python-client` | 2.200.0 | Apache-2.0 |
 | `google-auth-oauthlib` | 1.4.1 | Apache-2.0 |
+| `winrt-runtime` and `winrt-Windows.*` (pywinrt, local OCR) | 3.2.1 | MIT |
 
 **REVIEW — speech model weights.** `faster-whisper` the *library* is MIT, but
 the Whisper **model weights** it downloads are a separate artifact under their

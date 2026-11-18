@@ -76,7 +76,7 @@ CATEGORIES: tuple[Category, ...] = (
     Category(
         "display", "Ecrã e monitores",
         "Monitores, brilho e captura de ecrã.",
-        prefixes=("pc_display_", "pc_screenshot_"),
+        prefixes=("pc_display_", "pc_screenshot_", "pc_screen_"),
     ),
     Category(
         "input", "Escrita e área de transferência",

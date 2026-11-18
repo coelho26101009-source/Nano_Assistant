@@ -242,6 +242,7 @@ class PolicyEngine:
         "pc_power_shutdown": "pc.power.shutdown",
         "pc_session_logoff": "pc.session.logoff",
         "pc_screenshot_capture": "pc.screen.capture",
+        "pc_screen_read_text": "pc.screen.read_text",
     }
 
     def __init__(self, autonomy_mode: str | AutonomyMode = AutonomyMode.SAFE):
@@ -387,6 +388,7 @@ class PolicyEngine:
             "pc.window.close": (AuthorityDecision.APPROVAL_REQUIRED.value, RiskLevel.HIGH, "system", "Closing a window can lose unsaved work and needs explicit confirmation."),
             "pc.window.batch_close": (AuthorityDecision.APPROVAL_REQUIRED.value, RiskLevel.HIGH, "system", "Closing every window of an application multiplies the risk of losing unsaved work."),
             "pc.screen.capture": (AuthorityDecision.APPROVAL_REQUIRED.value, RiskLevel.HIGH, "system", "A screenshot may contain anything on screen; it always needs explicit consent."),
+            "pc.screen.read_text": (AuthorityDecision.APPROVAL_REQUIRED.value, RiskLevel.HIGH, "system", "Screen text goes to the model; it is opt-in and always needs explicit consent."),
             "pc.clipboard.read": (AuthorityDecision.APPROVAL_REQUIRED.value, RiskLevel.HIGH, "system", "The clipboard may hold a password or a private message; reading it is a privacy event."),
             "pc.clipboard.write": (AuthorityDecision.APPROVAL_REQUIRED.value, RiskLevel.HIGH, "system", "Writing replaces whatever the user had copied, and Windows cannot undo that."),
             "pc.clipboard.clear": (AuthorityDecision.APPROVAL_REQUIRED.value, RiskLevel.HIGH, "system", "Clearing discards whatever the user had copied."),

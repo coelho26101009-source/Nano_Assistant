@@ -10,3 +10,12 @@ onnxruntime>=1.18,<2
 # Google Calendar reading in plugins/calendar.py (calendar.google_enabled).
 google-api-python-client>=2.100,<3
 google-auth-oauthlib>=1.2,<2
+# Local screen text in pc_screen_read_text: Windows' own OCR (Windows.Media.Ocr)
+# through the WinRT projection. Local only; nothing is uploaded.
+winrt-runtime>=3,<4
+winrt-Windows.Foundation>=3,<4
+winrt-Windows.Foundation.Collections>=3,<4
+winrt-Windows.Globalization>=3,<4
+winrt-Windows.Graphics.Imaging>=3,<4
+winrt-Windows.Media.Ocr>=3,<4
+winrt-Windows.Storage.Streams>=3,<4
