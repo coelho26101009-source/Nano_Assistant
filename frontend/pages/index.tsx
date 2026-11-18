@@ -411,6 +411,8 @@ export default function Home() {
           // Safe per-response diagnostics (provider, model, tokens, latency).
           meta: final?.meta ?? m.meta,
           tools,
+          // An ambiguous PC target: the candidates become buttons.
+          clarification: final?.clarification ?? undefined,
         };
       }));
       refreshCC();
@@ -1221,6 +1223,7 @@ export default function Home() {
                     <Conversation
                       messages={messages} status={activityLabel} thinking={thinking}
                       userName={profileName} connecting={!ready && !gaveUp}
+                      onChoose={(reply) => sendMessage(reply)}
                     />
                   )}
                   {/* The provider's own wait, counted down, until it is over. It

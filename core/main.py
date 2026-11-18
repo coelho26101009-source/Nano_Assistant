@@ -34,7 +34,7 @@ from core.app_paths import DATA_DIR, FRONTEND_DIR, PLUGINS_DIR, ROOT, default_da
 from core.dotenv_gate import dotenv_allowed
 from core import data_migration
 from core import capability_catalogue, local_control_plane
-from core import agenda
+from core import agenda, clarification
 from core import version as nano_version
 from core.brain import Brain
 from core.config import CONFIG_PATH, load_config
@@ -3180,6 +3180,10 @@ def _on_voice_turn_finished(source: str, future) -> None:
         # A short machine-readable reason. Never a traceback and never a
         # provider message: the overlay must not show internals to the user.
         "error": (str(result.get("error")) if result.get("error") else None),
+        # An ambiguous PC target: labels only, so the overlay can show what
+        # to choose between while the spoken answer asks.
+        "clarification": (clarification.for_overlay(getattr(brain, "turn_clarification", None))
+                          if result.get("ok") else None),
     })
 
 
@@ -3560,6 +3564,11 @@ async def _process_message(user_text: str, msg_id: str | None = None,
         }
         if rate_limit:
             result["rate_limit"] = rate_limit
+        question = getattr(brain, "turn_clarification", None)
+        if question:
+            # An ambiguous PC target: the UI offers the candidates as buttons.
+            # See core/clarification.py.
+            result["clarification"] = question
         _emit_stream_end(msg_id, result)
         if _should_speak(source) and not rate_limit:
             if blocking_tts:

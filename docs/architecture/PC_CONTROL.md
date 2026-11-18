@@ -616,6 +616,15 @@ The benchmark produced "Procuro fechar o relatório" for "Procura o ficheiro
 relatório". A loose match plus a consequential verb is exactly that failure, and
 it stops and asks.
 
+**The clarification round-trip.** When a tool returns `ambiguous`,
+`core/clarification.py` turns its candidate list into a bounded question
+(at most six options, labels clipped). The chat shows each option as a button
+under the answer; pressing one sends an ordinary message naming the exact
+`window_id` or `app_id`, so the choice travels the whole pipeline again,
+confirmation included. A button never executes anything itself. On a voice
+turn the overlay shows "Qual delas?" with up to four labels for nine seconds
+while the spoken answer asks.
+
 ## The approval card
 
 A confirmation shows three things a person can judge, plus a preview where the
@@ -701,5 +710,3 @@ a closed allow-list with `shell=False`.
 * **Local OCR**, with a consent model of its own.
 * **Browser Agent**, with per-site consent and no credential access.
 * **Region screenshots** and per-monitor capture.
-* A clarification round-trip surfaced in the voice overlay, using the
-  `ambiguous` candidate lists these tools already return.

@@ -2002,3 +2002,17 @@ kbd {
 .agenda__list { list-style: none; margin: 0; padding: 0; min-width: 0; }
 .agenda__list ul { list-style: none; margin: 0; padding: 0; }
 .agenda__day { margin: 0 0 var(--sp-2); }
+
+/* ── Clarification choices (ambiguous PC target) ──────────────────────── */
+.msg__choices { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-3); min-width: 0; }
+.choice-chip {
+  max-width: 100%; padding: 6px 12px; border-radius: 999px;
+  border: 1px solid var(--border-strong); background: var(--surface-raised);
+  color: var(--text-primary); font: inherit; font-size: var(--fs-sm); cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  transition: border-color var(--transition), background var(--transition);
+}
+.choice-chip:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--text-dim); }
+.choice-chip:disabled { cursor: default; opacity: 0.55; }
+.choice-chip[aria-pressed="true"] { opacity: 1; border-color: var(--accent); }
+.msg__choices-more { align-self: center; font-size: var(--fs-sm); }

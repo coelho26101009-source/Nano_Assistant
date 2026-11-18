@@ -22,6 +22,11 @@ versioning policy.
 
 ### Added
 
+- When a PC Control target is ambiguous (two windows called "relatório", two
+  apps matching "Spotify"), the chat now shows the candidates as buttons under
+  Nano's question. Pressing one sends a normal message naming the exact
+  window or app, so it goes through policy and confirmation again. On a voice
+  turn the overlay shows "Qual delas?" with the options.
 - New **Agenda** section in the sidebar: see pending reminders and the
   calendar events of the next 7, 30 or 90 days (local, imported .ics and
   Google, labelled), create reminders and events with a form, and delete them

@@ -115,6 +115,14 @@ export function reasonText(reason?: string): string {
   return REASON_TEXT[key] ?? key;
 }
 
+/** An ambiguous PC target, offered as choices. See core/clarification.py. */
+export type Clarification = {
+  question: string;
+  tool?: string;
+  options: { label: string; reply: string }[];
+  more?: number;
+};
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
@@ -124,6 +132,7 @@ export interface Message {
   tools?: ToolEvent[];
   error?: boolean;
   meta?: ResponseMeta;
+  clarification?: Clarification;
 }
 
 /* ── Cleaning model output ────────────────────────────────────────────── */
@@ -314,6 +323,37 @@ function ToolCard({ event }: { event: ToolEvent }) {
   );
 }
 
+/* ── Clarification ────────────────────────────────────────────────────── */
+
+/**
+ * The candidates of an ambiguous PC target, as buttons.
+ *
+ * Pressing one sends its reply as an ordinary message: the choice goes through
+ * the whole pipeline again (policy, permission, confirmation), now naming the
+ * exact window or app. A button never runs anything by itself.
+ */
+function ClarificationChoices({
+  clarification, onChoose,
+}: { clarification: Clarification; onChoose: (reply: string) => void }) {
+  const [chosen, setChosen] = useState<string | null>(null);
+  return (
+    <div className="msg__choices" role="group" aria-label={clarification.question || "Escolhe uma opção"}>
+      {clarification.options.map((option) => (
+        <button
+          key={option.reply} type="button" className="choice-chip"
+          disabled={chosen !== null}
+          aria-pressed={chosen === option.reply}
+          title={option.label}
+          onClick={() => { setChosen(option.reply); onChoose(option.reply); }}
+        >
+          {option.label}
+        </button>
+      ))}
+      {clarification.more ? <span className="dim msg__choices-more">+{clarification.more}</span> : null}
+    </div>
+  );
+}
+
 /* ── Technical details ────────────────────────────────────────────────── */
 
 const CHEVRON = "m6 9 6 6 6-6";
@@ -449,8 +489,12 @@ function initialsOf(name?: string | null): string | null {
  * exchange scans as a steady rhythm of turns rather than as two columns.
  */
 function MessageBubble({
-  message, status, userName,
-}: { message: Message; status?: string; userName?: string | null }) {
+  message, status, userName, onChoose,
+}: {
+  message: Message; status?: string; userName?: string | null;
+  /** Only passed for the latest answer: older choices are history. */
+  onChoose?: (reply: string) => void;
+}) {
   const [copied, setCopied] = useState(false);
   const isUser = message.role === "user";
   const text = isUser ? message.content : cleanAssistantText(message.content);
@@ -514,6 +558,10 @@ function MessageBubble({
         {message.streaming && text && <span className="caret" aria-hidden="true" />}
       </div>
 
+      {onChoose && !isUser && !message.streaming && message.clarification?.options?.length ? (
+        <ClarificationChoices clarification={message.clarification} onChoose={onChoose} />
+      ) : null}
+
       {/* Technical details, collapsed by default so normal chat stays clean.
           Safe metadata only: provider, model, tokens and latency — and it is
           THIS message's, including for a message loaded from an older thread. */}
@@ -553,7 +601,7 @@ export function needsStandaloneThinking(messages: Message[], thinking: boolean):
 }
 
 export function Conversation({
-  messages, status, thinking, userName, connecting = false,
+  messages, status, thinking, userName, connecting = false, onChoose,
 }: {
   messages: Message[];
   status: string;
@@ -562,6 +610,8 @@ export function Conversation({
   userName?: string | null;
   /** The bridge has not answered yet (and has not given up either). */
   connecting?: boolean;
+  /** Send a clarification choice as the next message. */
+  onChoose?: (reply: string) => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => { endRef.current?.scrollIntoView({ block: "end" }); }, [messages, status]);
@@ -587,8 +637,9 @@ export function Conversation({
   return (
     <div className="conversation" role="log" aria-live="polite" aria-label="Conversa">
       <div className="conversation__inner">
-        {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} status={status} userName={userName} />
+        {messages.map((message, index) => (
+          <MessageBubble key={message.id} message={message} status={status} userName={userName}
+                         onChoose={index === messages.length - 1 && !thinking ? onChoose : undefined} />
         ))}
         {standalone && (
           <div className="thinking thinking--standalone" role="status" aria-live="polite">
