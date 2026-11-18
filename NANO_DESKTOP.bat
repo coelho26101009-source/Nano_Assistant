@@ -124,6 +124,12 @@ if "%NANO_BUILD%"=="0" (
 if "%NANO_BUILD%"=="1" (
     echo  [NANO] Frontend ...... BUILDING ^(sources changed, this takes a minute^)
     pushd frontend
+    REM A fresh download has no frontend\node_modules: install the locked
+    REM packages first, or `npm run build` fails with "next" not found.
+    if not exist "node_modules\next\package.json" (
+        echo  [NANO] Frontend ...... INSTALLING ^(first run only^)
+        call npm ci
+    )
     call npm run build
     popd
     if not exist "frontend\out\index.html" (
