@@ -59,7 +59,6 @@
   --surface-hover: #F3F3F3;
   --surface-active: #EAEAEA;
   --bg-sunken: #F6F6F6;        /* key-value panels, table heads */
-  --msg-band: #F7F7F8;         /* the row under each of NANO's turns */
   --surface-overlay: rgba(0, 0, 0, .4);
 
   /* The sidebar is a half-step off the page, as in Chatbot UI and every chat
@@ -1073,18 +1072,18 @@ kbd {
 
 /* ── Messages ─────────────────────────────────────────────────────────────
    Chatbot UI's rows: every turn has a header with an avatar and a name, and
-   both sides share one left-aligned reading column. NANO's turns sit on a
-   faint band that runs the full width of the stage -- painted with a spread
-   box-shadow and clipped to the row's own height, so the reading column
-   itself never widens. */
+   both sides share one left-aligned reading column. Every turn sits on the
+   same page background -- the avatar and the name tell the sides apart, not
+   a colour. Only a failed turn gets a band (danger-soft), painted full width
+   with a spread box-shadow and clipped to the row's own height, so the
+   reading column itself never widens. */
 .msg { position: relative; padding: 18px 0 20px; min-width: 0; }
 .msg { animation: nano-enter var(--motion-base) var(--motion-ease) both; }
-.msg--assistant {
-  background: var(--msg-band);
-  box-shadow: 0 0 0 100vmax var(--msg-band);
+.msg--error {
+  background: var(--danger-soft);
+  box-shadow: 0 0 0 100vmax var(--danger-soft);
   clip-path: inset(0 -100vmax);
 }
-.msg--error { --msg-band: var(--danger-soft); }
 
 .msg__head { display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 30px; margin-bottom: 6px; }
 .msg__avatar { flex: none; width: 24px; height: 24px; }
@@ -2023,7 +2022,6 @@ kbd {
   --surface-hover: #2A2A2A;
   --surface-active: #333333;
   --bg-sunken: #131313;
-  --msg-band: #1F1F1F;
   --surface-overlay: rgba(0, 0, 0, .6);
 
   --sidebar: #101010;

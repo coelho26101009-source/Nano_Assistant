@@ -32,7 +32,7 @@ consistent > different on every screen · functionality > branding.
 Colour is a role, never a literal. `:root` holds light values, while
 `:root:not([data-theme="light"])` makes dark the default before React mounts.
 
-- surfaces: `--bg`, `--surface`, `--surface-raised`, `--surface-hover`, `--surface-active`, `--bg-sunken`, `--msg-band`
+- surfaces: `--bg`, `--surface`, `--surface-raised`, `--surface-hover`, `--surface-active`, `--bg-sunken`
 - sidebar: `--sidebar`, `--sidebar-hover`, `--sidebar-active`
 - neutral primary: `--primary`, `--primary-hover`, `--on-primary` — buttons, the send button, count badges
 - accent: `--accent`, `--accent-hover`, `--accent-ink`, `--accent-wash`, `--accent-faint`, `--accent-veil`, `--on-accent`
@@ -77,8 +77,9 @@ on its own when a provider already works, and stays reachable from Sobre.
 ## Conversation
 
 Chatbot UI's rows: every turn has a header with an avatar and a name, both
-sides share one left-aligned reading column, and NANO's turns sit on a faint
-full-width band (`--msg-band`). The user's avatar shows initials only when the
+sides share one left-aligned reading column, and every turn (user's and
+NANO's) sits on the same page background: avatar and name tell them apart,
+never a lighter band. Only a failed turn gets a full-width `--danger-soft` band. The user's avatar shows initials only when the
 backend knows their name. Code blocks are dark in both themes. Errors use
 `--danger` and `--danger-soft`, never the accent.
 
