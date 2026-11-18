@@ -2571,6 +2571,60 @@ def forget_all_memory_facts() -> dict:
             "memoriesRemoved": memories_removed, "memory": get_memory_overview()}
 
 
+#: What the user must type in the confirmation dialog. Checked HERE, not only in
+#: the renderer: the renderer is the least trusted process in Nano, and an
+#: irreversible wipe must not be one stray bridge call away.
+ERASE_ALL_CONFIRMATION = "APAGAR TUDO"
+
+
+@eel.expose
+def erase_all_data(confirmation: str = "") -> dict:
+    """Erase everything Nano holds about the user, in one confirmed action.
+
+    ERASED: every conversation and message, every long-term memory, the whole
+    Second Brain (including nodes the user made by hand), the legacy key/value
+    facts and user profile, documents indexed for search, the retrieval index,
+    and the history of finished tasks. See ``MemoryStack.purge_everything``.
+
+    KEPT, ON PURPOSE, AND SAID SO IN THE DIALOG: settings, API keys, connected
+    accounts, permission policies and the permission audit log (configuration
+    and the security record, not personal content), and the rotating log file.
+    Tasks still queued or running are left to finish.
+
+    NOT A TOOL. This is a bridge endpoint for the Settings page only. It is not
+    registered with the ToolExecutor, no plugin exposes it, and the model can
+    neither see nor call it -- a test holds that. Erasing the user's data is a
+    decision the user makes with their own hands.
+    """
+    if not isinstance(confirmation, str) or confirmation.strip() != ERASE_ALL_CONFIRMATION:
+        return {"ok": False, "error": "confirmation_required"}
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+
+    brain.reset_conversation()
+    result = memory_stack.purge_everything()
+    if not result.get("ok"):
+        return {"ok": False, "error": result.get("error", "purge_failed"),
+                "memory": get_memory_overview()}
+
+    try:
+        result["tasks"] = task_engine.clear_finished()
+    except Exception:
+        # The personal content is already gone; say exactly which part failed
+        # instead of either hiding it or reporting the whole erase as failed.
+        logger.exception("Falha a apagar o historico de tarefas")
+        result["tasks"] = 0
+        result["ok"] = False
+        result["error"] = "tasks_not_cleared"
+
+    # Point the Brain at a fresh, empty thread, as deleting the active
+    # conversation does, so the next message has somewhere real to go.
+    brain.switch_conversation(memory_stack.ensure_active())
+    result["activeId"] = memory_stack.active_conversation_id
+    result["memory"] = get_memory_overview()
+    return result
+
+
 @eel.expose
 def get_agents_detail() -> list:
     """Registered agents with their real capabilities. Nothing invented."""

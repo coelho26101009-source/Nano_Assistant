@@ -292,6 +292,9 @@ a { color: var(--accent-ink); text-decoration: none; }
 
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .field__label { font-size: var(--fs-sm); font-weight: 500; color: var(--text-secondary); }
+
+/* The erase dialog's two lists: what goes and what stays. */
+.erase-list { margin: 4px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.6; }
 .field__hint { font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.6; }
 .field__error { font-size: var(--fs-xs); color: var(--st-error); }
 .field__row { display: flex; gap: var(--sp-2); align-items: center; min-width: 0; flex-wrap: wrap; }

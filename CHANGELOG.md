@@ -18,6 +18,20 @@ versioning policy.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- "Apagar todos os dados" in Definições → Privacidade erases every
+  conversation, memory, legacy fact, the user profile, the whole Second Brain,
+  indexed documents and the finished-task history in one transaction, then
+  compacts the database so the text does not linger in free pages. It asks for
+  the typed phrase `APAGAR TUDO`, which the backend checks too, and the dialog
+  lists what is kept: settings, API keys, connected accounts, permissions and
+  logs. It is a Settings control only, never a model tool.
+
+---
+
 ## [0.2.0-beta.1] - 2026-09-30
 
 The second public Beta. This remains a pre-release, with an unsigned Windows

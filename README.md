@@ -619,7 +619,6 @@ Sem ordem rígida, e sem prometer datas:
 - **Vision / OCR** — ler o ecrã, com controlos de privacidade próprios
 - **Coding / GitHub** — workflows de desenvolvimento assistido
 - **Produtividade** — calendário, email e integrações externas
-- **Eliminação total num clique** — os controlos individuais já existem
 
 ---
 

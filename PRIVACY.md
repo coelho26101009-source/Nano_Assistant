@@ -324,16 +324,28 @@ link-local addresses, `file://` and other schemes are refused.
 | An API key | Definições → IA, per provider |
 | Screenshots | Expire automatically; or delete `screenshots/` |
 | Logs | Delete `logs/nano.log*` |
-| Absolutely everything | Delete the data directory shown in Definições → Sobre |
+| All your conversations, memories, Second Brain and task history at once | Definições → Privacidade → "Apagar todos os dados" (you type `APAGAR TUDO` to confirm) |
+| Absolutely everything, settings and keys included | Delete the data directory shown in Definições → Sobre |
 
 Deleting a conversation removes its messages, its summary, its per-thread facts
 and its retrieval index entries. It does **not** remove long-term memories that
 were extracted from it — those are cross-thread by design and are cleared from
 the Memória page.
 
-There is currently **no single "delete all my data" button.** The individual
-controls above cover everything, but a one-click wipe does not exist yet and is
-tracked in [`docs/PUBLIC_RELEASE_CHECKLIST.md`](docs/PUBLIC_RELEASE_CHECKLIST.md).
+**"Apagar todos os dados"** erases, in one database transaction: every
+conversation and message (with their summaries and per-thread facts), every
+long-term memory and legacy fact, your user profile, the whole Second Brain
+including the nodes you made by hand, documents indexed for search, the
+retrieval index, and the history of finished tasks. Either all of that is
+erased or none of it is. Afterwards the database file is compacted (`VACUUM`)
+so the deleted text does not linger in free pages, and memory work that was
+queued before the erase is discarded so it cannot write anything back.
+
+It deliberately **keeps** your settings, API keys, connected accounts,
+permission policies and the log files, and leaves tasks that are still running
+to finish. The confirmation dialog lists both. To remove those too, delete the
+data directory. The erase is a button for you only: it is not a tool, and the
+model can neither see nor trigger it.
 
 ## Third parties
 
