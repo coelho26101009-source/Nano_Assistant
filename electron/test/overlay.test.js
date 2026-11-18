@@ -96,3 +96,28 @@ test('a backend that is not ready says so instead of failing silently', () => {
   assert.strictEqual(view.state, 'error');
   assert.ok(view.label.length > 0);
 });
+
+suite('overlay clarification');
+
+test('an ambiguous target keeps the candidates on screen', () => {
+  const view = overlay.fromTurnEnd({ ok: true, spoken: true, clarification: {
+    question: 'Há 2 janelas. Qual delas?', options: ['relatório.docx — WINWORD.EXE', 'relatório.pdf — msedge.exe'],
+  } });
+  assert.strictEqual(view.label, 'Qual delas?');
+  assert.ok(view.detail.includes('relatório.docx') && view.detail.includes('relatório.pdf'));
+  assert.ok(view.hideAfterMs >= 5000, 'long enough to read and answer');
+});
+
+test('the overlay bounds the list it shows', () => {
+  const many = Array.from({ length: 9 }, (_, i) => 'janela ' + i + ' '.repeat(3) + 'x'.repeat(60));
+  const view = overlay.fromTurnEnd({ ok: true, clarification: { options: many } });
+  assert.strictEqual(view.detail.split(' · ').length, 4);
+  for (const part of view.detail.split(' · ')) assert.ok(part.length <= 40);
+});
+
+test('one option, garbage or a failed turn is not a clarification', () => {
+  assert.strictEqual(overlay.fromTurnEnd({ ok: true, clarification: { options: ['só uma'] } }).label, 'Pronto');
+  assert.strictEqual(overlay.fromTurnEnd({ ok: true, clarification: { options: [1, null, {}] } }).label, 'Pronto');
+  assert.strictEqual(overlay.fromTurnEnd({ ok: true, clarification: 'x' }).label, 'Pronto');
+  assert.notStrictEqual(overlay.fromTurnEnd({ ok: false, clarification: { options: ['a', 'b'] } }).label, 'Qual delas?');
+});

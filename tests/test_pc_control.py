@@ -76,6 +76,7 @@ PC_TOOLS = (
     "pc_session_lock", "pc_power_sleep", "pc_power_restart",
     "pc_power_shutdown", "pc_session_logoff",
     "pc_screenshot_capture",
+    "pc_screen_read_text",
 )
 
 

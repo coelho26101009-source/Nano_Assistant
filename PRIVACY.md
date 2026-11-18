@@ -149,11 +149,19 @@ sees whatever the tool returned:
 | Search or open a web page | **the extracted page text** |
 | Look at system state, windows, volume | those values |
 | Take a screenshot | **the file path and its size — never the image** |
+| Read the text on screen (only if you turned it on) | **the text read by local OCR**, with keys, passwords, card numbers and IBANs masked, up to 4000 characters |
 
 Nano never reads any of these on its own initiative: each one is a tool the
 model must call, and the sensitive ones require your approval first. But
 "approved once" and "not transmitted" are different things, and the earlier
 version of this document conflated them.
+
+**Screen text is off by default.** Reading the text on screen is a separate
+tool, `pc_screen_read_text`, and it does nothing until you turn on Definições →
+Privacidade → "Ler texto do ecrã". The OCR runs locally (Windows' own engine),
+it always asks first, it never reads password managers or authenticators, and
+it keeps no image. The text it returns does go to the provider, like any tool
+result.
 
 **Screenshots are the genuine exception.** `core/pc_control/screen.py` returns a
 path, a size and dimensions — no base64, no pixels. The image is written to disk
@@ -336,7 +344,8 @@ the Memória page.
 conversation and message (with their summaries and per-thread facts), every
 long-term memory and legacy fact, your user profile, the whole Second Brain
 including the nodes you made by hand, documents indexed for search, the
-retrieval index, and the history of finished tasks. Either all of that is
+retrieval index, your reminders and calendar events, and the history of
+finished tasks. Either all of that is
 erased or none of it is. Afterwards the database file is compacted (`VACUUM`)
 so the deleted text does not linger in free pages, and memory work that was
 queued before the erase is discarded so it cannot write anything back.

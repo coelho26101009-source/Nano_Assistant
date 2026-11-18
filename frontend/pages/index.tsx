@@ -23,6 +23,8 @@ import ConfirmModal, { ConfirmCard } from "../components/Confirm";
 import PluginCodeModal from "../components/PluginCodeModal";
 import Rail, { type RailMode } from "../components/Rail";
 import CapabilitiesPage from "../components/CapabilitiesPage";
+import AgendaPage from "../components/AgendaPage";
+import WorkModesPage, { type WorkModeResult } from "../components/WorkModesPage";
 import SettingsPage, { type Section as SettingsSection } from "../components/SettingsPage";
 import TaskDetailModal from "../components/TaskDetailModal";
 import TopBar from "../components/TopBar";
@@ -132,9 +134,15 @@ function useMediaQuery(query: string, fallback: boolean): boolean {
 export default function Home() {
   const { ready, gaveUp } = useBridgeReady();
   const { toasts, notify } = useToasts();
+  // PC -> Modos: which mode is running, and how the last one went.
+  const [modeRunning, setModeRunning] = useState<string | null>(null);
+  const [modeResult, setModeResult] = useState<WorkModeResult | null>(null);
   // Capability detection, resolved after mount. In a browser this stays false
   // and the window controls are simply never rendered.
   const isDesktop = useIsDesktop();
+  // Read by backend callbacks registered once on mount.
+  const isDesktopRef = useRef(isDesktop);
+  isDesktopRef.current = isDesktop;
   const narrow = useNarrow();
   // Below this the collapsed icon column no longer fits either; the sidebar
   // leaves the layout and the top bar carries the button that opens it.
@@ -504,6 +512,8 @@ export default function Home() {
           // Safe per-response diagnostics (provider, model, tokens, latency).
           meta: final?.meta ?? m.meta,
           tools,
+          // An ambiguous PC target: the candidates become buttons.
+          clarification: final?.clarification ?? undefined,
         };
       }));
       refreshCC();
@@ -575,6 +585,23 @@ export default function Home() {
       // rail has to be re-read here too.
       reloadThreads();
     }, "on_voice_exchange");
+
+    // A reminder fell due. In the desktop shell Windows already shows a native
+    // notification, so the in-app toast is only for the browser mode.
+    expose((reminder: { text?: string; due_label?: string }) => {
+      const text = String(reminder?.text ?? "").trim();
+      if (!text || isDesktopRef.current) return;
+      const when = String(reminder?.due_label ?? "").trim();
+      notify(when ? `⏰ ${when} · ${text}` : `⏰ ${text}`, "default");
+    }, "on_reminder_due");
+
+    // A work mode finished. Each step went through the permission pipeline;
+    // the result says what really happened to each one.
+    expose((result: WorkModeResult) => {
+      setModeRunning(null);
+      setModeResult(result ?? null);
+      notify(result?.message ?? "O modo terminou.", result?.ok ? "success" : "error");
+    }, "on_work_mode_done");
 
     // The thread list, and the messages of whichever thread the backend
     // resumed. The backend picks that thread (the most recently active one) so
@@ -1380,6 +1407,7 @@ export default function Home() {
                       advanced={advancedMode}
                       onRetry={() => rerunLastTurn()}
                       onEdit={(text) => rerunLastTurn(text)}
+                      onChoose={(reply) => sendMessage(reply)}
                     />
                   )}
                   {/* The provider's own wait, counted down, until it is over. It
@@ -1484,6 +1512,22 @@ export default function Home() {
                     />
                   )}
                   {view === "capabilities" && <CapabilitiesPage enabled={ready} onTry={(text) => { setView("chat"); setShowFirstRun(false); sendMessage(text); }} />}
+                  {view === "agenda" && <AgendaPage enabled={ready} notify={notify} />}
+                  {view === "modes" && (
+                    <WorkModesPage
+                      enabled={ready} running={modeRunning} result={modeResult}
+                      onActivate={(modeId) => {
+                        setModeRunning(modeId);
+                        setModeResult(null);
+                        call<any>("activate_work_mode", modeId).then((ack) => {
+                          if (!ack?.accepted) {
+                            setModeRunning(null);
+                            notify("Não foi possível ativar o modo.", "error");
+                          }
+                        });
+                      }}
+                    />
+                  )}
                   {view === "integrations" && (
                     <IntegrationsPage
                       providers={providers} plugins={plugins} readiness={readiness}

@@ -870,6 +870,22 @@ export default function SettingsPage({
               <p className="dim" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>{t("Para que nada saia do computador, desliga a resposta falada em Definições → Voz. A transcrição do que dizes (Whisper) continua a ser feita localmente e nunca é enviada.")}</p>
             </Panel>
 
+            {/* Off by default. The text it reads goes to the model, which is
+                why it is a Privacy decision and not a PC Control one. */}
+            <Panel title={t("Ler texto do ecrã")} action={<Badge tone="info">local</Badge>}>
+              <Toggle
+                label={t("Permitir que o NANO leia o texto do ecrã")}
+                hint={t("Quando pedes (\u201co que diz esta janela?\u201d), o NANO usa o OCR do próprio Windows para extrair o texto da janela, monitor ou região. Pede sempre confirmação, nunca lê gestores de palavras-passe, oculta chaves, palavras-passe, cartões e IBANs, e não guarda a imagem. O texto lido é enviado ao modelo como qualquer mensagem.")}
+                checked={Boolean(settings.screenText?.enabled)}
+                onChange={(value) => onUpdate("screen_text_enabled", value)}
+              />
+              {settings.screenText && !settings.screenText.available && (
+                <p className="dim" style={{ fontSize: 12, marginTop: 8, lineHeight: 1.6 }}>
+                  {settings.screenText.message}
+                </p>
+              )}
+            </Panel>
+
             <Panel title={t("Permissões")}>
               <MetricRow label={t("Modo de autonomia")} value={settings.security.autonomyMode} />
               <MetricRow

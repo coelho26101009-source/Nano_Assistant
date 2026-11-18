@@ -14,7 +14,7 @@
   <img alt="Windows" src="https://img.shields.io/badge/Windows-Desktop-111111?style=for-the-badge&logo=windows11&logoColor=8EB5FF" />
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12%2B-111111?style=for-the-badge&logo=python&logoColor=8EB5FF" />
   <img alt="Electron" src="https://img.shields.io/badge/Electron-44-111111?style=for-the-badge&logo=electron&logoColor=8EB5FF" />
-  <img alt="Next.js" src="https://img.shields.io/badge/Next.js-15-111111?style=for-the-badge&logo=nextdotjs&logoColor=8EB5FF" />
+  <img alt="Next.js" src="https://img.shields.io/badge/Next.js-16-111111?style=for-the-badge&logo=nextdotjs&logoColor=8EB5FF" />
 </p>
 
 <p align="center">

@@ -43,6 +43,8 @@ class TrustLevel(str, Enum):
 
 # Capabilities whose output originates outside the trust boundary.
 UNTRUSTED_OUTPUT_CAPABILITIES = frozenset({
+    # Whatever is on screen -- a web page, an email -- is external content.
+    "pc.screen.read_text",
     "browser.read",
     "browser.interact",
     "browser.submit",

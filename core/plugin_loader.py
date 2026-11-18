@@ -165,6 +165,17 @@ def stop_plugin_services() -> None:
             logger.exception("Falha ao parar serviços do plugin '%s'", name)
 
 
+def get_plugin(name: str) -> Any | None:
+    """The loaded module of one plugin, or None.
+
+    Plugins are imported as ``nano.plugins.<name>``, so ``import
+    plugins.<name>`` elsewhere gives a SECOND copy of the module with its own
+    state (scheduler thread, registered notifiers). Host code that has to talk
+    to the running plugin must go through this.
+    """
+    return _loaded_plugins.get(name)
+
+
 def get_all_tools() -> list[dict]:
     return list(_all_tools)
 

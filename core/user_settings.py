@@ -73,13 +73,15 @@ ALLOWED_KEYS: frozenset[str] = frozenset({
     # conversations at all, and whether it may decide by itself what to carry.
     "memory_long_term_enabled",
     "memory_auto_capture",
+    # Screen text (local OCR). Off until the user turns it on in Privacidade.
+    "screen_text_enabled",
 })
 
 _BOOLEAN_KEYS = frozenset({
     "onboarding_completed", "wake_phrase_enabled", "wake_phrase_allow_nano_only",
     "voice_enabled", "tts_enabled", "typed_chat_tts", "voice_reply_tts",
     "reduce_motion", "memory_facts_enabled", "memory_rag_enabled",
-    "memory_long_term_enabled", "memory_auto_capture", "advanced_mode",
+    "memory_long_term_enabled", "memory_auto_capture", "advanced_mode", "screen_text_enabled",
 })
 
 

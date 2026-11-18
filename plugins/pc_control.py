@@ -53,6 +53,7 @@ from core.pc_control import (
     files,
     geometry,
     keyboard,
+    ocr,
     power,
     screen,
     settings,
@@ -1010,6 +1011,10 @@ def pc_session_logoff(arguments: dict[str, Any]) -> dict:
 # --------------------------------------------------------------------------
 
 
+def _region_arg(args: dict) -> dict:
+    return {key: args.get(key) for key in ("x", "y", "width", "height")}
+
+
 def pc_screenshot_capture(arguments: dict[str, Any]) -> dict:
     """Capture the desktop, the active window, or one named window.
 
@@ -1022,13 +1027,92 @@ def pc_screenshot_capture(arguments: dict[str, Any]) -> dict:
         window = None
         if mode == "window":
             window = _resolve_window_arg(args)
-        result = screen.capture(mode, window=window)
+        result = screen.capture(mode, window=window, monitor=args.get("monitor"),
+                                region=_region_arg(args) if mode == "region" else None)
         return ok("captured",
                   f"Captura de {result['subject']} guardada localmente "
                   f"({result['width']}x{result['height']}).",
                   **result)
 
     return _guard("screenshot.capture", run)
+
+
+def _screen_text_enabled() -> bool:
+    try:
+        from core import user_settings
+        return user_settings.get("screen_text_enabled", False) is True
+    except Exception:
+        return False
+
+
+def _visible_windows_with_rects() -> list[dict]:
+    described = []
+    for window in windows.list_windows():
+        try:
+            left, top, right, bottom = winapi.window_rect(int(window["window_id"]))
+            described.append({**window, "rect": (left, top, right - left, bottom - top)})
+        except Exception:
+            described.append({**window, "rect": None})
+    return described
+
+
+def pc_screen_read_text(arguments: dict[str, Any]) -> dict:
+    """Read the text in a window, monitor or region with LOCAL Windows OCR.
+
+    See core/pc_control/ocr.py for the privacy controls. In order: the user's
+    switch, the engine, the sensitive-app check on the target, the capture
+    (in memory only), the sensitive-app check on the captured area, OCR,
+    masking, bounding.
+    """
+    def run() -> dict:
+        if not _screen_text_enabled():
+            raise PCControlError(
+                "disabled",
+                "Ler texto do ecrã está desligado. Podes ligá-lo em Definições → "
+                "Privacidade → Ler texto do ecrã.")
+        args = arguments or {}
+        mode = str(args.get("mode") or ocr.DEFAULT_OCR_MODE).strip().lower()
+        if mode not in ocr.OCR_MODES:
+            raise PCControlError("invalid_input", f"'{mode}' não é um modo de leitura conhecido.",
+                                 allowed=list(ocr.OCR_MODES))
+        status = ocr.engine_status()
+        if not status["available"]:
+            raise PCControlError("unavailable", status["message"], reason=status["reason"])
+
+        window = None
+        if mode == "window":
+            window = _resolve_window_arg(args, allow_partial=False)
+        elif mode == "active_window":
+            hwnd = winapi.foreground_window()
+            if not hwnd or not winapi.is_window(hwnd):
+                raise PCControlError("not_found", "Não há nenhuma janela em primeiro plano.")
+            window = windows.describe(hwnd)
+        if window is not None and ocr.is_blocked_process(window.get("process")):
+            raise PCControlError(
+                "blocked",
+                f"O Nano não lê o texto de '{window.get('process')}': é uma aplicação de "
+                "palavras-passe ou de autenticação.")
+
+        shot = screen.grab("window" if window is not None else mode, window=window,
+                           monitor=args.get("monitor"),
+                           region=_region_arg(args) if mode == "region" else None)
+        if window is None:
+            sensitive = ocr.blocked_window_in(shot["rect"], _visible_windows_with_rects())
+            if sensitive is not None:
+                shot["rows"] = []
+                raise PCControlError(
+                    "blocked",
+                    f"Há uma janela de '{sensitive.get('process')}' nessa área. O Nano não lê "
+                    "o texto de aplicações de palavras-passe ou de autenticação.")
+
+        result = ocr.read_text(shot)
+        message = (f"Li {result['chars']} caracteres de {shot['subject']}."
+                   if result["text"] else f"Não encontrei texto em {shot['subject']}.")
+        if result["masked"]:
+            message += f" Ocultei {result['masked']} dado(s) sensível(eis)."
+        return ok("read", message, subject=shot["subject"], **result, **shot["extra"])
+
+    return _guard("screen.read_text", run)
 
 
 # --------------------------------------------------------------------------
@@ -1038,6 +1122,15 @@ def pc_screenshot_capture(arguments: dict[str, Any]) -> dict:
 _WINDOW_TARGET_SCHEMA = {
     "window_id": {"type": "integer", "description": "Identificador devolvido por pc_window_list."},
     "query": {"type": "string", "description": "Parte do título ou nome do processo da janela."},
+}
+
+_SCREEN_AREA_SCHEMA = {
+    "monitor": {"type": "integer", "minimum": 1, "maximum": 16,
+                "description": "Número do monitor (1 = o mais à esquerda/em cima), para mode=monitor."},
+    "x": {"type": "integer", "description": "Esquerda da região, em pixéis do ecrã (mode=region)."},
+    "y": {"type": "integer", "description": "Topo da região, em pixéis do ecrã (mode=region)."},
+    "width": {"type": "integer", "minimum": 8, "description": "Largura da região (mode=region)."},
+    "height": {"type": "integer", "minimum": 8, "description": "Altura da região (mode=region)."},
 }
 
 _APP_TARGET_SCHEMA = {
@@ -1320,10 +1413,20 @@ def get_tools() -> list[dict]:
         _tool("pc_screenshot_capture",
               "Captura o ecrã, a janela activa, ou uma janela indicada, para um "
               "ficheiro local. A imagem NÃO é enviada ao modelo nem para a nuvem.",
-              {**_WINDOW_TARGET_SCHEMA,
+              {**_WINDOW_TARGET_SCHEMA, **_SCREEN_AREA_SCHEMA,
                "mode": {"type": "string", "enum": list(screen.CAPTURE_MODES),
                         "default": screen.DEFAULT_CAPTURE_MODE,
-                        "description": "desktop (predefinido), active_window ou window."}}),
+                        "description": "desktop (predefinido), active_window, window, "
+                                       "monitor (com 'monitor') ou region (com x, y, width, height)."}}),
+        _tool("pc_screen_read_text",
+              "Extrai o texto visível de uma janela, monitor ou região com o OCR local do "
+              "Windows (nada vai para a nuvem). Só funciona se o utilizador o ligou em "
+              "Definições → Privacidade, pede sempre confirmação, recusa gestores de "
+              "palavras-passe e oculta dados sensíveis. Sem modo, usa a janela ativa.",
+              {**_WINDOW_TARGET_SCHEMA, **_SCREEN_AREA_SCHEMA,
+               "mode": {"type": "string", "enum": list(ocr.OCR_MODES),
+                        "default": ocr.DEFAULT_OCR_MODE,
+                        "description": "active_window (predefinido), window, monitor ou region."}}),
     ]
 
 
@@ -1384,4 +1487,5 @@ TOOL_HANDLERS = {
     "pc_power_shutdown": pc_power_shutdown,
     "pc_session_logoff": pc_session_logoff,
     "pc_screenshot_capture": pc_screenshot_capture,
+    "pc_screen_read_text": pc_screen_read_text,
 }

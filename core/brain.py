@@ -39,6 +39,7 @@ import time
 from typing import AsyncIterator, Any, NamedTuple
 import httpx
 from groq import AsyncGroq, DefaultAsyncHttpxClient
+from core import clarification
 from core.i18n import tr
 from core import i18n
 from core.config import load_config
@@ -401,6 +402,7 @@ class Brain:
         #: See _run_tool: without it, two identical calls in one round
         #: both passed the ledger lookup before either wrote to it.
         self._turn_tool_inflight: dict[str, asyncio.Future] = {}
+        self.turn_clarification: dict | None = None
         self.conversation: list[dict] = []
         self.groq_model = str(cfg.get("groq_model") or providers.DEFAULT_FAST_MODEL)
         # Two cloud tiers; the strong one is only reached by an explicit
@@ -1452,6 +1454,8 @@ class Brain:
         # second provider re-running a Windows action the first already did.
         self._turn_tool_results = {}
         self._turn_tool_inflight = {}
+        # The question an AMBIGUOUS PC target leaves for the user, if any.
+        self.turn_clarification = None
         self.conversation.append({"role": "user", "content": user_message})
         self._trim_conversation()
 
@@ -2061,6 +2065,13 @@ class Brain:
         # error must be retryable -- the user may approve on a second ask.
         if result.get("success"):
             self._turn_tool_results[fingerprint] = result
+            # The model resolved it itself later in the turn: nothing to ask.
+            if getattr(self, "turn_clarification", None) and self.turn_clarification.get("tool") == name:
+                self.turn_clarification = None
+        else:
+            question = clarification.from_tool_result(name, result)
+            if question is not None:
+                self.turn_clarification = question
 
         if not result.get("success") and result.get("status") == "permission_denied":
             return {

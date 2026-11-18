@@ -187,4 +187,6 @@ EN: dict[str, str] = {
     "Outras integrações": "Other integrations",
     "Capacidades adicionais fornecidas por componentes instalados.": "Extra capabilities provided by installed components.",
     "Esta execução": "This run",
+    "LER O TEXTO DO ECRÃ": "READ THE TEXT ON SCREEN",
+    "O texto visível é lido localmente e enviado ao modelo (dados sensíveis ocultos)": "The visible text is read locally and sent to the model (sensitive data hidden)",
 }

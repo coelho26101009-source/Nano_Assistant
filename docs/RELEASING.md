@@ -170,7 +170,8 @@ A beta release must say it is a beta in the first sentence.
 publisher or SmartScreen warning. Communicate that before an unsigned Beta is
 downloaded; do not ask users to disable Windows security.
 
-When it is set up:
+[CODE_SIGNING.md](CODE_SIGNING.md) compares the options and gives the exact
+electron-builder and workflow changes for when an account exists. In short:
 
 * Choose a supported signing service or certificate and validate the result.
 * The certificate lives in GitHub Actions secrets, **never** in the repository.
@@ -208,6 +209,8 @@ Stated plainly so nothing here reads as more finished than it is:
 * No code signing.
 * No update mechanism — a user with `0.1.0` will not learn that `0.2.0` exists.
 * A developer-host smoke does not prove installation on a clean Windows machine.
+  [CLEAN_WINDOWS_VALIDATION.md](CLEAN_WINDOWS_VALIDATION.md) is the script for
+  a person to follow on one.
 * MSI prerelease upgrades require a numeric-version increment; this Beta uses
   `0.2.0` so it is newer than the first Beta's `0.1.0`.
 

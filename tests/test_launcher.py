@@ -191,7 +191,7 @@ def _uncommented_lines(path: Path = LAUNCHER) -> list[tuple[int, str]]:
 
 @pytest.mark.parametrize("launcher", BATCH_LAUNCHERS, ids=lambda p: p.name)
 def test_no_echo_inside_a_block_has_unescaped_parentheses(launcher):
-    """An unescaped ( or ) in an echo ends the enclosing IF block early.
+    r"""An unescaped ( or ) in an echo ends the enclosing IF block early.
 
     This was real: `echo BUILDING (first run, this takes a minute)` closed the
     `if not exist frontend\out\index.html` block on its own line, so the npm

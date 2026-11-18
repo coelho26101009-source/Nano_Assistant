@@ -23,14 +23,48 @@ Two independent gates fix this:
 from __future__ import annotations
 
 import array
-import audioop
 import logging
 import math
 import re
+import sys
 import wave
 from io import BytesIO
 
+try:  # Removed from the standard library in Python 3.13 (PEP 594).
+    import audioop as _audioop
+except ModuleNotFoundError:  # pragma: no cover - exercised on 3.13+ only
+    _audioop = None
+
 logger = logging.getLogger("nano.speech_filter")
+
+_ARRAY_TYPECODES = {1: "b", 2: "h", 4: "i" if array.array("i").itemsize == 4 else "l"}
+
+
+def _rms(fragment: bytes, width: int) -> int:
+    """``audioop.rms`` with a pure-Python fallback for Python 3.13+.
+
+    The packaged runtime is CPython 3.12, but a developer running Nano from a
+    newer interpreter used to fail at import time -- and with it the whole
+    voice pipeline -- because ``audioop`` no longer exists there. The fallback
+    returns the same integer value for 8/16/32-bit signed PCM.
+    """
+    if _audioop is not None:
+        return _audioop.rms(fragment, width)
+    return _rms_pure(fragment, width)
+
+
+def _rms_pure(fragment: bytes, width: int) -> int:
+    typecode = _ARRAY_TYPECODES.get(width)
+    if typecode is None:
+        raise ValueError(f"unsupported sample width: {width}")
+    usable = len(fragment) - (len(fragment) % width)
+    if usable <= 0:
+        return 0
+    samples = array.array(typecode)
+    samples.frombytes(fragment[:usable])
+    if sys.byteorder == "big" and width > 1:
+        samples.byteswap()  # WAV PCM is little-endian.
+    return int(math.sqrt(sum(sample * sample for sample in samples) / len(samples)))
 
 # RMS below this (16-bit signed, so full scale is 32768) is treated as silence.
 # Typical room tone sits well under 100; speech at a normal distance is 800+.
@@ -96,7 +130,7 @@ def rms_of_wav(audio_bytes: bytes) -> float:
             width = handle.getsampwidth()
         if not frames:
             return 0.0
-        return float(audioop.rms(frames, width))
+        return float(_rms(frames, width))
     except Exception as exc:
         logger.debug("could not measure audio energy: %s", exc)
         return 0.0
@@ -124,7 +158,7 @@ def voiced_ratio(audio_bytes: bytes, *, silence_rms: float = DEFAULT_SILENCE_RMS
         for start in range(0, len(frames) - window_bytes + 1, window_bytes):
             window = frames[start:start + window_bytes]
             total += 1
-            if audioop.rms(window, width) >= silence_rms:
+            if _rms(window, width) >= silence_rms:
                 voiced += 1
         return (voiced / total) if total else 0.0
     except Exception as exc:

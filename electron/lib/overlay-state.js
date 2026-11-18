@@ -49,7 +49,22 @@ const ERROR_LABEL = Object.freeze({
 const GENERIC_ERROR = 'Não consegui responder';
 
 /** How long a terminal state lingers before the overlay hides itself. */
-const HIDE_DELAY = Object.freeze({ ok: 700, quiet: 1400, error: 2200, busy: 1600 });
+const HIDE_DELAY = Object.freeze({ ok: 700, quiet: 1400, error: 2200, busy: 1600, choose: 9000 });
+
+/** Bound what the overlay shows of an ambiguity: it is a pill, not a list. */
+function clarificationView(clarification) {
+  if (!clarification || !Array.isArray(clarification.options)) return null;
+  const labels = clarification.options
+    .filter((label) => typeof label === 'string' && label.trim())
+    .slice(0, 4)
+    .map((label) => (label.length > 40 ? label.slice(0, 39) + '…' : label));
+  if (labels.length < 2) return null;
+  return {
+    visible: true, state: 'done', label: 'Qual delas?',
+    detail: labels.join(' · '),
+    hideAfterMs: HIDE_DELAY.choose,
+  };
+}
 
 /** The view for one `voice_phase` event, or HIDDEN when the turn is at rest. */
 function fromPhase(phase) {
@@ -62,6 +77,10 @@ function fromPhase(phase) {
 /** The view for a `voice_turn_ended` event. */
 function fromTurnEnd(payload) {
   const data = payload || {};
+  // Nano asked which target was meant (an ambiguous window or app). Keep the
+  // candidates on screen long enough to answer, instead of a 0.7s "Pronto".
+  const choose = data.ok ? clarificationView(data.clarification) : null;
+  if (choose) return choose;
   if (data.ok) {
     // The phase stream already showed SPEAKING; fade out rather than flash a
     // redundant "done" state.

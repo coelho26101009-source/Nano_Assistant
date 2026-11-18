@@ -2034,6 +2034,43 @@ kbd {
 :root:not([data-theme="light"]) .btn--danger:hover:not(:disabled) { color: #1A1A1A; }
 :root:not([data-theme="light"]) .composer__mic--live { color: #0E1F1D; }
 
+/* ── Agenda ───────────────────────────────────────────────────────────── */
+.agenda__grid {
+  display: grid; gap: var(--sp-4); align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
+}
+.agenda__form { display: flex; flex-direction: column; gap: var(--sp-3); margin-bottom: var(--sp-4); min-width: 0; }
+.agenda__form-row { display: grid; gap: var(--sp-3); grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr)); }
+.agenda__form-actions { display: flex; justify-content: flex-end; }
+.agenda__list { list-style: none; margin: 0; padding: 0; min-width: 0; }
+.agenda__list ul { list-style: none; margin: 0; padding: 0; }
+.agenda__day { margin: 0 0 var(--sp-2); }
+
+/* ── Clarification choices (ambiguous PC target) ──────────────────────── */
+.msg__choices { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-3); min-width: 0; }
+.choice-chip {
+  max-width: 100%; padding: 6px 12px; border-radius: 999px;
+  border: 1px solid var(--border-strong); background: var(--surface-raised);
+  color: var(--text-primary); font: inherit; font-size: var(--fs-sm); cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  transition: border-color var(--transition), background var(--transition);
+}
+.choice-chip:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--text-dim); }
+.choice-chip:disabled { cursor: default; opacity: 0.55; }
+.choice-chip[aria-pressed="true"] { opacity: 1; border-color: var(--accent); }
+.msg__choices-more { align-self: center; font-size: var(--fs-sm); }
+
+/* ── Work modes (PC -> Modos) ─────────────────────────────────────────── */
+.work-mode__steps { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 4px;
+  font-size: var(--fs-sm); color: var(--text-secondary); overflow-wrap: anywhere; }
+.work-mode__result { margin-bottom: var(--sp-4); }
+.work-mode__outcomes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); }
+.work-mode__outcome { display: flex; gap: var(--sp-2); flex-wrap: wrap; min-width: 0; overflow-wrap: anywhere; }
+.work-mode__outcome-state { flex: none; min-width: 72px; font-weight: 600; }
+.work-mode__outcome--ok .work-mode__outcome-state { color: var(--success); }
+.work-mode__outcome--skipped .work-mode__outcome-state { color: var(--text-muted); }
+.work-mode__outcome--denied .work-mode__outcome-state,
+.work-mode__outcome--failed .work-mode__outcome-state { color: var(--warning); }
 /* ── Approval inside the conversation ─────────────────────────────────────
    Same facts as the dialog (action, target, scope, preview), on the reading
    column above the composer. Warning-toned edge: a decision is waiting. */

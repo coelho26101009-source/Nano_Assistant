@@ -505,8 +505,10 @@ authorise them.
 
 ## Screenshots and OCR
 
-Permission-gated, always confirmed. Three modes: `desktop`, `active_window`,
-`window` (target-bound to a window id). The image **never enters the model's
+Permission-gated, always confirmed. Five modes: `desktop`, `active_window`,
+`window` (target-bound to a window id), `monitor` (by the number a person says,
+bound to that number) and `region` (x, y, width, height in screen pixels,
+clipped to the monitor it starts on and bound to the exact rectangle). The image **never enters the model's
 context** — the tool returns a path, dimensions and a byte count, no base64 —
 and nothing uploads it: no `httpx`, `requests`, `socket` or any other network
 import exists anywhere in the package, which a test asserts. Files land in
@@ -519,12 +521,26 @@ window still captures, and falls back to copying the window's screen rectangle
 — **saying which one it used**, because a fallback capture of a covered window
 contains whatever was on top of it.
 
-**OCR is deferred, and nothing pretends otherwise.** Windows' own OCR
-(`Windows.Media.Ocr`) needs a WinRT binding this project does not have, and
-adding one to read text off a screenshot is a large new dependency for a
-capability nothing currently asks for. Until it exists, no tool is named or
-described as if it read the screen — a test asserts that too. "I can see what
-is on your screen" is a claim a screenshot path does not support.
+**Screen text (local OCR) is opt-in.** `pc_screen_read_text` reads the text
+of the active window, a window, a monitor or a region with Windows' own OCR
+(`Windows.Media.Ocr`, through the optional pywinrt packages). Unlike a
+screenshot, its result IS text the model reads, so it has its own controls,
+in `core/pc_control/ocr.py`:
+
+1. off until Definições → Privacidade → "Ler texto do ecrã" is turned on;
+2. capability `pc.screen.read_text`, HIGH risk, always confirmed, bound to the
+   window, monitor number or rectangle;
+3. password managers and authenticators are refused, before capture for a
+   window and before OCR for a monitor or region that shows one;
+4. keys, tokens, labelled passwords, Luhn-valid card numbers and IBANs are
+   masked;
+5. at most 4000 characters;
+6. the pixels stay in memory for the OCR call only; no image is written;
+7. the output is untrusted external content, fenced as data.
+
+Without the packages or an installed OCR language, the tool and the Settings
+page say so. Every other tool, screenshots included, still must not claim to
+read the screen; a test asserts it.
 
 ## Target binding
 
@@ -616,6 +632,15 @@ The benchmark produced "Procuro fechar o relatório" for "Procura o ficheiro
 relatório". A loose match plus a consequential verb is exactly that failure, and
 it stops and asks.
 
+**The clarification round-trip.** When a tool returns `ambiguous`,
+`core/clarification.py` turns its candidate list into a bounded question
+(at most six options, labels clipped). The chat shows each option as a button
+under the answer; pressing one sends an ordinary message naming the exact
+`window_id` or `app_id`, so the choice travels the whole pipeline again,
+confirmation included. A button never executes anything itself. On a voice
+turn the overlay shows "Qual delas?" with up to four labels for nine seconds
+while the spoken answer asks.
+
 ## The approval card
 
 A confirmation shows three things a person can judge, plus a preview where the
@@ -653,7 +678,7 @@ pipeline.
 Arbitrary command/shell/PowerShell execution · process kill · permanent file
 deletion · registry edits · Windows services · software install/uninstall ·
 click-at-a-pixel and pointer movement · keyboard macros and raw scan codes ·
-OCR and screen understanding · browser automation and DOM interaction ·
+cloud OCR and screen understanding · browser automation and DOM interaction ·
 clipboard history or background monitoring · credential management ·
 autonomous background computer control.
 
@@ -692,14 +717,21 @@ The tool, its handler and its risk classifier are gone. `_run_project_tests` is
 the only remaining subprocess call in the executor, and it picks its argv from
 a closed allow-list with `shell=False`.
 
+## Work modes
+
+`core/work_modes.py` rebuilds the withdrawn Context Switcher on the narrow
+tools, as its tombstone prescribed. A mode file is data; it compiles into calls
+to `pc_window_batch_close`, `pc_app_launch`, `pc_web_open_url`,
+`pc_volume_set` and `pc_settings_open`, validated with those tools' own rules.
+The UI (PC → Modos) runs each step through `ToolExecutor`; the model can only
+read a plan (`work_mode_plan`, capability `pc.mode.read`, autonomous and
+low-risk) and must call the narrow tools itself. Focus Assist is not toggled:
+the mode opens the Notifications page and the person decides.
+
 ## Future expansion points
 
 * **Media session state.** `pc_media_control` sends the transport key and says
   honestly that it cannot confirm an application acted on it. Reading real
   playback state needs the Windows media-session API (GSMTC), which needs a
   WinRT binding.
-* **Local OCR**, with a consent model of its own.
 * **Browser Agent**, with per-site consent and no credential access.
-* **Region screenshots** and per-monitor capture.
-* A clarification round-trip surfaced in the voice overlay, using the
-  `ambiguous` candidate lists these tools already return.

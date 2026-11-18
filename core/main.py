@@ -34,6 +34,7 @@ from core.app_paths import DATA_DIR, FRONTEND_DIR, PLUGINS_DIR, ROOT, default_da
 from core.dotenv_gate import dotenv_allowed
 from core import data_migration
 from core import capability_catalogue, local_control_plane
+from core import agenda, clarification, work_modes
 from core import version as nano_version
 from core import i18n
 from core.i18n import tr
@@ -2018,9 +2019,25 @@ def get_settings() -> dict:
             "stats": memory_stack.memories.stats() if memory_stack.ready else {},
             "knowledge": memory_stack.knowledge.stats() if memory_stack.ready else {},
         },
+        "screenText": _screen_text_settings(),
         "stored": user_settings.all_settings(),
         "runtime": get_runtime_info(),
         "language": i18n.describe(),
+    }
+
+
+def _screen_text_settings() -> dict:
+    """Privacidade -> Ler texto do ecrã: the switch, and whether OCR can run here."""
+    try:
+        from core.pc_control import ocr
+        status = ocr.engine_status()
+    except Exception:
+        status = {"available": False, "reason": "error", "message": "Não consegui verificar o OCR."}
+    return {
+        "enabled": user_settings.get("screen_text_enabled", False) is True,
+        "available": bool(status.get("available")),
+        "reason": str(status.get("reason") or ""),
+        "message": str(status.get("message") or ""),
     }
 
 
@@ -2683,6 +2700,70 @@ ERASE_ALL_CONFIRMATION = "APAGAR TUDO"
 ERASE_ALL_CONFIRMATIONS = frozenset({ERASE_ALL_CONFIRMATION, "DELETE EVERYTHING"})
 
 
+# ── Work modes (PC -> Modos) ───────────────────────────────────────────────
+
+@eel.expose
+def get_work_modes() -> dict:
+    """Every mode in config/modes with the steps it would take. Read-only."""
+    return {"ok": True, "modes": work_modes.list_modes()}
+
+
+async def _run_work_mode(mode_id: str) -> None:
+    try:
+        result = await work_modes.run(mode_id, tool_executor)
+    except Exception:
+        logger.exception("Modo de trabalho falhou")
+        result = {"ok": False, "id": str(mode_id)[:32], "message": "O modo falhou.", "steps": []}
+    _notify_ui("on_work_mode_done", result)
+
+
+@eel.expose
+def activate_work_mode(mode_id: str) -> dict:
+    """Start a work mode. Returns an ACK; the outcome arrives on on_work_mode_done.
+
+    Each step runs through ToolExecutor and may wait on a confirmation dialog,
+    so this must not hold the bridge thread for the whole mode.
+    """
+    if str(mode_id or "").strip().casefold() not in work_modes.available_ids():
+        return {"ok": False, "accepted": False, "error": "unknown_mode"}
+    try:
+        asyncio.run_coroutine_threadsafe(_run_work_mode(str(mode_id).strip().casefold()),
+                                         _get_or_create_loop())
+    except Exception:
+        logger.exception("Não foi possível arrancar o modo")
+        return {"ok": False, "accepted": False, "error": "dispatch_failed"}
+    return {"ok": True, "accepted": True}
+
+
+# ── Agenda page: reminders and calendar events ─────────────────────────────
+# The user's own edits to Nano's own data, like the Memória page. Not model
+# tools; see core/agenda.py.
+
+@eel.expose
+def get_agenda(days: int = 30) -> dict:
+    return agenda.overview(days)
+
+
+@eel.expose
+def agenda_create_reminder(text: str, when: str, repeat: str | None = None) -> dict:
+    return agenda.create_reminder(text, when, repeat)
+
+
+@eel.expose
+def agenda_delete_reminder(reminder_id: int) -> dict:
+    return agenda.delete_reminder(reminder_id)
+
+
+@eel.expose
+def agenda_create_event(title: str, start: str, end: str | None = None, location: str = "") -> dict:
+    return agenda.create_event(title, start, end, location)
+
+
+@eel.expose
+def agenda_delete_event(event_id: int) -> dict:
+    return agenda.delete_event(event_id)
+
+
 @eel.expose
 def erase_all_data(confirmation: str = "") -> dict:
     """Erase everything Nano holds about the user, in one confirmed action.
@@ -3256,6 +3337,10 @@ def _on_voice_turn_finished(source: str, future) -> None:
         # A short machine-readable reason. Never a traceback and never a
         # provider message: the overlay must not show internals to the user.
         "error": (str(result.get("error")) if result.get("error") else None),
+        # An ambiguous PC target: labels only, so the overlay can show what
+        # to choose between while the spoken answer asks.
+        "clarification": (clarification.for_overlay(getattr(brain, "turn_clarification", None))
+                          if result.get("ok") else None),
     })
 
 
@@ -3399,6 +3484,37 @@ def _exit_now() -> None:
         logger.exception("Falha no encerramento pedido pelo desktop")
     finally:
         os._exit(0)
+
+
+def _on_reminder_due(reminder: dict) -> None:
+    """Show a due reminder on this PC.
+
+    The desktop shell turns ``reminder_due`` into a Windows notification (it
+    works with the window hidden in the tray); the open UI shows it as a toast.
+    Only plain data crosses either boundary: id, text and the due time label.
+    """
+    payload = {
+        "id": reminder.get("id"),
+        "text": str(reminder.get("text") or "")[:500],
+        "due_label": str(reminder.get("due_label") or "")[:16],
+    }
+    _desktop_emit("reminder_due", payload)
+    _notify_ui("on_reminder_due", payload)
+
+
+def _register_reminder_notifier() -> bool:
+    """Attach the local reminder channel, if the reminders plugin is loaded."""
+    from core.plugin_loader import get_plugin
+
+    # The instance the loader runs (its scheduler fires the reminders), not a
+    # fresh `import plugins.reminders`, which would be a second, idle copy.
+    reminders_plugin = get_plugin("reminders")
+    register = getattr(reminders_plugin, "register_notifier", None)
+    if not callable(register):
+        logger.debug("Plugin de lembretes indisponível; sem notificações locais")
+        return False
+    register(_on_reminder_due)
+    return True
 
 
 #: THE COMPLETE SET. Anything not named here is refused by the dispatcher.
@@ -3608,6 +3724,11 @@ async def _process_message(user_text: str, msg_id: str | None = None,
         }
         if rate_limit:
             result["rate_limit"] = rate_limit
+        question = getattr(brain, "turn_clarification", None)
+        if question:
+            # An ambiguous PC target: the UI offers the candidates as buttons.
+            # See core/clarification.py.
+            result["clarification"] = question
         _emit_stream_end(msg_id, result)
         if _should_speak(source) and not rate_limit:
             if blocking_tts:
@@ -3830,6 +3951,7 @@ def main():
     background_worker.start()
     _report("Backend", "READY" if background_worker.status().get("running") else "ERROR")
 
+    _register_reminder_notifier()
     started_services = start_plugin_services()
     _report("Plugins", "OK", f"{len(list_plugins())} loaded")
     if started_services:

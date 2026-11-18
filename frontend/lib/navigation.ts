@@ -16,11 +16,11 @@ import { t } from "../lib/i18n";
  */
 
 export type ViewId =
-  | "chat" | "tasks" | "activity"
+  | "chat" | "agenda" | "tasks" | "activity" | "modes"
   | "permissions" | "agents" | "memory" | "knowledge" | "graph" | "integrations"
   | "capabilities" | "status" | "settings";
 
-export type SectionId = "chat" | "tools" | "pc" | "memory" | "settings";
+export type SectionId = "chat" | "agenda" | "tools" | "pc" | "memory" | "settings";
 
 export type NavCounts = Partial<Record<ViewId, number>>;
 
@@ -37,6 +37,13 @@ export const SECTIONS: SectionEntry[] = [
     section: "chat",
     label: t("Chat"),
     views: [{ id: "chat", label: t("Conversa"), hint: t("Fala com o NANO") }],
+  },
+  {
+    // AGENDA is the user's time: reminders and calendar events, which used to
+    // be reachable only by asking in the chat.
+    section: "agenda",
+    label: "Agenda",
+    views: [{ id: "agenda", label: "Agenda", hint: "Lembretes e eventos" }],
   },
   {
     // FERRAMENTAS answers "what can this thing do for me?". It is a catalogue,
@@ -60,6 +67,7 @@ export const SECTIONS: SectionEntry[] = [
       { id: "permissions", label: t("Permissões"), hint: t("O que o NANO pode fazer neste computador") },
       { id: "activity", label: t("Atividade"), hint: t("O que o NANO tem feito aqui") },
       { id: "tasks", label: t("Tarefas"), hint: t("Trabalho em segundo plano") },
+      { id: "modes", label: t("Modos"), hint: t("Preparar o PC para uma atividade") },
     ],
   },
   {

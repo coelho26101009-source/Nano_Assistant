@@ -134,6 +134,20 @@ def evaluate(text: str, *, trust: str | TrustLevel = TrustLevel.USER) -> MemoryV
     return MemoryVerdict(True, "ok")
 
 
+def mask_secrets(text: str) -> tuple[str, int]:
+    """Replace every credential-shaped span with a marker. Returns (text, count).
+
+    For text that is going to be SHOWN (screen OCR), where refusing the whole
+    thing would be useless but passing a key through would be wrong.
+    """
+    value = str(text or "")
+    total = 0
+    for category, pattern in _SECRET_PATTERNS:
+        value, count = pattern.subn(f"[{category} oculto]", value)
+        total += count
+    return value, total
+
+
 def redact(text: str, limit: int = 80) -> str:
     """A log-safe stand-in for a memory: its length and nothing else.
 
@@ -150,6 +164,7 @@ __all__ = [
     "MemoryVerdict",
     "contains_secret",
     "evaluate",
+    "mask_secrets",
     "redact",
     "secret_reason",
 ]

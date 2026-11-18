@@ -1,18 +1,15 @@
-# Modo Relax — fim de dia, descanso
-name: "Modo Relax 🌅"
-description: "Spotify, nada de trabalho, luzes suaves"
-message: "Modo Relax activado, Simão. Mereces descansar."
+# Modo Relax — fim do dia.
+# Ver config/modes/foco.yaml para o formato.
+name: "Modo Relax"
+description: "Fecha o trabalho, abre a música e sobe o volume."
+message: "Modo Relax ativo. Mereces descansar."
 
 close_apps:
-  - "code.exe"
-  - "WindowsTerminal.exe"
-  - "Docker Desktop.exe"
+  - "code"
+  - "teams"
+  - "slack"
 
 open_apps:
-  - "Spotify.exe"
-
-open_urls:
-  - "https://youtube.com"
+  - "Spotify"
 
 volume: 65
-focus_assist: false

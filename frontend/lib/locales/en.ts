@@ -962,4 +962,10 @@ export const EN: Record<string, string> = {
   "Tenta de novo dentro de ~{0} s.": "Try again in ~{0} s.",
   "Configura um provedor cloud ou um modelo local para conversar.": "Set up a cloud provider or a local model to chat.",
   "O {0} pode cometer erros. Ações sensíveis pedem sempre a tua autorização.": "{0} can make mistakes. Sensitive actions always ask for your approval.",
+  "Ler texto do ecrã": "Read text on screen",
+  "Permitir que o NANO leia o texto do ecrã": "Let NANO read the text on screen",
+  "Quando pedes (“o que diz esta janela?”), o NANO usa o OCR do próprio Windows para extrair o texto da janela, monitor ou região. Pede sempre confirmação, nunca lê gestores de palavras-passe, oculta chaves, palavras-passe, cartões e IBANs, e não guarda a imagem. O texto lido é enviado ao modelo como qualquer mensagem.": "When you ask (“what does this window say?”), NANO uses Windows' own OCR to extract the text of a window, monitor or region. It always asks for confirmation, never reads password managers, hides keys, passwords, cards and IBANs, and does not keep the image. The text it reads is sent to the model like any message.",
+  "Lembretes e eventos do calendário": "Reminders and calendar events",
+  "Modos": "Modes",
+  "Preparar o PC para uma atividade": "Get the PC ready for an activity",
 };

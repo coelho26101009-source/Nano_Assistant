@@ -31,7 +31,7 @@
 'use strict';
 
 const {
-  app, BrowserWindow, Menu, Tray, dialog, globalShortcut, ipcMain,
+  app, BrowserWindow, Menu, Notification, Tray, dialog, globalShortcut, ipcMain,
   nativeImage, screen, shell,
 } = require('electron');
 const path = require('path');
@@ -41,6 +41,7 @@ const { execFile } = require('child_process');
 
 const { NanoBackend } = require('./lib/backend');
 const overlayState = require('./lib/overlay-state');
+const notifications = require('./lib/notifications');
 const windowState = require('./lib/window-state');
 const { canonicalDataDir, shellStateFile } = require('./lib/paths');
 const { diagnostics, waitForHttp, loadRecovery } = require('./lib/startup-health');
@@ -311,6 +312,37 @@ function onBackendEvent(event, payload) {
   }
   if (event === 'voice_turn_ended') {
     applyOverlayView(overlayState.fromTurnEnd(payload));
+    return;
+  }
+  const toast = notifications.fromBackendEvent(event, payload);
+  if (toast) showNativeNotification(toast);
+}
+
+/**
+ * Show a reminder as a Windows notification.
+ *
+ * Shown from the main process, so it works with the window hidden in the tray
+ * and needs no renderer permission (the renderer is still denied
+ * notifications; see hardenWebContents). Clicking it brings Nano forward.
+ */
+function showNativeNotification(toast) {
+  try {
+    if (!Notification || (typeof Notification.isSupported === 'function' && !Notification.isSupported())) {
+      log('Notificações nativas não suportadas neste sistema.');
+      return false;
+    }
+    const notification = new Notification({
+      title: toast.title,
+      body: toast.body,
+      silent: toast.silent,
+      icon: appIcon(),
+    });
+    notification.on('click', () => showMainWindow());
+    notification.show();
+    return true;
+  } catch (err) {
+    log('Falha ao mostrar a notificação:', err.message);
+    return false;
   }
 }
 
@@ -1075,6 +1107,12 @@ if (!gotLock) {
     log('Segunda instância pedida; a focar a janela existente.');
     showMainWindow();
   });
+
+  // Windows only shows toasts from an app with an identity; this must match
+  // build.appId so the notification carries Nano's name and icon.
+  if (process.platform === 'win32' && typeof app.setAppUserModelId === 'function') {
+    app.setAppUserModelId('com.nano.assistant');
+  }
 
   app.whenReady().then(async () => {
     loadShellState();

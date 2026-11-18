@@ -1,20 +1,33 @@
-# Modo Foco — trabalho profundo sem distracções
-name: "Modo Foco 🎯"
-description: "Deep work — sem notificações, sem redes sociais"
-message: "Modo Foco activo. 90 minutos de trabalho profundo, Simão. Vai!"
+# Modo Foco — trabalho profundo sem distrações.
+#
+# Um modo é só DADOS. O Nano transforma-o numa lista de ações das ferramentas
+# de PC Control (core/work_modes.py) e cada ação passa pela política, pelas
+# permissões e pelas confirmações normais. Fechar aplicações pede sempre
+# confirmação e nunca força o fecho.
+#
+#   close_apps:        nomes de processos (sem caminhos), fechados com pedido
+#   open_apps:         nomes de aplicações instaladas (sem caminhos)
+#   open_urls:         só http/https
+#   volume:            0-100
+#   settings_section:  secção das Definições do Windows a abrir (ex. notifications)
+name: "Modo Foco"
+description: "Trabalho profundo: fecha conversas, abre o editor e baixa o volume."
+message: "Modo Foco ativo. Bom trabalho!"
 
 close_apps:
-  - "Discord.exe"
-  - "slack.exe"
-  - "Teams.exe"
-  - "WhatsApp.exe"
-  - "Telegram.exe"
+  - "discord"
+  - "slack"
+  - "teams"
+  - "whatsapp"
+  - "telegram"
 
 open_apps:
-  - "code"
+  - "Visual Studio Code"
 
 open_urls:
   - "https://notion.so"
 
 volume: 30
-focus_assist: true
+
+# O Nano não altera o Foco/Não incomodar sozinho: abre a página e tu decides.
+settings_section: "notifications"

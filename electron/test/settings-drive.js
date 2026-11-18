@@ -282,13 +282,14 @@ app.whenReady().then(async () => {
   await sleep(1500);
 
   /* ---- 1. every top-level destination opens real content ----------------
-     The five sections live in the sidebar: four in its navigation, Definições
+     The six sections live in the sidebar: five in its navigation, Definições
      at its foot. */
   const navButtons = qa('.rail-nav__item');
-  ok('the five destinations are present', navButtons.length === 5,
+  ok('the six destinations are present', navButtons.length === 6,
      navButtons.map((b) => b.textContent.trim()).join(' / '));
 
   for (const [label, expect] of [
+    ['Agenda', 'Lembretes'],
     ['Ferramentas', 'Capacidades'],
     ['PC', null],
     ['Memória', null],
@@ -364,8 +365,8 @@ app.whenReady().then(async () => {
        openPopover ? (topbar.contains(openPopover) ? 'still inside .topbar' : 'outside .topbar') : 'no popover found');
 
     const navLabels = qa('.rail-nav__item').map((el) => el.textContent.trim());
-    ok('all five destinations are still present with the popover open',
-       navLabels.length === 5 && navLabels.every((label) => label.length > 0),
+    ok('all six destinations are still present with the popover open',
+       navLabels.length === 6 && navLabels.every((label) => label.length > 0),
        navLabels.join(' / '));
     const navRect = q('.rail-nav')?.getBoundingClientRect();
     ok('the nav bar itself still has real, visible dimensions',
@@ -685,7 +686,7 @@ app.whenReady().then(async () => {
     rect.right <= window.innerWidth + 1 && rect.bottom <= window.innerHeight + 1;
   const navLabels = Array.from(document.querySelectorAll('.rail-nav__item')).map((el) => el.textContent.trim());
   return {
-    ok: withinViewport && rect.width > 100 && rect.height > 50 && navLabels.length === 5,
+    ok: withinViewport && rect.width > 100 && rect.height > 50 && navLabels.length === 6,
     withinViewport, width: rect.width, height: rect.height,
     viewport: { w: window.innerWidth, h: window.innerHeight },
     navCount: navLabels.length,

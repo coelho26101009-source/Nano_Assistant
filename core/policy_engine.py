@@ -185,6 +185,8 @@ class PolicyEngine:
         # pc_app_launch and the CAPABILITIES are pc.app.launch. This table is
         # the only place the two vocabularies meet.
         "pc_app_search": "pc.app.search",
+        "work_mode_list": "pc.mode.read",
+        "work_mode_plan": "pc.mode.read",
         "pc_app_launch": "pc.app.launch",
         "pc_app_switch": "pc.app.switch",
         "pc_app_list_running": "pc.app.read",
@@ -240,6 +242,7 @@ class PolicyEngine:
         "pc_power_shutdown": "pc.power.shutdown",
         "pc_session_logoff": "pc.session.logoff",
         "pc_screenshot_capture": "pc.screen.capture",
+        "pc_screen_read_text": "pc.screen.read_text",
     }
 
     def __init__(self, autonomy_mode: str | AutonomyMode = AutonomyMode.SAFE):
@@ -349,6 +352,9 @@ class PolicyEngine:
             # whose risk is HIGH or CRITICAL. The sensitive three below rely on
             # exactly that.
             "pc.app.search": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Listing installed applications is read-only."),
+            # Work modes: reading a plan is read-only; applying it is the
+            # narrow tools in the plan, each with its own rule.
+            "pc.mode.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Reading a work mode's plan executes nothing."),
             "pc.window.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Listing open windows is read-only."),
             "pc.volume.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Reading the volume is read-only."),
             "pc.system.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "The system snapshot is read-only and carries no identifiers."),
@@ -382,6 +388,7 @@ class PolicyEngine:
             "pc.window.close": (AuthorityDecision.APPROVAL_REQUIRED.value, RiskLevel.HIGH, "system", "Closing a window can lose unsaved work and needs explicit confirmation."),
             "pc.window.batch_close": (AuthorityDecision.APPROVAL_REQUIRED.value, RiskLevel.HIGH, "system", "Closing every window of an application multiplies the risk of losing unsaved work."),
             "pc.screen.capture": (AuthorityDecision.APPROVAL_REQUIRED.value, RiskLevel.HIGH, "system", "A screenshot may contain anything on screen; it always needs explicit consent."),
+            "pc.screen.read_text": (AuthorityDecision.APPROVAL_REQUIRED.value, RiskLevel.HIGH, "system", "Screen text goes to the model; it is opt-in and always needs explicit consent."),
             "pc.clipboard.read": (AuthorityDecision.APPROVAL_REQUIRED.value, RiskLevel.HIGH, "system", "The clipboard may hold a password or a private message; reading it is a privacy event."),
             "pc.clipboard.write": (AuthorityDecision.APPROVAL_REQUIRED.value, RiskLevel.HIGH, "system", "Writing replaces whatever the user had copied, and Windows cannot undo that."),
             "pc.clipboard.clear": (AuthorityDecision.APPROVAL_REQUIRED.value, RiskLevel.HIGH, "system", "Clearing discards whatever the user had copied."),

@@ -20,8 +20,65 @@ versioning policy.
 
 ## [Unreleased]
 
+### Changed
+
+- **Frontend on Next.js 16** (16.4.5, from 15.5.29). The build now uses
+  Turbopack; `turbopack.root` points at the repository so `lib/version.ts` can
+  still read `version.json`. The removed `eslint` key is gone from
+  `next.config.js`. `npm audit` reports 0 vulnerabilities. React stays on 18,
+  which Next 16 still supports but deprecates; React 19 is needed before Next 17.
+
+### Documentation
+
+- `docs/CLEAN_WINDOWS_VALIDATION.md`: a step-by-step script for validating an
+  installer on a clean Windows account, including every feature added in this
+  release.
+- `docs/CODE_SIGNING.md`: signing options for the installers, and the exact
+  electron-builder and workflow changes to make once an account exists.
+
 ### Added
 
+- **Recurring reminders and everyday phrases.** Reminders understand
+  "amanhã às 9", "sexta às 15h", "depois de amanhã", "9 e meia" and "3 da
+  tarde", and can repeat: "todos os dias às 8", "nos dias úteis",
+  "todas as segundas às 9" or "todos os meses". A recurring reminder moves to
+  its next slot when it fires (claimed atomically, so it is delivered once
+  per slot), and slots missed while the PC was off are skipped rather than
+  fired in a burst. The Agenda page gains a "Repetir" choice and shows the
+  rule beside each reminder. Old databases gain the new column on first use.
+- **Read the text on screen, locally and only if you allow it.** New
+  `pc_screen_read_text` uses Windows' own OCR on the active window, a window, a
+  monitor or a region. It is off until Definições → Privacidade → "Ler texto
+  do ecrã" is on, always asks, refuses password managers and authenticators,
+  masks keys, passwords, card numbers and IBANs, returns at most 4000
+  characters, keeps no image, and its output is fenced as untrusted content.
+  Needs the optional pywinrt packages (added to `requirements/optional.lock`).
+- Screenshots can now capture **one monitor** (`mode=monitor`) or **a region**
+  (`mode=region`, clipped to the monitor), each bound to its own grant.
+- **Work modes are back, safely** (PC → Modos). A mode in `config/modes/*.yaml`
+  compiles into ordinary PC Control actions (close apps, open apps and sites,
+  set the volume, open a Windows Settings page); the page shows every step
+  before anything runs, and "Ativar" sends each one through the permission
+  pipeline. Closing apps asks each time and never forces; apps that are not
+  open are skipped without a prompt. The model gets read-only
+  `work_mode_list` / `work_mode_plan` and applies a mode with the narrow tools.
+  Mode ids are a closed allow-list of the files in the folder; terminals,
+  interpreters, paths and non-http(s) URLs are refused.
+- When a PC Control target is ambiguous (two windows called "relatório", two
+  apps matching "Spotify"), the chat now shows the candidates as buttons under
+  Nano's question. Pressing one sends a normal message naming the exact
+  window or app, so it goes through policy and confirmation again. On a voice
+  turn the overlay shows "Qual delas?" with the options.
+- New **Agenda** section in the sidebar: see pending reminders and the
+  calendar events of the next 7, 30 or 90 days (local, imported .ics and
+  Google, labelled), create reminders and events with a form, and delete them
+  after a confirmation. Google events are read-only. The page talks to the
+  running plugins through `core/agenda.py`; nothing here is a model tool.
+- Reminders now show up on the PC: Nano Desktop raises a Windows notification
+  when one falls due (also with the window hidden in the tray; clicking it
+  brings Nano forward), and the browser mode shows an in-app toast. The phone
+  webhook still works as before. `reminders.desktop_notifications: false`
+  turns the local notification off.
 - "Apagar todos os dados" in Definições → Privacidade erases every
   conversation, memory, legacy fact, the user profile, the whole Second Brain,
   indexed documents and the finished-task history in one transaction, then
@@ -29,6 +86,34 @@ versioning policy.
   the typed phrase `APAGAR TUDO`, which the backend checks too, and the dialog
   lists what is kept: settings, API keys, connected accounts, permissions and
   logs. It is a Settings control only, never a model tool.
+
+### Fixed
+
+- "Apagar todos os dados" now also erases reminders and calendar events, which
+  live in the same database and used to survive it.
+- Reminders: an absolute time that has already passed is refused instead of
+  firing at once; "dd/mm HH:MM" for a date already past this year means next
+  year; a due reminder is claimed before delivery, so a failure part-way can no
+  longer re-send it every 20 seconds.
+- Calendar `.ics` import: UTC times (`...Z`) are converted to local time
+  instead of being stored an hour or more off; folded long lines, `SUMMARY`/
+  `LOCATION` with parameters and escaped text (`\,` `\;` `\n`) are read
+  correctly; re-importing a file no longer duplicates events; imported events
+  can be deleted.
+- Google Calendar reading (`calendar.google_enabled`) needed two libraries that
+  were not declared anywhere; `google-api-python-client` and
+  `google-auth-oauthlib` are now in `requirements-optional.txt` and
+  `optional.lock`.
+- `core.speech_filter` no longer fails to import on Python 3.13+, where
+  `audioop` was removed; it falls back to an equivalent pure-Python RMS.
+- User-facing replies and tool descriptions no longer hard-code a personal
+  name.
+- Frontend: Next.js 15.5.26 → 15.5.29 and `source-map-js` updated (npm audit
+  clean); removed the `export` script, since `next export` no longer exists
+  (`next build` with `output: "export"` already produces `out/`).
+- Tests no longer depend on the machine: proxy tests clear the lower-case
+  `https_proxy`/`no_proxy` variables too, the untrusted-output test no longer
+  needs working DNS, and an invalid escape sequence warning is gone.
 
 ---
 

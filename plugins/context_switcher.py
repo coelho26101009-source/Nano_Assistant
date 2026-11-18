@@ -64,6 +64,10 @@ That version would need the mode name resolved against a closed allow-list of
 files actually inside ``config/modes``, and a confirmation card that names every
 application it is about to close. None of that is implemented here: this file
 is a tombstone, not a staging area.
+
+The safe version now exists as ``core/work_modes.py`` (PC -> Modos in the UI,
+and the read-only ``work_mode_list`` / ``work_mode_plan`` tools in
+``plugins/work_modes.py``).
 """
 
 from __future__ import annotations

@@ -183,9 +183,12 @@ class Bridge:
         for name in _CLOUD_ENV:
             monkeypatch.delenv(name, raising=False)
         monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
-        monkeypatch.delenv("HTTPS_PROXY", raising=False)
-        monkeypatch.delenv("HTTP_PROXY", raising=False)
-        monkeypatch.delenv("ALL_PROXY", raising=False)
+        # Lower-case spellings too: on Linux they are separate variables and
+        # urllib/httpx prefer them, so an inherited https_proxy would route
+        # this test's traffic around the simulated network.
+        for name in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY",
+                     "https_proxy", "http_proxy", "all_proxy", "no_proxy"):
+            monkeypatch.delenv(name, raising=False)
         # Settings and secrets this test writes go to its own directory, and
         # the process's copies come back exactly as they were.
         monkeypatch.setattr(user_settings, "_PATH", tmp_path / "user_settings.json")

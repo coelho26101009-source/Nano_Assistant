@@ -286,6 +286,8 @@ export type SettingsPayload = {
   };
   stored: Record<string, any>;
   runtime: Record<string, any>;
+  /** Privacidade -> Ler texto do ecrã (local OCR). Off by default. */
+  screenText?: { enabled: boolean; available: boolean; reason: string; message: string };
 };
 
 /* ── Bridge ───────────────────────────────────────────────────────────── */

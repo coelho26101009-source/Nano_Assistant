@@ -303,7 +303,7 @@ async function main() {
     });
     for (const viewport of VIEWPORTS) {
       report.desktop.push(await measure(desktopWindow, url, viewport));
-      for (const section of ['Ferramentas', 'PC', 'Mem', 'Defini']) {
+      for (const section of ['Agenda', 'Ferramentas', 'PC', 'Mem', 'Defini']) {
         report.sections.push(await measureSection(desktopWindow, viewport, section));
       }
     }

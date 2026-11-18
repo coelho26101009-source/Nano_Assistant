@@ -52,7 +52,7 @@ CSS = FRONTEND / "styles" / "globals.css"
 # by exactly one section -- so the expectation moves with the product while the
 # guarantees stay put.
 VIEWS = (
-    "chat", "tasks", "activity", "permissions",
+    "chat", "agenda", "tasks", "modes", "activity", "permissions",
     "agents", "memory", "knowledge", "graph",
     "integrations", "capabilities", "status", "settings",
 )

@@ -799,6 +799,9 @@ class MemoryStack:
         "retrieval_entries",
     )
 
+    #: Created lazily by plugins/reminders.py and plugins/calendar.py.
+    _PURGE_PLUGIN_TABLES = ("reminders", "calendar_events")
+
     #: Legacy key/value rows in ``preferences`` that are personal: the facts
     #: written by ``remember_fact`` and older builds, and the user profile.
     _PURGE_PREFERENCES = ("fact:%", "nano.user_profile")
@@ -894,6 +897,13 @@ class MemoryStack:
                     self.conn.execute(f"DELETE FROM {table}")  # noqa: S608 - fixed names
                 for pattern in self._PURGE_PREFERENCES:
                     self.conn.execute("DELETE FROM preferences WHERE key LIKE ?", (pattern,))
+                # Plugin tables in the same file, created on first use, so
+                # they may not exist yet: reminder texts and calendar events
+                # are personal too, and used to survive "Apagar todos os dados".
+                for table in self._PURGE_PLUGIN_TABLES:
+                    if self._table_exists(table):
+                        counts[table] = self._count(f"SELECT COUNT(*) FROM {table}")  # noqa: S608
+                        self.conn.execute(f"DELETE FROM {table}")  # noqa: S608 - fixed names
                 # FTS tables exist only where SQLite was built with FTS5.
                 if self._table_exists("retrieval_fts"):
                     self.conn.execute("DELETE FROM retrieval_fts")

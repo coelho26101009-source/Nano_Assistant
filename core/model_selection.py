@@ -180,7 +180,9 @@ _CATEGORY_TOOLS: dict[ToolCategory, tuple[str, ...]] = {
         # line.
         "system_stats", "pc_system_info", "pc_network_status", "pc_storage_info",
         "pc_settings_open",
-        "context_activate_mode", "context_list_modes",
+        "work_mode_list", "work_mode_plan",
+        # Applying a mode calls these; they must be in the same payload.
+        "pc_app_launch", "pc_window_batch_close", "pc_web_open_url", "pc_volume_set",
         "monitor_status", "monitor_start", "monitor_stop",
         "clean_windows_cache",
     ),
@@ -218,7 +220,8 @@ _CATEGORY_TOOLS: dict[ToolCategory, tuple[str, ...]] = {
         "pc_session_lock", "pc_power_sleep", "pc_power_restart",
         "pc_power_shutdown", "pc_session_logoff",
     ),
-    ToolCategory.PC_SCREEN: ("pc_screenshot_capture", "pc_window_list"),
+    ToolCategory.PC_SCREEN: ("pc_screenshot_capture", "pc_screen_read_text", "pc_window_list",
+                             "pc_display_info"),
     ToolCategory.FILES: (
         "organize_downloads", "rename_file_smart",
         "rag_index_pdf", "clean_windows_cache",
@@ -313,6 +316,9 @@ _CATEGORY_KEYWORDS: dict[ToolCategory, tuple[str, ...]] = {
     ToolCategory.PC_SCREEN: (
         "captura", "capturar", "screenshot", "print do ecra",
         "print screen", "fotografia do ecra", "imagem do ecra",
+        # Screen text (local OCR).
+        "texto do ecra", "le o ecra", "ler o ecra", "o que diz", "o que esta escrito",
+        "ocr", "le a janela", "ler a janela", "le o texto", "ler o texto",
     ),
     ToolCategory.FILES: (
         "ficheiro", "ficheiros", "pasta", "pastas", "diretorio", "directorio",

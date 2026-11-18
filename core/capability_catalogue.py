@@ -77,7 +77,7 @@ CATEGORIES: tuple[Category, ...] = (
     Category(
         "display", "Ecrã e monitores",
         "Monitores, brilho e captura de ecrã.",
-        prefixes=("pc_display_", "pc_screenshot_"),
+        prefixes=("pc_display_", "pc_screenshot_", "pc_screen_"),
     ),
     Category(
         "input", "Escrita e área de transferência",
@@ -87,7 +87,7 @@ CATEGORIES: tuple[Category, ...] = (
     Category(
         "system", "Sistema",
         "Estado da máquina, definições do Windows, energia e sessão.",
-        prefixes=("pc_power_", "pc_session_", "monitor_"),
+        prefixes=("pc_power_", "pc_session_", "monitor_", "work_mode_"),
         exact=frozenset({
             "pc_system_info", "pc_network_status", "pc_storage_info",
             "pc_settings_open", "system_stats", "clean_windows_cache",
