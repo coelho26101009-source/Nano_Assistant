@@ -36,7 +36,7 @@ import React from "react";
 import Icon, { type IconName } from "./Icon";
 import NanoLogo, { NanoLockup } from "./NanoLogo";
 import { Button, ConfirmDialog, Popover, Skeleton } from "./ui";
-import { Thread, groupThreads, matchesThread, threadStamp } from "../lib/conversations";
+import { Thread, matchesThread, organiseThreads, projectNames, threadStamp } from "../lib/conversations";
 import {
   NavCounts, SECTIONS, SectionEntry, SectionId, ViewId, sectionBadge, sectionOf,
 } from "../lib/navigation";
@@ -85,11 +85,14 @@ function SectionButton({
 }
 
 function RowMenu({
-  thread, onRename, onDelete,
+  thread, onRename, onDelete, onPin, onMove, onUnfile,
 }: {
   thread: Thread;
   onRename: (thread: Thread) => void;
   onDelete: (thread: Thread) => void;
+  onPin?: (thread: Thread, pinned: boolean) => void;
+  onMove?: (thread: Thread) => void;
+  onUnfile?: (thread: Thread) => void;
 }) {
   const [open, setOpen] = React.useState(false);
   return (
@@ -102,7 +105,7 @@ function RowMenu({
           {...props}
           type="button"
           className="chat-item__menu"
-          title={t("Mudar o nome ou apagar")}
+          title={t("Fixar, mover, mudar o nome ou apagar")}
           aria-label={t("Ações de {0}", { 0: thread.title })}
           onClick={(event) => { event.stopPropagation(); setOpen((v) => !v); }}
         >
@@ -111,6 +114,30 @@ function RowMenu({
       )}
     >
       {/* Popover already renders role="menu" and the label; these are its items. */}
+      {onPin && (
+        <button type="button" className="popover__item" role="menuitem"
+                onClick={() => { setOpen(false); onPin(thread, !thread.pinned); }}>
+          <span className="popover__item-body">
+            <span className="popover__item-label">{thread.pinned ? t("Desafixar") : t("Fixar no topo")}</span>
+          </span>
+        </button>
+      )}
+      {onMove && (
+        <button type="button" className="popover__item" role="menuitem"
+                onClick={() => { setOpen(false); onMove(thread); }}>
+          <span className="popover__item-body">
+            <span className="popover__item-label">{thread.project ? t("Mudar de projeto…") : t("Mover para um projeto…")}</span>
+          </span>
+        </button>
+      )}
+      {onUnfile && thread.project && (
+        <button type="button" className="popover__item" role="menuitem"
+                onClick={() => { setOpen(false); onUnfile(thread); }}>
+          <span className="popover__item-body">
+            <span className="popover__item-label">{t("Tirar do projeto {0}", { 0: thread.project })}</span>
+          </span>
+        </button>
+      )}
       <button type="button" className="popover__item" role="menuitem"
               onClick={() => { setOpen(false); onRename(thread); }}>
         <span className="popover__item-body">
@@ -131,8 +158,12 @@ function RowMenu({
 export default function Rail({
   mode, onToggle, view, onView, counts, version,
   threads, activeId, query, onQuery, onNew, onOpen, onRename, onDelete, onDeleteMany,
-  loading, unavailable, userName, onProfile, onHelp,
+  loading, unavailable, userName, onProfile, onHelp, onPin, onProject,
 }: {
+  /** Pin a thread to the top, or unpin it. */
+  onPin?: (thread: Thread, pinned: boolean) => void;
+  /** File a thread under a project; an empty name takes it out. */
+  onProject?: (thread: Thread, project: string) => void;
   /** Open the keyboard shortcuts list. */
   onHelp?: () => void;
   /** The user's name, when they gave one or memory knows it. */
@@ -166,6 +197,8 @@ export default function Rail({
   const [renaming, setRenaming] = React.useState<Thread | null>(null);
   const [draftTitle, setDraftTitle] = React.useState("");
   const [deleting, setDeleting] = React.useState<Thread | null>(null);
+  const [moving, setMoving] = React.useState<Thread | null>(null);
+  const [draftProject, setDraftProject] = React.useState("");
   const [selecting, setSelecting] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [confirmBulk, setConfirmBulk] = React.useState(false);
@@ -185,7 +218,12 @@ export default function Rail({
     () => threads.filter((thread) => matchesThread(thread, query)),
     [threads, query],
   );
-  const groups = React.useMemo(() => groupThreads(matching), [matching]);
+  const groups = React.useMemo(() => organiseThreads(matching), [matching]);
+  const projects = React.useMemo(() => projectNames(threads), [threads]);
+  const startMove = React.useCallback((thread: Thread) => {
+    setDraftProject(thread.project ?? "");
+    setMoving(thread);
+  }, []);
 
   const startRename = React.useCallback((thread: Thread) => {
     setDraftTitle(thread.title);
@@ -202,13 +240,13 @@ export default function Rail({
      The confirmation owns Escape while it is up: closing both with one press
      would cancel the delete AND the selection the user spent time building. */
   React.useEffect(() => {
-    if (!selecting || confirmBulk || renaming || deleting) return;
+    if (!selecting || confirmBulk || renaming || deleting || moving) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") exitSelection();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selecting, confirmBulk, renaming, deleting, exitSelection]);
+  }, [selecting, confirmBulk, renaming, deleting, moving, exitSelection]);
 
   /* A selection can only ever name threads that still exist. Without this, a
      thread deleted from its own row menu (or by another window) would stay in
@@ -383,7 +421,10 @@ export default function Rail({
           ) : (
             groups.map((group) => (
               <div className="rail-group" key={group.key}>
-                <div className="rail-group__head">{group.label}</div>
+                <div className="rail-group__head" data-kind={group.kind}>
+                  {group.kind === "project" && <Icon name="memory" size={13} />}
+                  {group.label}
+                </div>
                 {group.threads.map((thread) => {
                   const isActive = thread.id === activeId;
                   const isChecked = selected.has(thread.id);
@@ -418,7 +459,11 @@ export default function Rail({
                         <span className="chat-item__title">{thread.title}</span>
                       </button>
                       {!selecting && (
-                        <RowMenu thread={thread} onRename={startRename} onDelete={setDeleting} />
+                        <RowMenu
+                          thread={thread} onRename={startRename} onDelete={setDeleting}
+                          onPin={onPin} onMove={onProject ? startMove : undefined}
+                          onUnfile={onProject ? (item) => onProject(item, "") : undefined}
+                        />
                       )}
                     </div>
                   );
@@ -473,6 +518,37 @@ export default function Rail({
           setRenaming(null);
         }}
         onCancel={() => setRenaming(null)}
+      />
+
+      <ConfirmDialog
+        open={Boolean(moving)}
+        title={t("Mover para um projeto")}
+        confirmLabel={t("Mover")}
+        message={
+          <>
+            <label className="field__label" htmlFor="rail-project">{t("Nome do projeto")}</label>
+            <input
+              id="rail-project" className="input" value={draftProject} autoFocus maxLength={40}
+              onChange={(event) => setDraftProject(event.target.value)}
+              placeholder={t("Por exemplo: Trabalho, Escola, Casa")}
+            />
+            {projects.length > 0 && (
+              <div className="rail-projects" role="group" aria-label={t("Projetos existentes")}>
+                {projects.map((name) => (
+                  <button key={name} type="button" className="chip"
+                          aria-pressed={draftProject.trim() === name}
+                          onClick={() => setDraftProject(name)}>{name}</button>
+                ))}
+              </div>
+            )}
+            <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>{t("Um projeto agrupa conversas na barra lateral. Um nome novo cria o projeto.")}</p>
+          </>
+        }
+        onConfirm={() => {
+          if (moving && draftProject.trim() && onProject) onProject(moving, draftProject.trim());
+          setMoving(null);
+        }}
+        onCancel={() => setMoving(null)}
       />
 
       <ConfirmDialog

@@ -837,6 +837,21 @@ export default function Home() {
     });
   }, [notify, reloadThreads]);
 
+  const pinThread = useCallback((thread: Thread, pinned: boolean) => {
+    call<any>("pin_conversation", thread.id, pinned).then((result) => {
+      if (result?.ok) { reloadThreads(); notify(pinned ? t("Conversa fixada") : t("Conversa desafixada")); }
+      else notify(t("Não foi possível fixar"), "error");
+    });
+  }, [notify, reloadThreads]);
+
+  const fileThread = useCallback((thread: Thread, project: string) => {
+    call<any>("set_conversation_project", thread.id, project).then((result) => {
+      if (!result?.ok) { notify(t("Não foi possível mover a conversa"), "error"); return; }
+      reloadThreads();
+      notify(project ? t("Movida para {0}", { 0: project }) : t("Tirada do projeto"));
+    });
+  }, [notify, reloadThreads]);
+
   const deleteThread = useCallback((thread: Thread) => {
     call<any>("delete_conversation", thread.id).then((result) => {
       if (!result?.ok) { notify(t("Não foi possível apagar"), "error"); return; }
@@ -1351,6 +1366,8 @@ export default function Home() {
             onNew={() => { newConversation(); if (narrow) setRailOpen(false); }}
             onOpen={(id) => { setShowFirstRun(false); openThread(id); }}
             onRename={renameThread}
+            onPin={pinThread}
+            onProject={fileThread}
             onDelete={deleteThread}
             onDeleteMany={deleteThreads}
             loading={threads === null}

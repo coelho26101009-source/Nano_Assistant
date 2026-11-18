@@ -109,6 +109,10 @@ def _attachments(raw: Any) -> list[dict]:
             for entry in files if isinstance(entry, dict)]
 
 
+#: The longest project name the rail keeps.
+MAX_PROJECT_CHARS = 40
+
+
 class ConversationStore:
     """CRUD for threads and their messages. Owns no connection of its own."""
 
@@ -231,6 +235,67 @@ class ConversationStore:
                 " WHERE id=?", (clean, _now(), str(conversation_id)))
             self.conn.commit()
         return {"ok": True, "id": conversation_id, "title": clean}
+
+    def organise(self, conversation_id: str, *, pinned: bool | None = None,
+                 project: str | None = None) -> dict:
+        """Pin a thread, or file it under a project. ``None`` leaves a field alone.
+
+        Both live in the thread's metadata, so organising needs no migration and
+        deleting the thread takes them with it. A project is only a name the
+        person typed: an empty name takes the thread out of its project.
+        """
+        if not self.exists(conversation_id):
+            return {"ok": False, "error": "unknown_conversation"}
+        name = None
+        if project is not None:
+            if not isinstance(project, str):
+                return {"ok": False, "error": "bad_project"}
+            name = " ".join(project.split())
+            if len(name) > MAX_PROJECT_CHARS or any(ord(c) < 32 for c in name):
+                return {"ok": False, "error": "bad_project"}
+        if pinned is not None and not isinstance(pinned, bool):
+            return {"ok": False, "error": "bad_pinned"}
+        with self._lock:
+            row = self.conn.execute("SELECT metadata FROM conversations WHERE id=?",
+                                    (str(conversation_id),)).fetchone()
+            meta = _loads(row[0] if row else None, {})
+            meta = meta if isinstance(meta, dict) else {}
+            if pinned is not None:
+                if pinned:
+                    meta["pinned"] = True
+                else:
+                    meta.pop("pinned", None)
+            if name is not None:
+                if name:
+                    meta["project"] = name
+                else:
+                    meta.pop("project", None)
+            self.conn.execute("UPDATE conversations SET metadata=? WHERE id=?",
+                              (json.dumps(meta, ensure_ascii=False), str(conversation_id)))
+            self.conn.commit()
+        return {"ok": True, "id": conversation_id, "pinned": bool(meta.get("pinned")),
+                "project": meta.get("project") or ""}
+
+    def organised(self, *, limit: int = MAX_LIST_LIMIT) -> list[dict]:
+        """Every pinned or filed thread, however old.
+
+        The rail lists the most recent threads only; a pinned thread must not
+        fall out of it because it is old, which is the whole point of pinning.
+        """
+        try:
+            with self._lock:
+                rows = self.conn.execute(
+                    "SELECT id, title, title_source, created_at, updated_at,"
+                    " last_message_at, message_count, archived, metadata"
+                    " FROM conversations WHERE archived = 0 AND message_count > 0 AND ("
+                    "  json_extract(metadata, '$.pinned') = 1"
+                    "  OR COALESCE(json_extract(metadata, '$.project'), '') != '')"
+                    " ORDER BY COALESCE(last_message_at, created_at) DESC LIMIT ?",
+                    (max(1, int(limit)),)).fetchall()
+        except sqlite3.Error:
+            logger.exception("Falha a listar conversas organizadas")
+            return []
+        return [self._row_to_thread(row) for row in rows]
 
     def set_archived(self, conversation_id: str, archived: bool) -> dict:
         if not self.exists(conversation_id):
@@ -699,6 +764,8 @@ class ConversationStore:
             "messageCount": int(row[6] or 0),
             "archived": bool(row[7]),
             "metadata": _loads(row[8], {}),
+            "pinned": bool((_loads(row[8], {}) or {}).get("pinned")),
+            "project": str((_loads(row[8], {}) or {}).get("project") or ""),
         }
 
 

@@ -25,7 +25,7 @@
  */
 import type { AttachmentSummary } from "./attachments";
 import type { ResponseMeta } from "../components/Conversation";
-import { t } from "../lib/i18n";
+import { intlLocale, t } from "../lib/i18n";
 
 /** A stored message, as core/conversation_store.messages returns it.
  *
@@ -56,6 +56,10 @@ export type Thread = {
   messageCount: number;
   archived: boolean;
   metadata?: Record<string, unknown>;
+  /** Pinned to the top of the rail. */
+  pinned?: boolean;
+  /** The project it is filed under; empty when none. */
+  project?: string;
 };
 
 export type ThreadSummary = {
@@ -112,6 +116,44 @@ export function groupThreads(
     .map((key) => ({ key, label: GROUP_LABEL[key], threads: buckets.get(key)! }));
 }
 
+/** One section of the rail: pinned, a project, or a day bucket. */
+export type RailGroup = { key: string; label: string; kind: "pinned" | "project" | "day"; threads: Thread[] };
+
+/**
+ * The rail's sections, in order: pinned threads, then each project (by name),
+ * then everything else by day. A pinned thread shows once, under Fixadas, even
+ * when it is also in a project.
+ */
+export function organiseThreads(threads: Thread[], now: Date = new Date()): RailGroup[] {
+  const pinned = threads.filter((thread) => thread.pinned);
+  const filed = new Map<string, Thread[]>();
+  const loose: Thread[] = [];
+  for (const thread of threads) {
+    if (thread.pinned) continue;
+    const project = (thread.project ?? "").trim();
+    if (project) {
+      const list = filed.get(project);
+      if (list) list.push(thread);
+      else filed.set(project, [thread]);
+    } else {
+      loose.push(thread);
+    }
+  }
+  const out: RailGroup[] = [];
+  if (pinned.length) out.push({ key: "pinned", label: t("Fixadas"), kind: "pinned", threads: pinned });
+  for (const name of [...filed.keys()].sort((a, b) => a.localeCompare(b))) {
+    out.push({ key: `project:${name}`, label: name, kind: "project", threads: filed.get(name)! });
+  }
+  for (const group of groupThreads(loose, now)) out.push({ ...group, kind: "day" });
+  return out;
+}
+
+/** Every project name in use, for the "move to project" dialog. */
+export function projectNames(threads: Thread[]): string[] {
+  return [...new Set(threads.map((thread) => (thread.project ?? "").trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+}
+
 /**
  * The short timestamp shown on a row.
  *
@@ -123,11 +165,11 @@ export function threadStamp(thread: Thread, now: Date = new Date()): string {
   const when = threadTime(thread);
   const key = groupKeyFor(when, now);
   if (key === "today") {
-    return when.toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" });
+    return when.toLocaleTimeString(intlLocale(), { hour: "2-digit", minute: "2-digit" });
   }
   if (key === "yesterday") return t("Ontem");
-  if (key === "week") return when.toLocaleDateString("pt-PT", { weekday: "short" }).replace(".", "");
-  return when.toLocaleDateString("pt-PT", { day: "2-digit", month: "2-digit" });
+  if (key === "week") return when.toLocaleDateString(intlLocale(), { weekday: "short" }).replace(".", "");
+  return when.toLocaleDateString(intlLocale(), { day: "2-digit", month: "2-digit" });
 }
 
 /** Case- and accent-insensitive match. Mirrors core/text_normalize.normalize. */

@@ -889,6 +889,11 @@ def list_conversations(query: str = "", limit: int = 60,
     # It stays the active one (the next message lands there) but has no row in
     # the rail, the way a new chat behaves in every other chat app.
     threads = [t for t in threads if int(t.get("messageCount") or t.get("message_count") or 0) > 0]
+    # Pinned and filed threads are always listed, however old: pinning one that
+    # then fell out of the recent window would be a pin that does nothing.
+    if not query:
+        seen = {t["id"] for t in threads}
+        threads += [t for t in memory_stack.conversations.organised() if t["id"] not in seen]
     return {"ok": True, "conversations": threads,
             "activeId": memory_stack.active_conversation_id}
 
@@ -933,6 +938,22 @@ def rename_conversation(conversation_id: str, title: str) -> dict:
     if not memory_stack.ready:
         return {"ok": False, "error": "memory_unavailable"}
     return memory_stack.conversations.rename(conversation_id, title)
+
+
+@eel.expose
+def pin_conversation(conversation_id: str, pinned: bool) -> dict:
+    """Pin a thread to the top of the rail, or unpin it."""
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    return memory_stack.conversations.organise(conversation_id, pinned=bool(pinned))
+
+
+@eel.expose
+def set_conversation_project(conversation_id: str, project: str = "") -> dict:
+    """File a thread under a project name; an empty name takes it out."""
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    return memory_stack.conversations.organise(conversation_id, project=str(project or ""))
 
 
 @eel.expose

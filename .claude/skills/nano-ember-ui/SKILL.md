@@ -50,7 +50,9 @@ and the open microphone use `--information` (teal), never the accent.
 
 - sidebar (`components/Rail.tsx`): brand, new conversation (neutral primary),
   search, the sections (Chat, Ferramentas, PC, Memória), the conversation list
-  grouped by day, Definições at the foot. Expanded, it shows the N and the
+  grouped as Fixadas (pinned), then each project by name, then by day
+  (`organiseThreads`), Definições at the foot. Pin and "move to a project"
+  live in each row's menu. Expanded, it shows the N and the
   wordmark; collapsed, a 60px column of icons with the N on top; below 1024px it
   starts collapsed and opens as a drawer; below 640px it leaves the layout and
   the top bar carries the menu button

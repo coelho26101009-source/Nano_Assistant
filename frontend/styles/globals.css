@@ -2279,3 +2279,8 @@ kbd {
   .chat-split { position: relative; }
   .side-panel { position: absolute; inset: 0; z-index: 20; flex-basis: auto; border-left: none; }
 }
+
+/* Projects in the rail: a name with a small folder-like mark; the move dialog
+   offers the existing names as chips. */
+.rail-group__head[data-kind="project"] { display: flex; align-items: center; gap: 6px; }
+.rail-projects { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
