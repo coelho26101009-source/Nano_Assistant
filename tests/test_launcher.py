@@ -280,3 +280,20 @@ def test_the_launcher_rebuilds_when_the_frontend_sources_changed():
         "the launcher never records a build stamp, so the build would always "
         "look stale afterwards"
     )
+
+
+@pytest.mark.parametrize("launcher", BATCH_LAUNCHERS, ids=lambda p: p.name)
+def test_a_fresh_download_installs_the_frontend_packages_before_building(launcher):
+    r"""A fresh clone has frontend\out missing AND frontend\node_modules missing.
+
+    The launcher built the frontend straight away, so the very first start on a
+    clean copy failed with "next is not recognized". It must install the locked
+    packages (npm ci) when they are absent, before `npm run build`.
+    """
+    code = launcher.read_text(encoding="ascii")
+    build = code.find("call npm run build")
+    assert build != -1
+    before = code[:build]
+    install = before.rfind("call npm ci")
+    assert install != -1, f"{launcher.name} builds the frontend without installing its packages"
+    assert 'if not exist "node_modules\\next\\package.json"' in before[before.rfind("pushd frontend"):]
