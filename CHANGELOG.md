@@ -20,6 +20,22 @@ versioning policy.
 
 ## [Unreleased]
 
+### Changed
+
+- **Frontend on Next.js 16** (16.4.5, from 15.5.29). The build now uses
+  Turbopack; `turbopack.root` points at the repository so `lib/version.ts` can
+  still read `version.json`. The removed `eslint` key is gone from
+  `next.config.js`. `npm audit` reports 0 vulnerabilities. React stays on 18,
+  which Next 16 still supports but deprecates; React 19 is needed before Next 17.
+
+### Documentation
+
+- `docs/CLEAN_WINDOWS_VALIDATION.md`: a step-by-step script for validating an
+  installer on a clean Windows account, including every feature added in this
+  release.
+- `docs/CODE_SIGNING.md`: signing options for the installers, and the exact
+  electron-builder and workflow changes to make once an account exists.
+
 ### Added
 
 - **Recurring reminders and everyday phrases.** Reminders understand

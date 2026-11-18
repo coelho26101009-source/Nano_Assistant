@@ -40,6 +40,7 @@ See [BETA_READINESS_REPORT.md](BETA_READINESS_REPORT.md) for evidence and limits
 
 - [ ] Clean Windows x64 account without development tools: install, launch, chat,
       restart, uninstall and reinstall using the final installer and checksum.
+      Follow [CLEAN_WINDOWS_VALIDATION.md](CLEAN_WINDOWS_VALIDATION.md).
 - [ ] Real no-Ollama/no-key/offline scenarios on that clean machine. Existing
       error branches have automated coverage; this host already has Ollama.
 - [ ] Live cloud credentials and each provider's current account/model access.
@@ -49,10 +50,12 @@ See [BETA_READINESS_REPORT.md](BETA_READINESS_REPORT.md) for evidence and limits
       Numeric prerelease metadata is not a validated upgrade policy.
 - [ ] Signing certificate, publisher verification and actual SmartScreen reputation.
       Local artifacts are unsigned; no certificate or signing claim is fabricated.
+      Options and wiring: [CODE_SIGNING.md](CODE_SIGNING.md).
 - [ ] Current patch CI/CodeQL and dependency rescan after an authorized push.
       Remote CodeQL was zero; remote Dependabot was 35, not zero.
-- [ ] Next.js major migration: 23 advisories in the local audit are triaged against
-      static export. Reassess before adding a Next server or affected client API.
+- [x] Next.js major migration: on Next 16 (Turbopack, static export). `npm audit`
+      reports 0 vulnerabilities. React stays on 18, which Next 16 still supports
+      with a deprecation warning; React 19 is required before Next 17.
 - [ ] Independent security/privacy review and third-party license distribution review.
       Included notices are not a claim of legal clearance for every optional model.
 
