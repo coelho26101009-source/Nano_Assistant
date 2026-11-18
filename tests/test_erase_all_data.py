@@ -366,7 +366,7 @@ def test_erasing_is_not_reachable_by_the_model():
             text = path.read_text(encoding="utf-8", errors="ignore")
             if re.search(r"erase_all_data|purge_everything", text) and \
                     path.name != "memory_stack.py":
-                offenders.append(str(path.relative_to(ROOT)))
+                offenders.append(path.relative_to(ROOT).as_posix())
     assert offenders == [], f"erase is referenced outside the bridge: {offenders}"
 
     main_source = (ROOT / "core" / "main.py").read_text(encoding="utf-8")
@@ -374,7 +374,7 @@ def test_erasing_is_not_reachable_by_the_model():
     assert len(callers) == 1, "purge_everything must have exactly one caller in main.py"
 
     frontend = ROOT / "frontend"
-    users = [str(path.relative_to(ROOT))
+    users = [path.relative_to(ROOT).as_posix()
              for pattern in ("components/*.tsx", "pages/*.tsx", "lib/*.ts")
              for path in frontend.glob(pattern)
              if "erase_all_data" in path.read_text(encoding="utf-8")]
