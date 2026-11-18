@@ -2050,7 +2050,7 @@ def _screen_text_settings() -> dict:
         from core.pc_control import ocr
         status = ocr.engine_status()
     except Exception:
-        status = {"available": False, "reason": "error", "message": "Não consegui verificar o OCR."}
+        status = {"available": False, "reason": "error", "message": tr("Não consegui verificar o OCR.")}
     return {
         "enabled": user_settings.get("screen_text_enabled", False) is True,
         "available": bool(status.get("available")),
@@ -2731,7 +2731,7 @@ async def _run_work_mode(mode_id: str) -> None:
         result = await work_modes.run(mode_id, tool_executor)
     except Exception:
         logger.exception("Modo de trabalho falhou")
-        result = {"ok": False, "id": str(mode_id)[:32], "message": "O modo falhou.", "steps": []}
+        result = {"ok": False, "id": str(mode_id)[:32], "message": tr("O modo falhou."), "steps": []}
     _notify_ui("on_work_mode_done", result)
 
 

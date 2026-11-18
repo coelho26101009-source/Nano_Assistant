@@ -9,15 +9,23 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { call } from "../lib/backend";
 import { Badge, Button, ConfirmDialog, EmptyState, Field, Panel, Skeleton, Tabs } from "./ui";
+import { intlLocale, t } from "../lib/i18n";
+import { tj } from "../lib/tj";
 
 export type AgendaReminder = { id: number; text: string; due_at: string; fired?: boolean; recurrence?: string | null; recurrence_label?: string | null };
 const REPEAT_OPTIONS = [
-  { value: "", label: "Não repetir" },
-  { value: "daily", label: "Todos os dias" },
-  { value: "weekdays", label: "Dias úteis" },
-  { value: "weekly", label: "Todas as semanas" },
-  { value: "monthly", label: "Todos os meses" },
+  { value: "", label: t("Não repetir") },
+  { value: "daily", label: t("Todos os dias") },
+  { value: "weekdays", label: t("Dias úteis") },
+  { value: "weekly", label: t("Todas as semanas") },
+  { value: "monthly", label: t("Todos os meses") },
 ];
+/** How a stored recurrence reads after "repete": from the code, in the
+ *  interface language, not the backend's Portuguese label. */
+const REPEAT_LABEL: Record<string, string> = {
+  daily: t("todos os dias"), weekdays: t("nos dias úteis"),
+  weekly: t("todas as semanas"), monthly: t("todos os meses"),
+};
 
 export type AgendaEvent = {
   id: number | string; title: string; start: string; end?: string | null;
@@ -39,8 +47,6 @@ type Notify = (text: string, tone?: "default" | "error" | "success") => void;
 type Window = "7" | "30" | "90";
 type PendingDelete = { kind: "reminder" | "event"; id: number; label: string } | null;
 
-const WEEKDAYS = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
-const MONTHS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 
 function parseLocal(value?: string | null): Date | null {
   if (!value) return null;
@@ -56,10 +62,14 @@ const pad = (n: number) => String(n).padStart(2, "0");
 export function dayLabel(date: Date, now: Date = new Date()): string {
   const start = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   const diff = Math.round((start(date) - start(now)) / 86400000);
-  if (diff === 0) return "Hoje";
-  if (diff === 1) return "Amanhã";
-  const base = `${WEEKDAYS[date.getDay()]}, ${date.getDate()} ${MONTHS[date.getMonth()]}`;
-  return date.getFullYear() === now.getFullYear() ? base : `${base} ${date.getFullYear()}`;
+  if (diff === 0) return t("Hoje");
+  if (diff === 1) return t("Amanhã");
+  // The weekday and month come from the browser's own calendar data, in the
+  // interface language: "quinta, 12 nov" or "Thursday, Nov 12".
+  return new Intl.DateTimeFormat(intlLocale(), {
+    weekday: "long", day: "numeric", month: "short",
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  }).format(date);
 }
 
 function timeLabel(date: Date | null): string {
@@ -68,7 +78,7 @@ function timeLabel(date: Date | null): string {
 
 function sourceLabel(source?: string): string | null {
   if (source === "google") return "Google";
-  if (source === "ics") return "importado";
+  if (source === "ics") return t("importado");
   return null;
 }
 
@@ -105,20 +115,20 @@ export default function AgendaPage({ enabled, notify }: { enabled: boolean; noti
       after?.();
       refresh();
     } else {
-      notify(result?.message || "Não foi possível concluir.", "error");
+      notify(result?.message || t("Não foi possível concluir."), "error");
     }
   }, [notify, refresh]);
 
   const addReminder = (event: React.FormEvent) => {
     event.preventDefault();
-    run("agenda_create_reminder", [reminderText, reminderWhen, reminderRepeat || null], "Lembrete criado.", () => {
+    run("agenda_create_reminder", [reminderText, reminderWhen, reminderRepeat || null], t("Lembrete criado."), () => {
       setReminderText(""); setReminderWhen(""); setReminderRepeat("");
     });
   };
 
   const addEvent = (event: React.FormEvent) => {
     event.preventDefault();
-    run("agenda_create_event", [eventTitle, eventStart, eventEnd || null, eventLocation], "Evento criado.", () => {
+    run("agenda_create_event", [eventTitle, eventStart, eventEnd || null, eventLocation], t("Evento criado."), () => {
       setEventTitle(""); setEventStart(""); setEventEnd(""); setEventLocation("");
     });
   };
@@ -127,15 +137,15 @@ export default function AgendaPage({ enabled, notify }: { enabled: boolean; noti
     if (!pendingDelete) return;
     const { kind, id } = pendingDelete;
     setPendingDelete(null);
-    if (kind === "reminder") run("agenda_delete_reminder", [id], "Lembrete apagado.");
-    else run("agenda_delete_event", [id], "Evento apagado.");
+    if (kind === "reminder") run("agenda_delete_reminder", [id], t("Lembrete apagado."));
+    else run("agenda_delete_event", [id], t("Evento apagado."));
   };
 
   const eventGroups = useMemo(() => {
     const groups: { label: string; events: AgendaEvent[] }[] = [];
     for (const item of data?.events ?? []) {
       const start = parseLocal(item.start);
-      const label = start ? dayLabel(start) : "Sem data";
+      const label = start ? dayLabel(start) : t("Sem data");
       const last = groups[groups.length - 1];
       if (last && last.label === label) last.events.push(item);
       else groups.push({ label, events: [item] });
@@ -150,23 +160,23 @@ export default function AgendaPage({ enabled, notify }: { enabled: boolean; noti
   return (
     <div className="page__inner page__inner--wide agenda">
       <div className="agenda__grid">
-        <Panel title="Lembretes" action={<Badge>{reminders.length}</Badge>}>
+        <Panel title={t("Lembretes")} action={<Badge>{reminders.length}</Badge>}>
           {remindersOff ? (
-            <EmptyState title="Os lembretes estão desligados"
-                        hint="Liga reminders.enabled nas definições para os usar." />
+            <EmptyState title={t("Os lembretes estão desligados")}
+                        hint={t("Liga reminders.enabled nas definições para os usar.")} />
           ) : (
             <>
               <form className="agenda__form" onSubmit={addReminder}>
-                <Field label="Lembrar-me de" htmlFor="agenda-reminder-text">
+                <Field label={t("Lembrar-me de")} htmlFor="agenda-reminder-text">
                   <input id="agenda-reminder-text" className="input" value={reminderText} maxLength={300}
-                         placeholder="Ligar ao dentista" onChange={(e) => setReminderText(e.target.value)} />
+                         placeholder={t("Ligar ao dentista")} onChange={(e) => setReminderText(e.target.value)} />
                 </Field>
-                <Field label="Quando" htmlFor="agenda-reminder-when"
-                       hint="Por exemplo: 10 minutos, 18:30, amanhã às 9 ou sexta às 15h">
+                <Field label={t("Quando")} htmlFor="agenda-reminder-when"
+                       hint={t("Por exemplo: 10 minutos, 18:30, amanhã às 9 ou sexta às 15h")}>
                   <input id="agenda-reminder-when" className="input" value={reminderWhen} maxLength={64}
                          placeholder="18:30" onChange={(e) => setReminderWhen(e.target.value)} />
                 </Field>
-                <Field label="Repetir" htmlFor="agenda-reminder-repeat">
+                <Field label={t("Repetir")} htmlFor="agenda-reminder-repeat">
                   <select id="agenda-reminder-repeat" className="input input--select" value={reminderRepeat}
                           onChange={(e) => setReminderRepeat(e.target.value)}>
                     {REPEAT_OPTIONS.map((option) => (
@@ -177,7 +187,7 @@ export default function AgendaPage({ enabled, notify }: { enabled: boolean; noti
                 <div className="agenda__form-actions">
                   <Button type="submit" variant="primary"
                           disabled={busy || !reminderText.trim() || !reminderWhen.trim()}>
-                    Criar lembrete
+                    {t("Criar lembrete")}
                   </Button>
                 </div>
               </form>
@@ -185,10 +195,10 @@ export default function AgendaPage({ enabled, notify }: { enabled: boolean; noti
               {loading && !data ? (
                 <div className="stack stack--tight"><Skeleton height={44} /><Skeleton height={44} /></div>
               ) : reminders.length === 0 ? (
-                <EmptyState title="Sem lembretes pendentes"
-                            hint="Cria um aqui ou pede ao NANO: “lembra-me de beber água daqui a 1 hora”." />
+                <EmptyState title={t("Sem lembretes pendentes")}
+                            hint={t("Cria um aqui ou pede ao NANO: “lembra-me de beber água daqui a 1 hora”.")} />
               ) : (
-                <ul className="stack stack--tight agenda__list" aria-label="Lembretes pendentes">
+                <ul className="stack stack--tight agenda__list" aria-label={t("Lembretes pendentes")}>
                   {reminders.map((item) => {
                     const due = parseLocal(item.due_at);
                     return (
@@ -197,14 +207,16 @@ export default function AgendaPage({ enabled, notify }: { enabled: boolean; noti
                           <div className="row-item__title" title={item.text}>{item.text}</div>
                           <div className="row-item__meta">
                             {due ? `${dayLabel(due)} · ${timeLabel(due)}` : item.due_at}
-                            {item.recurrence ? ` · repete ${item.recurrence_label || item.recurrence}` : ""}
+                            {item.recurrence
+                              ? ` · ${t("repete {0}", { 0: REPEAT_LABEL[item.recurrence] ?? item.recurrence_label ?? item.recurrence })}`
+                              : ""}
                           </div>
                         </div>
                         <div className="row-item__actions">
                           <Button size="sm" variant="ghost" disabled={busy}
-                                  aria-label={`Apagar o lembrete ${item.text}`}
+                                  aria-label={t("Apagar o lembrete {0}", { 0: item.text })}
                                   onClick={() => setPendingDelete({ kind: "reminder", id: item.id, label: item.text })}>
-                            Apagar
+                            {t("Apagar")}
                           </Button>
                         </div>
                       </li>
@@ -216,49 +228,50 @@ export default function AgendaPage({ enabled, notify }: { enabled: boolean; noti
           )}
         </Panel>
 
-        <Panel title="Eventos" action={
+        <Panel title={t("Eventos")} action={
           <Tabs<Window> value={windowDays} onChange={setWindowDays} tabs={[
-            { value: "7", label: "7 dias" }, { value: "30", label: "30 dias" }, { value: "90", label: "90 dias" },
+            { value: "7", label: t("{0} dias", { 0: 7 }) }, { value: "30", label: t("{0} dias", { 0: 30 }) },
+            { value: "90", label: t("{0} dias", { 0: 90 }) },
           ]} />
         }>
           {calendarOff ? (
-            <EmptyState title="O calendário não está disponível" />
+            <EmptyState title={t("O calendário não está disponível")} />
           ) : (
             <>
               <form className="agenda__form" onSubmit={addEvent}>
-                <Field label="Título" htmlFor="agenda-event-title">
+                <Field label={t("Título")} htmlFor="agenda-event-title">
                   <input id="agenda-event-title" className="input" value={eventTitle} maxLength={200}
-                         placeholder="Reunião de equipa" onChange={(e) => setEventTitle(e.target.value)} />
+                         placeholder={t("Reunião de equipa")} onChange={(e) => setEventTitle(e.target.value)} />
                 </Field>
                 <div className="agenda__form-row">
-                  <Field label="Início" htmlFor="agenda-event-start">
+                  <Field label={t("Início")} htmlFor="agenda-event-start">
                     <input id="agenda-event-start" className="input" type="datetime-local" value={eventStart}
                            onChange={(e) => setEventStart(e.target.value)} />
                   </Field>
-                  <Field label="Fim (opcional)" htmlFor="agenda-event-end">
+                  <Field label={t("Fim (opcional)")} htmlFor="agenda-event-end">
                     <input id="agenda-event-end" className="input" type="datetime-local" value={eventEnd}
                            min={eventStart || undefined} onChange={(e) => setEventEnd(e.target.value)} />
                   </Field>
                 </div>
-                <Field label="Local (opcional)" htmlFor="agenda-event-location">
+                <Field label={t("Local (opcional)")} htmlFor="agenda-event-location">
                   <input id="agenda-event-location" className="input" value={eventLocation} maxLength={200}
                          onChange={(e) => setEventLocation(e.target.value)} />
                 </Field>
                 <div className="agenda__form-actions">
                   <Button type="submit" variant="primary" disabled={busy || !eventTitle.trim() || !eventStart}>
-                    Criar evento
+                    {t("Criar evento")}
                   </Button>
                 </div>
               </form>
               {data?.eventsError && <p className="field__error">{data.eventsError}</p>}
               {data?.googleError && (
-                <p className="field__hint">O Google Calendar não respondeu: {data.googleError}</p>
+                <p className="field__hint">{t("O Google Calendar não respondeu: {0}", { 0: data.googleError })}</p>
               )}
               {loading && !data ? (
                 <div className="stack stack--tight"><Skeleton height={44} /><Skeleton height={44} /></div>
               ) : eventGroups.length === 0 ? (
-                <EmptyState title={`Nada marcado nos próximos ${windowDays} dias`}
-                            hint="Cria um evento aqui, importa um ficheiro .ics pelo chat ou liga o Google Calendar." />
+                <EmptyState title={t("Nada marcado nos próximos {0} dias", { 0: windowDays })}
+                            hint={t("Cria um evento aqui, importa um ficheiro .ics pelo chat ou liga o Google Calendar.")} />
               ) : (
                 <div className="stack agenda__list">
                   {eventGroups.map((group) => (
@@ -283,9 +296,9 @@ export default function AgendaPage({ enabled, notify }: { enabled: boolean; noti
                                 {source && <Badge tone="info">{source}</Badge>}
                                 {deletable && (
                                   <Button size="sm" variant="ghost" disabled={busy}
-                                          aria-label={`Apagar o evento ${item.title}`}
+                                          aria-label={t("Apagar o evento {0}", { 0: item.title })}
                                           onClick={() => setPendingDelete({ kind: "event", id: item.id as number, label: item.title })}>
-                                    Apagar
+                                    {t("Apagar")}
                                   </Button>
                                 )}
                               </div>
@@ -304,9 +317,9 @@ export default function AgendaPage({ enabled, notify }: { enabled: boolean; noti
 
       <ConfirmDialog
         open={pendingDelete !== null}
-        title={pendingDelete?.kind === "event" ? "Apagar evento" : "Apagar lembrete"}
-        message={<>Vais apagar <strong>{pendingDelete?.label}</strong>. Isto não pode ser desfeito.</>}
-        confirmLabel="Apagar" danger
+        title={pendingDelete?.kind === "event" ? t("Apagar evento") : t("Apagar lembrete")}
+        message={tj("Vais apagar {0}. Isto não pode ser desfeito.", { 0: <strong>{pendingDelete?.label}</strong> })}
+        confirmLabel={t("Apagar")} danger
         onConfirm={confirmDelete} onCancel={() => setPendingDelete(null)}
       />
     </div>

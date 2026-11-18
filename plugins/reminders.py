@@ -177,6 +177,59 @@ def _at(day: datetime, hm: tuple[int, int]) -> datetime:
     return day.replace(hour=hm[0], minute=hm[1], second=0, microsecond=0)
 
 
+_EN_WEEKDAYS = {
+    "monday": "segunda", "tuesday": "terça", "wednesday": "quarta", "thursday": "quinta",
+    "friday": "sexta", "saturday": "sábado", "sunday": "domingo",
+}
+#: English phrasings, rewritten into the Portuguese ones this parser already
+#: knows. Order matters: longer phrases first. Applied only to whole words, so
+#: a Portuguese phrase passes through untouched.
+_EN_PHRASES = (
+    (r"\bthe day after tomorrow\b|\bday after tomorrow\b", "depois de amanhã"),
+    (r"\btomorrow\b", "amanhã"),
+    (r"\btonight\b", "hoje à noite"),
+    (r"\btoday\b", "hoje"),
+    (r"\bin the morning\b|\bmorning\b", "de manhã"),
+    (r"\bin the afternoon\b|\bafternoon\b", "à tarde"),
+    (r"\bin the evening\b|\bat night\b|\bevening\b", "à noite"),
+    (r"\bat noon\b|\bnoon\b|\bmidday\b", "meio-dia"),
+    (r"\bat midnight\b|\bmidnight\b", "meia-noite"),
+    (r"\bevery weekday\b|\bon weekdays\b|\bweekdays\b", "dias úteis"),
+    (r"\bevery day\b|\bdaily\b", "todos os dias"),
+    (r"\bevery week\b|\bweekly\b", "todas as semanas"),
+    (r"\bevery month\b|\bmonthly\b", "todos os meses"),
+    (r"\b(?:in|within)\s+(?=\d)", "daqui a "),
+    (r"\bminutes?\b", "minutos"),
+    (r"\b(?:hours?|hrs?)\b", "horas"),
+    (r"\bseconds?\b|\bsecs?\b", "segundos"),
+    (r"\bdays?\b", "dias"),
+    (r"\b(?:on|this)\s+(?=(?:mon|tues|wednes|thurs|fri|satur|sun)day\b)", ""),
+    (r"\bnext\s+(?=(?:mon|tues|wednes|thurs|fri|satur|sun)day\b)", "próxima "),
+)
+
+
+def _from_english(text: str) -> str:
+    """'tomorrow at 9pm' -> 'amanhã às 21:00'; Portuguese comes back unchanged."""
+    t = text.lower()
+    if not re.search(r"[a-z]", t):
+        return text
+    # 9pm, 9:30 pm, 12am: to the 24-hour clock the parser reads.
+    def clock(match: re.Match) -> str:
+        hour, minute, half = int(match.group(1)), int(match.group(2) or 0), match.group(3)
+        if hour > 12 or minute > 59:
+            return match.group(0)
+        hour = (hour % 12) + (12 if half == "pm" else 0)
+        return f"{hour:02d}:{minute:02d}"
+    t = re.sub(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", clock, t)
+    for pattern, replacement in _EN_PHRASES:
+        t = re.sub(pattern, replacement, t)
+    t = re.sub(r"\bevery\s+(" + "|".join(_EN_WEEKDAYS) + r")\b",
+               lambda m: f"todas as {_EN_WEEKDAYS[m.group(1)]}s", t)
+    t = re.sub(r"\b(" + "|".join(_EN_WEEKDAYS) + r")s?\b", lambda m: _EN_WEEKDAYS[m.group(1)], t)
+    t = re.sub(r"\bat\b", "às", t)
+    return " ".join(t.split())
+
+
 def parse_when(when: str, now: datetime | None = None) -> datetime | None:
     """Turn what the user said into a moment.
 
@@ -185,7 +238,7 @@ def parse_when(when: str, now: datetime | None = None) -> datetime | None:
     'amanhã às 9', 'hoje às 15h30', 'depois de amanhã às 10', 'sexta às 18h',
     'na segunda de manhã', 'às 9 da noite', 'meio-dia'.
     """
-    when = " ".join((when or "").strip().split())
+    when = _from_english(" ".join((when or "").strip().split()))
     if not when:
         return None
     now = now or datetime.now()
@@ -271,7 +324,7 @@ def _parse_phrase(text: str, now: datetime) -> datetime | None:
 
 def parse_recurring(when: str) -> tuple[str, str | None]:
     """Split 'todos os dias às 8' into ('às 8', 'daily'). Plain phrases pass through."""
-    text = " ".join((when or "").strip().split())
+    text = _from_english(" ".join((when or "").strip().split()))
     lowered = text.lower()
     patterns = (
         (r"^(?:todos os dias|todo dia|diariamente)\b\s*(.*)$", "daily"),

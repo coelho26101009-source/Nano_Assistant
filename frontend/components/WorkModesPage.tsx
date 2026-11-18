@@ -10,6 +10,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { call } from "../lib/backend";
 import { Badge, Button, EmptyState, Panel, Skeleton } from "./ui";
+import { t } from "../lib/i18n";
+import { tj } from "../lib/tj";
 
 export type WorkModeStep = { tool: string; label: string; asks?: boolean };
 export type WorkMode = {
@@ -24,7 +26,7 @@ export type WorkModeResult = {
 };
 
 const OUTCOME_LABEL: Record<WorkModeOutcome["status"], string> = {
-  ok: "feito", skipped: "já estava", denied: "recusado", failed: "não feito",
+  ok: t("feito"), skipped: t("já estava"), denied: t("recusado"), failed: t("não feito"),
 };
 
 export default function WorkModesPage({
@@ -51,16 +53,14 @@ export default function WorkModesPage({
   return (
     <div className="page__inner page__inner--wide">
       <p className="dim" style={{ marginBottom: 16, maxWidth: "72ch" }}>
-        Um modo prepara o PC para uma atividade. Vês todos os passos antes de ativar, e cada um
-        passa pelas permissões normais: fechar aplicações pede sempre confirmação e nunca força
-        o fecho. Os modos são ficheiros em <code>config/modes</code>.
+        {tj("Um modo prepara o PC para uma atividade. Vês todos os passos antes de ativar, e cada um passa pelas permissões normais: fechar aplicações pede sempre confirmação e nunca força o fecho. Os modos são ficheiros em {0}.", { 0: <code>config/modes</code> })}
       </p>
 
       {result && (
         <div className="card work-mode__result" role="status" aria-live="polite">
           <div className="inline" style={{ justifyContent: "space-between", marginBottom: 8 }}>
-            <strong>{result.name ?? "Modo"}</strong>
-            <Badge tone={result.ok ? "info" : "neutral"}>{result.done ?? 0} de {(result.total ?? 0) - (result.skipped ?? 0)} passos</Badge>
+            <strong>{result.name ?? t("Modo")}</strong>
+            <Badge tone={result.ok ? "info" : "neutral"}>{t("{0} de {1} passos", { 0: result.done ?? 0, 1: (result.total ?? 0) - (result.skipped ?? 0) })}</Badge>
           </div>
           {result.message && <p className="muted" style={{ marginBottom: 8 }}>{result.message}</p>}
           <ul className="work-mode__outcomes">
@@ -78,27 +78,27 @@ export default function WorkModesPage({
       {loading && !modes ? (
         <div className="grid-auto"><Skeleton height={180} /><Skeleton height={180} /></div>
       ) : !modes?.length ? (
-        <EmptyState title="Sem modos" hint="Cria um ficheiro .yaml em config/modes para adicionar um modo." />
+        <EmptyState title={t("Sem modos")} hint={t("Cria um ficheiro .yaml em config/modes para adicionar um modo.")} />
       ) : (
         <div className="grid-auto">
           {modes.map((mode) => (
             <Panel key={mode.id} title={mode.name} action={
               <Button variant="primary" size="sm"
                       disabled={!!mode.error || running !== null || !enabled}
-                      aria-label={`Ativar ${mode.name}`}
+                      aria-label={t("Ativar {0}", { 0: mode.name })}
                       onClick={() => onActivate(mode.id)}>
-                {running === mode.id ? "A ativar…" : "Ativar"}
+                {running === mode.id ? t("A ativar…") : t("Ativar")}
               </Button>
             }>
               {mode.description && <p className="muted" style={{ marginBottom: 10 }}>{mode.description}</p>}
               {mode.error ? (
                 <p className="field__error">{mode.error}</p>
               ) : (
-                <ol className="work-mode__steps" aria-label={`Passos do ${mode.name}`}>
+                <ol className="work-mode__steps" aria-label={t("Passos do {0}", { 0: mode.name })}>
                   {mode.steps.map((step, index) => (
                     <li key={`${step.tool}-${index}`}>
                       {step.label}
-                      {step.asks && <span className="dim"> · pede confirmação</span>}
+                      {step.asks && <span className="dim"> · {t("pede confirmação")}</span>}
                     </li>
                   ))}
                 </ol>

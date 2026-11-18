@@ -11,6 +11,9 @@ model tool pipeline. Nothing here is a model tool.
 """
 from __future__ import annotations
 
+from core import i18n
+from core.i18n import tr
+
 import logging
 from datetime import datetime
 from typing import Any
@@ -42,6 +45,18 @@ def _as_id(value: Any) -> int | None:
     return number if number > 0 else None
 
 
+def _say(plugin_message: Any, fallback: str) -> str:
+    """The plugin's own sentence in Portuguese; in another language, ours.
+
+    The reminders and calendar plugins answer the model in Portuguese, with
+    the exact time in the sentence. The page shows the time in the list
+    anyway, so a translated generic sentence loses nothing.
+    """
+    if i18n.current() == "pt-PT" and plugin_message:
+        return str(plugin_message)
+    return tr(fallback)
+
+
 def _failure(error: str, message: str) -> dict:
     return {"ok": False, "error": error, "message": message}
 
@@ -66,7 +81,7 @@ def overview(days: int = 30) -> dict:
             result["reminders"] = list(reminders_plugin.list_reminders().get("reminders", []))
         except Exception:
             logger.exception("Agenda: não consegui ler os lembretes")
-            result["remindersError"] = "Não consegui ler os lembretes."
+            result["remindersError"] = tr("Não consegui ler os lembretes.")
     if calendar_plugin is not None:
         try:
             listed = calendar_plugin.list_events(days=window)
@@ -75,38 +90,38 @@ def overview(days: int = 30) -> dict:
                 result["googleError"] = str(listed["google_error"])[:300]
         except Exception:
             logger.exception("Agenda: não consegui ler os eventos")
-            result["eventsError"] = "Não consegui ler os eventos."
+            result["eventsError"] = tr("Não consegui ler os eventos.")
     return result
 
 
 def create_reminder(text: Any, when: Any, repeat: Any = None) -> dict:
     reminders_plugin = _plugin("reminders")
     if reminders_plugin is None:
-        return _failure("reminders_unavailable", "Os lembretes estão desligados.")
+        return _failure("reminders_unavailable", tr("Os lembretes estão desligados."))
     text = _clean(text, MAX_TEXT)
     when = _clean(when, MAX_WHEN)
     if not text:
-        return _failure("empty_text", "Escreve do que te devo lembrar.")
+        return _failure("empty_text", tr("Escreve do que te devo lembrar."))
     if not when:
-        return _failure("empty_when", "Indica quando, por exemplo '10 minutos' ou '18:30'.")
+        return _failure("empty_when", tr("Indica quando, por exemplo '10 minutos' ou '18:30'."))
     repeat = _clean(repeat, 32) or None
     if repeat is not None and repeat not in getattr(reminders_plugin, "RECURRENCES", {}):
-        return _failure("invalid_repeat", "Repetição inválida.")
+        return _failure("invalid_repeat", tr("Repetição inválida."))
     created = reminders_plugin.set_reminder(text, when, repeat)
     if created.get("success"):
         return {"ok": True, "id": created.get("id"), "dueAt": created.get("due_at"),
                 "recurrence": created.get("recurrence"),
-                "message": created.get("message", "Lembrete criado.")}
-    return _failure("invalid_when", str(created.get("error") or "Não consegui criar o lembrete."))
+                "message": _say(created.get("message"), "Lembrete criado.")}
+    return _failure("invalid_when", str(created.get("error") or tr("Não consegui criar o lembrete.")))
 
 
 def delete_reminder(reminder_id: Any) -> dict:
     reminders_plugin = _plugin("reminders")
     if reminders_plugin is None:
-        return _failure("reminders_unavailable", "Os lembretes estão desligados.")
+        return _failure("reminders_unavailable", tr("Os lembretes estão desligados."))
     number = _as_id(reminder_id)
     if number is None:
-        return _failure("invalid_id", "Lembrete inválido.")
+        return _failure("invalid_id", tr("Lembrete inválido."))
     result = reminders_plugin.cancel_reminder(number)
     return {"ok": bool(result.get("success")), "message": result.get("message", "")}
 
@@ -123,34 +138,34 @@ def _parse_local(value: str) -> datetime | None:
 def create_event(title: Any, start: Any, end: Any = None, location: Any = "") -> dict:
     calendar_plugin = _plugin("calendar")
     if calendar_plugin is None:
-        return _failure("calendar_unavailable", "O calendário está desligado.")
+        return _failure("calendar_unavailable", tr("O calendário está desligado."))
     title = _clean(title, MAX_TITLE)
     start = _clean(start, MAX_WHEN)
     end = _clean(end, MAX_WHEN) or None
     location = _clean(location, MAX_LOCATION)
     if not title:
-        return _failure("empty_title", "Dá um título ao evento.")
+        return _failure("empty_title", tr("Dá um título ao evento."))
     start_dt = _parse_local(start)
     if start_dt is None:
-        return _failure("invalid_start", "Indica quando começa.")
+        return _failure("invalid_start", tr("Indica quando começa."))
     if end is not None:
         end_dt = _parse_local(end)
         if end_dt is None:
-            return _failure("invalid_end", "A hora de fim não é válida.")
+            return _failure("invalid_end", tr("A hora de fim não é válida."))
         if end_dt < start_dt:
-            return _failure("end_before_start", "O evento não pode acabar antes de começar.")
+            return _failure("end_before_start", tr("O evento não pode acabar antes de começar."))
     created = calendar_plugin.add_event(title, start, end, location=location)
     if created.get("success"):
-        return {"ok": True, "id": created.get("id"), "message": created.get("message", "Evento criado.")}
-    return _failure("invalid_event", str(created.get("error") or "Não consegui criar o evento."))
+        return {"ok": True, "id": created.get("id"), "message": _say(created.get("message"), "Evento criado.")}
+    return _failure("invalid_event", str(created.get("error") or tr("Não consegui criar o evento.")))
 
 
 def delete_event(event_id: Any) -> dict:
     calendar_plugin = _plugin("calendar")
     if calendar_plugin is None:
-        return _failure("calendar_unavailable", "O calendário está desligado.")
+        return _failure("calendar_unavailable", tr("O calendário está desligado."))
     number = _as_id(event_id)
     if number is None:
-        return _failure("invalid_id", "Evento inválido.")
+        return _failure("invalid_id", tr("Evento inválido."))
     result = calendar_plugin.delete_event(number)
     return {"ok": bool(result.get("success")), "message": result.get("message", "")}

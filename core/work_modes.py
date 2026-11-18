@@ -25,6 +25,8 @@ tombstone left behind:
 """
 from __future__ import annotations
 
+from core.i18n import tr
+
 import logging
 import re
 from pathlib import Path
@@ -76,42 +78,42 @@ def _app_name(value: Any) -> str:
     if folded.endswith(".exe"):
         name, folded = name[:-4], folded[:-4]
     if not name or not APP_NAME.match(name) or folded in REFUSED_APPS:
-        raise ModeError(f"'{_clip(value, 60)}' não é um nome de aplicação aceite num modo.")
+        raise ModeError(tr("'{name}' não é um nome de aplicação aceite num modo.", name=_clip(value, 60)))
     return name
 
 
 def _list(raw: dict, key: str) -> list:
     value = raw.get(key) or []
     if not isinstance(value, list):
-        raise ModeError(f"'{key}' tem de ser uma lista.")
+        raise ModeError(tr("'{key}' tem de ser uma lista.", key=key))
     if len(value) > MAX_ITEMS:
-        raise ModeError(f"'{key}' tem mais de {MAX_ITEMS} entradas.")
+        raise ModeError(tr("'{key}' tem mais de {limit} entradas.", key=key, limit=MAX_ITEMS))
     return value
 
 
 def compile_mode(mode_id: str, raw: Any) -> dict:
     """Validate a parsed mode file and turn it into a plan of narrow tool calls."""
     if not isinstance(raw, dict):
-        raise ModeError("O ficheiro do modo não tem o formato esperado.")
+        raise ModeError(tr("O ficheiro do modo não tem o formato esperado."))
     steps: list[dict] = []
     for app in _list(raw, "close_apps"):
         name = _app_name(app)
         steps.append({"tool": "pc_window_batch_close", "args": {"app": name},
-                      "label": f"Fechar {name}", "asks": True})
+                      "label": tr("Fechar {name}", name=name), "asks": True})
     for app in _list(raw, "open_apps"):
         name = _app_name(app)
-        steps.append({"tool": "pc_app_launch", "args": {"name": name}, "label": f"Abrir {name}"})
+        steps.append({"tool": "pc_app_launch", "args": {"name": name}, "label": tr("Abrir {name}", name=name)})
     for url in _list(raw, "open_urls"):
         try:
             safe = pc_web.normalise_url(url)
         except PCControlError as exc:
-            raise ModeError(f"Endereço recusado: {exc.message}") from exc
-        steps.append({"tool": "pc_web_open_url", "args": {"url": safe}, "label": f"Abrir {safe}"})
+            raise ModeError(tr("Endereço recusado: {reason}", reason=exc.message)) from exc
+        steps.append({"tool": "pc_web_open_url", "args": {"url": safe}, "label": tr("Abrir {name}", name=safe)})
     if raw.get("volume") is not None:
         volume = raw.get("volume")
         if isinstance(volume, bool) or not isinstance(volume, int) or not 0 <= volume <= 100:
-            raise ModeError("'volume' tem de ser um número inteiro entre 0 e 100.")
-        steps.append({"tool": "pc_volume_set", "args": {"level": volume}, "label": f"Volume a {volume}%"})
+            raise ModeError(tr("'volume' tem de ser um número inteiro entre 0 e 100."))
+        steps.append({"tool": "pc_volume_set", "args": {"level": volume}, "label": tr("Volume a {level}%", level=volume)})
     section = raw.get("settings_section")
     if section:
         try:
@@ -119,9 +121,9 @@ def compile_mode(mode_id: str, raw: Any) -> dict:
         except PCControlError as exc:
             raise ModeError(exc.message) from exc
         steps.append({"tool": "pc_settings_open", "args": {"section": key},
-                      "label": f"Abrir as definições de {label}"})
+                      "label": tr("Abrir as definições de {section}", section=label)})
     if not steps:
-        raise ModeError("Este modo não faz nada.")
+        raise ModeError(tr("Este modo não faz nada."))
     return {
         "id": mode_id,
         "name": _clip(raw.get("name") or mode_id, 60),
@@ -136,15 +138,15 @@ def load(mode_id: Any, modes_dir: Path | None = None) -> dict:
     wanted = str(mode_id or "").strip().casefold()
     allowed = available_ids(modes_dir)
     if wanted not in allowed:
-        raise ModeError(f"Não conheço o modo '{_clip(mode_id, 40)}'. Modos: {', '.join(allowed) or 'nenhum'}.")
+        raise ModeError(tr("Não conheço o modo '{mode}'. Modos: {modes}.", mode=_clip(mode_id, 40), modes=", ".join(allowed) or tr("nenhum")))
     folder = modes_dir or MODES_DIR
     path = (folder / f"{wanted}.yaml").resolve()
     if path.parent != folder.resolve():  # belt and braces; the allow-list already holds
-        raise ModeError("Modo inválido.")
+        raise ModeError(tr("Modo inválido."))
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
-        raise ModeError(f"Não consegui ler o modo '{wanted}'.") from exc
+        raise ModeError(tr("Não consegui ler o modo '{mode}'.", mode=wanted)) from exc
     return compile_mode(wanted, raw)
 
 
@@ -191,7 +193,7 @@ async def run(mode_id: Any, executor: Any, modes_dir: Path | None = None) -> dic
                 and _process_key(step["args"]["app"]) not in running:
             # Not open: nothing to close, and no confirmation to sit through.
             outcomes.append({"label": step["label"], "tool": step["tool"], "ok": True,
-                             "status": "skipped", "message": "Não estava aberto."})
+                             "status": "skipped", "message": tr("Não estava aberto.")})
             continue
         try:
             result = await executor.execute_tool_async(step["tool"], dict(step["args"]))
@@ -202,9 +204,10 @@ async def run(mode_id: Any, executor: Any, modes_dir: Path | None = None) -> dic
     done = sum(1 for o in outcomes if o["ok"] and o["status"] != "skipped")
     skipped = sum(1 for o in outcomes if o["status"] == "skipped")
     counted = len(outcomes) - skipped
-    message = f"{mode['name']}: {done} de {counted} passos feitos."
+    message = tr("{mode}: {done} de {total} passos feitos.", mode=mode["name"], done=done, total=counted)
     if done and mode.get("message"):
-        message = f"{mode['message']} ({done} de {counted} passos feitos.)"
+        message = tr("{message} ({done} de {total} passos feitos.)",
+                     message=mode["message"], done=done, total=counted)
     return {"ok": done > 0 or skipped == len(outcomes), "id": mode["id"], "name": mode["name"],
             "message": message, "done": done, "skipped": skipped, "total": len(outcomes),
             "steps": outcomes}

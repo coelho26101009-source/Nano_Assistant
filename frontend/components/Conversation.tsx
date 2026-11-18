@@ -461,7 +461,7 @@ function ClarificationChoices({
 }: { clarification: Clarification; onChoose: (reply: string) => void }) {
   const [chosen, setChosen] = useState<string | null>(null);
   return (
-    <div className="msg__choices" role="group" aria-label={clarification.question || "Escolhe uma opção"}>
+    <div className="msg__choices" role="group" aria-label={clarification.question || t("Escolhe uma opção")}>
       {clarification.options.map((option) => (
         <button
           key={option.reply} type="button" className="choice-chip"

@@ -606,7 +606,7 @@ export default function Home() {
     expose((result: WorkModeResult) => {
       setModeRunning(null);
       setModeResult(result ?? null);
-      notify(result?.message ?? "O modo terminou.", result?.ok ? "success" : "error");
+      notify(result?.message ?? t("O modo terminou."), result?.ok ? "success" : "error");
     }, "on_work_mode_done");
 
     // The thread list, and the messages of whichever thread the backend
@@ -1556,7 +1556,7 @@ export default function Home() {
                         call<any>("activate_work_mode", modeId).then((ack) => {
                           if (!ack?.accepted) {
                             setModeRunning(null);
-                            notify("Não foi possível ativar o modo.", "error");
+                            notify(t("Não foi possível ativar o modo."), "error");
                           }
                         });
                       }}

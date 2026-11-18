@@ -20,6 +20,8 @@ anything, approves anything or skips a confirmation.
 """
 from __future__ import annotations
 
+from core.i18n import tr
+
 from typing import Any
 
 MAX_OPTIONS = 6
@@ -47,18 +49,21 @@ def _option(candidate: Any) -> dict | None:
         return None
     window_id = candidate.get("window_id")
     if isinstance(window_id, int) and not isinstance(window_id, bool):
-        title = _clip(candidate.get("title") or "(sem título)", MAX_LABEL)
+        title = _clip(candidate.get("title") or tr("(sem título)"), MAX_LABEL)
         process = _clip(candidate.get("process") or "", 40)
         label = f"{title} — {process}" if process else title
         return {
             "label": _clip(label, MAX_LABEL),
-            "reply": f"Refiro-me à janela «{title}»{f' ({process})' if process else ''}, window_id {window_id}.",
+            "reply": (tr("Refiro-me à janela «{title}» ({process}), window_id {id}.",
+                         title=title, process=process, id=window_id) if process else
+                      tr("Refiro-me à janela «{title}», window_id {id}.", title=title, id=window_id)),
         }
     app_id = candidate.get("app_id")
     name = candidate.get("name")
     if isinstance(app_id, str) and app_id and name:
         label = _clip(name, MAX_LABEL)
-        return {"label": label, "reply": f"Refiro-me à aplicação «{label}», app_id {_clip(app_id, 120)}."}
+        return {"label": label, "reply": tr("Refiro-me à aplicação «{name}», app_id {id}.",
+                                            name=label, id=_clip(app_id, 120))}
     return None
 
 
@@ -84,7 +89,7 @@ def from_tool_result(tool_name: str, result: Any) -> dict | None:
         # One candidate is not a choice, and zero is "not found".
         return None
     return {
-        "question": _clip(payload.get("message") or "Qual destas?", MAX_QUESTION),
+        "question": _clip(tr(payload.get("message") or "Qual destas?"), MAX_QUESTION),
         "tool": _clip(tool_name, 64),
         "options": options,
         "more": max(0, len(candidates) - len(options)),
