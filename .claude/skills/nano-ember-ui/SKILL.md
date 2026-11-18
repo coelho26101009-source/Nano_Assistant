@@ -107,6 +107,15 @@ microphone is a privacy state: `--information` border, filled mic button and
 the wave indicator. Voice that is not set up shows no chip in the composer;
 the disabled microphone carries the reason in its name and tooltip.
 
+## Voice mode
+
+`components/VoiceMode.tsx` is the full-screen view (Ctrl+Shift+M, the palette, or
+the waves button in the composer). It shows one big control, the turn's phase as
+a ring, and the last exchange. The ring follows the PHASE only, never a
+microphone level, because the backend sends none. Listening is `--information`
+and is always labelled in words. An approval asked during voice mode shows as
+the dialog, above it.
+
 ## State presentation
 
 Never let colour alone carry a state. Each differs in fill or motion too:

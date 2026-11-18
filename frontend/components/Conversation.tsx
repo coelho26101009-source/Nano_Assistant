@@ -948,7 +948,7 @@ export function Conversation({
 export function Composer({
   value, onChange, onSend, onStop, onVoice, onCancelVoice,
   thinking, disabled, voiceState, listening, suggestions, onSuggestion,
-  readOnlyReason, files = [], onFiles, onRemoveFile, onFileError,
+  readOnlyReason, files = [], onFiles, onRemoveFile, onFileError, onVoiceMode,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -968,6 +968,8 @@ export function Composer({
   onFiles?: (files: PendingFile[]) => void;
   onRemoveFile?: (index: number) => void;
   onFileError?: (message: string) => void;
+  /** Open the full-screen voice mode. */
+  onVoiceMode?: () => void;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const picker = useRef<HTMLInputElement>(null);
@@ -1099,6 +1101,17 @@ export function Composer({
             )}
 
             <span className="composer__spacer" />
+
+            {onVoiceMode && (
+              <Button
+                variant="ghost" icon size="sm" onClick={onVoiceMode}
+                disabled={locked || (!voiceReady && !listening)}
+                title={voiceReady ? t("Modo de voz (Ctrl+Shift+M)") : voiceTitle}
+                aria-label={t("Modo de voz")}
+              >
+                <Icon name="waves" size={17} />
+              </Button>
+            )}
 
             <button
               type="button"

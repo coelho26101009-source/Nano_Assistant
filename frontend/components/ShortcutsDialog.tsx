@@ -15,6 +15,7 @@ export const SHORTCUTS: Shortcut[] = [
   { keys: ["Ctrl", "K"], label: t("Paleta de comandos") },
   { keys: ["Ctrl", "B"], label: t("Mostrar/ocultar barra lateral") },
   { keys: ["Ctrl", "M"], label: t("Falar com o NANO") },
+  { keys: ["Ctrl", "Shift", "M"], label: t("Modo de voz") },
   { keys: ["Ctrl", ","], label: t("Definições") },
   { keys: ["Enter"], label: t("Enviar mensagem") },
   { keys: ["Shift", "Enter"], label: t("Nova linha") },

@@ -37,6 +37,7 @@ const PATHS = {
   refresh: "M3 12a9 9 0 0 1 15.5-6.2L21 8M21 3v5h-5M21 12a9 9 0 0 1-15.5 6.2L3 16M3 21v-5h5",
   newChat: "M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z",
   arrowDown: "M12 5v14M19 12l-7 7-7-7",
+  waves: "M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4",
 } as const;
 
 export type IconName = keyof typeof PATHS;

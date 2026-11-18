@@ -37,3 +37,14 @@ def test_the_conversation_only_follows_new_text_when_already_at_the_end():
     source = (FRONTEND / "components" / "Conversation.tsx").read_text(encoding="utf-8")
     assert "if (atEndRef.current) stick();" in source
     assert 'className="conversation__to-end"' in source
+
+
+def test_voice_mode_follows_the_phase_and_never_a_fake_level():
+    source = (FRONTEND / "components" / "VoiceMode.tsx").read_text(encoding="utf-8")
+    assert "export function voiceModeState(" in source
+    # The ring is driven by the turn's phase only; there is no audio level to read.
+    for fake in ("getUserMedia", "AnalyserNode", "Math.random"):
+        assert fake not in source
+    shell = (FRONTEND / "pages" / "index.tsx").read_text(encoding="utf-8")
+    # An approval asked during voice mode is shown as the dialog, above it.
+    assert '!showFirstRun && !voiceModeOpen' in shell

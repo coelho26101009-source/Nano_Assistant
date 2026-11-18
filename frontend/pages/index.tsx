@@ -20,6 +20,7 @@ import Head from "next/head";
 
 import CommandPalette, { Command } from "../components/CommandPalette";
 import ShortcutsDialog from "../components/ShortcutsDialog";
+import VoiceMode from "../components/VoiceMode";
 import ConfirmModal, { ConfirmCard } from "../components/Confirm";
 import PluginCodeModal from "../components/PluginCodeModal";
 import Rail, { type RailMode } from "../components/Rail";
@@ -34,7 +35,7 @@ import { SECTIONS, ViewId, sectionEntry, sectionOf } from "../lib/navigation";
 import { BRAND_NAME } from "../lib/brand";
 import FirstRunGuide from "../components/FirstRunGuide";
 import DiagnosticsPanel from "../components/DiagnosticsPanel";
-import { Composer, Conversation, Message, ToolEvent } from "../components/Conversation";
+import { Composer, Conversation, Message, ToolEvent, cleanAssistantText } from "../components/Conversation";
 import {
   ActivityPage, AgentsPage, IntegrationsPage,
   PermissionsPage, StatusPage, TaskScope, TasksPage, pcActivityMatches,
@@ -166,6 +167,7 @@ export default function Home() {
   const [railCollapsed, setRailCollapsed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [voiceModeOpen, setVoiceModeOpen] = useState(false);
   /** Text files waiting in the composer for the next message. */
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   // Appearance and personalisation live in the backend's settings (the
@@ -1097,6 +1099,7 @@ export default function Home() {
       const key = event.key.toLowerCase();
       // Ctrl+Shift+O, the convention in other chat apps; Ctrl+N stays too.
       if (event.shiftKey && key === "o") { event.preventDefault(); newConversation(); return; }
+      if (event.shiftKey && key === "m") { event.preventDefault(); setVoiceModeOpen(true); return; }
       if (key === "/") { event.preventDefault(); setShortcutsOpen(true); return; }
       if (key === "k") { event.preventDefault(); setPaletteOpen((v) => !v); }
       else if (key === "b") { event.preventDefault(); toggleRail(); }
@@ -1109,6 +1112,14 @@ export default function Home() {
   }, [newConversation, startVoice, toggleRail]);
 
   /* ── Derived ────────────────────────────────────────────────────────── */
+  /** The last exchange, for the voice mode: plain text, the answer clipped. */
+  const voiceLast = useMemo(() => {
+    const question = [...messages].reverse().find((m) => m.role === "user")?.content;
+    const last = messages[messages.length - 1];
+    const raw = last?.role === "assistant" && !last.streaming ? cleanAssistantText(last.content) : "";
+    const answer = raw.replace(/```[\s\S]*?```/g, "").replace(/[*_`#>|]/g, "").replace(/[-:]{3,}/g, "").replace(/\s+/g, " ").trim();
+    return { question, answer: answer.length > 600 ? `${answer.slice(0, 600)}…` : answer };
+  }, [messages]);
   const pendingCount = commandCenter?.permissions?.length ?? 0;
   const agentState = readiness?.agent.state ?? (gaveUp ? "BACKEND_OFFLINE" : "UNKNOWN");
   const section = sectionOf(view);
@@ -1276,6 +1287,7 @@ export default function Home() {
     { id: "copy", label: t("Copiar conversa"), run: () => { copyConversation(); } },
     { id: "theme", label: t("Alternar tema"), run: () => setTheme(theme === "dark" ? "light" : "dark") },
     { id: "voice", label: t("Falar com o NANO"), hint: "Ctrl+M", run: startVoice },
+    { id: "voice-mode", label: t("Modo de voz"), hint: "Ctrl+Shift+M", run: () => setVoiceModeOpen(true) },
     {
       id: "estop",
       label: readiness?.emergencyStop ? t("Retomar execução") : t("Paragem de emergência"),
@@ -1295,7 +1307,7 @@ export default function Home() {
 
   /* The home screen: nothing said yet and nothing pending. It names itself
      ("Como posso ajudar?"), so the top bar carries no title there. */
-  const approvalInline = view === "chat" && !showFirstRun;
+  const approvalInline = view === "chat" && !showFirstRun && !voiceModeOpen;
   const hero = isChat && !showFirstRun && messages.length === 0 && !thinking && !confirmReq;
 
   /* Every thread is writable now, so there is exactly one set of messages on
@@ -1475,6 +1487,7 @@ export default function Home() {
                     value={input} onChange={setInput}
                     onSend={() => { setShowFirstRun(false); sendMessage(); }} onStop={stopWork}
                     onVoice={startVoice} onCancelVoice={cancelVoice}
+                    onVoiceMode={() => setVoiceModeOpen(true)}
                     thinking={thinking} disabled={!ready}
                     voiceState={readiness?.voice.state ?? "UNKNOWN"}
                     listening={listening}
@@ -1609,6 +1622,17 @@ export default function Home() {
 
       <CommandPalette open={paletteOpen} commands={commands} onClose={() => setPaletteOpen(false)} />
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      <VoiceMode
+        open={voiceModeOpen}
+        phase={voicePhase?.phase}
+        listening={listening}
+        voiceReady={ready && readiness?.voice.state === "READY" && !thinking}
+        lastQuestion={voiceLast.question}
+        lastAnswer={voiceLast.answer}
+        onTalk={startVoice}
+        onStop={listening ? cancelVoice : stopWork}
+        onClose={() => setVoiceModeOpen(false)}
+      />
       <ToastStack toasts={toasts} />
 
       {confirmReq && !approvalInline && (

@@ -2173,3 +2173,69 @@ kbd {
 }
 .shortcuts__plus { color: var(--text-dim); font-size: 11px; }
 .rail__help { flex: none; width: 28px; height: 28px; font-weight: 600; font-size: 13px; color: var(--text-muted); }
+
+/* ============================================================================
+   VOICE MODE — full-screen, one big control, the turn's phase as a ring.
+   Below the approval dialog (1000) and the toasts, above everything else, so
+   an approval asked mid-turn is never hidden behind it.
+   ========================================================================== */
+.voice-mode {
+  position: fixed; inset: 0; z-index: 950;
+  display: flex; flex-direction: column; align-items: center;
+  background: var(--bg); color: var(--text-primary);
+  padding: 48px 16px 40px; min-width: 0; overflow-y: auto;
+  animation: fadeIn 160ms ease-out;
+}
+.voice-mode__close {
+  position: absolute; top: 14px; right: 14px; width: 40px; height: 40px;
+  display: grid; place-items: center; border-radius: var(--r-md);
+  background: transparent; border: none; color: var(--text-muted); cursor: pointer;
+}
+.voice-mode__close:hover { background: var(--surface-hover); color: var(--text-primary); }
+.voice-mode__stage {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 22px; width: 100%; max-width: 640px; min-width: 0; text-align: center;
+}
+.voice-mode__orb {
+  position: relative; width: 200px; height: 200px; display: grid; place-items: center;
+  border-radius: 50%; background: var(--surface);
+}
+/* The ring is the state. Idle: a quiet border. Listening: the information
+   colour, breathing. Working: a dashed ring turning. Speaking: solid, slower.
+   The label under it always says the same thing in words. */
+.voice-mode__ring {
+  position: absolute; inset: -10px; border-radius: 50%;
+  border: 2px solid var(--border);
+}
+.voice-mode__orb[data-state="listening"] .voice-mode__ring {
+  border: 3px solid var(--information); animation: voice-breathe 1.4s ease-in-out infinite;
+}
+.voice-mode__orb[data-state="working"] .voice-mode__ring {
+  border: 3px dashed var(--information); animation: voice-turn 2.4s linear infinite;
+}
+.voice-mode__orb[data-state="speaking"] .voice-mode__ring {
+  border: 3px solid var(--text-secondary); animation: voice-breathe 2.6s ease-in-out infinite;
+}
+@keyframes voice-breathe { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.06); opacity: .65; } }
+@keyframes voice-turn { to { transform: rotate(360deg); } }
+.voice-mode__status { font-size: var(--fs-md); color: var(--text-secondary); min-height: 1.6em; }
+.voice-mode__exchange {
+  width: 100%; display: flex; flex-direction: column; gap: 12px;
+  max-height: 34vh; overflow-y: auto; min-width: 0;
+}
+.voice-mode__you { color: var(--text-muted); font-size: var(--fs-base); overflow-wrap: anywhere; }
+.voice-mode__answer { font-size: 18px; line-height: 1.6; color: var(--text-primary); overflow-wrap: anywhere; }
+.voice-mode__controls { padding-top: 24px; }
+.voice-mode__talk {
+  width: 76px; height: 76px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--primary); color: var(--on-primary); border: none; cursor: pointer;
+  box-shadow: var(--shadow-md); transition: background var(--transition);
+}
+.voice-mode__talk:hover:not(:disabled) { background: var(--primary-hover); }
+.voice-mode__talk:disabled { opacity: .45; cursor: not-allowed; }
+.voice-mode__talk:focus-visible { outline: 3px solid var(--focus); outline-offset: 4px; }
+.voice-mode__talk[data-state="listening"] { background: var(--information); color: var(--bg); }
+@media (max-width: 640px) {
+  .voice-mode__orb { width: 150px; height: 150px; }
+  .voice-mode__answer { font-size: 16px; }
+}
