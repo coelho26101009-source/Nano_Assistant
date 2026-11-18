@@ -19,6 +19,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Head from "next/head";
 
 import CommandPalette, { Command } from "../components/CommandPalette";
+import ShortcutsDialog from "../components/ShortcutsDialog";
 import ConfirmModal, { ConfirmCard } from "../components/Confirm";
 import PluginCodeModal from "../components/PluginCodeModal";
 import Rail, { type RailMode } from "../components/Rail";
@@ -155,6 +156,7 @@ export default function Home() {
   const [railOpen, setRailOpen] = useState(false);
   const [railCollapsed, setRailCollapsed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   // Appearance and personalisation live in the backend's settings (the
   // frontend uses no browser storage). "system" follows the OS theme.
   const [themePref, setThemePref] = useState<ThemePref>("system");
@@ -1041,8 +1043,15 @@ export default function Home() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const mod = event.ctrlKey || event.metaKey;
+      const target = event.target as HTMLElement | null;
+      const typing = !!target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+      // "?" opens the shortcuts list, unless the person is typing a "?".
+      if (!mod && event.key === "?" && !typing) { event.preventDefault(); setShortcutsOpen(true); return; }
       if (!mod) return;
       const key = event.key.toLowerCase();
+      // Ctrl+Shift+O, the convention in other chat apps; Ctrl+N stays too.
+      if (event.shiftKey && key === "o") { event.preventDefault(); newConversation(); return; }
+      if (key === "/") { event.preventDefault(); setShortcutsOpen(true); return; }
       if (key === "k") { event.preventDefault(); setPaletteOpen((v) => !v); }
       else if (key === "b") { event.preventDefault(); toggleRail(); }
       else if (key === "n") { event.preventDefault(); newConversation(); }
@@ -1210,7 +1219,8 @@ export default function Home() {
   );
 
   const commands: Command[] = useMemo(() => [
-    { id: "new", label: t("Nova conversa"), hint: "Ctrl+N", run: newConversation },
+    { id: "new", label: t("Nova conversa"), hint: "Ctrl+Shift+O", run: newConversation },
+    { id: "shortcuts", label: t("Atalhos de teclado"), hint: "?", run: () => setShortcutsOpen(true) },
     ...SECTIONS.flatMap((entry) => entry.views.filter((v) => advancedMode || !ADVANCED_VIEWS.has(v.id)).map((v) => ({
       id: `go-${v.id}`,
       label: entry.views.length > 1 ? t("Ir para {0} › {1}", { 0: entry.label, 1: v.label }) : t("Ir para {0}", { 0: v.label }),
@@ -1268,6 +1278,7 @@ export default function Home() {
             counts={navCounts}
             version={APP_VERSION}
             userName={userName}
+            onHelp={() => setShortcutsOpen(true)}
             onProfile={() => { openSettingsSection("general"); if (narrow) setRailOpen(false); }}
             threads={threads ?? []}
             activeId={activeThreadId}
@@ -1530,6 +1541,7 @@ export default function Home() {
       </div>
 
       <CommandPalette open={paletteOpen} commands={commands} onClose={() => setPaletteOpen(false)} />
+      <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <ToastStack toasts={toasts} />
 
       {confirmReq && !approvalInline && (

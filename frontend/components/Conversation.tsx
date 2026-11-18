@@ -734,7 +734,33 @@ export function Conversation({
   connecting?: boolean;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ block: "end" }); }, [messages, status]);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  /* FOLLOW THE ANSWER ONLY WHILE THE READER IS AT THE END.
+     Scrolling up to reread something used to be undone by the next streamed
+     chunk. Now the view follows only when it was already at the bottom, and a
+     button offers the way back down. Sending a message always goes down. */
+  const [atEnd, setAtEnd] = useState(true);
+  const atEndRef = useRef(true);
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    atEndRef.current = near;
+    setAtEnd(near);
+  };
+  const lastRole = messages[messages.length - 1]?.role;
+  const count = messages.length;
+  useEffect(() => {
+    if (lastRole === "user") atEndRef.current = true;
+  }, [count, lastRole]);
+  useEffect(() => {
+    if (atEndRef.current) endRef.current?.scrollIntoView({ block: "end" });
+  }, [messages, status]);
+  const toEnd = () => {
+    atEndRef.current = true;
+    setAtEnd(true);
+    endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+  };
   const standalone = needsStandaloneThinking(messages, thinking);
   const lastIndex = messages.length - 1;
   // A turn the user can ask again must exist as a question + answer pair. A
@@ -760,7 +786,8 @@ export function Conversation({
   }
 
   return (
-    <div className="conversation" role="log" aria-live="polite" aria-label={t("Conversa")}>
+    <div className="conversation" role="log" aria-live="polite" aria-label={t("Conversa")}
+         ref={scrollRef} onScroll={onScroll}>
       <div className="conversation__inner">
         {messages.map((message, index) => {
           const isLast = index === lastIndex;
@@ -783,6 +810,12 @@ export function Conversation({
         )}
         <div ref={endRef} />
       </div>
+      {!atEnd && (
+        <button type="button" className="conversation__to-end" onClick={toEnd}
+                aria-label={t("Ir para o fim da conversa")} title={t("Ir para o fim da conversa")}>
+          <Icon name="arrowDown" size={18} />
+        </button>
+      )}
     </div>
   );
 }
