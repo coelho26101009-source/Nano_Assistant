@@ -311,7 +311,7 @@ app.whenReady().then(async () => {
   ok('the AI pill is an interactive menu trigger',
      !!pill && pill.getAttribute('aria-haspopup') === 'menu', pill ? pill.className : 'missing');
   const labelBefore = q('.status-pill__text')?.textContent?.trim();
-  ok('the pill shows the real provider and mode', labelBefore === 'Groq · AUTO', labelBefore);
+  ok('the pill shows the real provider and mode', labelBefore === 'Groq · Auto', labelBefore);
 
   if (!pill) {
     report.dom = {
@@ -419,7 +419,7 @@ app.whenReady().then(async () => {
      modeCalls.length === callsBefore + 1 && modeCalls[modeCalls.length - 1].args[0] === 'LOCAL',
      JSON.stringify(modeCalls.map((c) => c.args[0])));
   const labelAfter = q('.status-pill__text')?.textContent?.trim();
-  ok('the pill now names the REAL local model', labelAfter === 'Qwen3 · LOCAL', labelAfter);
+  ok('the pill now names the REAL local model', labelAfter === 'Qwen3 8B · Local', labelAfter);
 
   /* ---- 6. Settings -> IA agrees with the pill --------------------------- */
   pill.click(); await sleep(300);
