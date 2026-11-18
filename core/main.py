@@ -3472,7 +3472,7 @@ async def _process_message(user_text: str, msg_id: str | None = None,
             # A 429 is a state the UI shows in its own affordance, not a wall
             # of red text inside the answer.
             _emit_rate_limited(msg_id, rate_limit)
-        full_response = full_response.strip() or "Desculpa Simão, não consegui gerar uma resposta."
+        full_response = full_response.strip() or "Desculpa, não consegui gerar uma resposta."
         # ONE shaping, used for BOTH the live payload and the stored row.
         #
         # The Brain's scratchpad is not shippable: it carries the provider's own
@@ -3508,7 +3508,7 @@ async def _process_message(user_text: str, msg_id: str | None = None,
         return result
     except Exception:
         logger.exception("Erro no _process_message")
-        error_result = {"msg_id": msg_id, "text": "Ups Simão, ocorreu um erro ao processar o teu pedido.", "ok": False, "error": "processing_error"}
+        error_result = {"msg_id": msg_id, "text": "Ups, ocorreu um erro ao processar o teu pedido.", "ok": False, "error": "processing_error"}
         _emit_stream_error(msg_id, "processing_error", error_result["text"])
         _emit_stream_end(msg_id, error_result)
         return error_result

@@ -336,7 +336,8 @@ the Memória page.
 conversation and message (with their summaries and per-thread facts), every
 long-term memory and legacy fact, your user profile, the whole Second Brain
 including the nodes you made by hand, documents indexed for search, the
-retrieval index, and the history of finished tasks. Either all of that is
+retrieval index, your reminders and calendar events, and the history of
+finished tasks. Either all of that is
 erased or none of it is. Afterwards the database file is compacted (`VACUUM`)
 so the deleted text does not linger in free pages, and memory work that was
 queued before the erase is discarded so it cannot write anything back.

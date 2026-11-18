@@ -7,3 +7,6 @@ pypdf>=5,<7
 playwright>=1.45,<2
 openwakeword>=0.6,<1
 onnxruntime>=1.18,<2
+# Google Calendar reading in plugins/calendar.py (calendar.google_enabled).
+google-api-python-client>=2.100,<3
+google-auth-oauthlib>=1.2,<2

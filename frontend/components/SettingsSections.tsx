@@ -282,6 +282,7 @@ export function EraseAllDataPanel({ onErase }: {
           <li>Todas as conversas e mensagens</li>
           <li>Todas as memórias e factos guardados</li>
           <li>O Second Brain, incluindo os nós criados à mão</li>
+          <li>Lembretes e eventos do calendário</li>
           <li>O histórico de tarefas terminadas</li>
         </ul>
         <div className="cc-tile-label" style={{ marginTop: 12 }}>Fica</div>

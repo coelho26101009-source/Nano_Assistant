@@ -4,14 +4,15 @@ Local calendar in SQLite (always available, no accounts or network needed)
 with optional .ics file import and optional Google Calendar reading.
 
 Google Calendar (opcional):
-  pip install google-api-python-client google-auth-oauthlib
+  pip install --require-hashes --no-build-isolation -r requirements/optional.lock
+  (google-api-python-client e google-auth-oauthlib estão em requirements-optional.txt)
   config/settings.yaml → calendar.google_enabled: true
   Credenciais OAuth em data/google_credentials.json (token gravado ao lado).
 """
 
 import logging
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -97,7 +98,9 @@ def list_events(days: int = 7, include_google: bool = True) -> dict:
 def delete_event(event_id: int) -> dict:
     """Apaga um evento local pelo id."""
     conn = _conn()
-    cur = conn.execute("DELETE FROM calendar_events WHERE id = ? AND source = 'local'", (int(event_id),))
+    # Imported (.ics) events are stored locally too; only Google events, which
+    # are read live and never stored, cannot be deleted from here.
+    cur = conn.execute("DELETE FROM calendar_events WHERE id = ? AND source IN ('local', 'ics')", (int(event_id),))
     conn.commit()
     if cur.rowcount:
         return {"success": True, "message": f"Evento #{event_id} apagado."}
@@ -109,41 +112,89 @@ def import_ics(file_path: str) -> dict:
     path = Path(file_path)
     if not path.exists():
         return {"error": f"Ficheiro não encontrado: {file_path}"}
-    imported = 0
+    imported = skipped = 0
     title = start = end = location = None
     conn = _conn()
     try:
-        for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-            line = raw.strip()
+        for line in _unfold_ics(path.read_text(encoding="utf-8", errors="ignore")):
+            name, _, value = line.partition(":")
+            key = name.split(";", 1)[0].upper()
             if line == "BEGIN:VEVENT":
                 title = start = end = location = None
-            elif line.startswith("SUMMARY:"):
-                title = line[len("SUMMARY:"):]
-            elif line.startswith("DTSTART"):
-                start = _parse_ics_dt(line.split(":", 1)[-1])
-            elif line.startswith("DTEND"):
-                end = _parse_ics_dt(line.split(":", 1)[-1])
-            elif line.startswith("LOCATION:"):
-                location = line[len("LOCATION:"):]
+            elif key == "SUMMARY":
+                title = _ics_text(value)
+            elif key == "DTSTART":
+                start = _parse_ics_dt(value)
+            elif key == "DTEND":
+                end = _parse_ics_dt(value)
+            elif key == "LOCATION":
+                location = _ics_text(value)
             elif line == "END:VEVENT" and title and start:
+                start_at = start.isoformat(timespec="minutes")
+                # Importing the same file twice used to duplicate every event.
+                if conn.execute(
+                    "SELECT 1 FROM calendar_events WHERE title = ? AND start_at = ? LIMIT 1",
+                    (title, start_at),
+                ).fetchone():
+                    skipped += 1
+                    continue
                 conn.execute(
                     "INSERT INTO calendar_events (title, start_at, end_at, location, source) VALUES (?,?,?,?, 'ics')",
-                    (title, start.isoformat(timespec="minutes"), end.isoformat(timespec="minutes") if end else None, location or ""),
+                    (title, start_at, end.isoformat(timespec="minutes") if end else None, location or ""),
                 )
                 imported += 1
         conn.commit()
     except Exception as exc:
         return {"error": f"Falha a importar '{path.name}': {exc}"}
-    return {"success": True, "imported": imported, "file": path.name, "message": f"Importei {imported} eventos de '{path.name}'."}
+    message = f"Importei {imported} eventos de '{path.name}'."
+    if skipped:
+        message += f" {skipped} já existiam e foram ignorados."
+    return {"success": True, "imported": imported, "skipped": skipped, "file": path.name, "message": message}
+
+
+def _unfold_ics(text: str) -> list[str]:
+    """RFC 5545 §3.1: a line that starts with a space or tab continues the previous one.
+
+    Calendar exports fold anything over 75 octets, so long titles and
+    locations used to be cut at the fold.
+    """
+    lines: list[str] = []
+    for raw in text.splitlines():
+        if raw[:1] in (" ", "\t") and lines:
+            lines[-1] += raw[1:]
+        else:
+            # Not strip(): a trailing space before a fold is part of the text.
+            lines.append(raw.lstrip())
+    return lines
+
+
+def _ics_text(value: str) -> str:
+    """Undo RFC 5545 TEXT escaping (\\, \\; \\, \\n)."""
+    out: list[str] = []
+    chars = iter(value)
+    for ch in chars:
+        if ch == "\\":
+            nxt = next(chars, "")
+            out.append("\n" if nxt in ("n", "N") else nxt)
+        else:
+            out.append(ch)
+    return "".join(out).strip()
 
 
 def _parse_ics_dt(value: str) -> datetime | None:
-    value = value.strip().rstrip("Z")
-    for fmt in ("%Y%m%dT%H%M%S", "%Y%m%d"):
+    value = value.strip()
+    utc = value.endswith("Z")
+    value = value.rstrip("Z")
+    for fmt in ("%Y%m%dT%H%M%S", "%Y%m%dT%H%M", "%Y%m%d"):
         try:
-            return datetime.strptime(value, fmt)
+            parsed = datetime.strptime(value, fmt)
         except ValueError:
             continue
+        if utc:
+            # "...Z" is UTC. Dropping the Z stored it as local time, so every
+            # event exported by Google/Outlook in UTC showed at the wrong hour.
+            parsed = parsed.replace(tzinfo=timezone.utc).astimezone().replace(tzinfo=None)
+        return parsed
     return None
 
 
@@ -183,7 +234,7 @@ def get_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "calendar_add_event",
-                "description": "Marca um evento no calendário local do Simão.",
+                "description": "Marca um evento no calendário local do utilizador.",
                 "parameters": {
                     "type": "object",
                     "required": ["title", "start"],

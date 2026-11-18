@@ -189,6 +189,14 @@ def test_malicious_page_cannot_unlock_dotenv_or_shell(workspace, manager):
 
 
 def test_executor_marks_external_output_as_untrusted(workspace, manager, monkeypatch):
+    import socket
+
+    # The URL guard resolves the host to refuse private addresses. Answer with
+    # a public address so the test does not depend on the machine's DNS: in an
+    # offline or proxied sandbox the lookup fails and the call is refused as
+    # "unresolvable_host" before the trust marking this test is about runs.
+    monkeypatch.setattr(socket, "getaddrinfo",
+                        lambda *_a, **_k: [(None, None, None, None, ("93.184.216.34", 0))])
     manager.confirmation_callback = lambda *_: True
     executor = ToolExecutor(permission_manager=manager)
     executor.registry["browser.fetch_url"]["handler"] = lambda args: {

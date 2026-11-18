@@ -62,6 +62,11 @@ DOWN, UNKNOWN = ProviderState.UNAVAILABLE, ProviderState.UNKNOWN
 #: Every variable a cloud credential can come from, and fake values for three.
 CLOUD_ENV = ("NANO_API_KEY", "HELIOS_API_KEY", "GROQ_API_KEY", "NANO_GEMINI_API_KEY",
              "GEMINI_API_KEY", "GOOGLE_API_KEY", "NANO_MISTRAL_API_KEY", "MISTRAL_API_KEY")
+# Both spellings: on Linux they are separate variables and urllib/httpx prefer
+# the lower-case one, so an inherited https_proxy (CI, a corporate shell, a
+# sandbox) would otherwise send the traffic these tests simulate elsewhere.
+_PROXY_ENV = ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY",
+              "https_proxy", "http_proxy", "all_proxy", "no_proxy")
 FAKE_KEYS = {"GROQ_API_KEY": "gsk_" + "0" * 48,
              "MISTRAL_API_KEY": "mistral-" + "0" * 24,
              "GEMINI_API_KEY": "AIza" + "0" * 35}
@@ -148,7 +153,7 @@ def isolated(monkeypatch, tmp_path):
                                                  "executable": None})
     monkeypatch.setattr(provider_status, "CACHE", cache)
     monkeypatch.setattr(ollama_service, "STATUS", monitor)
-    for name in CLOUD_ENV + ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY"):
+    for name in CLOUD_ENV + _PROXY_ENV:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
     monkeypatch.setattr(secret_store, "_STORE_PATH", tmp_path / "secrets.dat")
@@ -752,7 +757,7 @@ class _SSE(BaseHTTPRequestHandler):
 
 @pytest.fixture
 def local_server(monkeypatch):
-    for name in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY"):
+    for name in _PROXY_ENV:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
     server = ThreadingHTTPServer(("127.0.0.1", 0), _SSE)

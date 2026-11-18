@@ -30,6 +30,34 @@ versioning policy.
   lists what is kept: settings, API keys, connected accounts, permissions and
   logs. It is a Settings control only, never a model tool.
 
+### Fixed
+
+- "Apagar todos os dados" now also erases reminders and calendar events, which
+  live in the same database and used to survive it.
+- Reminders: an absolute time that has already passed is refused instead of
+  firing at once; "dd/mm HH:MM" for a date already past this year means next
+  year; a due reminder is claimed before delivery, so a failure part-way can no
+  longer re-send it every 20 seconds.
+- Calendar `.ics` import: UTC times (`...Z`) are converted to local time
+  instead of being stored an hour or more off; folded long lines, `SUMMARY`/
+  `LOCATION` with parameters and escaped text (`\,` `\;` `\n`) are read
+  correctly; re-importing a file no longer duplicates events; imported events
+  can be deleted.
+- Google Calendar reading (`calendar.google_enabled`) needed two libraries that
+  were not declared anywhere; `google-api-python-client` and
+  `google-auth-oauthlib` are now in `requirements-optional.txt` and
+  `optional.lock`.
+- `core.speech_filter` no longer fails to import on Python 3.13+, where
+  `audioop` was removed; it falls back to an equivalent pure-Python RMS.
+- User-facing replies and tool descriptions no longer hard-code a personal
+  name.
+- Frontend: Next.js 15.5.26 → 15.5.29 and `source-map-js` updated (npm audit
+  clean); removed the `export` script, since `next export` no longer exists
+  (`next build` with `output: "export"` already produces `out/`).
+- Tests no longer depend on the machine: proxy tests clear the lower-case
+  `https_proxy`/`no_proxy` variables too, the untrusted-output test no longer
+  needs working DNS, and an invalid escape sequence warning is gone.
+
 ---
 
 ## [0.2.0-beta.1] - 2026-09-30

@@ -147,6 +147,31 @@ def test_purge_erases_every_personal_store(stack):
         assert marker not in _context(stack, f"o que sabes sobre {marker}?")
 
 
+def test_purge_erases_reminders_and_calendar_events(stack, monkeypatch, tmp_path):
+    """The reminders and calendar plugins keep their rows in the same file.
+    Their text is as personal as a message and must not survive the erase."""
+    from plugins import calendar as cal
+    from plugins import reminders
+
+    monkeypatch.setattr(reminders, "get_memory", lambda: stack.engine)
+    monkeypatch.setattr(cal, "get_memory", lambda: stack.engine)
+    monkeypatch.setattr(reminders, "start_scheduler", lambda: True)
+    assert reminders.set_reminder("ERASE_REMINDER_MARKER_7A11", "10 minutos")["success"]
+    assert cal.add_event("ERASE_EVENT_MARKER_3C55", "2030-01-02 18:30")["success"]
+
+    result = stack.purge_everything()
+
+    assert result["ok"], result
+    assert result["reminders"] == 1 and result["calendar_events"] == 1
+    for table in ("reminders", "calendar_events"):
+        assert stack.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+
+
+def test_purge_works_before_the_plugin_tables_exist(stack):
+    assert not stack._table_exists("reminders")
+    assert stack.purge_everything()["ok"]
+
+
 def test_purge_is_not_bounded_by_the_renderer_list_limit(stack):
     """ConversationStore.delete_all lists at most 200 threads. An erase that
     went through it would leave the 201st conversation behind."""

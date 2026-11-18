@@ -78,10 +78,20 @@ def parse_when(when: str) -> datetime | None:
 
     for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%d/%m/%Y %H:%M", "%d/%m %H:%M"):
         try:
-            parsed = datetime.strptime(when, fmt)
             if fmt == "%d/%m %H:%M":
-                parsed = parsed.replace(year=datetime.now().year)
-            return parsed
+                # Parse with the year attached: strptime defaults to 1900,
+                # which is not a leap year, so "29/02 10:00" failed outright.
+                now = datetime.now()
+                parsed = datetime.strptime(f"{now.year}/{when}", "%Y/" + fmt)
+                if parsed <= now:
+                    # "02/01 09:00" said in December means next January,
+                    # not a moment that has already passed.
+                    try:
+                        parsed = parsed.replace(year=now.year + 1)
+                    except ValueError:  # 29/02 and next year is not a leap year
+                        pass
+                return parsed
+            return datetime.strptime(when, fmt)
         except ValueError:
             continue
     return None
@@ -96,6 +106,11 @@ def set_reminder(text: str, when: str) -> dict:
         return {"error": f"Não percebi o momento '{when}'. Usa '10 minutos', '18:30' ou '2026-01-02 18:30'."}
     if not (text or "").strip():
         return {"error": "Preciso de saber do que te devo lembrar."}
+    if due <= datetime.now():
+        # An absolute time in the past used to be stored as due and fired on
+        # the scheduler's next pass, i.e. "lembra-me às 2026-01-02 18:30" a
+        # day late produced an immediate, confusing notification.
+        return {"error": f"O momento '{when}' já passou ({due:%d/%m/%Y %H:%M}). Indica uma hora no futuro."}
 
     conn = _conn()
     cur = conn.execute(
@@ -141,11 +156,28 @@ def cancel_reminder(reminder_id: int) -> dict:
 
 # ─── Scheduler ────────────────────────────────────────────────────────────────
 
-def _fire(reminder_id: int, text: str):
+def _fire(reminder_id: int, text: str) -> bool:
+    """Deliver one due reminder exactly once.
+
+    The row is claimed (``fired = 1``) *before* anything is delivered. It used
+    to be marked only at the end, so a failure in between -- the memory write
+    raising, say -- left it pending and the scheduler delivered it again every
+    20 seconds, phone notification included, forever.
+    """
+    conn = _conn()
+    claimed = conn.execute(
+        "UPDATE reminders SET fired = 1 WHERE id = ? AND fired = 0", (reminder_id,)
+    ).rowcount
+    conn.commit()
+    if not claimed:
+        return False
+
     message = f"⏰ Lembrete: {text}"
     logger.info(message)
-    memory = get_memory()
-    memory.save_message("assistant", message, {"source": "reminder", "reminder_id": reminder_id})
+    try:
+        get_memory().save_message("assistant", message, {"source": "reminder", "reminder_id": reminder_id})
+    except Exception as exc:
+        logger.warning(f"Não consegui guardar o lembrete #{reminder_id} na memória: {exc}")
 
     webhook = get_setting("iot.notification_webhook", "")
     if webhook:
@@ -153,10 +185,7 @@ def _fire(reminder_id: int, text: str):
             asyncio.run(phone_notification(message, webhook))
         except Exception as exc:
             logger.warning(f"Notificação do lembrete falhou: {exc}")
-
-    conn = _conn()
-    conn.execute("UPDATE reminders SET fired = 1 WHERE id = ?", (reminder_id,))
-    conn.commit()
+    return True
 
 
 def _loop():
@@ -205,7 +234,7 @@ def get_tools() -> list[dict]:
         }},
         {"type": "function", "function": {
             "name": "list_reminders",
-            "description": "Lista os lembretes pendentes do Simão.",
+            "description": "Lista os lembretes pendentes do utilizador.",
             "parameters": {"type": "object", "properties": {
                 "include_fired": {"type": "boolean", "default": False},
             }},
