@@ -95,6 +95,9 @@ export default function Home() {
   // Capability detection, resolved after mount. In a browser this stays false
   // and the window controls are simply never rendered.
   const isDesktop = useIsDesktop();
+  // Read by backend callbacks registered once on mount.
+  const isDesktopRef = useRef(isDesktop);
+  isDesktopRef.current = isDesktop;
   const narrow = useNarrow();
   // Below this the collapsed icon column no longer fits either; the sidebar
   // leaves the layout and the top bar carries the button that opens it.
@@ -478,6 +481,15 @@ export default function Home() {
       // rail has to be re-read here too.
       reloadThreads();
     }, "on_voice_exchange");
+
+    // A reminder fell due. In the desktop shell Windows already shows a native
+    // notification, so the in-app toast is only for the browser mode.
+    expose((reminder: { text?: string; due_label?: string }) => {
+      const text = String(reminder?.text ?? "").trim();
+      if (!text || isDesktopRef.current) return;
+      const when = String(reminder?.due_label ?? "").trim();
+      notify(when ? `⏰ ${when} · ${text}` : `⏰ ${text}`, "default");
+    }, "on_reminder_due");
 
     // The thread list, and the messages of whichever thread the backend
     // resumed. The backend picks that thread (the most recently active one) so

@@ -3295,6 +3295,37 @@ def _exit_now() -> None:
         os._exit(0)
 
 
+def _on_reminder_due(reminder: dict) -> None:
+    """Show a due reminder on this PC.
+
+    The desktop shell turns ``reminder_due`` into a Windows notification (it
+    works with the window hidden in the tray); the open UI shows it as a toast.
+    Only plain data crosses either boundary: id, text and the due time label.
+    """
+    payload = {
+        "id": reminder.get("id"),
+        "text": str(reminder.get("text") or "")[:500],
+        "due_label": str(reminder.get("due_label") or "")[:16],
+    }
+    _desktop_emit("reminder_due", payload)
+    _notify_ui("on_reminder_due", payload)
+
+
+def _register_reminder_notifier() -> bool:
+    """Attach the local reminder channel, if the reminders plugin is loaded."""
+    from core.plugin_loader import get_plugin
+
+    # The instance the loader runs (its scheduler fires the reminders), not a
+    # fresh `import plugins.reminders`, which would be a second, idle copy.
+    reminders_plugin = get_plugin("reminders")
+    register = getattr(reminders_plugin, "register_notifier", None)
+    if not callable(register):
+        logger.debug("Plugin de lembretes indisponível; sem notificações locais")
+        return False
+    register(_on_reminder_due)
+    return True
+
+
 #: THE COMPLETE SET. Anything not named here is refused by the dispatcher.
 DESKTOP_OPERATIONS = {
     "ping": _ctl_ping,
@@ -3721,6 +3752,7 @@ def main():
     background_worker.start()
     _report("Backend", "READY" if background_worker.status().get("running") else "ERROR")
 
+    _register_reminder_notifier()
     started_services = start_plugin_services()
     _report("Plugins", "OK", f"{len(list_plugins())} loaded")
     if started_services:

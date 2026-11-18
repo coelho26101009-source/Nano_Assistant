@@ -22,6 +22,11 @@ versioning policy.
 
 ### Added
 
+- Reminders now show up on the PC: Nano Desktop raises a Windows notification
+  when one falls due (also with the window hidden in the tray; clicking it
+  brings Nano forward), and the browser mode shows an in-app toast. The phone
+  webhook still works as before. `reminders.desktop_notifications: false`
+  turns the local notification off.
 - "Apagar todos os dados" in Definições → Privacidade erases every
   conversation, memory, legacy fact, the user profile, the whole Second Brain,
   indexed documents and the finished-task history in one transaction, then

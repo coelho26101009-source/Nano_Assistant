@@ -40,6 +40,7 @@ REQUIRED_CALLBACKS = {
     "on_confirm_request",
     "on_wake_detected",
     "on_voice_exchange",
+    "on_reminder_due",
 }
 
 

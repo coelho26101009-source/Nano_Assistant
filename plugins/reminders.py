@@ -1,8 +1,10 @@
 """
 Nano Plugin: Reminders
 Persistent reminders and alarms (SQLite) with a lightweight scheduler on a
-daemon thread. When a reminder is due, a notification is sent to the phone
-(webhook) and the message is saved to memory so Nano can refer to it later.
+daemon thread. When a reminder is due it is shown on the PC (a Windows
+notification, through whatever notifier the host registered), sent to the
+phone (webhook, if configured) and saved to memory so Nano can refer to it
+later.
 """
 
 import asyncio
@@ -12,6 +14,7 @@ import sys
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -25,6 +28,44 @@ CHECK_INTERVAL_SECONDS = 20
 
 _scheduler: threading.Thread | None = None
 _stop = threading.Event()
+
+#: Local delivery channels (Windows notification, UI toast). The host
+#: registers them; the plugin never imports the UI or the desktop shell.
+_notifiers: list[Callable[[dict], None]] = []
+_notifiers_lock = threading.Lock()
+
+
+def register_notifier(notifier: Callable[[dict], None]) -> None:
+    """Add a local delivery channel for due reminders (idempotent)."""
+    with _notifiers_lock:
+        if notifier not in _notifiers:
+            _notifiers.append(notifier)
+
+
+def unregister_notifier(notifier: Callable[[dict], None]) -> None:
+    with _notifiers_lock:
+        if notifier in _notifiers:
+            _notifiers.remove(notifier)
+
+
+def _notify_locally(payload: dict) -> int:
+    """Hand a due reminder to every registered notifier. Returns how many took it.
+
+    One failing channel never stops the others, and never un-fires the
+    reminder: it was already claimed in ``_fire``.
+    """
+    if not get_setting("reminders.desktop_notifications", True):
+        return 0
+    with _notifiers_lock:
+        targets = list(_notifiers)
+    delivered = 0
+    for notifier in targets:
+        try:
+            notifier(dict(payload))
+            delivered += 1
+        except Exception as exc:
+            logger.warning(f"Notificação local do lembrete #{payload.get('id')} falhou: {exc}")
+    return delivered
 
 
 # ─── Persistence ──────────────────────────────────────────────────────────────
@@ -156,7 +197,7 @@ def cancel_reminder(reminder_id: int) -> dict:
 
 # ─── Scheduler ────────────────────────────────────────────────────────────────
 
-def _fire(reminder_id: int, text: str) -> bool:
+def _fire(reminder_id: int, text: str, due_at: str | None = None) -> bool:
     """Deliver one due reminder exactly once.
 
     The row is claimed (``fired = 1``) *before* anything is delivered. It used
@@ -174,6 +215,13 @@ def _fire(reminder_id: int, text: str) -> bool:
 
     message = f"⏰ Lembrete: {text}"
     logger.info(message)
+    due_label = ""
+    if due_at:
+        try:
+            due_label = datetime.fromisoformat(due_at).strftime("%H:%M")
+        except ValueError:
+            due_label = ""
+    _notify_locally({"id": reminder_id, "text": text, "due_label": due_label, "message": message})
     try:
         get_memory().save_message("assistant", message, {"source": "reminder", "reminder_id": reminder_id})
     except Exception as exc:
@@ -193,10 +241,10 @@ def _loop():
         try:
             now = datetime.now().isoformat(timespec="seconds")
             due = _conn().execute(
-                "SELECT id, text FROM reminders WHERE fired = 0 AND due_at <= ?", (now,)
+                "SELECT id, text, due_at FROM reminders WHERE fired = 0 AND due_at <= ?", (now,)
             ).fetchall()
-            for reminder_id, text in due:
-                _fire(reminder_id, text)
+            for reminder_id, text, due_at in due:
+                _fire(reminder_id, text, due_at)
         except Exception as exc:
             logger.error(f"Scheduler de lembretes: {exc}")
         _stop.wait(CHECK_INTERVAL_SECONDS)

@@ -89,5 +89,9 @@
   function on_voice_phase(phase, detail) { return dispatch("on_voice_phase", [phase, detail]); }
   eel.expose(on_voice_phase, "on_voice_phase");
 
-  console.info("[nano-bridge] ready: 11 Python -> UI callbacks registered.");
+  // A reminder fell due while the app is open.
+  function on_reminder_due(reminder) { return dispatch("on_reminder_due", [reminder]); }
+  eel.expose(on_reminder_due, "on_reminder_due");
+
+  console.info("[nano-bridge] ready: 12 Python -> UI callbacks registered.");
 })();

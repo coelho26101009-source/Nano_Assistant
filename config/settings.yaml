@@ -202,6 +202,9 @@ iot:
 
 reminders:
   enabled: true
+  # Mostrar os lembretes como notificação do Windows (Nano Desktop) e como
+  # aviso na janela aberta. O webhook do telemóvel continua independente.
+  desktop_notifications: true
 
 calendar:
   google_enabled: false
