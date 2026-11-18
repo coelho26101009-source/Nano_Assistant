@@ -68,7 +68,7 @@ export function PcControlSection({
       <Panel title="Controlo do computador" action={<Badge tone="accent">Ativo</Badge>}>
         <p className="muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
           O NANO pode abrir aplicações, arrumar janelas, mexer no volume, procurar
-          ficheiros e abrir páginas das Definições do Windows. Cada acção passa
+          ficheiros e abrir páginas das Definições do Windows. Cada ação passa
           por uma ferramenta específica, com argumentos verificados — nunca por
           uma linha de comandos.
         </p>
@@ -89,7 +89,7 @@ export function PcControlSection({
         <p className="muted" style={{ fontSize: 13, lineHeight: 1.7, marginBottom: 10 }}>
           Ações reversíveis e de leitura acontecem de imediato. Tudo o que fecha,
           escreve, apaga, captura o ecrã ou mexe na sessão pede confirmação —
-          com a acção, o alvo e o alcance à vista antes de decidires.
+          com a ação, o alvo e o alcance à vista antes de decidires.
         </p>
         <MetricRow label="Modo de autonomia" value={settings.security.autonomyMode} />
         <MetricRow

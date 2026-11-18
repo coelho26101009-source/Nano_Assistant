@@ -183,7 +183,7 @@ def get_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "calendar_add_event",
-                "description": "Marca um evento no calendário local do Simão.",
+                "description": "Marca um evento no calendário local do utilizador.",
                 "parameters": {
                     "type": "object",
                     "required": ["title", "start"],

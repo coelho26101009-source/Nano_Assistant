@@ -205,7 +205,7 @@ def get_tools() -> list[dict]:
         }},
         {"type": "function", "function": {
             "name": "list_reminders",
-            "description": "Lista os lembretes pendentes do Simão.",
+            "description": "Lista os lembretes pendentes do utilizador.",
             "parameters": {"type": "object", "properties": {
                 "include_fired": {"type": "boolean", "default": False},
             }},
