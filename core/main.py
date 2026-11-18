@@ -2025,6 +2025,23 @@ def get_settings() -> dict:
 
 
 @eel.expose
+def get_preferences() -> dict:
+    """Appearance and personalisation, read once when the window opens.
+
+    Cheap on purpose (no provider or audio probe), so the theme and the name
+    are right on the first paint instead of after Settings is opened.
+    """
+    stored = user_settings.all_settings()
+    theme = stored.get("theme")
+    return {
+        "theme": theme if theme in {"system", "dark", "light"} else "system",
+        "reduceMotion": stored.get("reduce_motion") is True,
+        "displayName": str(stored.get("display_name") or "").strip(),
+        "advancedMode": stored.get("advanced_mode") is True,
+    }
+
+
+@eel.expose
 def get_language() -> dict:
     """The interface language: the choice, what it resolved to, and the OS's.
 

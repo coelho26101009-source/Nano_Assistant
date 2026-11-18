@@ -130,8 +130,12 @@ function RowMenu({
 export default function Rail({
   mode, onToggle, view, onView, counts, version,
   threads, activeId, query, onQuery, onNew, onOpen, onRename, onDelete, onDeleteMany,
-  loading, unavailable,
+  loading, unavailable, userName, onProfile,
 }: {
+  /** The user's name, when they gave one or memory knows it. */
+  userName?: string | null;
+  /** Open the personalisation settings. */
+  onProfile?: () => void;
   mode: RailMode;
   /** Collapse or expand when docked; open or close when it is a drawer. */
   onToggle: () => void;
@@ -423,6 +427,17 @@ export default function Rail({
       )}
 
       <div className="rail__footer">
+        {/* The person this NANO belongs to, once their name is known. It opens
+            Personalização, where the name, theme and language are chosen. */}
+        {userName && onProfile && (
+          <button type="button" className="rail__profile" onClick={onProfile}
+                  title={t("Personalização")} aria-label={t("Perfil de {0}", { 0: userName })}>
+            <span className="rail__avatar" aria-hidden="true">
+              {userName.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase()}
+            </span>
+            {!collapsed && <span className="rail__profile-name">{userName}</span>}
+          </button>
+        )}
         <SectionButton
           entry={settings} active={current === "settings"} badge={0}
           collapsed={collapsed} onView={onView}

@@ -66,6 +66,25 @@ const STATUS_TONE: Record<CapabilityRow["status"], "accent" | "info" | "neutral"
   unsupported: "neutral",
 };
 
+/**
+ * What a person would actually SAY to use each group, one click from the chat.
+ * Each example is a request a narrow tool in that group fulfils; a group with
+ * no entry here (a plugin's "Outras integrações") simply shows none.
+ */
+const EXAMPLES: Record<string, string[]> = {
+  apps: [t("Abre o Spotify"), t("Que aplicações tenho abertas?")],
+  windows: [t("Põe as janelas lado a lado"), t("Minimiza todas as janelas do Discord")],
+  audio: [t("Baixa o volume para 30"), t("Pausa a música")],
+  files: [t("Procura o meu currículo nos Documentos"), t("Arruma a pasta Transferências")],
+  web: [t("Pesquisa o tempo em Lisboa"), t("Abre o YouTube")],
+  display: [t("Baixa o brilho do monitor"), t("Tira uma captura de ecrã")],
+  input: [t("Copia este texto: olá mundo")],
+  system: [t("Quanto espaço livre tenho no disco?"), t("Estou ligado à internet?")],
+  memory: [t("Lembra-te que prefiro respostas curtas"), t("O que sabes sobre mim?")],
+  schedule: [t("Lembra-me de fazer uma pausa daqui a 1 hora")],
+  devices: [t("Envia uma notificação para o meu telemóvel")],
+};
+
 function CapabilityItem({ row }: { row: CapabilityRow }) {
   return (
     <li className="cap-item" data-status={row.status}>
@@ -98,7 +117,11 @@ function CapabilityItem({ row }: { row: CapabilityRow }) {
   );
 }
 
-export default function CapabilitiesPage({ enabled }: { enabled: boolean }) {
+export default function CapabilitiesPage({ enabled, onTry }: {
+  enabled: boolean;
+  /** Send an example to the chat. */
+  onTry?: (text: string) => void;
+}) {
   const { data, loading } = useFetch<CapabilityCatalogue>("get_capability_catalogue", enabled);
   const [filter, setFilter] = useState<"all" | "available" | "confirm">("all");
 
@@ -133,7 +156,7 @@ export default function CapabilitiesPage({ enabled }: { enabled: boolean }) {
   return (
     <div className="page__inner">
       <h2 className="page-title">{t("Capacidades")}</h2>
-      <p className="dim" style={{ marginBottom: 14, maxWidth: "72ch" }}>{t("Tudo o que o NANO sabe fazer neste computador, lido diretamente do motor. As ações sensíveis pedem sempre confirmação — e as que o NANO não faz estão listadas também, porque nenhuma autorização as torna possíveis.")}</p>
+      <p className="dim" style={{ marginBottom: 14, maxWidth: "72ch" }}>{t("Pede ao NANO por palavras tuas. Clica num exemplo para o experimentar. As ações sensíveis pedem sempre confirmação.")}</p>
 
       <div className="cap-filters" role="group" aria-label={t("Filtrar capacidades")}>
         {([
@@ -160,10 +183,24 @@ export default function CapabilitiesPage({ enabled }: { enabled: boolean }) {
             title={group.label}
             action={<Badge tone="neutral">{group.capabilities.length}</Badge>}
           >
-            <p className="dim" style={{ fontSize: 12, marginBottom: 10 }}>{group.hint}</p>
-            <ul className="cap-list">
-              {group.capabilities.map((row) => <CapabilityItem key={row.tool} row={row} />)}
-            </ul>
+            <p className="dim" style={{ fontSize: 13, marginBottom: 10 }}>{group.hint}</p>
+            {onTry && (EXAMPLES[group.id] ?? []).length > 0 && (
+              <div className="cap-examples" aria-label={t("Experimenta")}>
+                {(EXAMPLES[group.id] ?? []).map((example) => (
+                  <button key={example} type="button" className="suggestion" onClick={() => onTry(example)}>
+                    {example}
+                  </button>
+                ))}
+              </div>
+            )}
+            {/* The individual tools, for whoever wants them, behind a
+                disclosure: the examples above are what the page is for. */}
+            <details className="cap-group__tools">
+              <summary>{t("Ver as {0} ações", { 0: group.capabilities.length })}</summary>
+              <ul className="cap-list">
+                {group.capabilities.map((row) => <CapabilityItem key={row.tool} row={row} />)}
+              </ul>
+            </details>
           </Panel>
         ))}
 

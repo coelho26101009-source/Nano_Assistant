@@ -925,7 +925,7 @@ kbd {
 .stage__tabs {
   flex: none; display: flex; align-items: center; gap: 2px;
   width: max-content; max-width: calc(100% - 48px);
-  margin: 4px 0 0 max(24px, calc((100% - var(--page-max)) / 2 + 24px));
+  margin: 16px 0 4px max(24px, calc((100% - var(--page-max)) / 2 + 24px));
   padding: 3px; border-radius: var(--r-md);
   background: var(--surface-hover);
   overflow-x: auto; scrollbar-width: none;
@@ -1060,6 +1060,10 @@ kbd {
   line-height: 1.25; color: var(--text); margin: 0;
 }
 .chat-hero__hint { font-size: var(--fs-sm); color: var(--text-muted); }
+.chat-hero__sub {
+  margin: -6px 0 0; font-size: var(--fs-lg); color: var(--text-muted);
+  animation: nano-enter var(--motion-slow) var(--motion-ease) 90ms both;
+}
 .chat-hero__mark {
   filter: drop-shadow(0 14px 12px rgba(47, 111, 237, .12));
   animation: nano-enter var(--motion-slow) var(--motion-ease) both;
@@ -2029,3 +2033,54 @@ kbd {
 :root:not([data-theme="light"]) .window-control--close:hover { color: #1A1A1A; }
 :root:not([data-theme="light"]) .btn--danger:hover:not(:disabled) { color: #1A1A1A; }
 :root:not([data-theme="light"]) .composer__mic--live { color: #0E1F1D; }
+
+/* ── Approval inside the conversation ─────────────────────────────────────
+   Same facts as the dialog (action, target, scope, preview), on the reading
+   column above the composer. Warning-toned edge: a decision is waiting. */
+.chat__approval { width: 100%; max-width: var(--chat-max); margin: 0 auto; padding: 0 16px 12px; }
+.confirm-card {
+  border: 1px solid var(--border); border-left: 3px solid var(--warning);
+  background: var(--surface-raised); border-radius: 12px; padding: 16px 18px;
+}
+.confirm-card__eyebrow { font-size: 12px; font-weight: 600; color: var(--warning); text-transform: uppercase; letter-spacing: .04em; }
+.confirm-card__title { margin: 4px 0 12px; font-size: var(--fs-lg); font-weight: 600; color: var(--text-primary); }
+.confirm-card__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.confirm-args summary { cursor: pointer; }
+
+/* ── First run: three short steps ───────────────────────────────────────── */
+.first-run__inner { max-width: 640px; }
+.first-run__steps { display: flex; gap: 18px; list-style: none; padding: 0; margin: 14px 0 0; flex-wrap: wrap; }
+.first-run__steps li { display: flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--text-muted); }
+.first-run__steps li[aria-current="step"] { color: var(--text-primary); font-weight: 600; }
+.first-run__dot {
+  display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%;
+  border: 1px solid var(--border); font-size: 12px;
+}
+.first-run__steps li[aria-current="step"] .first-run__dot { background: var(--primary); color: var(--on-primary); border-color: var(--primary); }
+.first-run__steps li.is-done .first-run__dot { background: var(--surface-active); }
+.first-run__card {
+  border: 1px solid var(--border); border-radius: 12px; background: var(--surface);
+  padding: 20px 22px;
+}
+.first-run__card h3 { margin: 0 0 6px; font-size: var(--fs-lg); font-weight: 600; color: var(--text-primary); }
+.first-run__points { margin: 8px 0 0; padding-left: 18px; font-size: var(--fs-sm); line-height: 1.7; color: var(--text-secondary); }
+
+/* ── Tools catalogue: examples first, tool rows behind a disclosure ─────── */
+.cap-examples { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.cap-group__tools > summary { cursor: pointer; font-size: var(--fs-sm); color: var(--text-muted); padding: 4px 0; }
+.cap-group__tools[open] > summary { margin-bottom: 8px; }
+
+/* ── Profile, at the foot of the sidebar ────────────────────────────────── */
+.rail__footer { flex-wrap: wrap; }
+.rail__profile {
+  flex: 1 0 100%; display: flex; align-items: center; gap: 10px; min-width: 0;
+  padding: 6px 8px; border-radius: var(--r-md); color: var(--text-primary);
+  transition: background var(--transition);
+}
+.rail__profile:hover { background: var(--sidebar-hover); }
+.rail__avatar {
+  flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%;
+  background: var(--surface-active); color: var(--text-primary); font-size: 12px; font-weight: 600;
+}
+.rail__profile-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); font-weight: 500; }
+.rail[data-mode="collapsed"] .rail__profile { flex: none; justify-content: center; padding: 6px; }
