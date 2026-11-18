@@ -12,6 +12,7 @@ import React, { useState } from "react";
 
 import Icon from "./Icon";
 import { Button, Modal } from "./ui";
+import { t } from "../lib/i18n";
 
 interface PluginCodeModalProps {
   pluginName: string;
@@ -46,11 +47,11 @@ export default function PluginCodeModal({
       title={filename || `${pluginName}.py`}
       footer={
         <>
-          <Button onClick={handleCopy} title="Copiar código do plugin">
+          <Button onClick={handleCopy} title={t("Copiar código do plugin")}>
             <Icon name={copied ? "check" : "copy"} size={15} />
-            {copied ? "Copiado" : "Copiar"}
+            {copied ? t("Copiado") : t("Copiar")}
           </Button>
-          <Button variant="primary" onClick={onClose}>Fechar</Button>
+          <Button variant="primary" onClick={onClose}>{t("Fechar")}</Button>
         </>
       }
     >

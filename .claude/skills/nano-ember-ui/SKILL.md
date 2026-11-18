@@ -64,8 +64,13 @@ and the open microphone use `--information` (teal), never the accent.
 
 ## Home
 
-The mark, "Como posso ajudar?", the composer, and a few light suggestions under
-it — nothing else. No dashboards, telemetry or cards on the home screen.
+The mark, a greeting by the local clock ("Boa tarde, Ana" when a name is
+known, from Personalização or memory), "Como posso ajudar?", the composer, and
+a few light suggestions under it that lead with what NANO does on this PC.
+Nothing else: no dashboards, telemetry or cards on the home screen.
+
+The first-run guide is three short steps (brain, privacy, name). It steps aside
+on its own when a provider already works, and stays reachable from Sobre.
 
 ## Conversation
 
@@ -82,6 +87,13 @@ turns reveal theirs on hover and focus. A pending answer shows one line,
 "A pensar…" (or a short tool status), with a text shimmer — never routing
 explanations, never a second logo. Code blocks are highlighted by the small
 in-house tokenizer in `Conversation.tsx`; block quotes render as quotes.
+
+## Approvals and Modo avançado
+
+While the chat is open, an approval request is a card in the conversation,
+above the composer (`ConfirmCard`), with the same body as the dialog used on
+every other page. Developer surfaces (each answer's technical details, the
+Agentes and Componentes pages, the Arranque panel) show only in Modo avançado.
 
 ## Composer
 
@@ -116,6 +128,19 @@ inside a card. A nested panel is transparent. Keep the seven categories: Geral,
 IA, Voz, PC Control, Memória, Privacidade, Sobre. Never hide a
 security-sensitive control, and never render an architectural guarantee as a
 switch.
+
+## Language
+
+The interface ships in English (the default) and European Portuguese. Every
+user-facing string in a component is the Portuguese original wrapped in `t()`
+(`t("Nova conversa")`), and English is a lookup in `frontend/lib/locales/en.ts`.
+A sentence with an element inside it uses `tj("Abre o NANO com {0}.", { 0: <code>…</code> })`
+so English can move the element. Never split a sentence into several `t()`
+fragments, and never build a plural by gluing on "s": pick between two whole
+keys. Backend sentences the UI shows go through `core.i18n.tr()` with
+`core/locales/en.py`. `tests/test_i18n.py` fails on any key without an English
+entry. The language is fixed per page load (`?lang=`), and the Chromium
+harnesses run in pt-PT.
 
 ## Motion
 

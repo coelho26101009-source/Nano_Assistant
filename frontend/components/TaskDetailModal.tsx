@@ -5,6 +5,7 @@ import {
   Badge, Button, EmptyState, Meter, Modal, StatusIndicator,
   ToolChip, formatTime, sanitizeArgs,
 } from "./ui";
+import { t } from "../lib/i18n";
 
 export default function TaskDetailModal({
   visible,
@@ -25,8 +26,8 @@ export default function TaskDetailModal({
 
   if (!task) {
     return (
-      <Modal open={visible} onClose={onClose} eyebrow="Task" title="Detalhe da tarefa">
-        <EmptyState title="Tarefa não encontrada" />
+      <Modal open={visible} onClose={onClose} eyebrow={t("Task")} title={t("Detalhe da tarefa")}>
+        <EmptyState title={t("Tarefa não encontrada")} />
       </Modal>
     );
   }
@@ -39,30 +40,30 @@ export default function TaskDetailModal({
     <Modal
       open={visible}
       onClose={onClose}
-      eyebrow={`Task · ${task.id?.slice(0, 8)}`}
-      title={task.title || "Tarefa"}
+      eyebrow={t("Task · {0}", { 0: task.id?.slice(0, 8) })}
+      title={task.title || t("Tarefa")}
       width="wide"
       footer={
         <>
           {onCancel && !isTerminal && (
-            <Button variant="danger" onClick={() => onCancel(task.id)}>Cancelar tarefa</Button>
+            <Button variant="danger" onClick={() => onCancel(task.id)}>{t("Cancelar tarefa")}</Button>
           )}
-          <Button onClick={onClose}>Fechar</Button>
+          <Button onClick={onClose}>{t("Fechar")}</Button>
         </>
       }
     >
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
         <StatusIndicator state={task.status} label={task.status} />
         <Badge tone="neutral">{task.task_type}</Badge>
-        <Badge tone="info">prioridade {task.priority}</Badge>
-        {task.retries > 0 && <Badge tone="neutral">{task.retries} retries</Badge>}
+        <Badge tone="info">{t("prioridade {0}", { 0: task.priority })}</Badge>
+        {task.retries > 0 && <Badge tone="neutral">{t("{0} tentativas", { 0: task.retries })}</Badge>}
       </div>
 
       <Meter value={task.progress ?? 0} />
       <div className="tl-meta" style={{ marginTop: 6, marginBottom: 20 }}>
-        {task.progress ?? 0}% · criada {formatTime(task.created_at)}
-        {task.started_at ? ` · iniciada ${formatTime(task.started_at)}` : ""}
-        {task.finished_at ? ` · terminada ${formatTime(task.finished_at)}` : ""}
+        {t("{0}% · criada {1}", { 0: task.progress ?? 0, 1: formatTime(task.created_at) })}
+        {task.started_at ? t(" · iniciada {0}", { 0: formatTime(task.started_at) }) : ""}
+        {task.finished_at ? t(" · terminada {0}", { 0: formatTime(task.finished_at) }) : ""}
       </div>
 
       {task.error && (
@@ -71,7 +72,7 @@ export default function TaskDetailModal({
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
         <section>
-          <div className="cc-tile-label">Plano</div>
+          <div className="cc-tile-label">{t("Plano")}</div>
           {plan.length ? (
             <ol style={{ paddingLeft: 18, display: "flex", flexDirection: "column", gap: 6 }}>
               {plan.map((step, index) => (
@@ -79,10 +80,10 @@ export default function TaskDetailModal({
               ))}
             </ol>
           ) : (
-            <EmptyState title="Sem plano registado" />
+            <EmptyState title={t("Sem plano registado")} />
           )}
 
-          <div className="cc-tile-label" style={{ marginTop: 20 }}>Execução e verificação</div>
+          <div className="cc-tile-label" style={{ marginTop: 20 }}>{t("Execução e verificação")}</div>
           {steps.length ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {steps.map((entry: any, index: number) => {
@@ -99,17 +100,17 @@ export default function TaskDetailModal({
                       />
                       {metadata.verified !== undefined && (
                         <Badge tone={metadata.verified ? "accent" : "neutral"}>
-                          {metadata.verified ? "verificado" : "não verificado"}
+                          {metadata.verified ? "verificado" : t("não verificado")}
                         </Badge>
                       )}
-                      {metadata.trust === "UNTRUSTED_EXTERNAL" && <Badge tone="info">externo</Badge>}
+                      {metadata.trust === "UNTRUSTED_EXTERNAL" && <Badge tone="info">{t("externo")}</Badge>}
                     </div>
                     <dl className="kv" style={{ marginTop: 10 }}>
-                      <dt>Capability</dt><dd className="mono">{metadata.capability ?? "—"}</dd>
-                      <dt>Scope</dt><dd className="mono">{metadata.scope ?? "—"}</dd>
-                      <dt>Duração</dt><dd className="mono">{metadata.duration_ms ?? "—"} ms</dd>
-                      <dt>Retry policy</dt><dd className="mono">{metadata.retry_policy ?? "—"}</dd>
-                      {metadata.verification && (<><dt>Verificação</dt><dd className="mono">{metadata.verification}</dd></>)}
+                      <dt>{t("Capability")}</dt><dd className="mono">{metadata.capability ?? "—"}</dd>
+                      <dt>{t("Scope")}</dt><dd className="mono">{metadata.scope ?? "—"}</dd>
+                      <dt>{t("Duração")}</dt><dd className="mono">{metadata.duration_ms ?? "—"} ms</dd>
+                      <dt>{t("Retry policy")}</dt><dd className="mono">{metadata.retry_policy ?? "—"}</dd>
+                      {metadata.verification && (<><dt>{t("Verificação")}</dt><dd className="mono">{metadata.verification}</dd></>)}
                     </dl>
                     {args.length > 0 && (
                       <div className="perm-args" style={{ marginTop: 10 }}>
@@ -122,12 +123,12 @@ export default function TaskDetailModal({
               })}
             </div>
           ) : (
-            <EmptyState title="Ainda sem passos executados" />
+            <EmptyState title={t("Ainda sem passos executados")} />
           )}
         </section>
 
         <section>
-          <div className="cc-tile-label">Permissões relacionadas</div>
+          <div className="cc-tile-label">{t("Permissões relacionadas")}</div>
           {permissions?.length ? (
             permissions.map((request: any) => (
               <div className="card" key={request.id} style={{ padding: 12, marginBottom: 8 }}>
@@ -136,10 +137,10 @@ export default function TaskDetailModal({
               </div>
             ))
           ) : (
-            <EmptyState title="Nenhuma permissão pendente" />
+            <EmptyState title={t("Nenhuma permissão pendente")} />
           )}
 
-          <div className="cc-tile-label" style={{ marginTop: 20 }}>Eventos</div>
+          <div className="cc-tile-label" style={{ marginTop: 20 }}>{t("Eventos")}</div>
           <ActivityTimeline events={events as any} limit={20} />
         </section>
       </div>

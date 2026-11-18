@@ -28,6 +28,9 @@
 'use strict';
 
 const { app, BrowserWindow } = require('electron');
+// The UI copy these checks assert is the Portuguese original, so the page
+// must load in Portuguese whatever language the CI machine speaks.
+app.commandLine.appendSwitch('lang', 'pt-PT');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -273,6 +276,9 @@ app.whenReady().then(async () => {
                deleted: [...set], failed: [], messages: 12, indexEntries: 12,
                activeId: ACTIVE };
     },
+    // The technical-details panel is a Modo avançado feature; this drive
+    // checks it, so the fake user has it on.
+    get_preferences: () => ({ theme: 'dark', reduceMotion: false, displayName: '', advancedMode: true }),
     get_memory_overview: () => ({ profile: {}, facts: [], memories: [], kinds: [],
       stats: { total: 0, active: 0, candidates: 0, archived: 0, byKind: {} },
       knowledge: { nodes: 0, edges: 0, byType: {} },

@@ -1,8 +1,14 @@
 import type { AppProps } from "next/app";
 import Head from "next/head";
+import { useEffect, useState } from "react";
 import "../styles/globals.css";
 
 export default function App({ Component, pageProps }: AppProps) {
+  // The interface language is only known in the browser (?lang= or the
+  // browser's own language), so nothing is rendered at build time: a
+  // pre-rendered English page hydrated in Portuguese would mismatch.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
   return (
     <>
       <Head>
@@ -15,7 +21,7 @@ export default function App({ Component, pageProps }: AppProps) {
             consegue chamar a UI (streaming, wake word, confirmações). */}
         <script src="/nano_bridge.js" />
       </Head>
-      <Component {...pageProps} />
+      {mounted && <Component {...pageProps} />}
     </>
   );
 }

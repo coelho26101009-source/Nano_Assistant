@@ -36,6 +36,8 @@ from core import data_migration
 from core import capability_catalogue, local_control_plane
 from core import agenda, clarification, work_modes
 from core import version as nano_version
+from core import i18n
+from core.i18n import tr
 from core.brain import Brain
 from core.config import CONFIG_PATH, load_config
 from core.guardrails import GuardrailsEngine
@@ -174,7 +176,7 @@ voice_runtime = VoiceRuntime(
 
 wake_word: WakeWordEngine | None = None
 # Result of the startup Ollama probe/launch; surfaced to the UI as model.boot.
-OLLAMA_BOOT: dict = {"available": False, "started": False, "reused": False, "detail": "não avaliado"}
+OLLAMA_BOOT: dict = {"available": False, "started": False, "reused": False, "detail": tr("não avaliado")}
 eel.init(str(FRONTEND_DIR) if FRONTEND_DIR.exists() else str(ROOT / "web"))
 
 _EVENT_LOOP: asyncio.AbstractEventLoop | None = None
@@ -1106,7 +1108,7 @@ def _start_ollama(control: ollama_service.Autostart | None = None) -> None:
     autostart = bool(CONFIG.get("local", {}).get("autostart", True))
     monitor = ollama_service.STATUS
     monitor.begin_startup(base_url)
-    boot: dict = {"available": False, "started": False, "reused": False, "detail": "não avaliado"}
+    boot: dict = {"available": False, "started": False, "reused": False, "detail": tr("não avaliado")}
     measurement: dict | None = None
     try:
         boot = ollama_service.ensure_running(
@@ -1177,7 +1179,7 @@ def _start_ollama_in_background() -> threading.Thread | None:
     control = ollama_service.Autostart()
     _OLLAMA_AUTOSTART = control
     OLLAMA_BOOT = {"available": False, "started": False, "reused": False, "pending": True,
-                   "detail": "A verificar o Ollama em segundo plano."}
+                   "detail": tr("A verificar o Ollama em segundo plano.")}
     ollama_service.STATUS.begin_startup(base_url)
 
     def _run() -> None:
@@ -1334,8 +1336,7 @@ def describe_providers(*, stale_ok: bool = False) -> dict:
         merged["temporarily_limited"] = state["temporarily_limited"]
         merged["retry_in_seconds"] = state["retry_in_seconds"]
         if state["temporarily_limited"]:
-            merged["detail"] = (f"Limite temporário atingido. Volta a estar disponível em "
-                                f"~{int(state['retry_in_seconds'] or 0)} s.")
+            merged["detail"] = (tr("Limite temporário atingido. Volta a estar disponível em ~{p0} s.", p0=int(state['retry_in_seconds'] or 0)))
         return merged, state
 
     # Every cloud provider, by id. Iterating rather than naming them means a
@@ -1423,7 +1424,7 @@ _VALIDATION_TIMEOUT_SECONDS = 20.0
 def _validation_timeout(provider_id: str) -> dict:
     name = providers.provider_name(provider_id)
     return {"ok": False, "error": "timeout",
-            "detail": f"O {name} não respondeu a tempo. Tenta novamente dentro de momentos."}
+            "detail": tr("O {p0} não respondeu a tempo. Tenta novamente dentro de momentos.", p0=name)}
 
 
 # The latest selection per setting. A model choice is validated off the hub,
@@ -1447,7 +1448,7 @@ def _selection_is_latest(setting: str, ticket: int) -> bool:
 
 def _superseded() -> dict:
     return {"ok": False, "error": "superseded",
-            "detail": "Entretanto foi escolhida outra opção; essa é a que fica."}
+            "detail": tr("Entretanto foi escolhida outra opção; essa é a que fica.")}
 
 
 @eel.expose
@@ -1478,7 +1479,7 @@ def set_groq_api_key(api_key: str) -> dict:
     """
     candidate = (api_key or "").strip()
     if not candidate:
-        return {"ok": False, "error": "empty_key", "detail": "Introduz uma chave de API."}
+        return {"ok": False, "error": "empty_key", "detail": tr("Introduz uma chave de API.")}
 
     try:
         verdict = _off_hub(providers.test_groq, candidate, timeout=_VALIDATION_TIMEOUT_SECONDS)
@@ -1489,7 +1490,7 @@ def set_groq_api_key(api_key: str) -> dict:
         return {"ok": False, "error": verdict["error"], "detail": verdict["detail"]}
 
     if not secret_store.set_secret(providers.GROQ_SECRET_NAME, candidate):
-        return {"ok": False, "error": "store_failed", "detail": "Não foi possível guardar a chave em segurança."}
+        return {"ok": False, "error": "store_failed", "detail": tr("Não foi possível guardar a chave em segurança.")}
 
     # Adopt a working model if the configured one is not on this account.
     if brain.groq_model not in verdict["models"]:
@@ -1545,10 +1546,10 @@ def set_groq_model(model: str) -> dict:
     except TimeoutError:
         return _validation_timeout(providers.ProviderId.GROQ.value)
     if error:
-        return {"ok": False, "error": error, "detail": "Não foi possível validar o modelo com o Groq."}
+        return {"ok": False, "error": error, "detail": tr("Não foi possível validar o modelo com o Groq.")}
     if chosen not in available:
         return {"ok": False, "error": "model_unavailable",
-                "detail": f"'{chosen}' não existe nesta conta Groq."}
+                "detail": tr("'{p0}' não existe nesta conta Groq.", p0=chosen)}
     if not _selection_is_latest("groq_model", ticket):
         return _superseded()
     user_settings.set_value("groq_model", chosen)
@@ -1568,7 +1569,7 @@ def set_preferred_cloud_provider(provider: str) -> dict:
     chosen = providers.parse_preferred_cloud(provider)
     if str(provider or "").strip().lower() not in providers.CLOUD_PROVIDER_IDS:
         return {"ok": False, "error": "unknown_provider",
-                "detail": f"'{provider}' não é um provedor cloud do Nano."}
+                "detail": tr("'{p0}' não é um provedor cloud do Nano.", p0=provider)}
 
     result = user_settings.set_value("preferred_cloud", chosen)
     if not result.get("ok"):
@@ -1605,7 +1606,7 @@ def _cloud_provider_id(provider: str) -> str:
 
 def _unknown_provider(provider: str) -> dict:
     return {"ok": False, "error": "unknown_provider",
-            "detail": f"'{provider}' não é um provedor cloud do Nano."}
+            "detail": tr("'{p0}' não é um provedor cloud do Nano.", p0=provider)}
 
 
 def _store_cloud_model(provider_id: str, key: str, chosen: str) -> None:
@@ -1644,7 +1645,7 @@ def set_cloud_api_key(provider: str, api_key: str) -> dict:
 
     candidate = (api_key or "").strip()
     if not candidate:
-        return {"ok": False, "error": "empty_key", "detail": "Introduz uma chave de API."}
+        return {"ok": False, "error": "empty_key", "detail": tr("Introduz uma chave de API.")}
 
     try:
         verdict = _off_hub(providers.test_cloud, provider_id, candidate,
@@ -1657,7 +1658,7 @@ def set_cloud_api_key(provider: str, api_key: str) -> dict:
 
     if not secret_store.set_secret(providers.CLOUD_SECRET_NAMES[provider_id], candidate):
         return {"ok": False, "error": "store_failed",
-                "detail": "Não foi possível guardar a chave em segurança."}
+                "detail": tr("Não foi possível guardar a chave em segurança.")}
 
     # Adopt a working model when the configured one is absent or does not exist
     # on this account, so the provider is usable immediately. An EXISTING and
@@ -1742,10 +1743,10 @@ def set_cloud_model(provider: str, model: str, tier: str = "fast") -> dict:
     name = providers.provider_name(provider_id)
     if error:
         return {"ok": False, "error": error,
-                "detail": f"Não foi possível validar o modelo com o {name}."}
+                "detail": tr("Não foi possível validar o modelo com o {p0}.", p0=name)}
     if chosen not in available:
         return {"ok": False, "error": "model_unavailable",
-                "detail": f"'{chosen}' não existe nesta conta {name}."}
+                "detail": tr("'{p0}' não existe nesta conta {p1}.", p0=chosen, p1=name)}
     if not _selection_is_latest(key, ticket):
         return _superseded()
 
@@ -1858,7 +1859,7 @@ def set_local_model(model: str) -> dict:
         return {"ok": False, "error": "empty_model"}
     if not brain.local_enabled:
         return {"ok": False, "error": "local_disabled",
-                "detail": "Os modelos locais estao desativados; ativa-os para escolher um."}
+                "detail": tr("Os modelos locais estão desativados; ativa-os para escolher um.")}
 
     base_url = brain.ollama_url.removesuffix("/api/chat")
     ticket = _begin_selection("local_model")
@@ -1871,11 +1872,10 @@ def set_local_model(model: str) -> dict:
     state = status.get("state")
     if state == ollama_service.OllamaState.UNKNOWN:
         return {"ok": False, "error": "ollama_status_unknown",
-                "detail": "Ainda nao foi possivel confirmar os modelos do Ollama; "
-                          "tenta novamente dentro de momentos."}
+                "detail": tr("Ainda não foi possível confirmar os modelos do Ollama; tenta novamente dentro de momentos.")}
     if not status.get("ollamaUp"):
         return {"ok": False, "error": "ollama_unavailable",
-                "detail": "O Ollama nao esta a responder; nao e possivel validar o modelo."}
+                "detail": tr("O Ollama não está a responder; não é possível validar o modelo.")}
 
     installed = list(status.get("installed") or [])
     if not ollama_service.model_installed(chosen, installed):
@@ -2007,11 +2007,11 @@ def get_settings() -> dict:
             # blamed a missing chromadb, so the UI hid a working feature.
             "ragSupported": bool(memory_stack.index.fts_available),
             "ragNote": (
-                "A pesquisa de memoria usa o indice local SQLite FTS5 (BM25). "
-                "Nada e enviado para fora do computador."
+                tr("A pesquisa de memória usa o índice local SQLite FTS5 (BM25). "
+                   "Nada é enviado para fora do computador.")
                 if memory_stack.index.fts_available else
-                "O SQLite desta instalacao nao tem FTS5: a pesquisa usa "
-                "correspondencia textual simples."),
+                tr("O SQLite desta instalação não tem FTS5: a pesquisa usa "
+                   "correspondência textual simples.")),
             "longTermEnabled": bool(memory_stack.long_term_enabled),
             "captureEnabled": bool(memory_stack.capture_enabled),
             "ready": bool(memory_stack.ready),
@@ -2022,6 +2022,7 @@ def get_settings() -> dict:
         "screenText": _screen_text_settings(),
         "stored": user_settings.all_settings(),
         "runtime": get_runtime_info(),
+        "language": i18n.describe(),
     }
 
 
@@ -2038,6 +2039,45 @@ def _screen_text_settings() -> dict:
         "reason": str(status.get("reason") or ""),
         "message": str(status.get("message") or ""),
     }
+
+
+@eel.expose
+def get_preferences() -> dict:
+    """Appearance and personalisation, read once when the window opens.
+
+    Cheap on purpose (no provider or audio probe), so the theme and the name
+    are right on the first paint instead of after Settings is opened.
+    """
+    stored = user_settings.all_settings()
+    theme = stored.get("theme")
+    return {
+        "theme": theme if theme in {"system", "dark", "light"} else "system",
+        "reduceMotion": stored.get("reduce_motion") is True,
+        "displayName": str(stored.get("display_name") or "").strip(),
+        "advancedMode": stored.get("advanced_mode") is True,
+    }
+
+
+@eel.expose
+def get_language() -> dict:
+    """The interface language: the choice, what it resolved to, and the OS's.
+
+    Cheap on purpose (no provider or audio probe): the window asks for it as
+    soon as the bridge is up, and reloads itself once if the language it
+    guessed from the browser differs from the one the backend resolved.
+    """
+    return i18n.describe()
+
+
+@eel.expose
+def set_language(value: str = "system") -> dict:
+    """Save the interface language: "system", "en" or "pt-PT"."""
+    if value not in i18n.SETTING_VALUES:
+        return {"ok": False, "error": "invalid_language", **i18n.describe()}
+    result = user_settings.set_value("language", value)
+    if isinstance(result, dict) and result.get("ok") is False:
+        return {**result, **i18n.describe()}
+    return {"ok": True, **i18n.describe()}
 
 
 @eel.expose
@@ -2154,7 +2194,7 @@ def test_wake_phrase(phrase: str = "", seconds: int = 3) -> dict:
         if not voice.wake_phrase_provider.pause_and_wait(5.0):
             voice.wake_phrase_provider.resume()
             return {"ok": False, "error": "microphone_busy", "phrase": candidate,
-                    "detail": "O microfone ainda está ocupado pelo detector."}
+                    "detail": tr("O microfone ainda está ocupado pelo detector.")}
     try:
         audio = voice.input_provider.capture(window)
     except Exception as exc:
@@ -2165,7 +2205,7 @@ def test_wake_phrase(phrase: str = "", seconds: int = 3) -> dict:
 
     if not audio:
         return {"ok": False, "error": "no_audio", "phrase": candidate,
-                "detail": "O microfone não devolveu áudio."}
+                "detail": tr("O microfone não devolveu áudio.")}
 
     rms = speech_filter.rms_of_wav(audio)
     threshold = engine.gate.threshold
@@ -2177,8 +2217,7 @@ def test_wake_phrase(phrase: str = "", seconds: int = 3) -> dict:
             "ok": True, "phrase": candidate, "matched": False,
             "transcript": "", "normalized": "", "gate": False,
             "rms": round(rms, 1), "threshold": round(threshold, 1),
-            "detail": (f"Nível demasiado baixo ({rms:.0f}; é preciso {threshold:.0f}). "
-                       "Fala mais perto do microfone."),
+            "detail": (tr("Nível demasiado baixo ({p0:.0f}; é preciso {p1:.0f}). Fala mais perto do microfone.", p0=rms, p1=threshold)),
         }
 
     result = voice.stt_provider.transcribe(audio)
@@ -2195,8 +2234,8 @@ def test_wake_phrase(phrase: str = "", seconds: int = 3) -> dict:
         "normalized": wake_phrase_mod.normalize_transcript(transcript),
         "gate": True, "rms": round(rms, 1), "threshold": round(threshold, 1),
         "detail": (f"Reconhecido: \"{candidate}\"." if matched
-                   else (f"Ouvi \"{transcript}\" — não corresponde a \"{candidate}\"."
-                         if transcript else "Não percebi nenhuma fala.")),
+                   else (tr('Ouvi "{p0}" — não corresponde a "{p1}".', p0=transcript, p1=candidate)
+                         if transcript else tr("Não percebi nenhuma fala."))),
     }
 
 
@@ -2206,7 +2245,7 @@ def test_speaker() -> dict:
     played = audio_feedback.acknowledge_wake(blocking=True)
     return {
         "ok": played,
-        "detail": "Som reproduzido." if played else "Nenhum dispositivo de saída aceitou o som.",
+        "detail": tr("Som reproduzido.") if played else tr("Nenhum dispositivo de saída aceitou o som."),
         "output": audio_feedback.output_device_report().get("default_output"),
     }
 
@@ -2225,7 +2264,7 @@ def test_microphone(seconds: int = 3) -> dict:
     if was_running and not voice.wake_phrase_provider.pause_and_wait(5.0):
         voice.wake_phrase_provider.resume()
         return {"ok": False, "error": "microphone_busy",
-                "detail": "O microfone ainda está ocupado pelo detector de wake."}
+                "detail": tr("O microfone ainda está ocupado pelo detector de wake.")}
     try:
         audio = voice.input_provider.capture(max(1, min(5, int(seconds))))
     except Exception as exc:
@@ -2234,7 +2273,7 @@ def test_microphone(seconds: int = 3) -> dict:
         if was_running:
             voice.wake_phrase_provider.resume()
     if not audio:
-        return {"ok": False, "error": "no_audio", "detail": "O microfone não devolveu áudio."}
+        return {"ok": False, "error": "no_audio", "detail": tr("O microfone não devolveu áudio.")}
 
     # Measure against the SAME calibrated threshold the wake detector uses.
     # speech_filter.describe() applies the old fixed floor, so it could report
@@ -2248,14 +2287,11 @@ def test_microphone(seconds: int = 3) -> dict:
         audio, silence_rms=threshold) >= gate.min_voiced_ratio
 
     if detected:
-        detail = f"Voz detetada (nível {rms:.0f}, limiar {threshold:.0f})."
+        detail = tr("Voz detetada (nível {p0:.0f}, limiar {p1:.0f}).", p0=rms, p1=threshold)
     elif rms < max(2.0, gate.noise_floor):
-        detail = ("O microfone não está a receber áudio nenhum. Verifica o "
-                  "dispositivo de entrada e o nível de captura no Windows.")
+        detail = (tr("O microfone não está a receber áudio nenhum. Verifica o dispositivo de entrada e o nível de captura no Windows."))
     else:
-        detail = (f"Nível demasiado baixo: {rms:.0f}, é preciso {threshold:.0f}. "
-                  "Fala mais perto ou aumenta o volume do microfone nas "
-                  "Definições de Som do Windows.")
+        detail = (tr("Nível demasiado baixo: {p0:.0f}, é preciso {p1:.0f}. Fala mais perto ou aumenta o volume do microfone nas Definições de Som do Windows.", p0=rms, p1=threshold))
 
     return {
         "ok": True,
@@ -2348,7 +2384,7 @@ def archive_finished_tasks() -> dict:
     return {
         "ok": True,
         "removed": removed,
-        "note": "Apenas a fila de tarefas foi limpa. O registo de auditoria de permissões mantém-se intacto.",
+        "note": tr("Apenas a fila de tarefas foi limpa. O registo de auditoria de permissões mantém-se intacto."),
         "counts": get_task_counts(),
     }
 
@@ -2658,7 +2694,10 @@ def forget_all_memory_facts() -> dict:
 #: What the user must type in the confirmation dialog. Checked HERE, not only in
 #: the renderer: the renderer is the least trusted process in Nano, and an
 #: irreversible wipe must not be one stray bridge call away.
+#: One phrase per interface language; any of them is accepted, so switching
+#: language never leaves the dialog asking for a phrase the backend refuses.
 ERASE_ALL_CONFIRMATION = "APAGAR TUDO"
+ERASE_ALL_CONFIRMATIONS = frozenset({ERASE_ALL_CONFIRMATION, "DELETE EVERYTHING"})
 
 
 # ── Work modes (PC -> Modos) ───────────────────────────────────────────────
@@ -2744,7 +2783,7 @@ def erase_all_data(confirmation: str = "") -> dict:
     neither see nor call it -- a test holds that. Erasing the user's data is a
     decision the user makes with their own hands.
     """
-    if not isinstance(confirmation, str) or confirmation.strip() != ERASE_ALL_CONFIRMATION:
+    if not isinstance(confirmation, str) or confirmation.strip() not in ERASE_ALL_CONFIRMATIONS:
         return {"ok": False, "error": "confirmation_required"}
     if not memory_stack.ready:
         return {"ok": False, "error": "memory_unavailable"}
@@ -3265,7 +3304,7 @@ def start_voice_turn(source: str = "ui") -> dict:
                 "error": "voice_turn_in_progress",
                 "active_source": status.get("source"),
                 "phase": status.get("phase"),
-                "detail": "O Nano já está a ouvir."}
+                "detail": tr("O Nano já está a ouvir.")}
     try:
         loop = _get_or_create_loop()
         future = asyncio.run_coroutine_threadsafe(voice_runtime.run_voice_turn(source), loop)
@@ -3658,7 +3697,7 @@ async def _process_message(user_text: str, msg_id: str | None = None,
             # A 429 is a state the UI shows in its own affordance, not a wall
             # of red text inside the answer.
             _emit_rate_limited(msg_id, rate_limit)
-        full_response = full_response.strip() or "Desculpa, não consegui gerar uma resposta."
+        full_response = full_response.strip() or tr("Desculpa, não consegui gerar uma resposta.")
         # ONE shaping, used for BOTH the live payload and the stored row.
         #
         # The Brain's scratchpad is not shippable: it carries the provider's own

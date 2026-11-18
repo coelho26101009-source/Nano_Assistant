@@ -25,6 +25,8 @@ import { BRAND_NAME } from "../lib/brand";
 import {
   Badge, Button, ConfirmDialog, MetricRow, Modal, Panel, StatusIndicator, Toggle,
 } from "./ui";
+import { t } from "../lib/i18n";
+import { tj } from "../lib/tj";
 
 /* ── PC Control ───────────────────────────────────────────────────────── */
 
@@ -32,24 +34,24 @@ import {
  *  what it prevents rather than as what it is called internally. */
 const GUARANTEES: { label: string; detail: string }[] = [
   {
-    label: "Sem shell, terminal ou PowerShell",
-    detail: "O NANO não executa comandos arbitrários. Não existe ferramenta para isso e nenhuma confirmação a cria.",
+    label: t("Sem shell, terminal ou PowerShell"),
+    detail: t("O NANO não executa comandos arbitrários. Não existe ferramenta para isso e nenhuma confirmação a cria."),
   },
   {
-    label: "Locais protegidos",
-    detail: "Ficheiros internos do Windows, Program Files, credenciais e perfis de browser nunca são escritos nem removidos.",
+    label: t("Locais protegidos"),
+    detail: t("Ficheiros internos do Windows, Program Files, credenciais e perfis de browser nunca são escritos nem removidos."),
   },
   {
-    label: "Autorização ligada ao alvo",
-    detail: "Permitir fechar uma janela não permite fechar outra. Cada decisão vale para a capability, o alvo e o âmbito daquele pedido.",
+    label: t("Autorização ligada ao alvo"),
+    detail: t("Permitir fechar uma janela não permite fechar outra. Cada decisão vale para a capability, o alvo e o âmbito daquele pedido."),
   },
   {
-    label: "Nada é apagado em definitivo",
-    detail: "«Apagar» significa Reciclagem. É sempre recuperável.",
+    label: t("Nada é apagado em definitivo"),
+    detail: t("«Apagar» significa Reciclagem. É sempre recuperável."),
   },
   {
-    label: "Sem autorização permanente",
-    detail: "Nenhuma capability pode ser autorizada para sempre — no máximo, para a tarefa em curso.",
+    label: t("Sem autorização permanente"),
+    detail: t("Nenhuma capability pode ser autorizada para sempre — no máximo, para a tarefa em curso."),
   },
 ];
 
@@ -65,44 +67,32 @@ export function PcControlSection({
 
   return (
     <div className="stack">
-      <Panel title="Controlo do computador" action={<Badge tone="accent">Ativo</Badge>}>
-        <p className="muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
-          O NANO pode abrir aplicações, arrumar janelas, mexer no volume, procurar
-          ficheiros e abrir páginas das Definições do Windows. Cada ação passa
-          por uma ferramenta específica, com argumentos verificados — nunca por
-          uma linha de comandos.
-        </p>
+      <Panel title={t("Controlo do computador")} action={<Badge tone="accent">{t("Ativo")}</Badge>}>
+        <p className="muted" style={{ fontSize: 13, lineHeight: 1.7 }}>{t("O NANO pode abrir aplicações, arrumar janelas, mexer no volume, procurar ficheiros e abrir páginas das Definições do Windows. Cada ação passa por uma ferramenta específica, com argumentos verificados — nunca por uma linha de comandos.")}</p>
         {catalogue && (
           <>
             <div style={{ height: 10 }} />
-            <MetricRow label="Capacidades disponíveis" value={String(catalogue.totals.available)} />
-            <MetricRow label="Pedem sempre confirmação" value={String(catalogue.totals.confirm)} />
+            <MetricRow label={t("Capacidades disponíveis")} value={String(catalogue.totals.available)} />
+            <MetricRow label={t("Pedem sempre confirmação")} value={String(catalogue.totals.confirm)} />
           </>
         )}
         <div className="inline" style={{ marginTop: 12 }}>
-          <Button size="sm" onClick={onOpenCapabilities}>Ver todas as capacidades</Button>
-          <Button size="sm" onClick={onOpenPermissions}>Ver permissões deste PC</Button>
+          <Button size="sm" onClick={onOpenCapabilities}>{t("Ver todas as capacidades")}</Button>
+          <Button size="sm" onClick={onOpenPermissions}>{t("Ver permissões deste PC")}</Button>
         </div>
       </Panel>
 
-      <Panel title="Quando o NANO pergunta">
-        <p className="muted" style={{ fontSize: 13, lineHeight: 1.7, marginBottom: 10 }}>
-          Ações reversíveis e de leitura acontecem de imediato. Tudo o que fecha,
-          escreve, apaga, captura o ecrã ou mexe na sessão pede confirmação —
-          com a ação, o alvo e o alcance à vista antes de decidires.
-        </p>
-        <MetricRow label="Modo de autonomia" value={settings.security.autonomyMode} />
+      <Panel title={t("Quando o NANO pergunta")}>
+        <p className="muted" style={{ fontSize: 13, lineHeight: 1.7, marginBottom: 10 }}>{t("Ações reversíveis e de leitura acontecem de imediato. Tudo o que fecha, escreve, apaga, captura o ecrã ou mexe na sessão pede confirmação — com a ação, o alvo e o alcance à vista antes de decidires.")}</p>
+        <MetricRow label={t("Modo de autonomia")} value={settings.security.autonomyMode} />
         <MetricRow
-          label="Autorização permanente"
-          value={<StatusIndicator state="DISABLED" label="desativada por desenho" />}
+          label={t("Autorização permanente")}
+          value={<StatusIndicator state="DISABLED" label={t("desativada por desenho")} />}
         />
       </Panel>
 
-      <Panel title="Garantias de segurança">
-        <p className="dim" style={{ fontSize: 12, marginBottom: 12, lineHeight: 1.6 }}>
-          Isto não são preferências. Fazem parte da arquitetura do NANO e não podem
-          ser desligadas — nem por ti, nem pelo modelo.
-        </p>
+      <Panel title={t("Garantias de segurança")}>
+        <p className="dim" style={{ fontSize: 12, marginBottom: 12, lineHeight: 1.6 }}>{t("Isto não são preferências. Fazem parte da arquitetura do NANO e não podem ser desligadas — nem por ti, nem pelo modelo.")}</p>
         <ul className="guarantee-list">
           {GUARANTEES.map((item) => (
             <li key={item.label} className="guarantee">
@@ -139,10 +129,10 @@ export function MemorySection({
 
   return (
     <div className="stack">
-      <Panel title="O que o NANO guarda">
+      <Panel title={t("O que o NANO guarda")}>
         <Toggle
-          label="Recordar factos sobre mim"
-          hint="Preferências duradouras que o NANO aprende durante as conversas. Desligado, o NANO deixa de guardar e deixa de consultar."
+          label={t("Recordar factos sobre mim")}
+          hint={t("Preferências duradouras que o NANO aprende durante as conversas. Desligado, o NANO deixa de guardar e deixa de consultar.")}
           checked={Boolean(memory?.factsEnabled)}
           onChange={(value) => onUpdate("memory_facts_enabled", value)}
         />
@@ -152,17 +142,17 @@ export function MemorySection({
             itself what to carry -- with it off, "lembra-te que..." still works,
             because that is the user asking rather than Nano guessing. */}
         <Toggle
-          label="Memória entre conversas"
-          hint="Deixa o NANO usar numa conversa o que aprendeu noutra. Desligado, cada conversa fica isolada e o Second Brain deixa de contribuir."
+          label={t("Memória entre conversas")}
+          hint={t("Deixa o NANO usar numa conversa o que aprendeu noutra. Desligado, cada conversa fica isolada e o Second Brain deixa de contribuir.")}
           checked={Boolean(memory?.longTermEnabled)}
           onChange={(value) => onUpdate("memory_long_term_enabled", value)}
         />
         <Toggle
-          label="Sugerir memórias sozinho"
-          hint="O NANO propõe guardar algo que reparou. As sugestões não são usadas nas respostas enquanto não as aprovares em Memória. Dizer “lembra-te que…” funciona sempre."
+          label={t("Sugerir memórias sozinho")}
+          hint={t("O NANO propõe guardar algo que reparou. As sugestões não são usadas nas respostas enquanto não as aprovares em Memória. Dizer “lembra-te que…” funciona sempre.")}
           checked={Boolean(memory?.captureEnabled)}
           disabled={!memory?.longTermEnabled}
-          disabledReason="Precisa da memória entre conversas ligada."
+          disabledReason={t("Precisa da memória entre conversas ligada.")}
           onChange={(value) => onUpdate("memory_auto_capture", value)}
         />
         {/* Document retrieval is not installed. It is HIDDEN rather than shown
@@ -170,48 +160,37 @@ export function MemorySection({
             no option. */}
         {memory?.ragSupported && (
           <Toggle
-            label="Consultar documentos indexados"
-            hint="Usa excertos dos documentos indexados para responder."
+            label={t("Consultar documentos indexados")}
+            hint={t("Usa excertos dos documentos indexados para responder.")}
             checked={Boolean(memory?.ragEnabled)}
             onChange={(value) => onUpdate("memory_rag_enabled", value)}
           />
         )}
       </Panel>
 
-      <Panel title="Gerir a memória">
-        <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
-          O conteúdo guardado — ver, procurar, editar e apagar — vive na secção
-          <strong> Memória</strong>, com as memórias, o Second Brain e o grafo.
-          Aqui só se decide o comportamento.
-        </p>
+      <Panel title={t("Gerir a memória")}>
+        <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>{tj("O conteúdo guardado — ver, procurar, editar e apagar — vive na secção {0}, com as memórias, o Second Brain e o grafo. Aqui só se decide o comportamento.", { 0: <strong>{t("Memória")}</strong> })}</p>
         {memory?.retrieval?.engine && (
-          <p className="dim" style={{ fontSize: 11, marginBottom: 12, lineHeight: 1.6 }}>
-            Pesquisa de memória: <strong>{memory.retrieval.engine}</strong>,
-            {" "}{memory.retrieval.entries} entradas indexadas neste computador.
-          </p>
+          <p className="dim" style={{ fontSize: 11, marginBottom: 12, lineHeight: 1.6 }}>{tj("Pesquisa de memória: {0}, {1} entradas indexadas neste computador.", { 0: <strong>{memory.retrieval.engine}</strong>, 1: memory.retrieval.entries })}</p>
         )}
         <div className="inline">
-          <Button size="sm" onClick={onOpenMemory}>Abrir a Memória</Button>
-          <Button size="sm" variant="danger" onClick={() => setConfirmForget(true)}>
-            Esquecer tudo
-          </Button>
+          <Button size="sm" onClick={onOpenMemory}>{t("Abrir a Memória")}</Button>
+          <Button size="sm" variant="danger" onClick={() => setConfirmForget(true)}>{t("Esquecer tudo")}</Button>
         </div>
-        <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>
-          «Esquecer tudo» apaga os factos guardados. Não apaga a conversa atual.
-        </p>
+        <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>{t("«Esquecer tudo» apaga os factos guardados. Não apaga a conversa atual.")}</p>
       </Panel>
 
       {memory && !memory.ragSupported && (
-        <Panel title="Documentos">
+        <Panel title={t("Documentos")}>
           <p className="dim" style={{ fontSize: 12, lineHeight: 1.6 }}>{memory.ragNote}</p>
         </Panel>
       )}
 
       <ConfirmDialog
         open={confirmForget} danger
-        title="Esquecer tudo o que o NANO sabe sobre ti?"
-        confirmLabel="Esquecer tudo"
-        message="Todos os factos guardados são apagados. A conversa atual não é afetada."
+        title={t("Esquecer tudo o que o NANO sabe sobre ti?")}
+        confirmLabel={t("Esquecer tudo")}
+        message={t("Todos os factos guardados são apagados. A conversa atual não é afetada.")}
         onConfirm={() => { setConfirmForget(false); onForgetAll(); }}
         onCancel={() => setConfirmForget(false)}
       />
@@ -223,7 +202,7 @@ export function MemorySection({
 
 /** What the user types. The backend checks the same phrase (core/main.py
  *  ERASE_ALL_CONFIRMATION), so this is not the only gate. */
-export const ERASE_ALL_PHRASE = "APAGAR TUDO";
+export const ERASE_ALL_PHRASE = t("APAGAR TUDO");
 
 /**
  * The one-click erase, with the decision laid out before it is made.
@@ -256,48 +235,43 @@ export function EraseAllDataPanel({ onErase }: {
 
   return (
     <>
-      <Panel title="Apagar todos os dados">
-        <Button variant="danger" onClick={() => setOpen(true)}>Apagar todos os dados</Button>
-        <p className="dim" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>
-          Apaga de uma vez as conversas, as memórias, o Second Brain e o histórico de
-          tarefas deste computador. As definições e as chaves de API ficam.
-        </p>
+      <Panel title={t("Apagar todos os dados")}>
+        <Button variant="danger" onClick={() => setOpen(true)}>{t("Apagar todos os dados")}</Button>
+        <p className="dim" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>{t("Apaga de uma vez as conversas, as memórias, o Second Brain e o histórico de tarefas deste computador. As definições e as chaves de API ficam.")}</p>
       </Panel>
 
       <Modal
         open={open} onClose={close} width="narrow"
-        eyebrow="Não pode ser desfeito"
-        title="Apagar todos os dados?"
+        eyebrow={t("Não pode ser desfeito")}
+        title={t("Apagar todos os dados?")}
         footer={
           <>
-            <Button onClick={close} disabled={busy}>Cancelar</Button>
+            <Button onClick={close} disabled={busy}>{t("Cancelar")}</Button>
             <Button variant="danger" onClick={confirm} disabled={!matches || busy}>
-              {busy ? "A apagar…" : "Apagar tudo"}
+              {busy ? t("A apagar…") : t("Apagar tudo")}
             </Button>
           </>
         }
       >
-        <div className="cc-tile-label">É apagado</div>
+        <div className="cc-tile-label">{t("É apagado")}</div>
         <ul className="muted erase-list">
-          <li>Todas as conversas e mensagens</li>
-          <li>Todas as memórias e factos guardados</li>
-          <li>O Second Brain, incluindo os nós criados à mão</li>
-          <li>Lembretes e eventos do calendário</li>
-          <li>O histórico de tarefas terminadas</li>
+          <li>{t("Todas as conversas e mensagens")}</li>
+          <li>{t("Todas as memórias e factos guardados")}</li>
+          <li>{t("O Second Brain, incluindo os nós criados à mão")}</li>
+          <li>{t("Lembretes e eventos do calendário")}</li>
+          <li>{t("O histórico de tarefas terminadas")}</li>
         </ul>
-        <div className="cc-tile-label" style={{ marginTop: 12 }}>Fica</div>
+        <div className="cc-tile-label" style={{ marginTop: 12 }}>{t("Fica")}</div>
         <ul className="muted erase-list">
-          <li>Definições, chaves de API e contas ligadas</li>
-          <li>Permissões e o registo de autorizações</li>
-          <li>O ficheiro de registos (<code>logs/nano.log</code>)</li>
+          <li>{t("Definições, chaves de API e contas ligadas")}</li>
+          <li>{t("Permissões e o registo de autorizações")}</li>
+          <li>{tj("O ficheiro de registos ({0})", { 0: <code>logs/nano.log</code> })}</li>
         </ul>
         <form
           className="field" style={{ marginTop: 16 }}
           onSubmit={(event) => { event.preventDefault(); confirm(); }}
         >
-          <label className="field__label" htmlFor="erase-all-confirm">
-            Escreve <strong>{ERASE_ALL_PHRASE}</strong> para confirmar
-          </label>
+          <label className="field__label" htmlFor="erase-all-confirm">{tj("Escreve {0} para confirmar", { 0: <strong>{ERASE_ALL_PHRASE}</strong> })}</label>
           <input
             id="erase-all-confirm" className="input" type="text"
             value={typed} onChange={(event) => setTyped(event.target.value)}
@@ -330,45 +304,36 @@ export function AboutSection({ settings, onOpenFirstRun }: {
           <div>
             <h3 className="about-hero__name"><NanoWordmark height={20} /></h3>
             <p className="about-hero__version">{VERSION.display}</p>
-            <p className="dim" style={{ fontSize: 12, marginTop: 4 }}>
-              Assistente executivo para Windows, com voz e controlo do computador.
-            </p>
+            <p className="dim" style={{ fontSize: 12, marginTop: 4 }}>{t("Assistente executivo para Windows, com voz e controlo do computador.")}</p>
           </div>
         </div>
       </Panel>
 
-      <Panel title="Versão">
-        <MetricRow label="Produto" value={VERSION.product} />
-        <MetricRow label="Canal" value={VERSION.channel} />
-        <MetricRow label="Motor (Python)" value={runtime.version ?? "—"} />
-        <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-          Versão Beta. Ainda não existe atualização automática.
-        </p>
-        <Button size="sm" onClick={onOpenFirstRun}>Abrir guia inicial</Button>
-        <p className="dim" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>
-          A interface e o motor leem a mesma versão do ficheiro <code>version.json</code>,
-          para que nunca possam discordar sobre que versão está a correr.
-        </p>
+      <Panel title={t("Versão")}>
+        <MetricRow label={t("Produto")} value={VERSION.product} />
+        <MetricRow label={t("Canal")} value={VERSION.channel} />
+        <MetricRow label={t("Motor (Python)")} value={runtime.version ?? "—"} />
+        <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>{t("Versão Beta. Ainda não existe atualização automática.")}</p>
+        <Button size="sm" onClick={onOpenFirstRun}>{t("Abrir guia inicial")}</Button>
+        <p className="dim" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>{tj("A interface e o motor leem a mesma versão do ficheiro {0}, para que nunca possam discordar sobre que versão está a correr.", { 0: <code>version.json</code> })}</p>
       </Panel>
 
-      <Panel title="Ambiente">
-        <MetricRow label="Python" value={runtime.python ?? "—"} />
-        <MetricRow label="Plataforma" value={runtime.platform ?? "—"} />
-        <MetricRow label="RAM total" value={runtime.ramTotalGb ? `${runtime.ramTotalGb} GB` : "—"} />
-        <MetricRow label="Modelo local recomendado" value={runtime.recommendedLocalModel ?? "—"} />
+      <Panel title={t("Ambiente")}>
+        <MetricRow label={t("Python")} value={runtime.python ?? "—"} />
+        <MetricRow label={t("Plataforma")} value={runtime.platform ?? "—"} />
+        <MetricRow label={t("RAM total")} value={runtime.ramTotalGb ? `${runtime.ramTotalGb} GB` : "—"} />
+        <MetricRow label={t("Modelo local recomendado")} value={runtime.recommendedLocalModel ?? "—"} />
         {dataLocation?.data_dir && (
-          <MetricRow label="Dados" value={<code className="mono">{dataLocation.data_dir}</code>} />
+          <MetricRow label={t("Dados")} value={<code className="mono">{dataLocation.data_dir}</code>} />
         )}
       </Panel>
 
-      <Panel title="Projeto">
+      <Panel title={t("Projeto")}>
         <MetricRow
-          label="Código"
+          label={t("Código")}
           value={<code className="mono">github.com/coelho26101009-source/Nano_Assistant</code>}
         />
-        <p className="dim" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>
-          A documentação de arquitetura e a política de segurança acompanham o
-          código, em <code>docs/</code>.
+        <p className="dim" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>{tj("A documentação de arquitetura e a política de segurança acompanham o código, em {0}.", { 0: <code>docs/</code> })}
         </p>
       </Panel>
       <DiagnosticsPanel />

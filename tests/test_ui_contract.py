@@ -252,7 +252,7 @@ def test_every_task_status_has_a_label_in_the_ui():
     import core.main as main
 
     source = (FRONTEND / "components" / "ui.tsx").read_text(encoding="utf-8")
-    labelled = set(re.findall(r"^\s*([A-Z_]+):\s*\"", source, re.M))
+    labelled = set(re.findall(r"^\s*([A-Z_]+):\s*(?:t\()?\"", source, re.M))
 
     statuses = (
         main.ACTIVE_TASK_STATUSES | main.ATTENTION_TASK_STATUSES | main.TERMINAL_TASK_STATUSES

@@ -19,7 +19,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Head from "next/head";
 
 import CommandPalette, { Command } from "../components/CommandPalette";
-import ConfirmModal from "../components/Confirm";
+import ConfirmModal, { ConfirmCard } from "../components/Confirm";
 import PluginCodeModal from "../components/PluginCodeModal";
 import Rail, { type RailMode } from "../components/Rail";
 import CapabilitiesPage from "../components/CapabilitiesPage";
@@ -55,6 +55,7 @@ import { useIsDesktop } from "../lib/desktop";
 // Electron main process read too. It used to be a literal here, which is how
 // the UI said "v1.0" while the backend reported "8.1.0".
 import { APP_VERSION } from "../lib/version";
+import { locale, normaliseLocale, reloadInLocale, t } from "../lib/i18n";
 
 
 export interface ConfirmRequest {
@@ -111,6 +112,25 @@ function useNarrow(query = "(max-width: 1024px)"): boolean {
   return narrow;
 }
 
+type ThemePref = "system" | "dark" | "light";
+
+/** Pages for developers, hidden until Modo avançado is on. */
+const ADVANCED_VIEWS: ReadonlySet<ViewId> = new Set<ViewId>(["agents", "integrations"]);
+
+/** A media query's live answer, with a fallback until it is known. */
+function useMediaQuery(query: string, fallback: boolean): boolean {
+  const [matches, setMatches] = useState(fallback);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const media = window.matchMedia(query);
+    const sync = () => setMatches(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, [query]);
+  return matches;
+}
+
 export default function Home() {
   const { ready, gaveUp } = useBridgeReady();
   const { toasts, notify } = useToasts();
@@ -143,8 +163,14 @@ export default function Home() {
   const [railOpen, setRailOpen] = useState(false);
   const [railCollapsed, setRailCollapsed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
-  const [reduceMotion, setReduceMotion] = useState(false);
+  // Appearance and personalisation live in the backend's settings (the
+  // frontend uses no browser storage). "system" follows the OS theme.
+  const [themePref, setThemePref] = useState<ThemePref>("system");
+  const systemDark = useMediaQuery("(prefers-color-scheme: dark)", true);
+  const theme: "dark" | "light" = themePref === "system" ? (systemDark ? "dark" : "light") : themePref;
+  const [reduceMotion, setReduceMotionState] = useState(false);
+  const [advancedMode, setAdvancedModeState] = useState(false);
+  const [displayName, setDisplayNameState] = useState("");
 
   /* ── Conversation ───────────────────────────────────────────────────── */
   const [messages, setMessages] = useState<Message[]>([]);
@@ -251,17 +277,68 @@ export default function Home() {
     firstRunChecked.current = true;
     if (threads.some((thread) => thread.messageCount > 0)) return;
     call<{ completed: boolean }>("get_onboarding_status").then((result) => {
-      if (result?.completed === false) setShowFirstRun(true);
+      if (result?.completed === false) { firstRunAuto.current = true; setShowFirstRun(true); }
     });
   }, [ready, threads, memoryReady]);
 
+  // The page guessed its language from the browser before the bridge was up.
+  // The backend's resolved choice wins: if they differ, reload once in the
+  // backend's language. Loop-safe, because the reload carries ?lang= and the
+  // next load then matches.
+  const languageChecked = useRef(false);
+  useEffect(() => {
+    if (!ready || languageChecked.current) return;
+    languageChecked.current = true;
+    call<{ resolved: string }>("get_language").then((result) => {
+      const resolved = normaliseLocale(result?.resolved);
+      if (resolved && resolved !== locale()) reloadInLocale(resolved);
+    });
+  }, [ready]);
+
+  useEffect(() => { document.documentElement.lang = locale(); }, []);
+
+  /** Opened by the app itself on a first run (not reopened from Sobre). */
+  const firstRunAuto = useRef(false);
   const finishFirstRun = useCallback(async () => {
     setSavingFirstRun(true);
     const result = await call<{ ok: boolean }>("update_setting", "onboarding_completed", true);
     setSavingFirstRun(false);
     if (result?.ok) setShowFirstRun(false);
-    else notify("Não foi possível guardar o progresso. Tenta novamente.", "error");
+    else notify(t("Não foi possível guardar o progresso. Tenta novamente."), "error");
   }, [notify]);
+
+  useEffect(() => {
+    if (!ready) return;
+    call<{ theme: ThemePref; reduceMotion: boolean; displayName: string; advancedMode: boolean }>("get_preferences")
+      .then((prefs) => {
+        if (!prefs) return;
+        setThemePref(prefs.theme ?? "system");
+        setReduceMotionState(prefs.reduceMotion === true);
+        setDisplayNameState(prefs.displayName ?? "");
+        setAdvancedModeState(prefs.advancedMode === true);
+      });
+  }, [ready]);
+
+  const savePreference = useCallback((key: string, value: unknown) => {
+    call<{ ok: boolean }>("update_setting", key, value).then((result) => {
+      if (!result?.ok) notify(t("Não foi possível guardar a preferência."), "error");
+    });
+  }, [notify]);
+  const setTheme = useCallback((next: ThemePref) => { setThemePref(next); savePreference("theme", next); }, [savePreference]);
+  const setReduceMotion = useCallback((next: boolean) => { setReduceMotionState(next); savePreference("reduce_motion", next); }, [savePreference]);
+  const setAdvancedMode = useCallback((next: boolean) => { setAdvancedModeState(next); savePreference("advanced_mode", next); }, [savePreference]);
+  const setDisplayName = useCallback((next: string) => { setDisplayNameState(next.trim()); savePreference("display_name", next.trim()); }, [savePreference]);
+  /** The name NANO greets: the one typed in Settings, else what memory knows. */
+  const userName = displayName || profileName;
+
+  // A provider that already works means there is nothing to set up: the
+  // automatic first-run guide steps aside (it stays reachable from Sobre).
+  useEffect(() => {
+    if (showFirstRun && firstRunAuto.current && providers?.route?.usable === true) {
+      firstRunAuto.current = false;
+      void finishFirstRun();
+    }
+  }, [showFirstRun, providers, finishFirstRun]);
 
   useEffect(() => { document.documentElement.setAttribute("data-theme", theme); }, [theme]);
   // Stamped on the root so rules that cannot see the React tree -- the drag
@@ -339,8 +416,8 @@ export default function Home() {
     expose(() => {
       setThinking(true);
       setListening(true);
-      setStatus("Ouvi-te — diz o comando");
-      notify("Wake detetada");
+      setStatus(t("Ouvi-te — diz o comando"));
+      notify(t("Wake detetada"));
     }, "on_wake_detected");
 
     expose((msgId: string, userText?: string) => {
@@ -377,8 +454,8 @@ export default function Home() {
       // cards rather than showing the raw backend string.
       const match = /⚙️\s*(.+?)\.\.\./.exec(text);
       if (match) {
-        const names = match[1].split(",").map((t) => t.trim()).filter(Boolean);
-        setStatus(names.length === 1 ? `A usar ${names[0]}…` : `A usar ${names.length} ferramentas…`);
+        const names = match[1].split(",").map((name) => name.trim()).filter(Boolean);
+        setStatus(names.length === 1 ? t("A usar {0}…", { 0: names[0] }) : t("A usar {0} ferramentas…", { 0: names.length }));
         setMessages((prev) => {
           const next = [...prev];
           for (let i = next.length - 1; i >= 0; i -= 1) {
@@ -386,8 +463,8 @@ export default function Home() {
               const existing = next[i].tools ?? [];
               const merged: ToolEvent[] = [...existing];
               for (const name of names) {
-                if (!merged.some((t) => t.name === name)) {
-                  merged.push({ name, state: "running", summary: `A executar ${name}…` });
+                if (!merged.some((tool) => tool.name === name)) {
+                  merged.push({ name, state: "running", summary: t("A executar {0}…", { 0: name }) });
                 }
               }
               next[i] = { ...next[i], tools: merged };
@@ -426,7 +503,7 @@ export default function Home() {
       const text = final?.text ?? final?.error;
       setMessages((prev) => prev.map((m) => {
         if (m.id !== msgId) return m;
-        const tools = (m.tools ?? []).map((t) => t.state === "running" ? { ...t, state: "ok" as const, summary: `${t.name} concluída` } : t);
+        const tools = (m.tools ?? []).map((tool) => tool.state === "running" ? { ...tool, state: "ok" as const, summary: t("{0} concluída", { 0: tool.name }) } : tool);
         return {
           ...m,
           content: text ?? m.content,
@@ -452,9 +529,9 @@ export default function Home() {
       setStatus("");
       setMessages((prev) => prev.map((m) => m.id === msgId
         ? { ...m, streaming: false, error: true,
-            content: m.content || `**Não foi possível responder.** ${error?.detail ?? error?.code ?? ""}` }
+            content: m.content || t("**Não foi possível responder.** {0}", { 0: error?.detail ?? error?.code ?? "" }) }
         : m));
-      notify("Erro ao responder", "error");
+      notify(t("Erro ao responder"), "error");
     }, "on_stream_error");
 
     // Rate limiting is a state with a known wait, not a generic error.
@@ -466,13 +543,13 @@ export default function Home() {
       // list has loaded, so a display name looked up now is the raw id. The
       // name is resolved where it is shown -- see rateLimitProvider.
       setRateLimit({
-        message: info?.message ?? "Limite temporário atingido.",
+        message: info?.message ?? t("Limite temporário atingido."),
         waitSeconds: wait,
         provider: String(info?.provider ?? ""),
       });
       setStatus("");
       setThinking(false);
-      notify(info?.message ?? "Limite temporário atingido.", "default");
+      notify(info?.message ?? t("Limite temporário atingido."), "default");
     }, "on_rate_limited");
 
     // Which phase of a voice turn we are in, so the UI can narrate it.
@@ -590,12 +667,12 @@ export default function Home() {
       setStatus("");
       const transportDown = ack === null || ack === undefined;
       const answer = transportDown
-        ? "**Sem resposta do motor do NANO.** A ligação ao backend caiu ou expirou. Confirma que a janela do NANO continua aberta e recarrega a página."
-        : `**O pedido não foi aceite.** ${ack?.error ?? "motivo desconhecido"}.`;
-      notify(transportDown ? "Motor offline" : "Pedido recusado", "error");
+        ? t("**Sem resposta do motor do NANO.** A ligação ao backend caiu ou expirou. Confirma que a janela do NANO continua aberta e recarrega a página.")
+        : t("**O pedido não foi aceite.** {0}.", { 0: ack?.error ?? "motivo desconhecido" });
+      notify(transportDown ? "Motor offline" : t("Pedido recusado"), "error");
       setMessages((prev) => prev.map((m) => m.id === msgId
         ? { ...m, content: answer, streaming: false, error: true,
-            tools: (m.tools ?? []).map((t) => t.state === "running" ? { ...t, state: "ok" as const } : t) }
+            tools: (m.tools ?? []).map((tool) => tool.state === "running" ? { ...tool, state: "ok" as const } : tool) }
         : m));
     });
   }, [input, thinking, ready, notify]);
@@ -630,12 +707,12 @@ export default function Home() {
       if (ack?.accepted) return;
       setThinking(false);
       setStatus("");
-      notify("Não foi possível tentar de novo", "error");
+      notify(t("Não foi possível tentar de novo"), "error");
       setMessages((prev) => prev.map((m) => m.id === msgId
         ? { ...m, streaming: false, error: true,
             content: ack == null
-              ? "**Sem resposta do motor do NANO.** Recarrega a página e tenta outra vez."
-              : `**O pedido não foi aceite.** ${ack?.error ?? "motivo desconhecido"}.` }
+              ? t("**Sem resposta do motor do NANO.** Recarrega a página e tenta outra vez.")
+              : t("**O pedido não foi aceite.** {0}.", { 0: ack?.error ?? "motivo desconhecido" }) }
         : m));
     });
   }, [thinking, ready, messages, notify]);
@@ -644,7 +721,7 @@ export default function Home() {
     call("stop_voice");
     const current = commandCenter?.current_task;
     if (current && !["COMPLETED", "FAILED", "CANCELLED"].includes(current.status)) {
-      call("cancel_agent_task", current.id).then(() => { notify("Tarefa cancelada"); refreshCC(); refreshCounts(); });
+      call("cancel_agent_task", current.id).then(() => { notify(t("Tarefa cancelada")); refreshCC(); refreshCounts(); });
     }
     setThinking(false);
     setListening(false);
@@ -654,7 +731,7 @@ export default function Home() {
   const startVoice = useCallback(() => {
     if (!ready || thinking) return;
     if (readiness && readiness.voice.state !== "READY") {
-      notify(`Voz: ${stateLabel(readiness.voice.state)}`, "error");
+      notify(t("Voz: {0}", { 0: stateLabel(readiness.voice.state) }), "error");
       return;
     }
     // One shared voice turn for every trigger. This returns an ACK, not the
@@ -666,12 +743,12 @@ export default function Home() {
       setListening(false);
       setThinking(false);
       setStatus("");
-      if (result?.busy) notify("O NANO já está a ouvir");
-      else notify(`Voz: ${result?.error ?? "não foi possível iniciar"}`, "error");
+      if (result?.busy) notify(t("O NANO já está a ouvir"));
+      else notify(t("Voz: {0}", { 0: result?.error ?? "não foi possível iniciar" }), "error");
     });
     setListening(true);
     setThinking(true);
-    setStatus("A ouvir…");
+    setStatus(t("A ouvir…"));
   }, [ready, thinking, readiness, notify]);
 
   const cancelVoice = useCallback(() => {
@@ -679,7 +756,7 @@ export default function Home() {
     setListening(false);
     setThinking(false);
     setStatus("");
-    notify("Escuta cancelada");
+    notify(t("Escuta cancelada"));
   }, [notify]);
 
   /**
@@ -700,7 +777,7 @@ export default function Home() {
       setView("chat");
       if (result?.conversation) setActiveThreadId(result.conversation.id);
       reloadThreads();
-      notify("Nova conversa");
+      notify(t("Nova conversa"));
     });
   }, [notify, reloadThreads]);
 
@@ -717,7 +794,7 @@ export default function Home() {
     // person says "take me back to it".
     if (thread.id === activeThreadId) { setView("chat"); if (narrow) setRailOpen(false); return; }
     call<any>("open_conversation", thread.id).then((result) => {
-      if (!result?.ok) { notify("Não foi possível abrir a conversa", "error"); return; }
+      if (!result?.ok) { notify(t("Não foi possível abrir a conversa"), "error"); return; }
       setActiveThreadId(result.conversation.id);
       showThreadMessages(result.messages);
       setInput("");
@@ -728,15 +805,15 @@ export default function Home() {
 
   const renameThread = useCallback((thread: Thread, title: string) => {
     call<any>("rename_conversation", thread.id, title).then((result) => {
-      if (result?.ok) { reloadThreads(); notify("Conversa renomeada"); }
-      else notify("Não foi possível mudar o nome", "error");
+      if (result?.ok) { reloadThreads(); notify(t("Conversa renomeada")); }
+      else notify(t("Não foi possível mudar o nome"), "error");
     });
   }, [notify, reloadThreads]);
 
   const deleteThread = useCallback((thread: Thread) => {
     call<any>("delete_conversation", thread.id).then((result) => {
-      if (!result?.ok) { notify("Não foi possível apagar", "error"); return; }
-      notify(`Conversa apagada (${result.messages} mensagens)`);
+      if (!result?.ok) { notify(t("Não foi possível apagar"), "error"); return; }
+      notify(t("Conversa apagada ({0} mensagens)", { 0: result.messages }));
       if (thread.id === activeThreadId) {
         // The backend has already moved the Brain to another thread; ask it
         // which one rather than guessing, so the two never disagree about
@@ -763,13 +840,13 @@ export default function Home() {
       const removed = Number(result?.removed ?? 0);
       const failed = (result?.failed ?? []).length;
       if (!removed) {
-        notify("Não foi possível apagar as conversas", "error");
+        notify(t("Não foi possível apagar as conversas"), "error");
       } else if (failed) {
         // Say exactly what happened. "Apagadas" for a batch that partly failed
         // would leave rows on screen the user believes are gone.
-        notify(`${removed} apagada(s), ${failed} falharam`, "error");
+        notify(t("{0} apagada(s), {1} falharam", { 0: removed, 1: failed }), "error");
       } else {
-        notify(`${removed} conversa(s) apagada(s)`);
+        notify(t("{0} conversa(s) apagada(s)", { 0: removed }));
       }
       if (hadActive) {
         call<ThreadMessage[]>("get_conversation_history").then(showThreadMessages);
@@ -781,14 +858,14 @@ export default function Home() {
   const copyConversation = useCallback(async () => {
     const text = messages
       .filter((m) => m.content.trim())
-      .map((m) => `${m.role === "user" ? "Você" : "Nano"}: ${m.content}`)
+      .map((m) => `${m.role === "user" ? t("Tu") : "NANO"}: ${m.content}`)
       .join("\n\n");
-    if (!text) { notify("Não há nada para copiar"); return; }
+    if (!text) { notify(t("Não há nada para copiar")); return; }
     try {
       await navigator.clipboard.writeText(text);
-      notify("Conversa copiada", "success");
+      notify(t("Conversa copiada"), "success");
     } catch {
-      notify("A área de transferência está bloqueada", "error");
+      notify(t("A área de transferência está bloqueada"), "error");
     }
   }, [messages, notify]);
 
@@ -798,13 +875,13 @@ export default function Home() {
         setTaskDetail(result.task);
         setTaskDetailEvents(result.events ?? []);
         setTaskDetailOpen(true);
-      } else notify("Tarefa não encontrada", "error");
+      } else notify(t("Tarefa não encontrada"), "error");
     });
   }, [notify]);
 
   const cancelTask = useCallback((taskId: string) => {
     call<any>("cancel_agent_task", taskId).then((result) => {
-      notify(result?.ok ? "Tarefa cancelada" : "Não foi possível cancelar", result?.ok ? "default" : "error");
+      notify(result?.ok ? t("Tarefa cancelada") : t("Não foi possível cancelar"), result?.ok ? "default" : "error");
       refreshCC(); refreshCounts(); refreshTasks();
       setTaskDetailOpen(false);
     });
@@ -812,7 +889,7 @@ export default function Home() {
 
   const archiveTasks = useCallback(() => {
     call<any>("archive_finished_tasks").then((result) => {
-      notify(result?.ok ? `${result.removed} tarefa(s) arquivadas` : "Falha ao arquivar", result?.ok ? "success" : "error");
+      notify(result?.ok ? t("{0} tarefa(s) arquivadas", { 0: result.removed }) : t("Falha ao arquivar"), result?.ok ? "success" : "error");
       refreshTasks(); refreshCounts(); refreshCC();
     });
   }, [notify, refreshTasks, refreshCounts, refreshCC]);
@@ -822,22 +899,22 @@ export default function Home() {
     call<any>("resolve_permission", requestId, decision).then((result) => {
       setResolving(false);
       if (result?.ok) {
-        notify(decision === "deny" ? "Pedido recusado" : "Autorização concedida", "success");
+        notify(decision === "deny" ? t("Pedido recusado") : t("Autorização concedida"), "success");
         refreshCC(); refreshReadiness();
-      } else notify(`Recusado pela policy: ${result?.error ?? "erro"}`, "error");
+      } else notify(t("Recusado pela policy: {0}", { 0: result?.error ?? "erro" }), "error");
     });
   }, [notify, refreshCC, refreshReadiness]);
 
   const toggleEmergencyStop = useCallback((enabled: boolean) => {
     call<any>("set_emergency_stop", enabled).then(() => {
-      notify(enabled ? "Execução bloqueada" : "Execução retomada", enabled ? "error" : "success");
+      notify(enabled ? t("Execução bloqueada") : t("Execução retomada"), enabled ? "error" : "success");
       refreshReadiness(); refreshCC(); refreshSettings();
     });
   }, [notify, refreshReadiness, refreshCC, refreshSettings]);
 
   const openPluginCode = useCallback((name: string) => {
     call<any>("get_plugin_code", name).then((result) => {
-      if (result?.ok) setPluginCode(result); else notify("Não foi possível ler o componente", "error");
+      if (result?.ok) setPluginCode(result); else notify(t("Não foi possível ler o componente"), "error");
     });
   }, [notify]);
 
@@ -846,8 +923,8 @@ export default function Home() {
     setBusy(true);
     call<any>("set_provider_mode", mode).then((result) => {
       setBusy(false);
-      if (result?.ok) { notify(`Modo: ${mode}`, "success"); refreshProviders(); refreshSettings(); refreshReadiness(); }
-      else notify("Não foi possível mudar de modo", "error");
+      if (result?.ok) { notify(t("Modo: {0}", { 0: mode }), "success"); refreshProviders(); refreshSettings(); refreshReadiness(); }
+      else notify(t("Não foi possível mudar de modo"), "error");
     });
   }, [notify, refreshProviders, refreshSettings, refreshReadiness]);
 
@@ -855,15 +932,15 @@ export default function Home() {
     setBusy(true);
     call<any>("set_local_model", model).then((result) => {
       setBusy(false);
-      if (result?.ok) { notify(`Modelo local: ${result.model}`, "success"); refreshProviders(); refreshSettings(); }
-      else notify(result?.detail ?? "Não foi possível mudar o modelo local", "error");
+      if (result?.ok) { notify(t("Modelo local: {0}", { 0: result.model }), "success"); refreshProviders(); refreshSettings(); }
+      else notify(result?.detail ?? t("Não foi possível mudar o modelo local"), "error");
     });
   }, [notify, refreshProviders, refreshSettings]);
 
   const forgetAllMemory = useCallback(() => {
     call<any>("forget_all_memory_facts").then((result) => {
       notify(
-        result?.ok ? `${result.removed} facto(s) esquecido(s)` : "Não foi possível esquecer tudo",
+        result?.ok ? t("{0} facto(s) esquecido(s)", { 0: result.removed }) : t("Não foi possível esquecer tudo"),
         result?.ok ? "success" : "error",
       );
       refreshMemory();
@@ -890,15 +967,15 @@ export default function Home() {
     refreshSettings();
     refreshCC();
     if (result?.ok) {
-      notify("Todos os dados foram apagados", "success");
+      notify(t("Todos os dados foram apagados"), "success");
       return true;
     }
     notify(
       result?.error === "tasks_not_cleared"
-        ? "Dados apagados, mas o histórico de tarefas não foi limpo"
+        ? t("Dados apagados, mas o histórico de tarefas não foi limpo")
         : result?.error === "purge_failed"
-          ? "Não foi possível apagar os dados. Nada foi alterado."
-          : "Não foi possível apagar os dados.",
+          ? t("Não foi possível apagar os dados. Nada foi alterado.")
+          : t("Não foi possível apagar os dados."),
       "error",
     );
     return false;
@@ -928,13 +1005,13 @@ export default function Home() {
     setBusy(true);
     const result = await call<any>("set_cloud_api_key", provider, key);
     setBusy(false);
-    if (result?.ok) { notify("Chave validada e guardada", "success"); refreshProviders(); refreshSettings(); refreshReadiness(); }
-    else notify(result?.detail ?? "Chave recusada", "error");
+    if (result?.ok) { notify(t("Chave validada e guardada"), "success"); refreshProviders(); refreshSettings(); refreshReadiness(); }
+    else notify(result?.detail ?? t("Chave recusada"), "error");
   }, [notify, refreshProviders, refreshSettings, refreshReadiness]);
 
   const removeCloudKey = useCallback((provider: CloudProviderKey) => {
     call<any>("remove_cloud_api_key", provider).then(() => {
-      notify("Chave removida"); refreshProviders(); refreshSettings(); refreshReadiness();
+      notify(t("Chave removida")); refreshProviders(); refreshSettings(); refreshReadiness();
     });
   }, [notify, refreshProviders, refreshSettings, refreshReadiness]);
 
@@ -942,7 +1019,7 @@ export default function Home() {
     setBusy(true);
     call<any>("test_cloud_connection", provider).then((result) => {
       setBusy(false);
-      notify(result?.detail ?? "Sem resposta", result?.ok ? "success" : "error");
+      notify(result?.detail ?? t("Sem resposta"), result?.ok ? "success" : "error");
     });
   }, [notify]);
 
@@ -951,8 +1028,8 @@ export default function Home() {
       setBusy(true);
       call<any>("set_cloud_model", provider, model, tier).then((result) => {
         setBusy(false);
-        if (result?.ok) { notify(`Modelo: ${model}`, "success"); refreshProviders(); refreshSettings(); }
-        else notify(result?.detail ?? "Modelo indisponível", "error");
+        if (result?.ok) { notify(t("Modelo: {0}", { 0: model }), "success"); refreshProviders(); refreshSettings(); }
+        else notify(result?.detail ?? t("Modelo indisponível"), "error");
       });
     }, [notify, refreshProviders, refreshSettings]);
 
@@ -960,8 +1037,8 @@ export default function Home() {
     setBusy(true);
     call<any>("set_preferred_cloud_provider", provider).then((result) => {
       setBusy(false);
-      if (result?.ok) { notify(`Provedor: ${providerLabel(provider)}`, "success"); refreshProviders(); refreshSettings(); refreshReadiness(); }
-      else notify(result?.detail ?? "Não foi possível mudar de provedor", "error");
+      if (result?.ok) { notify(t("Provedor: {0}", { 0: providerLabel(provider) }), "success"); refreshProviders(); refreshSettings(); refreshReadiness(); }
+      else notify(result?.detail ?? t("Não foi possível mudar de provedor"), "error");
     });
   }, [notify, providerLabel, refreshProviders, refreshSettings, refreshReadiness]);
 
@@ -974,17 +1051,17 @@ export default function Home() {
   const updateSetting = useCallback((key: string, value: any) => {
     call<any>("update_setting", key, value).then((result) => {
       if (result?.ok) { refreshSettings(); refreshReadiness(); }
-      else notify(`Não foi possível guardar: ${result?.error ?? "erro"}`, "error");
+      else notify(t("Não foi possível guardar: {0}", { 0: result?.error ?? "erro" }), "error");
     });
   }, [notify, refreshSettings, refreshReadiness]);
 
   const testSpeaker = useCallback(() => {
-    call<any>("test_speaker").then((r) => notify(r?.detail ?? "Sem resposta", r?.ok ? "success" : "error"));
+    call<any>("test_speaker").then((r) => notify(r?.detail ?? t("Sem resposta"), r?.ok ? "success" : "error"));
   }, [notify]);
 
   const testMicrophone = useCallback(() => {
-    notify("A gravar 3 segundos…");
-    call<any>("test_microphone", 3).then((r) => notify(r?.detail ?? "Sem resposta", r?.ok && r?.speechDetected ? "success" : "error"));
+    notify(t("A gravar 3 segundos…"));
+    call<any>("test_microphone", 3).then((r) => notify(r?.detail ?? t("Sem resposta"), r?.ok && r?.speechDetected ? "success" : "error"));
   }, [notify]);
 
   /* ── Keyboard ───────────────────────────────────────────────────────── */
@@ -1008,6 +1085,8 @@ export default function Home() {
   const agentState = readiness?.agent.state ?? (gaveUp ? "BACKEND_OFFLINE" : "UNKNOWN");
   const section = sectionOf(view);
   const sectionDef = sectionEntry(section);
+  /** Developer pages (agents, components) only in Modo avançado. */
+  const visibleTabs = sectionDef.views.filter((entry) => advancedMode || !ADVANCED_VIEWS.has(entry.id));
 
   /** The thread currently on screen, from the real list. */
   const activeThread = useMemo(
@@ -1019,16 +1098,16 @@ export default function Home() {
   const openNode = useCallback((nodeId: string) => {
     call<any>("get_knowledge_node", nodeId).then((result) => {
       if (result?.ok) { setNodeDetail(result); setNodeOpen(true); }
-      else notify("Nó não encontrado", "error");
+      else notify(t("Nó não encontrado"), "error");
     });
   }, [notify]);
 
   const createMemory = useCallback((text: string, kind: string, importance: number) => {
     call<any>("create_memory", text, kind, importance, []).then((result) => {
-      if (result?.ok) { notify("Memória guardada", "success"); refreshMemory(); }
+      if (result?.ok) { notify(t("Memória guardada"), "success"); refreshMemory(); }
       // A refusal is reported with its REASON. "Não guardei" alone would leave
       // the user guessing; "parece conter api_key" tells them what to change.
-      else notify(result?.detail ?? "Não foi possível guardar essa memória", "error");
+      else notify(result?.detail ?? t("Não foi possível guardar essa memória"), "error");
     });
   }, [notify, refreshMemory]);
 
@@ -1037,13 +1116,13 @@ export default function Home() {
       patch.importance ?? null, patch.pinned ?? null, patch.status ?? null,
       patch.tags ?? null).then((result) => {
       if (result?.ok) refreshMemory();
-      else notify(result?.detail ?? "Não foi possível atualizar", "error");
+      else notify(result?.detail ?? t("Não foi possível atualizar"), "error");
     });
   }, [notify, refreshMemory]);
 
   const deleteMemory = useCallback((id: string) => {
     call<any>("delete_memory", id).then((result) => {
-      notify(result?.ok ? "Memória apagada" : "Não foi possível apagar",
+      notify(result?.ok ? t("Memória apagada") : t("Não foi possível apagar"),
              result?.ok ? "success" : "error");
       refreshMemory();
     });
@@ -1051,7 +1130,7 @@ export default function Home() {
 
   const clearMemories = useCallback(() => {
     call<any>("clear_memories").then((result) => {
-      notify(result?.ok ? `${result.removed} memória(s) apagada(s)` : "Falhou",
+      notify(result?.ok ? t("{0} memória(s) apagada(s)", { 0: result.removed }) : t("Falhou"),
              result?.ok ? "success" : "error");
       refreshMemory();
     });
@@ -1059,8 +1138,8 @@ export default function Home() {
 
   const createNode = useCallback((title: string, type: string, summary: string) => {
     call<any>("create_knowledge_node", title, type, summary, "", []).then((result) => {
-      if (result?.ok) { notify("Nó criado", "success"); refreshKnowledge(); refreshGraph(); }
-      else notify("Não foi possível criar o nó", "error");
+      if (result?.ok) { notify(t("Nó criado"), "success"); refreshKnowledge(); refreshGraph(); }
+      else notify(t("Não foi possível criar o nó"), "error");
     });
   }, [notify, refreshKnowledge, refreshGraph]);
 
@@ -1069,19 +1148,19 @@ export default function Home() {
       patch.summary ?? null, patch.body ?? null, patch.tags ?? null,
       patch.pinned ?? null).then((result) => {
       if (result?.ok) { refreshKnowledge(); openNode(id); }
-      else notify(result?.detail ?? "Não foi possível atualizar o nó", "error");
+      else notify(result?.detail ?? t("Não foi possível atualizar o nó"), "error");
     });
   }, [notify, refreshKnowledge, openNode]);
 
   const deleteNode = useCallback((id: string) => {
     call<any>("delete_knowledge_node", id).then((result) => {
       if (result?.ok) {
-        notify(`Nó apagado (${result.edges} ligações)`, "success");
+        notify(t("Nó apagado ({0} ligações)", { 0: result.edges }), "success");
         setNodeOpen(false);
         setNodeDetail(null);
         refreshKnowledge();
         refreshGraph();
-      } else notify("Não foi possível apagar o nó", "error");
+      } else notify(t("Não foi possível apagar o nó"), "error");
     });
   }, [notify, refreshKnowledge, refreshGraph]);
 
@@ -1092,34 +1171,34 @@ export default function Home() {
 
   /** The rate-limited provider as a person names it, from the live list. */
   const rateLimitProvider = rateLimit
-    ? (providers?.[rateLimit.provider as CloudProviderKey]?.name ?? (rateLimit.provider || "Cloud"))
+    ? (providers?.[rateLimit.provider as CloudProviderKey]?.name ?? (rateLimit.provider || t("Cloud")))
     : "";
 
   const healthLabel = useMemo(() => {
-    if (gaveUp) return "Motor offline";
-    if (rateLimit) return `${rateLimitProvider}: espera ~${rateLimit.waitSeconds}s`;
-    if (readiness?.emergencyStop) return "Execução bloqueada";
-    if (pendingCount > 0) return `${pendingCount} por autorizar`;
-    if (providers?.route?.usable === false) return "Sem provedor de IA";
+    if (gaveUp) return t("Motor offline");
+    if (rateLimit) return t("{0}: espera ~{1}s", { 0: rateLimitProvider, 1: rateLimit.waitSeconds });
+    if (readiness?.emergencyStop) return t("Execução bloqueada");
+    if (pendingCount > 0) return t("{0} por autorizar", { 0: pendingCount });
+    if (providers?.route?.usable === false) return t("Sem provedor de IA");
     // The wake detector reports MIC_SILENT when chunks arrive with no energy.
     // Saying "operacional" then would be untrue.
-    if (readiness?.wakePhrase?.state === "MIC_SILENT") return "Microfone sem áudio";
-    return "Todos os serviços operacionais";
+    if (readiness?.wakePhrase?.state === "MIC_SILENT") return t("Microfone sem áudio");
+    return t("Todos os serviços operacionais");
   }, [gaveUp, rateLimit, rateLimitProvider, readiness, pendingCount, providers]);
 
   /** What is actually answering, in the few words the top-bar pill can hold. */
   const routeLabel = useMemo(() => {
-    if (gaveUp) return "Motor offline";
+    if (gaveUp) return t("Motor offline");
     const route = providers?.route;
-    if (!route) return "A ligar…";
-    if (!route.usable) return "Sem provedor";
+    if (!route) return t("A ligar…");
+    if (!route.usable) return t("Sem provedor");
     // The provider's own name, from the payload. This read "Groq", "Local" or
     // an em dash, so every Gemini turn was labelled "—" in the top bar -- and
     // a third provider would have been too.
     const name = route.provider === "ollama"
-      ? "Local"
+      ? t("Local")
       : (providers?.[route.provider as CloudProviderKey]?.name ?? "—");
-    return route.fallback ? `${name} · fallback` : `${name} · ${route.mode}`;
+    return route.fallback ? t("{0} · fallback", { 0: name }) : `${name} · ${route.mode}`;
   }, [providers, gaveUp]);
 
   /** The Atividade list, filtered to the open category. See pcActivityMatches.
@@ -1140,8 +1219,15 @@ export default function Home() {
 
   const suggestions = useMemo(() => {
     if (messages.length > 0) return [];
-    const base = ["Ajuda-me a planear o dia", "Explica um conceito", "Revê um texto"];
-    if (providers?.route?.usable === false) return ["Ajuda"];
+    // What sets NANO apart is that it can act on this PC, so the offers lead
+    // with that. Each is a request NANO really fulfils with a narrow tool.
+    const base = [
+      t("Quanto espaço livre tenho no disco?"),
+      t("Põe as janelas lado a lado"),
+      t("Lembra-me de fazer uma pausa daqui a 1 hora"),
+      t("Ajuda-me a planear o dia"),
+    ];
+    if (providers?.route?.usable === false) return [t("Ajuda")];
     return base;
   }, [messages.length, providers]);
 
@@ -1151,22 +1237,22 @@ export default function Home() {
   );
 
   const commands: Command[] = useMemo(() => [
-    { id: "new", label: "Nova conversa", hint: "Ctrl+N", run: newConversation },
-    ...SECTIONS.flatMap((entry) => entry.views.map((v) => ({
+    { id: "new", label: t("Nova conversa"), hint: "Ctrl+N", run: newConversation },
+    ...SECTIONS.flatMap((entry) => entry.views.filter((v) => advancedMode || !ADVANCED_VIEWS.has(v.id)).map((v) => ({
       id: `go-${v.id}`,
-      label: entry.views.length > 1 ? `Ir para ${entry.label} › ${v.label}` : `Ir para ${v.label}`,
+      label: entry.views.length > 1 ? t("Ir para {0} › {1}", { 0: entry.label, 1: v.label }) : t("Ir para {0}", { 0: v.label }),
       run: () => setView(v.id),
     }))),
-    { id: "rail", label: "Mostrar/ocultar barra lateral", hint: "Ctrl+B", run: toggleRail },
-    { id: "copy", label: "Copiar conversa", run: () => { copyConversation(); } },
-    { id: "theme", label: "Alternar tema", run: () => setTheme((t) => (t === "dark" ? "light" : "dark")) },
-    { id: "voice", label: "Falar com o NANO", hint: "Ctrl+M", run: startVoice },
+    { id: "rail", label: t("Mostrar/ocultar barra lateral"), hint: "Ctrl+B", run: toggleRail },
+    { id: "copy", label: t("Copiar conversa"), run: () => { copyConversation(); } },
+    { id: "theme", label: t("Alternar tema"), run: () => setTheme(theme === "dark" ? "light" : "dark") },
+    { id: "voice", label: t("Falar com o NANO"), hint: "Ctrl+M", run: startVoice },
     {
       id: "estop",
-      label: readiness?.emergencyStop ? "Retomar execução" : "Paragem de emergência",
+      label: readiness?.emergencyStop ? t("Retomar execução") : t("Paragem de emergência"),
       run: () => toggleEmergencyStop(!readiness?.emergencyStop),
     },
-  ], [newConversation, startVoice, copyConversation, readiness, toggleEmergencyStop, toggleRail]);
+  ], [newConversation, startVoice, copyConversation, readiness, toggleEmergencyStop, toggleRail, advancedMode, theme, setTheme]);
 
   /* ── Chat presentation ──────────────────────────────────────────────── */
   const isChat = view === "chat";
@@ -1180,11 +1266,12 @@ export default function Home() {
 
   /* The home screen: nothing said yet and nothing pending. It names itself
      ("Como posso ajudar?"), so the top bar carries no title there. */
-  const hero = isChat && !showFirstRun && messages.length === 0 && !thinking;
+  const approvalInline = view === "chat" && !showFirstRun;
+  const hero = isChat && !showFirstRun && messages.length === 0 && !thinking && !confirmReq;
 
   /* Every thread is writable now, so there is exactly one set of messages on
      screen and no read-only mode to explain. `readOnlyReason` is gone with it. */
-  const chatTitle = activeThread?.title ?? (messages.length ? "Conversa" : "");
+  const chatTitle = activeThread?.title ?? (messages.length ? t("Conversa") : "");
   const pageTitle = isChat ? (hero ? "" : chatTitle) : sectionDef.label;
 
   return (
@@ -1207,6 +1294,8 @@ export default function Home() {
             onView={(next) => { setView(next); if (narrow) setRailOpen(false); }}
             counts={navCounts}
             version={APP_VERSION}
+            userName={userName}
+            onProfile={() => { openSettingsSection("general"); if (narrow) setRailOpen(false); }}
             threads={threads ?? []}
             activeId={activeThreadId}
             query={chatQuery} onQuery={setChatQuery}
@@ -1232,7 +1321,7 @@ export default function Home() {
                   {messages.length > 0 && !mobile && (
                     <button
                       type="button" className="icon-btn" onClick={copyConversation}
-                      aria-label="Copiar conversa" title="Copiar a conversa para a área de transferência"
+                      aria-label={t("Copiar conversa")} title={t("Copiar a conversa para a área de transferência")}
                     >
                       <Icon name="copy" size={17} />
                     </button>
@@ -1242,7 +1331,7 @@ export default function Home() {
                   {mobile && (
                     <button
                       type="button" className="icon-btn" onClick={newConversation}
-                      aria-label="Nova conversa" title="Nova conversa"
+                      aria-label={t("Nova conversa")} title={t("Nova conversa")}
                     >
                       <Icon name="newChat" size={17} />
                     </button>
@@ -1267,9 +1356,9 @@ export default function Home() {
             />
 
             <main className="stage">
-              {!isChat && sectionDef.views.length > 1 && (
-                <nav className="stage__tabs" aria-label={`Secções de ${sectionDef.label}`}>
-                  {sectionDef.views.map((entry) => (
+              {!isChat && visibleTabs.length > 1 && (
+                <nav className="stage__tabs" aria-label={t("Secções de {0}", { 0: sectionDef.label })}>
+                  {visibleTabs.map((entry) => (
                     <button
                       key={entry.id} type="button" className="subtab"
                       aria-current={view === entry.id ? "page" : undefined}
@@ -1291,11 +1380,11 @@ export default function Home() {
                 <div className="stage__offline">
                   <ErrorState
                     error={{
-                      message: "O motor do NANO não respondeu.",
-                      component: "ponte eel",
+                      message: t("O motor do NANO não respondeu."),
+                      component: t("ponte eel"),
                       detail: isDesktop
-                        ? "Fecha o NANO através do ícone junto ao relógio e volta a abri-lo. Se o problema continuar, copia o diagnóstico para o relatório de erro."
-                        : "Verifica se o motor está a correr e recarrega esta página.",
+                        ? t("Fecha o NANO através do ícone junto ao relógio e volta a abri-lo. Se o problema continuar, copia o diagnóstico para o relatório de erro.")
+                        : t("Verifica se o motor está a correr e recarrega esta página."),
                     }}
                     onRetry={() => window.location.reload()}
                   />
@@ -1307,13 +1396,15 @@ export default function Home() {
                 <div className={`chat${hero ? " chat--hero" : ""}`}>
                   {showFirstRun ? (
                     <FirstRunGuide providers={providers} readiness={readiness}
+                      displayName={displayName} onDisplayName={setDisplayName}
                       saving={savingFirstRun} onFinish={finishFirstRun}
                       onSettings={openSettingsSection}
                       onRefresh={() => { refreshProviders(); refreshReadiness(); }} />
                   ) : (
                     <Conversation
                       messages={messages} status={activityLabel} thinking={thinking}
-                      userName={profileName} connecting={!ready && !gaveUp}
+                      userName={userName} connecting={!ready && !gaveUp}
+                      advanced={advancedMode}
                       onRetry={() => rerunLastTurn()}
                       onEdit={(text) => rerunLastTurn(text)}
                       onChoose={(reply) => sendMessage(reply)}
@@ -1325,19 +1416,29 @@ export default function Home() {
                   {!showFirstRun && rateLimit && (
                     <div className="chat-notice rate-limit" role="status">
                       <span>
-                        <strong>{rateLimitProvider}:</strong> {rateLimit.message}{" "}
-                        Tenta de novo dentro de ~{rateLimit.waitSeconds} s.
+                        <strong>{rateLimitProvider}:</strong> {rateLimit.message}{" "}{t("Tenta de novo dentro de ~{0} s.", { 0: rateLimit.waitSeconds })}
                       </span>
                     </div>
                   )}
                   {!showFirstRun && providers?.route?.usable === false && (
                     <div className="chat-notice setup-notice" role="status">
-                      <span>Configura um provedor cloud ou um modelo local para conversar.</span>
+                      <span>{t("Configura um provedor cloud ou um modelo local para conversar.")}</span>
                       {/* Primary: with no provider this is the ONE action that
                           unblocks the app, and it was styled as a neutral
                           secondary button sitting beside the sentence explaining
                           the block. */}
-                      <Button size="sm" variant="primary" onClick={() => openSettingsSection("ai")}>Configurar IA</Button>
+                      <Button size="sm" variant="primary" onClick={() => openSettingsSection("ai")}>{t("Configurar IA")}</Button>
+                    </div>
+                  )}
+                  {/* The approval sits in the conversation, where the request was
+                      made, instead of covering it with a dialog. */}
+                  {approvalInline && confirmReq && (
+                    <div className="chat__approval">
+                      <ConfirmCard
+                        message={confirmReq.message} meta={confirmReq.meta}
+                        onConfirm={() => { call("confirm_action", confirmReq.requestId, true); setConfirmReq(null); }}
+                        onCancel={() => { call("confirm_action", confirmReq.requestId, false); setConfirmReq(null); }}
+                      />
                     </div>
                   )}
                   {!showFirstRun && <Composer
@@ -1353,9 +1454,7 @@ export default function Home() {
                   {/* Weighs the home screen's group -- mark, headline, composer
                       -- slightly above the middle, where the eye lands. */}
                   {hero && <div className="chat__balance" aria-hidden="true" />}
-                  <p className="stage__footer">
-                    O {BRAND_NAME} pode cometer erros. Ações sensíveis pedem sempre a tua autorização.
-                  </p>
+                  <p className="stage__footer">{t("O {0} pode cometer erros. Ações sensíveis pedem sempre a tua autorização.", { 0: BRAND_NAME })}</p>
                 </div>
               )}
 
@@ -1412,7 +1511,7 @@ export default function Home() {
                       overview={memoryData}
                     />
                   )}
-                  {view === "capabilities" && <CapabilitiesPage enabled={ready} />}
+                  {view === "capabilities" && <CapabilitiesPage enabled={ready} onTry={(text) => { setView("chat"); setShowFirstRun(false); sendMessage(text); }} />}
                   {view === "agenda" && <AgendaPage enabled={ready} notify={notify} />}
                   {view === "modes" && (
                     <WorkModesPage
@@ -1459,10 +1558,12 @@ export default function Home() {
                       onForgetAllMemory={forgetAllMemory}
                       onEraseAllData={eraseAllData}
                       onNavigate={setView}
-                      onOpenFirstRun={() => { setShowFirstRun(true); setView("chat"); }}
+                      onOpenFirstRun={() => { firstRunAuto.current = false; setShowFirstRun(true); setView("chat"); }}
                       section={settingsSection} onSection={setSettingsSection}
-                      theme={theme} onTheme={setTheme}
+                      theme={themePref} onTheme={setTheme}
                       reduceMotion={reduceMotion} onReduceMotion={setReduceMotion}
+                      advancedMode={advancedMode} onAdvancedMode={setAdvancedMode}
+                      displayName={displayName} onDisplayName={setDisplayName}
                     />
                   )}
                 </div>
@@ -1475,7 +1576,7 @@ export default function Home() {
       <CommandPalette open={paletteOpen} commands={commands} onClose={() => setPaletteOpen(false)} />
       <ToastStack toasts={toasts} />
 
-      {confirmReq && (
+      {confirmReq && !approvalInline && (
         <ConfirmModal
           message={confirmReq.message} meta={confirmReq.meta}
           onConfirm={() => { call("confirm_action", confirmReq.requestId, true); setConfirmReq(null); }}

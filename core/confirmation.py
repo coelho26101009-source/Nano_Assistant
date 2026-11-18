@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import logging
 
+from core.i18n import tr
+
 logger = logging.getLogger("nano.confirmation")
 
 #: capability -> the headline a person reads first. Deliberately verbs in
@@ -95,8 +97,8 @@ def _window_phrase(value: str) -> str:
     rest = value[len("window:"):] if value.startswith("window:") else value
     rest = rest.strip()
     if not rest or rest == "*":
-        return "Janela em primeiro plano"
-    return rest if not rest.isdigit() else f"Janela #{rest}"
+        return tr("Janela em primeiro plano")
+    return rest if not rest.isdigit() else tr("Janela #{rest}", rest=rest)
 
 
 #: Target prefixes, in the order they are tried, mapped to a human phrasing.
@@ -104,25 +106,25 @@ _TARGET_PREFIXES = (
     ("recycle:", lambda rest: rest),
     ("create:", lambda rest: rest),
     ("file:", lambda rest: rest.replace(" -> ", "  →  ")),
-    ("folder:", lambda rest: f"Pasta {rest}"),
-    ("windows:", lambda rest: f"Aplicação {rest.split(':', 1)[0]}"),
+    ("folder:", lambda rest: tr("Pasta {rest}", rest=rest)),
+    ("windows:", lambda rest: tr("Aplicação {name}", name=rest.split(':', 1)[0])),
     ("window:", _window_phrase),
     ("app:", lambda rest: rest),
-    ("apps:", lambda _rest: "Aplicações abertas"),
-    ("clipboard:", lambda _rest: "Área de transferência"),
+    ("apps:", lambda _rest: tr("Aplicações abertas")),
+    ("clipboard:", lambda _rest: tr("Área de transferência")),
     ("input:type:", lambda rest: _window_phrase(rest.split(":#", 1)[0])),
     ("input:key:", lambda rest: _window_phrase(rest.split(":", 1)[-1])),
     ("input:hotkey:", lambda rest: _window_phrase(rest.split(":", 1)[-1])),
     ("pointer:scroll:", lambda rest: _window_phrase(rest)),
-    ("screen:", lambda rest: "Ecrã completo" if rest == "desktop" else _window_phrase(rest)),
-    ("settings:", lambda rest: f"Definições: {rest}"),
+    ("screen:", lambda rest: tr("Ecrã completo") if rest == "desktop" else _window_phrase(rest)),
+    ("settings:", lambda rest: tr("Definições: {rest}", rest=rest)),
     ("search:", lambda rest: rest.split(":", 1)[-1]),
-    ("power:", lambda _rest: "Sessão do Windows"),
-    ("session:", lambda _rest: "Sessão do Windows"),
-    ("system:", lambda rest: f"Estado do sistema ({rest})"),
-    ("display:", lambda rest: f"Monitor {rest}"),
-    ("volume:", lambda _rest: "Volume do sistema"),
-    ("media:", lambda rest: f"Reprodução ({rest})"),
+    ("power:", lambda _rest: tr("Sessão do Windows")),
+    ("session:", lambda _rest: tr("Sessão do Windows")),
+    ("system:", lambda rest: tr("Estado do sistema ({rest})", rest=rest)),
+    ("display:", lambda rest: tr("Monitor {rest}", rest=rest)),
+    ("volume:", lambda _rest: tr("Volume do sistema")),
+    ("media:", lambda rest: tr("Reprodução ({rest})", rest=rest)),
     ("query:", lambda rest: f"“{rest}”"),
 )
 
@@ -160,7 +162,7 @@ def _preview(capability: str, args: dict) -> dict:
             group = windows.resolve_group(str(args.get("app") or ""))
             return {"count": len(group),
                     "items": [w["title"] for w in group[:10]],
-                    "note": f"{len(group)} janela(s) serão fechadas."}
+                    "note": tr("{count} janela(s) serão fechadas.", count=len(group))}
 
         if capability in {"pc.file.recycle", "pc.folder.recycle"}:
             from core.pc_control import fileops
@@ -170,7 +172,7 @@ def _preview(capability: str, args: dict) -> dict:
             contains = item.get("contains")
             if contains is not None:
                 preview["count"] = contains
-                preview["note"] = f"A pasta contém {contains} item(ns)."
+                preview["note"] = tr("A pasta contém {count} item(ns).", count=contains)
             elif item.get("size_bytes") is not None:
                 preview["note"] = f"{item['size_bytes']} bytes."
             return preview
@@ -192,10 +194,10 @@ def describe(capability: str, args: dict | None = None, *,
 
     return {
         "capability": capability,
-        "action": ACTION_LABELS.get(capability, _fallback_action(capability)),
+        "action": tr(ACTION_LABELS[capability]) if capability in ACTION_LABELS else _fallback_action(capability),
         "target": humanise_target(resolved_target),
         "raw_target": str(resolved_target) if resolved_target else None,
-        "scope": SCOPE_LABELS.get(capability, "Esta execução"),
+        "scope": tr(SCOPE_LABELS.get(capability, "Esta execução")),
         "risk": str(risk or "").upper() or None,
         "preview": _preview(capability, args),
     }
@@ -210,7 +212,7 @@ def _fallback_action(capability: str) -> str:
     """
     parts = [part for part in str(capability or "").replace("_", ".").split(".") if part]
     if not parts:
-        return "AÇÃO DESCONHECIDA"
+        return tr("AÇÃO DESCONHECIDA")
     return " ".join(parts[1:] or parts).upper()
 
 

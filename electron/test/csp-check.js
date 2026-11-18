@@ -20,6 +20,9 @@
 'use strict';
 
 const { app, BrowserWindow, session } = require('electron');
+// The UI copy these checks assert is the Portuguese original, so the page
+// must load in Portuguese whatever language the CI machine speaks.
+app.commandLine.appendSwitch('lang', 'pt-PT');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');

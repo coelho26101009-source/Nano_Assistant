@@ -28,6 +28,9 @@
 'use strict';
 
 const { app, BrowserWindow } = require('electron');
+// The UI copy these checks assert is the Portuguese original, so the page
+// must load in Portuguese whatever language the CI machine speaks.
+app.commandLine.appendSwitch('lang', 'pt-PT');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -526,6 +529,11 @@ app.whenReady().then(async () => {
   ok('the guide opens existing provider settings', !!q('.settings-body') && /Groq/.test(q('.settings-body').textContent));
   byText('.rail-nav__item', 'Chat')?.click();
   await sleep(300);
+  // Three short steps: the brain, privacy, the name.
+  byText('button', 'Continuar')?.click();
+  await sleep(200);
+  byText('button', 'Continuar')?.click();
+  await sleep(200);
   byText('button', 'Começar a conversar')?.click();
   await sleep(300);
   ok('finishing the guide persists acknowledgement without enabling services',

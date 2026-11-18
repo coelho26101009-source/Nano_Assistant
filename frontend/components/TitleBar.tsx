@@ -29,6 +29,7 @@ import React from "react";
 import {
   hideWindow, minimizeWindow, toggleMaximizeWindow, useWindowState,
 } from "../lib/desktop";
+import { t } from "../lib/i18n";
 
 /* Windows caption glyphs, drawn rather than typed: the Segoe MDL2 font is not
    guaranteed, and a missing glyph renders as a tofu box in the corner of the
@@ -67,25 +68,25 @@ export default function WindowControls() {
       <button
         type="button" className="window-control"
         onClick={minimizeWindow}
-        aria-label="Minimizar" title="Minimizar"
+        aria-label={t("Minimizar")} title={t("Minimizar")}
       >
         <Minimize />
       </button>
       <button
         type="button" className="window-control"
         onClick={toggleMaximizeWindow}
-        aria-label={maximized ? "Restaurar" : "Maximizar"}
-        title={maximized ? "Restaurar" : "Maximizar"}
+        aria-label={maximized ? t("Restaurar") : t("Maximizar")}
+        title={maximized ? t("Restaurar") : t("Maximizar")}
       >
         {maximized ? <Restore /> : <Maximize />}
       </button>
       <button
         type="button" className="window-control window-control--close"
         onClick={hideWindow}
-        aria-label="Fechar para o tabuleiro"
+        aria-label={t("Fechar para o tabuleiro")}
         // Says exactly what happens. A close button that does not close is
         // only acceptable if it never surprises anyone.
-        title="Fechar para o tabuleiro — o NANO continua a correr"
+        title={t("Fechar para o tabuleiro — o NANO continua a correr")}
       >
         <Close />
       </button>
