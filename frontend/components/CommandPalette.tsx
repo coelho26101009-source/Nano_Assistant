@@ -1,5 +1,6 @@
 /** Keyboard-first command palette (Ctrl+K). */
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { t } from "../lib/i18n";
 
 export type Command = {
   id: string;
@@ -47,13 +48,13 @@ export default function CommandPalette({
 
   return (
     <div className="palette-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="palette" role="dialog" aria-modal="true" aria-label="Paleta de comandos">
+      <div className="palette" role="dialog" aria-modal="true" aria-label={t("Paleta de comandos")}>
         <input
           ref={inputRef}
           className="palette-input"
-          placeholder="Escreve um comando…"
+          placeholder={t("Escreve um comando…")}
           value={query}
-          aria-label="Procurar comando"
+          aria-label={t("Procurar comando")}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Escape") { event.preventDefault(); onClose(); }
@@ -64,7 +65,7 @@ export default function CommandPalette({
         />
         <div className="palette-list" role="listbox">
           {filtered.length === 0 ? (
-            <div className="empty-state"><p className="empty-state-title">Sem resultados</p></div>
+            <div className="empty-state"><p className="empty-state-title">{t("Sem resultados")}</p></div>
           ) : (
             filtered.map((command, position) => (
               <button

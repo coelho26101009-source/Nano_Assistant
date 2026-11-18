@@ -40,6 +40,8 @@ import { Thread, groupThreads, matchesThread, threadStamp } from "../lib/convers
 import {
   NavCounts, SECTIONS, SectionEntry, SectionId, ViewId, sectionBadge, sectionOf,
 } from "../lib/navigation";
+import { t } from "../lib/i18n";
+import { tj } from "../lib/tj";
 
 export type RailMode = "expanded" | "collapsed" | "drawer";
 
@@ -73,7 +75,7 @@ function SectionButton({
       <span className="rail-nav__icon"><Icon name={SECTION_ICON[entry.section]} size={18} /></span>
       <span className={collapsed ? "sr-only" : "rail-nav__label"}>{entry.label}</span>
       {badge > 0 && (
-        <span className="rail-nav__badge" aria-label={`${badge} por rever`}>
+        <span className="rail-nav__badge" aria-label={t("{0} por rever", { 0: badge })}>
           {badge > 99 ? "99+" : badge}
         </span>
       )}
@@ -93,14 +95,14 @@ function RowMenu({
     <Popover
       open={open}
       onClose={() => setOpen(false)}
-      label={`Ações de ${thread.title}`}
+      label={t("Ações de {0}", { 0: thread.title })}
       trigger={(props) => (
         <button
           {...props}
           type="button"
           className="chat-item__menu"
-          title="Mudar o nome ou apagar"
-          aria-label={`Ações de ${thread.title}`}
+          title={t("Mudar o nome ou apagar")}
+          aria-label={t("Ações de {0}", { 0: thread.title })}
           onClick={(event) => { event.stopPropagation(); setOpen((v) => !v); }}
         >
           <Icon name="dots" size={16} strokeWidth={2.6} />
@@ -111,14 +113,14 @@ function RowMenu({
       <button type="button" className="popover__item" role="menuitem"
               onClick={() => { setOpen(false); onRename(thread); }}>
         <span className="popover__item-body">
-          <span className="popover__item-label">Mudar o nome</span>
+          <span className="popover__item-label">{t("Mudar o nome")}</span>
         </span>
       </button>
       <button type="button" className="popover__item popover__item--danger" role="menuitem"
               onClick={() => { setOpen(false); onDelete(thread); }}>
         <span className="popover__item-body">
-          <span className="popover__item-label">Apagar conversa</span>
-          <span className="popover__item-hint">As mensagens são apagadas deste computador.</span>
+          <span className="popover__item-label">{t("Apagar conversa")}</span>
+          <span className="popover__item-hint">{t("As mensagens são apagadas deste computador.")}</span>
         </span>
       </button>
     </Popover>
@@ -250,11 +252,11 @@ export default function Rail({
   const settings = SECTIONS.find((entry) => entry.section === "settings")!;
 
   const toggleLabel = mode === "drawer"
-    ? "Fechar barra lateral"
-    : collapsed ? "Abrir barra lateral" : "Recolher barra lateral";
+    ? t("Fechar barra lateral")
+    : collapsed ? t("Abrir barra lateral") : t("Recolher barra lateral");
 
   return (
-    <aside className="rail" data-mode={mode} aria-label="Barra lateral">
+    <aside className="rail" data-mode={mode} aria-label={t("Barra lateral")}>
       <div className="rail__brand">
         {collapsed ? <NanoLogo size={26} title="NANO" /> : <NanoLockup size={26} />}
         <button
@@ -276,11 +278,11 @@ export default function Rail({
             silently ticked it instead of opening it. */}
         <Button
           variant="primary" block={!collapsed} icon={collapsed}
-          className="rail__new" title="Nova conversa (Ctrl+N)"
+          className="rail__new" title={t("Nova conversa (Ctrl+N)")}
           onClick={() => { exitSelection(); onNew(); }}
         >
           <Icon name="plus" size={18} strokeWidth={2} />
-          <span className={collapsed ? "sr-only" : undefined}>Nova conversa</span>
+          <span className={collapsed ? "sr-only" : undefined}>{t("Nova conversa")}</span>
         </Button>
 
         {collapsed ? (
@@ -289,24 +291,24 @@ export default function Rail({
           <button
             type="button" className="rail__search-button"
             onClick={() => { setFocusSearch(true); onToggle(); }}
-            aria-label="Pesquisar conversas" title="Pesquisar conversas"
+            aria-label={t("Pesquisar conversas")} title={t("Pesquisar conversas")}
           >
             <Icon name="search" size={18} />
           </button>
         ) : (
           <span className="search rail__search">
             <span className="search__icon"><Icon name="search" size={15} /></span>
-            <label className="sr-only" htmlFor="rail-search">Pesquisar conversas</label>
+            <label className="sr-only" htmlFor="rail-search">{t("Pesquisar conversas")}</label>
             <input
               id="rail-search" ref={searchRef} className="input" type="search"
-              placeholder="Pesquisar conversas…"
+              placeholder={t("Pesquisar conversas…")}
               value={query} onChange={(event) => onQuery(event.target.value)}
             />
           </span>
         )}
       </div>
 
-      <nav className="rail-nav" aria-label="Secções">
+      <nav className="rail-nav" aria-label={t("Secções")}>
         {sections.map((entry) => (
           <SectionButton
             key={entry.section} entry={entry} active={current === entry.section}
@@ -325,9 +327,9 @@ export default function Rail({
                 sitting beside it, so the header never holds two competing
                 affordances. */}
             {!unavailable && threads.length > 0 && selecting ? (
-              <div className="rail__select-bar" role="group" aria-label="Seleção de conversas">
+              <div className="rail__select-bar" role="group" aria-label={t("Seleção de conversas")}>
                 <span className="rail__select-count" aria-live="polite">
-                  {selected.size === 1 ? "1 selecionada" : `${selected.size} selecionadas`}
+                  {selected.size === 1 ? t("1 selecionada") : `${selected.size} selecionadas`}
                 </span>
                 <button
                   type="button" className="rail__select-action"
@@ -335,53 +337,42 @@ export default function Rail({
                     ? new Set()
                     : new Set(matching.map((thread) => thread.id)))}
                 >
-                  {allVisibleSelected ? "Limpar" : "Selecionar tudo"}
+                  {allVisibleSelected ? t("Limpar") : t("Selecionar tudo")}
                 </button>
                 <button
                   type="button" className="rail__select-action rail__select-action--danger"
                   disabled={!selected.size}
                   onClick={() => setConfirmBulk(true)}
-                  title={selected.size ? "Apagar as conversas selecionadas" : "Seleciona pelo menos uma conversa"}
+                  title={selected.size ? t("Apagar as conversas selecionadas") : t("Seleciona pelo menos uma conversa")}
                 >
-                  <Icon name="trash" size={14} />
-                  Eliminar
-                </button>
-                <button type="button" className="rail__select-action" onClick={exitSelection}>
-                  Cancelar
-                </button>
+                  <Icon name="trash" size={14} />{t("Eliminar")}</button>
+                <button type="button" className="rail__select-action" onClick={exitSelection}>{t("Cancelar")}</button>
               </div>
             ) : (
               <>
-                <span className="rail-list__label">Conversas</span>
+                <span className="rail-list__label">{t("Conversas")}</span>
                 {!unavailable && threads.length > 0 && (
                   <button
                     type="button" className="rail__select-action"
                     onClick={() => setSelecting(true)}
-                    title="Selecionar várias conversas para apagar"
+                    title={t("Selecionar várias conversas para apagar")}
                   >
-                    <Icon name="check" size={14} />
-                    Selecionar
-                  </button>
+                    <Icon name="check" size={14} />{t("Selecionar")}</button>
                 )}
               </>
             )}
           </div>
 
           {unavailable ? (
-            <p className="rail__note">
-              A base de dados de memória não pôde ser migrada, por isso não há lista de
-              conversas. O chat continua a funcionar. Vê Memória para o detalhe.
-            </p>
+            <p className="rail__note">{t("A base de dados de memória não pôde ser migrada, por isso não há lista de conversas. O chat continua a funcionar. Vê Memória para o detalhe.")}</p>
           ) : loading && !threads.length ? (
             <div className="stack stack--tight" style={{ padding: "0 8px" }}>
               <Skeleton height={34} /><Skeleton height={34} /><Skeleton height={34} />
             </div>
           ) : !threads.length ? (
-            <p className="rail__note">
-              Ainda não há conversas guardadas. A primeira mensagem que enviares começa uma.
-            </p>
+            <p className="rail__note">{t("Ainda não há conversas guardadas. A primeira mensagem que enviares começa uma.")}</p>
           ) : !matching.length ? (
-            <p className="rail__note">Nenhuma conversa corresponde a “{query.trim()}”.</p>
+            <p className="rail__note">{t("Nenhuma conversa corresponde a “{0}”.", { 0: query.trim() })}</p>
           ) : (
             groups.map((group) => (
               <div className="rail-group" key={group.key}>
@@ -406,7 +397,7 @@ export default function Rail({
                         aria-pressed={selecting ? isChecked : undefined}
                         onClick={() => (selecting ? toggle(thread.id) : onOpen(thread))}
                         title={selecting
-                          ? `${isChecked ? "Remover da seleção" : "Selecionar"}: ${thread.title}`
+                          ? `${isChecked ? t("Remover da seleção") : t("Selecionar")}: ${thread.title}`
                           : `${thread.title} · ${stamp}`}
                       >
                         {selecting && (
@@ -441,20 +432,18 @@ export default function Rail({
 
       <ConfirmDialog
         open={Boolean(renaming)}
-        title="Mudar o nome da conversa"
-        confirmLabel="Guardar"
+        title={t("Mudar o nome da conversa")}
+        confirmLabel={t("Guardar")}
         message={
           <>
-            <label className="sr-only" htmlFor="rail-rename">Novo nome</label>
+            <label className="sr-only" htmlFor="rail-rename">{t("Novo nome")}</label>
             <input
               id="rail-rename" className="input" value={draftTitle} autoFocus
               maxLength={120}
               onChange={(event) => setDraftTitle(event.target.value)}
-              placeholder="Nome da conversa"
+              placeholder={t("Nome da conversa")}
             />
-            <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>
-              Depois de mudares o nome, o NANO deixa de o alterar sozinho.
-            </p>
+            <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>{t("Depois de mudares o nome, o NANO deixa de o alterar sozinho.")}</p>
           </>
         }
         onConfirm={() => {
@@ -466,17 +455,12 @@ export default function Rail({
 
       <ConfirmDialog
         open={Boolean(deleting)} danger
-        title="Apagar esta conversa?"
-        confirmLabel="Apagar"
+        title={t("Apagar esta conversa?")}
+        confirmLabel={t("Apagar")}
         message={
           <>
-            <strong>{deleting?.title}</strong> e as suas {deleting?.messageCount ?? 0} mensagens
-            são apagadas deste computador. Isto não pode ser desfeito.
-            <br /><br />
-            <span className="dim">
-              As memórias de longo prazo que tenham nascido nesta conversa ficam
-              guardadas — apagas cada uma em Memória › Memórias.
-            </span>
+            {tj("{0} e as suas {1} mensagens são apagadas deste computador. Isto não pode ser desfeito.", { 0: <strong>{deleting?.title}</strong>, 1: deleting?.messageCount ?? 0 })}<br /><br />
+            <span className="dim">{t("As memórias de longo prazo que tenham nascido nesta conversa ficam guardadas — apagas cada uma em Memória › Memórias.")}</span>
           </>
         }
         onConfirm={() => { if (deleting) onDelete(deleting); setDeleting(null); }}
@@ -489,18 +473,13 @@ export default function Rail({
           one the user is making. */}
       <ConfirmDialog
         open={confirmBulk} danger
-        title={`Apagar ${selected.size} conversa${selected.size === 1 ? "" : "s"}?`}
-        confirmLabel={`Apagar ${selected.size}`}
+        title={t(selected.size === 1 ? "Apagar {0} conversa?" : "Apagar {0} conversas?", { 0: selected.size })}
+        confirmLabel={t("Apagar {0}", { 0: selected.size })}
         message={
           <>
-            <strong>{selected.size} conversa{selected.size === 1 ? "" : "s"}</strong>
-            {" "}e as suas {selectedMessages} mensagens são apagadas deste computador.
-            Isto não pode ser desfeito.
-            <br /><br />
-            <span className="dim">
-              As memórias de longo prazo que tenham nascido nestas conversas ficam
-              guardadas — apagas cada uma em Memória › Memórias.
-            </span>
+            <strong>{t(selected.size === 1 ? "{0} conversa" : "{0} conversas", { 0: selected.size })}</strong>
+            {" "}{t("e as suas {0} mensagens são apagadas deste computador. Isto não pode ser desfeito.", { 0: selectedMessages })}<br /><br />
+            <span className="dim">{t("As memórias de longo prazo que tenham nascido nestas conversas ficam guardadas — apagas cada uma em Memória › Memórias.")}</span>
           </>
         }
         onConfirm={() => {

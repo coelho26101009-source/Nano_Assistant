@@ -27,6 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from core import capabilities
+from core.i18n import tr
 
 
 @dataclass(frozen=True)
@@ -151,8 +152,10 @@ def build(registry: dict[str, dict]) -> dict:
     def bucket(category: Category) -> dict:
         return buckets.setdefault(category.id, {
             "id": category.id,
-            "label": category.label,
-            "hint": category.hint,
+            # Labels are stored in Portuguese (the key) and translated when
+            # served, so the catalogue follows the interface language.
+            "label": tr(category.label),
+            "hint": tr(category.hint),
             "capabilities": [],
         })
 

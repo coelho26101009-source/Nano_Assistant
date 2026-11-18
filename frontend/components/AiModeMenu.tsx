@@ -35,24 +35,25 @@ import React, { useState } from "react";
 import type { CloudProviderKey, ProviderInfo, ProviderPayload } from "../lib/backend";
 import Icon from "./Icon";
 import { Popover, StatusIndicator } from "./ui";
+import { t } from "../lib/i18n";
 
 export type ProviderMode = "AUTO" | "CLOUD" | "LOCAL";
 
 export const MODES: { value: ProviderMode; label: string; hint: string }[] = [
   {
     value: "AUTO",
-    label: "Automático",
-    hint: "Provedor cloud preferido primeiro. Se falhar, o NANO continua no outro provedor cloud e, por fim, no modelo local.",
+    label: t("Automático"),
+    hint: t("Provedor cloud preferido primeiro. Se falhar, o NANO continua no outro provedor cloud e, por fim, no modelo local."),
   },
   {
     value: "CLOUD",
-    label: "Cloud",
-    hint: "Apenas o provedor cloud escolhido. Se não estiver disponível, o NANO diz — nunca muda sozinho.",
+    label: t("Cloud"),
+    hint: t("Apenas o provedor cloud escolhido. Se não estiver disponível, o NANO diz — nunca muda sozinho."),
   },
   {
     value: "LOCAL",
-    label: "Local",
-    hint: "Apenas Ollama. O texto das mensagens não sai do computador.",
+    label: t("Local"),
+    hint: t("Apenas Ollama. O texto das mensagens não sai do computador."),
   },
 ];
 
@@ -67,18 +68,18 @@ const MODEL_LIMIT = 6;
  */
 export function localModelLabel(model?: string | null): string {
   const raw = String(model ?? "").trim();
-  if (!raw) return "Local";
+  if (!raw) return t("Local");
   // "library/qwen3:8b-instruct" -> "Qwen3 8B". The size is kept because it is
   // the one thing that tells two installed variants of a family apart.
   const [family, tag = ""] = raw.split("/").pop()!.split(":");
-  if (!family) return "Local";
+  if (!family) return t("Local");
   const name = family.charAt(0).toUpperCase() + family.slice(1);
   const size = /^(\d+(?:\.\d+)?[bm])\b/i.exec(tag)?.[1];
   return size ? `${name} ${size.toUpperCase()}` : name;
 }
 
 /** The mode as a person says it, not as an enum. */
-export const MODE_LABEL: Record<ProviderMode, string> = { AUTO: "Auto", CLOUD: "Cloud", LOCAL: "Local" };
+export const MODE_LABEL: Record<ProviderMode, string> = { AUTO: t("Auto"), CLOUD: t("Cloud"), LOCAL: t("Local") };
 
 /**
  * Whether the route fell back because the cloud was never set up.
@@ -115,12 +116,12 @@ export function cloudModelLabel(model?: string | null): string {
 
 /** The text on the pill: "Groq · AUTO", "Gemini … · CLOUD", "Qwen3 · LOCAL". */
 export function providerLabel(providers: ProviderPayload | null, offline = false): string {
-  if (offline) return "Motor offline";
+  if (offline) return t("Motor offline");
   const route = providers?.route;
-  if (!route) return "A ligar…";
+  if (!route) return t("A ligar…");
   const mode = providers?.mode ?? route.mode;
   const modeLabel = MODE_LABEL[mode as ProviderMode] ?? mode;
-  if (!route.usable) return `Sem provedor · ${modeLabel}`;
+  if (!route.usable) return t("Sem provedor · {0}", { 0: modeLabel });
   // Groq is named by its BRAND and the others by their MODEL, which looks
   // inconsistent and is not. Groq's ids are vendor-prefixed paths
   // ("openai/gpt-oss-20b"), so the prettified model reads worse than the one
@@ -136,7 +137,7 @@ export function providerLabel(providers: ProviderPayload | null, offline = false
     : providers?.[route.provider as CloudProviderKey];
   const name =
     route.provider === "ollama" ? localModelLabel(route.model || providers?.ollama?.model)
-    : route.provider === "groq" ? "Groq"
+    : route.provider === "groq" ? t("Groq")
     : (cloudModelLabel(route.model) || info?.name || "—");
   return `${name} · ${modeLabel}`;
 }
@@ -190,26 +191,26 @@ function MenuItem({
  * an unknown state says so rather than implying the provider is fine.
  */
 function providerHint(info?: ProviderInfo): string {
-  if (!info) return "Estado desconhecido";
+  if (!info) return t("Estado desconhecido");
   if (info.temporarily_limited) {
     const seconds = Math.round(info.retry_in_seconds ?? 0);
-    return seconds > 0 ? `Limite temporário — ~${seconds} s` : "Limite temporário atingido";
+    return seconds > 0 ? t("Limite temporário — ~{0} s", { 0: seconds }) : t("Limite temporário atingido");
   }
   switch (info.state) {
-    case "READY": return "Configurado";
+    case "READY": return t("Configurado");
     // SETUP_REQUIRED NO LONGER MEANS ONE THING. It is "no key" and also "a
     // valid key whose account offers nothing Nano can use" -- two different
     // problems with two different fixes. Reading secret.configured is what
     // stops Nano telling somebody to paste a key they already pasted.
     case "SETUP_REQUIRED":
       return info.secret?.configured
-        ? "Sem modelo utilizável nesta conta"
-        : "Falta a chave de API";
-    case "MODEL_UNAVAILABLE": return "Modelo indisponível nesta conta";
-    case "ERROR": return "Chave recusada";
-    case "UNAVAILABLE": return "Sem ligação";
-    case "DISABLED": return "Não usado neste modo";
-    default: return info.state || "Estado desconhecido";
+        ? t("Sem modelo utilizável nesta conta")
+        : t("Falta a chave de API");
+    case "MODEL_UNAVAILABLE": return t("Modelo indisponível nesta conta");
+    case "ERROR": return t("Chave recusada");
+    case "UNAVAILABLE": return t("Sem ligação");
+    case "DISABLED": return t("Não usado neste modo");
+    default: return info.state || t("Estado desconhecido");
   }
 }
 
@@ -268,19 +269,19 @@ export default function AiModeMenu({
     <Popover
       open={open}
       onClose={() => setOpen(false)}
-      label="Modo de inteligência"
+      label={t("Modo de inteligência")}
       trigger={(props) => (
         <button
           {...props}
           type="button"
           className="status-pill status-pill--menu"
           onClick={() => setOpen((v) => !v)}
-          title={`${label}${fellBack ? " — rota alternativa" : ""}. ${healthLabel} — mudar o modo de IA`}
+          title={`${label}${fellBack ? t(" — rota alternativa") : ""}. ${healthLabel} — mudar o modo de IA`}
           data-mode={active}
         >
           <StatusIndicator state={routeState} label="" />
           <span className="status-pill__text">{label}</span>
-          {fellBack && <span className="status-pill__tag">alternativa</span>}
+          {fellBack && <span className="status-pill__tag">{t("alternativa")}</span>}
           <span className="status-pill__caret" aria-hidden="true">
             <Icon name="chevronDown" size={14} strokeWidth={2} />
           </span>
@@ -299,7 +300,7 @@ export default function AiModeMenu({
           label={mode.label}
           hint={mode.hint}
           disabled={busy}
-          title={busy ? "A aplicar a alteração anterior…" : mode.hint}
+          title={busy ? t("A aplicar a alteração anterior…") : mode.hint}
           onClick={() => choose(mode.value)}
         />
       ))}
@@ -309,7 +310,7 @@ export default function AiModeMenu({
       {cloudKeys.length > 1 && (
         <>
           <div className="popover__sep" role="separator" />
-          <p className="popover__label">Provedor cloud</p>
+          <p className="popover__label">{t("Provedor cloud")}</p>
           {cloudKeys.map((key) => (
             <MenuItem
               key={key}
@@ -331,8 +332,7 @@ export default function AiModeMenu({
       {models.length > 0 && (
         <>
           <div className="popover__sep" role="separator" />
-          <p className="popover__label">
-            Modelo de conversa · {preferredInfo?.name ?? preferred}
+          <p className="popover__label">{t("Modelo de conversa · {0}", { 0: preferredInfo?.name ?? preferred })}
           </p>
           {models.map((model) => (
             <MenuItem
@@ -345,10 +345,7 @@ export default function AiModeMenu({
             />
           ))}
           {(preferredInfo?.models?.length ?? 0) > MODEL_LIMIT && (
-            <p className="popover__note">
-              Mais {(preferredInfo?.models?.length ?? 0) - MODEL_LIMIT} modelo(s) em
-              Definições → IA.
-            </p>
+            <p className="popover__note">{t("Mais {0} modelo(s) em Definições → IA.", { 0: (preferredInfo?.models?.length ?? 0) - MODEL_LIMIT })}</p>
           )}
         </>
       )}
@@ -368,7 +365,7 @@ export default function AiModeMenu({
       >
         <span className="popover__item-check" aria-hidden="true"><Icon name="settings" size={14} /></span>
         <span className="popover__item-body">
-          <span className="popover__item-label">Abrir definições de IA</span>
+          <span className="popover__item-label">{t("Abrir definições de IA")}</span>
         </span>
       </button>
     </Popover>

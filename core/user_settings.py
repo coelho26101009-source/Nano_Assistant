@@ -57,6 +57,9 @@ ALLOWED_KEYS: frozenset[str] = frozenset({
     "output_device_index",
     "theme",
     "reduce_motion",
+    # Interface language: "system" follows the OS, or a fixed "en" / "pt-PT".
+    # See core/i18n.py.
+    "language",
     # Memory behaviour. Both were config-file-only before Settings V2, so the
     # Memoria panel could describe them but not change them.
     "memory_facts_enabled",    # let Nano remember durable facts about the user
@@ -93,7 +96,9 @@ def _valid_value(key: str, value: Any) -> bool:
     if key == "preferred_cloud":
         return isinstance(value, str) and value in {"groq", "google", "mistral"}
     if key == "theme":
-        return isinstance(value, str) and value in {"dark", "light"}
+        return isinstance(value, str) and value in {"system", "dark", "light"}
+    if key == "language":
+        return isinstance(value, str) and value in {"system", "en", "pt-PT"}
     # Model IDs are bounded plain strings, never arbitrary JSON containers.
     return isinstance(value, str) and len(value) <= 200 and not any(ord(ch) < 32 for ch in value)
 

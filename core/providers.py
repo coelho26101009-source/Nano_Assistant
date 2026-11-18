@@ -40,6 +40,7 @@ from typing import Any
 
 import httpx
 
+from core.i18n import tr
 from core import (google_provider, http_tls, model_defaults, mistral_provider,
                   ollama_service, secret_store)
 
@@ -258,17 +259,17 @@ def test_groq(api_key: str | None = None) -> dict[str, Any]:
     latency_ms = int((time.monotonic() - started) * 1000)
 
     if error == "no_api_key":
-        return {"ok": False, "error": "no_api_key", "detail": "Nenhuma chave de API configurada.", "models": []}
+        return {"ok": False, "error": "no_api_key", "detail": tr("Nenhuma chave de API configurada."), "models": []}
     if error == "invalid_api_key":
-        return {"ok": False, "error": "invalid_api_key", "detail": "A chave de API foi recusada pelo Groq.", "models": []}
+        return {"ok": False, "error": "invalid_api_key", "detail": tr("A chave de API foi recusada pelo Groq."), "models": []}
     if error:
-        return {"ok": False, "error": error, "detail": f"Não foi possível contactar o Groq: {error}", "models": []}
+        return {"ok": False, "error": error, "detail": tr("Não foi possível contactar o Groq: {error}", error=error), "models": []}
     if not models:
-        return {"ok": False, "error": "no_chat_models", "detail": "A chave é válida mas a conta não tem modelos de chat.", "models": []}
+        return {"ok": False, "error": "no_chat_models", "detail": tr("A chave é válida mas a conta não tem modelos de chat."), "models": []}
 
     return {
         "ok": True,
-        "detail": f"Ligação estabelecida ({len(models)} modelos disponíveis).",
+        "detail": tr("Ligação estabelecida ({count} modelos disponíveis).", count=len(models)),
         "models": models,
         # THE SAME RULE THE DESCRIBE PATH USES. Two implementations of "which
         # model should Nano adopt" would drift, and this pair already had:
@@ -296,16 +297,16 @@ def describe_groq(configured_model: str = "", complex_model: str = "") -> dict[s
             "state": ProviderState.SETUP_REQUIRED.value,
             "model": fast, "models": [], "secret": secret, "tiers": tiers,
             "model_source": _model_source(fast),
-            "detail": "Adiciona uma chave de API do Groq nas Definições para usar a cloud.",
+            "detail": tr("Adiciona uma chave de API do Groq nas Definições para usar a cloud."),
         }
 
     models, error = list_groq_models()
     if error:
         state = ProviderState.ERROR if error == "invalid_api_key" else ProviderState.UNAVAILABLE
         detail = (
-            "A chave de API do Groq foi recusada. Verifica-a nas Definições."
+            tr("A chave de API do Groq foi recusada. Verifica-a nas Definições.")
             if error == "invalid_api_key"
-            else f"O Groq não está acessível ({error})."
+            else tr("O Groq não está acessível ({error}).", error=error)
         )
         return {
             "id": "groq", "name": "Groq", "kind": "cloud", "role": "primary",
@@ -323,13 +324,13 @@ def describe_groq(configured_model: str = "", complex_model: str = "") -> dict[s
     missing = [m for m, ok in ((fast, fast_ok), (strong, strong_ok)) if not ok]
 
     if fast_ok and strong_ok:
-        detail = f"Pronto. Conversa: '{fast}'. Complexo: '{strong}'."
+        detail = tr("Pronto. Conversa: '{fast}'. Complexo: '{strong}'.", fast=fast, strong=strong)
     elif fast_ok:
-        detail = (f"Conversa pronta com '{fast}'. O modelo complexo '{strong}' não existe "
-                  f"nesta conta; pedidos complexos usam '{fast}'.")
+        detail = tr("Conversa pronta com '{fast}'. O modelo complexo '{strong}' não existe "
+                    "nesta conta; pedidos complexos usam '{fast}'.", fast=fast, strong=strong)
     else:
-        detail = (f"O modelo '{', '.join(missing)}' não existe nesta conta. "
-                  f"Disponíveis: {', '.join(models[:4])}.")
+        detail = tr("O modelo '{missing}' não existe nesta conta. Disponíveis: {available}.",
+                    missing=", ".join(missing), available=", ".join(models[:4]))
 
     return {
         "id": "groq", "name": "Groq", "kind": "cloud", "role": "primary",
@@ -525,7 +526,7 @@ def resolve_route(mode: ProviderMode, groq: dict, ollama: dict, *,
     if mode == ProviderMode.LOCAL:
         return _route("ollama", ollama["model"], usable=ollama_ready, fallback=False,
                       mode=mode, tier=tier,
-                      reason=("Modo Local: apenas o Ollama é usado." if ollama_ready
+                      reason=(tr("Modo Local: apenas o Ollama é usado.") if ollama_ready
                               else ollama["detail"]))
 
     if mode == ProviderMode.CLOUD:
@@ -537,7 +538,7 @@ def resolve_route(mode: ProviderMode, groq: dict, ollama: dict, *,
         ready = _is_ready(chosen)
         return _route(chosen_id, cloud_model_for(chosen, tier),
                       usable=ready, fallback=False, mode=mode, tier=tier,
-                      reason=(f"Modo Cloud: apenas o {provider_name(chosen_id)} é usado."
+                      reason=(tr("Modo Cloud: apenas o {name} é usado.", name=provider_name(chosen_id))
                               if ready else str(chosen.get("detail") or "")))
 
     # AUTO
@@ -546,7 +547,7 @@ def resolve_route(mode: ProviderMode, groq: dict, ollama: dict, *,
         (chosen_id, _chosen), *rest = ready_clouds
         return _route(chosen_id, cloud_model_for(_chosen, tier),
                       usable=True, fallback=False, mode=mode, tier=tier,
-                      reason=f"{provider_name(chosen_id)} disponível (sem custo de RAM local).",
+                      reason=tr("{name} disponível (sem custo de RAM local).", name=provider_name(chosen_id)),
                       alternatives=[pid for pid, _ in rest],
                       passed_over=_passed_over(clouds, chosen_id))
     if ollama_ready:
@@ -558,12 +559,12 @@ def resolve_route(mode: ProviderMode, groq: dict, ollama: dict, *,
                       # had fallen back -- the case the diagnostics panel most
                       # needs to explain.
                       fallback=True, mode=mode, tier=tier,
-                      reason=f"Cloud indisponível — a usar o Ollama local. {details}",
+                      reason=tr("Cloud indisponível — a usar o Ollama local. {details}", details=details),
                       passed_over=_passed_over(clouds))
 
     cloud_detail = " ".join(f"{provider_name(pid)}: {p.get('detail')}" for pid, p in clouds)
     return _route("none", "", usable=False, fallback=False, mode=mode, tier=tier,
-                  reason=f"Nenhum provedor disponível. {cloud_detail} Ollama: {ollama['detail']}",
+                  reason=tr("Nenhum provedor disponível. {clouds} Ollama: {ollama}", clouds=cloud_detail, ollama=ollama['detail']),
                   passed_over=_passed_over(clouds))
 
 
@@ -679,9 +680,9 @@ def rate_limit_message(info: dict[str, Any], provider: Any = None) -> str:
     wait = info.get("wait_seconds")
     if wait and wait > 0:
         rounded = int(wait) if wait >= 1 else 1
-        return (f"Limite temporário do {name} atingido. "
-                f"Disponível novamente em ~{rounded} s.")
-    return f"Limite temporário do {name} atingido. Tenta novamente dentro de momentos."
+        return tr("Limite temporário do {name} atingido. Disponível novamente em ~{seconds} s.",
+                  name=name, seconds=rounded)
+    return tr("Limite temporário do {name} atingido. Tenta novamente dentro de momentos.", name=name)
 
 
 

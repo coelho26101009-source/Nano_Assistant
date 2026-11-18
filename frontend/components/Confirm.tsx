@@ -28,6 +28,7 @@
  */
 import React from "react";
 import { Button, Modal, RiskBadge, sanitizeArgs } from "./ui";
+import { t } from "../lib/i18n";
 
 interface ConfirmProps {
   message: string;
@@ -49,37 +50,37 @@ export default function ConfirmModal({ message, meta, onConfirm, onCancel }: Con
     <Modal
       open
       onClose={onCancel}
-      eyebrow="Autorização necessária"
+      eyebrow={t("Autorização necessária")}
       title={action ?? message}
       width="narrow"
       footer={
         <>
-          <Button onClick={onCancel}>Recusar</Button>
-          <Button variant="primary" onClick={onConfirm}>Autorizar</Button>
+          <Button onClick={onCancel}>{t("Recusar")}</Button>
+          <Button variant="primary" onClick={onConfirm}>{t("Autorizar")}</Button>
         </>
       }
     >
       <dl className="kv">
         {target && (
           <>
-            <dt>Sobre</dt>
+            <dt>{t("Sobre")}</dt>
             <dd>{target}</dd>
           </>
         )}
         {scope && (
           <>
-            <dt>Alcance</dt>
+            <dt>{t("Alcance")}</dt>
             <dd>{scope}</dd>
           </>
         )}
-        <dt>Ferramenta</dt>
+        <dt>{t("Ferramenta")}</dt>
         <dd className="mono">{tool}</dd>
       </dl>
 
       {/* The size of the decision, when the target alone does not show it. */}
       {(preview?.note || previewItems.length > 0) && (
         <div style={{ marginTop: 16 }}>
-          <div className="cc-tile-label">O que vai ser afetado</div>
+          <div className="cc-tile-label">{t("O que vai ser afetado")}</div>
           <div className="perm-args">
             {preview?.note && <div><strong>{preview.note}</strong></div>}
             {previewItems.map((item, index) => (
@@ -91,7 +92,7 @@ export default function ConfirmModal({ message, meta, onConfirm, onCancel }: Con
 
       {args.length > 0 && (
         <div style={{ marginTop: 16 }}>
-          <div className="cc-tile-label">Argumentos que vais autorizar</div>
+          <div className="cc-tile-label">{t("Argumentos que vais autorizar")}</div>
           <div className="perm-args">
             {args.map(({ key, value }) => (
               <div key={key}><strong>{key}</strong>: {value}</div>
@@ -100,9 +101,7 @@ export default function ConfirmModal({ message, meta, onConfirm, onCancel }: Con
         </div>
       )}
 
-      <p className="dim" style={{ marginTop: 16, fontSize: 12 }}>
-        Autorizar aplica-se apenas a esta execução.
-      </p>
+      <p className="dim" style={{ marginTop: 16, fontSize: 12 }}>{t("Autorizar aplica-se apenas a esta execução.")}</p>
     </Modal>
   );
 }

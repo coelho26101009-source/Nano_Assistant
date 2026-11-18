@@ -15,6 +15,7 @@ import Icon from "./Icon";
 import NanoLogo from "./NanoLogo";
 import { Button, formatTime } from "./ui";
 import { BRAND_NAME } from "../lib/brand";
+import { t } from "../lib/i18n";
 
 export type ToolEvent = {
   name: string;
@@ -71,10 +72,10 @@ export interface ResponseMeta {
 
 /** Provider ids as a person says them. Unknown ids print as they arrived. */
 const PROVIDER_LABEL: Record<string, string> = {
-  google: "Google Gemini",
-  groq: "Groq",
-  mistral: "Mistral",
-  ollama: "Ollama (local)",
+  google: t("Google Gemini"),
+  groq: t("Groq"),
+  mistral: t("Mistral"),
+  ollama: t("Ollama (local)"),
 };
 
 export function providerName(id?: string): string {
@@ -92,21 +93,21 @@ export function providerName(id?: string): string {
  * copy; the vocabulary lives in Python because routing decides it.
  */
 const REASON_TEXT: Record<string, string> = {
-  rate_limit: "limite temporário atingido",
-  timeout: "demorou demasiado a responder",
-  unavailable: "não foi possível contactar",
-  provider_error: "o serviço do provedor falhou",
-  auth: "a chave de API foi recusada",
-  bad_request: "o pedido foi recusado",
-  model_unavailable: "o modelo não está disponível nesta conta",
-  cooldown: "em pausa após uma falha recente",
-  setup_required: "falta configurar a chave ou o modelo",
-  cancelled: "o pedido foi cancelado",
-  no_cloud_available: "nenhum provedor cloud estava disponível",
-  cloud_mode: "modo Cloud: sem recurso ao modelo local",
-  partial_answer: "a resposta foi interrompida a meio",
-  routing_bug: "erro de encaminhamento interno",
-  other: "motivo não classificado",
+  rate_limit: t("limite temporário atingido"),
+  timeout: t("demorou demasiado a responder"),
+  unavailable: t("não foi possível contactar"),
+  provider_error: t("o serviço do provedor falhou"),
+  auth: t("a chave de API foi recusada"),
+  bad_request: t("o pedido foi recusado"),
+  model_unavailable: t("o modelo não está disponível nesta conta"),
+  cooldown: t("em pausa após uma falha recente"),
+  setup_required: t("falta configurar a chave ou o modelo"),
+  cancelled: t("o pedido foi cancelado"),
+  no_cloud_available: t("nenhum provedor cloud estava disponível"),
+  cloud_mode: t("modo Cloud: sem recurso ao modelo local"),
+  partial_answer: t("a resposta foi interrompida a meio"),
+  routing_bug: t("erro de encaminhamento interno"),
+  other: t("motivo não classificado"),
 };
 
 /**
@@ -255,11 +256,11 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   return (
     <div className="code-block">
       <div className="code-block__head">
-        <span>{lang || "código"}</span>
+        <span>{lang || t("código")}</span>
         <span className="code-block__spacer" />
-        <Button variant="ghost" size="sm" onClick={copy} aria-label="Copiar código">
+        <Button variant="ghost" size="sm" onClick={copy} aria-label={t("Copiar código")}>
           <Icon name={copied ? "check" : "copy"} size={14} />
-          {copied ? "Copiado" : "Copiar"}
+          {copied ? t("Copiado") : t("Copiar")}
         </Button>
       </div>
       <pre><code>{highlight(code, lang)}</code></pre>
@@ -390,7 +391,7 @@ function ToolCard({ event }: { event: ToolEvent }) {
         </span>
         {event.detail && (
           <button type="button" className="tool-card__toggle" onClick={() => setOpen((v) => !v)}
-                  aria-expanded={open} aria-label="Detalhes técnicos">
+                  aria-expanded={open} aria-label={t("Detalhes técnicos")}>
             {open ? "ocultar" : "detalhes"}
           </button>
         )}
@@ -452,64 +453,64 @@ function TechnicalDetails({ meta, id }: { meta: ResponseMeta; id: string }) {
             <path d={CHEVRON} />
           </svg>
         </span>
-        <span>Detalhes técnicos</span>
-        {surprising && <span className="msg__meta-tag">fallback</span>}
+        <span>{t("Detalhes técnicos")}</span>
+        {surprising && <span className="msg__meta-tag">{t("alternativa")}</span>}
       </button>
 
       <div id={panelId} className="msg__meta-panel" hidden={!open}>
         <dl className="kv">
-          <dt>Provedor</dt>
+          <dt>{t("Provedor")}</dt>
           <dd>
             {providerName(meta.provider)}
-            {surprising ? " · fallback" : ""}
+            {surprising ? t(" · fallback") : ""}
           </dd>
-          <dt>Modelo</dt><dd>{meta.model}</dd>
-          <dt>Modo</dt><dd>{[meta.mode, meta.tier].filter(Boolean).join(" · ")}</dd>
+          <dt>{t("Modelo")}</dt><dd>{meta.model}</dd>
+          <dt>{t("Modo")}</dt><dd>{[meta.mode, meta.tier].filter(Boolean).join(" · ")}</dd>
           {fellBack && from && (
             <>
-              <dt>Origem</dt>
+              <dt>{t("Origem")}</dt>
               <dd>{providerName(from)} → {providerName(meta.provider)}</dd>
             </>
           )}
           {reason && (
             <>
-              <dt>Motivo</dt>
+              <dt>{t("Motivo")}</dt>
               <dd>
                 {reason}
                 {meta.retry_in_seconds ? ` · ~${Math.round(meta.retry_in_seconds)} s` : ""}
               </dd>
             </>
           )}
-          <dt>Pedido</dt><dd>{meta.task}</dd>
-          <dt>Ferramentas</dt>
-          <dd>{meta.tools_offered ?? 0} de {meta.tools_available ?? 0}</dd>
+          <dt>{t("Pedido")}</dt><dd>{meta.task}</dd>
+          <dt>{t("Ferramentas")}</dt>
+          <dd>{t("{0} de {1}", { 0: meta.tools_offered ?? 0, 1: meta.tools_available ?? 0 })}</dd>
           {meta.prompt_tokens != null && (
             <>
-              <dt>Tokens</dt>
-              <dd>{meta.prompt_tokens} entrada · {meta.completion_tokens ?? 0} saída</dd>
+              <dt>{t("Tokens")}</dt>
+              <dd>{t("{0} entrada · {1} saída", { 0: meta.prompt_tokens, 1: meta.completion_tokens ?? 0 })}</dd>
             </>
           )}
           {meta.time_to_first_token_ms != null && (
             <>
-              <dt>1.º token</dt><dd>{meta.time_to_first_token_ms} ms</dd>
+              <dt>{t("1.º token")}</dt><dd>{meta.time_to_first_token_ms} ms</dd>
             </>
           )}
           {meta.total_latency_ms != null && (
             <>
-              <dt>Total</dt><dd>{meta.total_latency_ms} ms</dd>
+              <dt>{t("Total")}</dt><dd>{meta.total_latency_ms} ms</dd>
             </>
           )}
         </dl>
 
         {crossed && (
-          <ol className="meta-chain" aria-label="Provedores tentados nesta resposta">
+          <ol className="meta-chain" aria-label={t("Provedores tentados nesta resposta")}>
             {attempts.map((attempt, index) => (
               <li key={`${attempt.provider}-${index}`}
                   className={`meta-chain__step${attempt.outcome === "ok" ? " is-ok" : ""}`}>
                 <span className="meta-chain__provider">{providerName(attempt.provider)}</span>
                 {attempt.model && <span className="meta-chain__model">{attempt.model}</span>}
                 <span className="meta-chain__outcome">
-                  {attempt.outcome === "ok" ? "respondeu" : reasonText(attempt.outcome) || "sem resposta"}
+                  {attempt.outcome === "ok" ? "respondeu" : reasonText(attempt.outcome) || t("sem resposta")}
                 </span>
               </li>
             ))}
@@ -601,7 +602,7 @@ function MessageBubble({
 
       {editing ? (
         <div className="msg__edit">
-          <label className="sr-only" htmlFor={`edit-${message.id}`}>Editar mensagem</label>
+          <label className="sr-only" htmlFor={`edit-${message.id}`}>{t("Editar mensagem")}</label>
           <textarea
             id={`edit-${message.id}`} className="msg__edit-input" value={draft} autoFocus
             rows={Math.min(8, Math.max(2, draft.split("\n").length))}
@@ -612,10 +613,8 @@ function MessageBubble({
             }}
           />
           <div className="msg__edit-bar">
-            <Button size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
-            <Button size="sm" variant="primary" onClick={saveEdit} disabled={!draft.trim()}>
-              Enviar
-            </Button>
+            <Button size="sm" onClick={() => setEditing(false)}>{t("Cancelar")}</Button>
+            <Button size="sm" variant="primary" onClick={saveEdit} disabled={!draft.trim()}>{t("Enviar")}</Button>
           </div>
         </div>
       ) : (
@@ -632,7 +631,7 @@ function MessageBubble({
               a pending answer showed the N twice, one above the other. */}
           {message.streaming && !text && (
             <span className="thinking" role="status" aria-live="polite">
-              <span className="thinking__text">{status?.trim() || "A pensar…"}</span>
+              <span className="thinking__text">{status?.trim() || t("A pensar…")}</span>
             </span>
           )}
           {message.streaming && text && <span className="caret" aria-hidden="true" />}
@@ -643,20 +642,20 @@ function MessageBubble({
         <div className={`msg__actions${pinned ? " msg__actions--pinned" : ""}`}>
           <button
             type="button" className="msg__action" onClick={copy}
-            aria-label={copied ? "Copiado" : isUser ? "Copiar mensagem" : "Copiar resposta"}
-            title={copied ? "Copiado" : "Copiar"}
+            aria-label={copied ? t("Copiado") : isUser ? t("Copiar mensagem") : t("Copiar resposta")}
+            title={copied ? t("Copiado") : t("Copiar")}
           >
             <Icon name={copied ? "check" : "copy"} size={15} />
           </button>
           {onEdit && (
             <button type="button" className="msg__action" onClick={startEdit}
-                    aria-label="Editar e reenviar" title="Editar">
+                    aria-label={t("Editar e reenviar")} title={t("Editar")}>
               <Icon name="edit" size={15} />
             </button>
           )}
           {onRetry && (
             <button type="button" className="msg__action" onClick={onRetry}
-                    aria-label="Tentar de novo" title="Tentar de novo">
+                    aria-label={t("Tentar de novo")} title={t("Tentar de novo")}>
               <Icon name="refresh" size={15} />
             </button>
           )}
@@ -732,9 +731,9 @@ export function Conversation({
             one thing to do here is start talking. */}
         <div className="chat-hero">
           <NanoLogo size={56} className="chat-hero__mark" />
-          <h1 className="chat-hero__title">Como posso ajudar?</h1>
+          <h1 className="chat-hero__title">{t("Como posso ajudar?")}</h1>
           {connecting && (
-            <p className="chat-hero__hint" role="status">A ligar ao motor do {BRAND_NAME}…</p>
+            <p className="chat-hero__hint" role="status">{t("A ligar ao motor do {0}…", { 0: BRAND_NAME })}</p>
           )}
         </div>
       </div>
@@ -742,7 +741,7 @@ export function Conversation({
   }
 
   return (
-    <div className="conversation" role="log" aria-live="polite" aria-label="Conversa">
+    <div className="conversation" role="log" aria-live="polite" aria-label={t("Conversa")}>
       <div className="conversation__inner">
         {messages.map((message, index) => {
           const isLast = index === lastIndex;
@@ -759,7 +758,7 @@ export function Conversation({
         {standalone && (
           <div className="thinking thinking--standalone" role="status" aria-live="polite">
             <span className="thinking__mark" aria-hidden="true"><NanoLogo size={22} /></span>
-            <span className="thinking__text">{status?.trim() || "A pensar…"}</span>
+            <span className="thinking__text">{status?.trim() || t("A pensar…")}</span>
           </div>
         )}
         <div ref={endRef} />
@@ -840,21 +839,21 @@ export function Composer({
   const voiceTitle = readOnlyReason
     ? readOnlyReason
     : listening
-      ? "A ouvir — clica para cancelar"
-      : voiceReady ? `Falar com o ${BRAND_NAME} (Ctrl+M)`
-        : "Voz por configurar — abre Definições → Voz";
+      ? t("A ouvir — clica para cancelar")
+      : voiceReady ? t("Falar com o {0} (Ctrl+M)", { 0: BRAND_NAME })
+        : t("Voz por configurar — abre Definições → Voz");
 
   // The placeholder and the line in the button bar are two halves of one
   // sentence, not the same sentence twice.
   const placeholder = readOnlyReason
-    ? "Conversa anterior — só leitura."
-    : disabled ? `A aguardar o motor do ${BRAND_NAME}…` : `Escreve uma mensagem ao ${BRAND_NAME}…`;
+    ? t("Conversa anterior — só leitura.")
+    : disabled ? t("A aguardar o motor do {0}…", { 0: BRAND_NAME }) : t("Escreve uma mensagem ao {0}…", { 0: BRAND_NAME });
 
   return (
     <div className="composer-wrap">
       <div className="composer-inner">
         <div className={`composer${listening ? " composer--listening" : ""}`}>
-          <label className="sr-only" htmlFor="composer-input">Mensagem para o {BRAND_NAME}</label>
+          <label className="sr-only" htmlFor="composer-input">{t("Mensagem para o {0}", { 0: BRAND_NAME })}</label>
           <textarea
             id="composer-input" ref={ref} className="composer__textarea" rows={1}
             value={value} disabled={locked}
@@ -871,16 +870,14 @@ export function Composer({
                 with the reason rather than silently doing nothing when clicked. */}
             <Button
               variant="ghost" icon size="sm" disabled
-              title="Anexos: brevemente" aria-label="Anexar ficheiro (brevemente)"
+              title={t("Anexos: brevemente")} aria-label={t("Anexar ficheiro (brevemente)")}
             >
               <Icon name="attach" size={17} />
             </Button>
 
             {listening && (
               <span className="mic-indicator" role="status">
-                <span className="mic-indicator__wave" aria-hidden="true"><i /><i /><i /></span>
-                A ouvir…
-              </span>
+                <span className="mic-indicator__wave" aria-hidden="true"><i /><i /><i /></span>{t("A ouvir…")}</span>
             )}
             {/* No "voz" status chip here any more. Voice not being set up is
                 not news to someone who types, and an amber dot that never
@@ -907,7 +904,7 @@ export function Composer({
             {thinking ? (
               <button
                 type="button" className="composer__send" onClick={onStop}
-                aria-label="Parar a resposta" title="Parar"
+                aria-label={t("Parar a resposta")} title={t("Parar")}
               >
                 <Icon name="stop" size={14} fill />
               </button>
@@ -915,8 +912,8 @@ export function Composer({
               <button
                 type="button" className="composer__send" onClick={onSend}
                 disabled={locked || !value.trim()}
-                aria-label="Enviar mensagem"
-                title={readOnlyReason ?? "Enviar (Enter)"}
+                aria-label={t("Enviar mensagem")}
+                title={readOnlyReason ?? t("Enviar (Enter)")}
               >
                 <Icon name="send" size={18} strokeWidth={2.2} />
               </button>

@@ -1,3 +1,4 @@
+import { t } from "../lib/i18n";
 /**
  * Types for the Memória section: long-term memories and the Second Brain.
  *
@@ -130,45 +131,45 @@ export type MemoryOverview = {
 
 /** Portuguese labels for the memory categories the backend defines. */
 export const KIND_LABEL: Record<string, string> = {
-  preference: "Preferência",
-  fact: "Facto",
-  hardware: "Hardware",
-  software: "Software",
-  project: "Projeto",
-  goal: "Objetivo",
-  decision: "Decisão",
-  person: "Pessoa",
-  other: "Outro",
+  preference: t("Preferência"),
+  fact: t("Facto"),
+  hardware: t("Hardware"),
+  software: t("Software"),
+  project: t("Projeto"),
+  goal: t("Objetivo"),
+  decision: t("Decisão"),
+  person: t("Pessoa"),
+  other: t("Outro"),
 };
 
 export const NODE_TYPE_LABEL: Record<string, string> = {
-  person: "Pessoa",
-  project: "Projeto",
-  topic: "Tema",
-  game: "Jogo",
-  software: "Software",
-  device: "Dispositivo",
-  goal: "Objetivo",
-  preference: "Preferência",
-  decision: "Decisão",
-  note: "Nota",
+  person: t("Pessoa"),
+  project: t("Projeto"),
+  topic: t("Tema"),
+  game: t("Jogo"),
+  software: t("Software"),
+  device: t("Dispositivo"),
+  goal: t("Objetivo"),
+  preference: t("Preferência"),
+  decision: t("Decisão"),
+  note: t("Nota"),
 };
 
 export const RELATION_LABEL: Record<string, string> = {
-  related_to: "relacionado com",
-  part_of: "faz parte de",
+  related_to: t("relacionado com"),
+  part_of: t("faz parte de"),
   uses: "usa",
   prefers: "prefere",
-  works_on: "trabalha em",
+  works_on: t("trabalha em"),
   decided: "decidiu",
-  mentioned_in: "mencionado em",
-  depends_on: "depende de",
+  mentioned_in: t("mencionado em"),
+  depends_on: t("depende de"),
 };
 
 export const ORIGIN_LABEL: Record<string, string> = {
-  explicit: "pedido pelo utilizador",
-  manual: "criado pelo utilizador",
-  inferred: "inferido pelo NANO",
+  explicit: t("pedido pelo utilizador"),
+  manual: t("criado pelo utilizador"),
+  inferred: t("inferido pelo NANO"),
 };
 
 export function kindLabel(kind: string): string {

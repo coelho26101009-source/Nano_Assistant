@@ -17,6 +17,7 @@ import AiModeMenu, { type ProviderMode } from "./AiModeMenu";
 import Icon from "./Icon";
 import WindowControls from "./TitleBar";
 import type { CloudProviderKey, ProviderPayload } from "../lib/backend";
+import { t } from "../lib/i18n";
 
 export default function TopBar({
   title, actions, showMenu, railOpen, onToggleRail,
@@ -52,8 +53,8 @@ export default function TopBar({
         <button
           type="button" className="icon-btn topbar__menu" onClick={onToggleRail}
           aria-expanded={railOpen}
-          aria-label={railOpen ? "Fechar barra lateral" : "Abrir barra lateral"}
-          title={railOpen ? "Fechar barra lateral (Ctrl+B)" : "Abrir barra lateral (Ctrl+B)"}
+          aria-label={railOpen ? t("Fechar barra lateral") : t("Abrir barra lateral")}
+          title={railOpen ? t("Fechar barra lateral (Ctrl+B)") : t("Abrir barra lateral (Ctrl+B)")}
         >
           <Icon name="menu" />
         </button>
@@ -85,8 +86,8 @@ export default function TopBar({
         <button
           type="button" className="icon-btn bell"
           onClick={onOpenPermissions}
-          aria-label={pendingCount > 0 ? `${pendingCount} autorizações por rever` : "Sem autorizações pendentes"}
-          title={pendingCount > 0 ? `${pendingCount} por autorizar` : "Sem autorizações pendentes"}
+          aria-label={pendingCount > 0 ? t("{0} autorizações por rever", { 0: pendingCount }) : t("Sem autorizações pendentes")}
+          title={pendingCount > 0 ? t("{0} por autorizar", { 0: pendingCount }) : t("Sem autorizações pendentes")}
         >
           <Icon name="bell" size={17} />
           {pendingCount > 0 && <span className="bell__dot" />}

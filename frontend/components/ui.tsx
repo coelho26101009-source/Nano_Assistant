@@ -7,6 +7,7 @@
  */
 import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { t } from "../lib/i18n";
 
 /* ── Readiness vocabulary ─────────────────────────────────────────────────
  * The only states the UI may display. There is deliberately no "online"
@@ -47,41 +48,41 @@ const STATE_TONE: Record<string, string> = {
 };
 
 const STATE_LABEL: Record<string, string> = {
-  READY: "Pronto",
-  WORKING: "A trabalhar",
-  PROCESSING: "A processar",
-  LISTENING: "A ouvir",
-  WAITING: "Em espera",
-  APPROVAL_REQUIRED: "Precisa de autorização",
-  SETUP_REQUIRED: "Configuração necessária",
-  MODEL_MISSING: "Modelo em falta",
-  MODEL_UNAVAILABLE: "Modelo indisponível",
-  MODEL_LOADING: "A carregar modelo",
-  PROVIDER_READY: "Provedor pronto",
-  STT_UNAVAILABLE: "Transcrição indisponível",
-  MIC_UNAVAILABLE: "Microfone indisponível",
-  OLLAMA_UNAVAILABLE: "Ollama indisponível",
-  OLLAMA_NOT_INSTALLED: "Ollama não instalado",
-  UNAVAILABLE: "Indisponível",
-  NOT_INSTALLED: "Não instalado",
-  BACKEND_OFFLINE: "Motor offline",
-  DISABLED: "Desativado",
-  OFFLINE: "Offline",
-  NOT_AVAILABLE: "Não disponível",
-  UNKNOWN: "Desconhecido",
-  ERROR: "Erro",
-  EXPERIMENTAL: "Experimental",
+  READY: t("Pronto"),
+  WORKING: t("A trabalhar"),
+  PROCESSING: t("A processar"),
+  LISTENING: t("A ouvir"),
+  WAITING: t("Em espera"),
+  APPROVAL_REQUIRED: t("Precisa de autorização"),
+  SETUP_REQUIRED: t("Configuração necessária"),
+  MODEL_MISSING: t("Modelo em falta"),
+  MODEL_UNAVAILABLE: t("Modelo indisponível"),
+  MODEL_LOADING: t("A carregar modelo"),
+  PROVIDER_READY: t("Provedor pronto"),
+  STT_UNAVAILABLE: t("Transcrição indisponível"),
+  MIC_UNAVAILABLE: t("Microfone indisponível"),
+  OLLAMA_UNAVAILABLE: t("Ollama indisponível"),
+  OLLAMA_NOT_INSTALLED: t("Ollama não instalado"),
+  UNAVAILABLE: t("Indisponível"),
+  NOT_INSTALLED: t("Não instalado"),
+  BACKEND_OFFLINE: t("Motor offline"),
+  DISABLED: t("Desativado"),
+  OFFLINE: t("Offline"),
+  NOT_AVAILABLE: t("Não disponível"),
+  UNKNOWN: t("Desconhecido"),
+  ERROR: t("Erro"),
+  EXPERIMENTAL: t("Experimental"),
   // Task statuses.
-  QUEUED: "Em fila",
-  PLANNING: "A planear",
-  RUNNING: "A executar",
-  RETRYING: "A repetir",
-  RECOVERABLE: "Recuperável",
-  WAITING_FOR_PERMISSION: "Precisa de autorização",
-  NEEDS_ATTENTION: "Precisa de atenção",
-  COMPLETED: "Concluída",
-  CANCELLED: "Cancelada",
-  FAILED: "Falhou",
+  QUEUED: t("Em fila"),
+  PLANNING: t("A planear"),
+  RUNNING: t("A executar"),
+  RETRYING: t("A repetir"),
+  RECOVERABLE: t("Recuperável"),
+  WAITING_FOR_PERMISSION: t("Precisa de autorização"),
+  NEEDS_ATTENTION: t("Precisa de atenção"),
+  COMPLETED: t("Concluída"),
+  CANCELLED: t("Cancelada"),
+  FAILED: t("Falhou"),
 };
 
 export function normalizeState(value: unknown): ReadinessState {
@@ -141,7 +142,7 @@ export function Badge({
 export function RiskBadge({ risk }: { risk?: string }) {
   const level = String(risk ?? "medium").toLowerCase();
   const known = ["low", "medium", "high", "critical"].includes(level) ? level : "medium";
-  const labels: Record<string, string> = { low: "baixo", medium: "médio", high: "alto", critical: "crítico" };
+  const labels: Record<string, string> = { low: "baixo", medium: t("médio"), high: "alto", critical: t("crítico") };
   return <span className={`badge badge--risk-${known}`}>{labels[known]}</span>;
 }
 
@@ -296,9 +297,9 @@ export function SecretField({
           <span className="input input--mono" style={{ flex: 1, minWidth: 0 }} aria-label={`${label} guardada`}>
             {masked || "••••••••"}
           </span>
-          <Button size="sm" onClick={() => setEditing(true)}>Alterar</Button>
-          <Button size="sm" onClick={() => onTest()}>Testar</Button>
-          <Button size="sm" variant="danger" onClick={() => onRemove()}>Remover</Button>
+          <Button size="sm" onClick={() => setEditing(true)}>{t("Alterar")}</Button>
+          <Button size="sm" onClick={() => onTest()}>{t("Testar")}</Button>
+          <Button size="sm" variant="danger" onClick={() => onRemove()}>{t("Remover")}</Button>
         </div>
       ) : (
         <div className="field__row">
@@ -306,15 +307,15 @@ export function SecretField({
             id={inputId} type="password" className="input input--mono"
             style={{ flex: 1, minWidth: 0 }}
             autoComplete="off" spellCheck={false}
-            placeholder={placeholder ?? "Cola aqui a tua chave"}
+            placeholder={placeholder ?? t("Cola aqui a tua chave")}
             value={value} disabled={busy}
             onChange={(event) => setValue(event.target.value)}
             onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); save(); } }}
           />
           <Button size="sm" variant="primary" onClick={save} disabled={busy || !value.trim()}>
-            {busy ? "A validar…" : "Guardar"}
+            {busy ? t("A validar…") : t("Guardar")}
           </Button>
-          {configured && <Button size="sm" onClick={() => { setEditing(false); setValue(""); }}>Cancelar</Button>}
+          {configured && <Button size="sm" onClick={() => { setEditing(false); setValue(""); }}>{t("Cancelar")}</Button>}
         </div>
       )}
     </Field>
@@ -389,24 +390,24 @@ export function ErrorState({
     <div className="error-state" role="alert">
       <div className="error-state__title">
         <span aria-hidden="true">⚠</span>
-        <span>{compact ? normalized.message : "Algo correu mal"}</span>
+        <span>{compact ? normalized.message : t("Algo correu mal")}</span>
       </div>
       {!compact && <div className="error-state__body">{normalized.message}</div>}
       {(onRetry || hasDetail) && (
         <div className="error-state__actions">
-          {onRetry && <Button size="sm" onClick={onRetry}>Tentar novamente</Button>}
+          {onRetry && <Button size="sm" onClick={onRetry}>{t("Tentar novamente")}</Button>}
           {hasDetail && (
             <Button size="sm" variant="ghost" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-              {open ? "Ocultar detalhes" : "Detalhes"}
+              {open ? t("Ocultar detalhes") : t("Detalhes")}
             </Button>
           )}
         </div>
       )}
       {open && hasDetail && (
         <div className="error-state__details">
-          {normalized.component && <div>componente: {normalized.component}</div>}
-          {normalized.code && <div>código: {normalized.code}</div>}
-          {normalized.timestamp && <div>quando: {normalized.timestamp}</div>}
+          {normalized.component && <div>{t("componente: {0}", { 0: normalized.component })}</div>}
+          {normalized.code && <div>{t("código: {0}", { 0: normalized.code })}</div>}
+          {normalized.timestamp && <div>{t("quando: {0}", { 0: normalized.timestamp })}</div>}
           {normalized.detail && <div style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>{normalized.detail}</div>}
         </div>
       )}
@@ -473,7 +474,7 @@ export function Modal({
             {eyebrow && <div className="modal-eyebrow">{eyebrow}</div>}
             <h2 className="modal-title">{title}</h2>
           </div>
-          <Button variant="ghost" icon aria-label="Fechar" onClick={onClose}>✕</Button>
+          <Button variant="ghost" icon aria-label={t("Fechar")} onClick={onClose}>✕</Button>
         </header>
         <div className="modal-body">{children}</div>
         {footer && <footer className="modal-footer">{footer}</footer>}
@@ -483,7 +484,7 @@ export function Modal({
 }
 
 export function ConfirmDialog({
-  open, title, message, confirmLabel = "Confirmar", danger, onConfirm, onCancel,
+  open, title, message, confirmLabel = t("Confirmar"), danger, onConfirm, onCancel,
 }: {
   open: boolean; title: string; message: React.ReactNode; confirmLabel?: string;
   danger?: boolean; onConfirm: () => void; onCancel: () => void;
@@ -493,7 +494,7 @@ export function ConfirmDialog({
       open={open} onClose={onCancel} title={title} width="narrow"
       footer={
         <>
-          <Button onClick={onCancel}>Cancelar</Button>
+          <Button onClick={onCancel}>{t("Cancelar")}</Button>
           <Button variant={danger ? "danger" : "primary"} onClick={onConfirm}>{confirmLabel}</Button>
         </>
       }
@@ -527,7 +528,7 @@ export function useToasts() {
     const id = Math.random().toString(36).slice(2);
     setToasts((prev) => [...prev.slice(-2), { id, text, tone }]);
     timers.current[id] = window.setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
+      setToasts((prev) => prev.filter((toast) => toast.id !== id));
       delete timers.current[id];
     }, tone === "error" ? 5200 : 2800);
   }, []);

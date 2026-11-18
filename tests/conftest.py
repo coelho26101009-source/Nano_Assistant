@@ -151,6 +151,21 @@ def _disable_dotenv_loading() -> None:
 
 
 _disable_dotenv_loading()
+
+
+def _pin_interface_language() -> None:
+    """Run the suite in Portuguese, whatever language the machine speaks.
+
+    Most tests assert the backend's Portuguese source sentences, which are
+    what ``core.i18n.tr`` returns in pt-PT. "system" reads NANO_LANGUAGE
+    first, so pinning it here keeps a test on an English CI runner from
+    getting the English translation instead. tests/test_i18n.py covers
+    English explicitly.
+    """
+    os.environ["NANO_LANGUAGE"] = "pt-PT"
+
+
+_pin_interface_language()
 NANO_TEST_PROFILE, _PROFILE_CREATED = _isolate_nano_profile()
 
 

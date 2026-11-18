@@ -30,6 +30,8 @@ import type {
   KnowledgeEdge, KnowledgeGraphPayload, KnowledgeNode, Memory, MemoryOverview,
 } from "../lib/memory";
 import { kindLabel, nodeTypeLabel, originLabel, relationLabel } from "../lib/memory";
+import { t } from "../lib/i18n";
+import { tj } from "../lib/tj";
 
 /* ======================================================================
    Shared bits
@@ -67,7 +69,7 @@ function OriginBadge({ memory }: { memory: Memory }) {
   return (
     <span className={`origin-chip origin-chip--${suggestion ? "candidate" : memory.origin}`}
           title={originLabel(String(memory.origin))}>
-      {suggestion ? "sugestão" : originLabel(String(memory.origin))}
+      {suggestion ? t("sugestão") : originLabel(String(memory.origin))}
     </span>
   );
 }
@@ -97,10 +99,7 @@ function RetrievalFooter({ overview }: { overview: MemoryOverview | null }) {
   const retrieval = overview?.retrieval;
   if (!retrieval) return null;
   return (
-    <p className="dim memory-footnote">
-      Pesquisa: <strong>{retrieval.engine}</strong> · {retrieval.entries} entradas
-      indexadas · tudo neste computador, nada é enviado para fora.
-    </p>
+    <p className="dim memory-footnote">{tj("Pesquisa: {0} · {1} entradas indexadas · tudo neste computador, nada é enviado para fora.", { 0: <strong>{retrieval.engine}</strong>, 1: retrieval.entries })}</p>
   );
 }
 
@@ -111,9 +110,9 @@ function RetrievalFooter({ overview }: { overview: MemoryOverview | null }) {
 type MemoryScope = "active" | "candidate" | "archived";
 
 const SCOPES: { id: MemoryScope; label: string }[] = [
-  { id: "active", label: "Ativas" },
-  { id: "candidate", label: "Sugestões" },
-  { id: "archived", label: "Arquivadas" },
+  { id: "active", label: t("Ativas") },
+  { id: "candidate", label: t("Sugestões") },
+  { id: "archived", label: t("Arquivadas") },
 ];
 
 export function MemoriesPage({
@@ -181,13 +180,10 @@ export function MemoriesPage({
     const migrationState = overview.migration?.ok === false ? "ERROR" : "UNKNOWN";
     return (
       <div className="page__inner">
-        <Panel title="Memória indisponível">
+        <Panel title={t("Memória indisponível")}>
           <StatusIndicator state={migrationState}
-                           label="A base de dados não pôde ser migrada" />
-          <p className="muted" style={{ fontSize: 13, marginTop: 10, lineHeight: 1.7 }}>
-            O NANO continua a responder, mas não guarda conversas nem memórias nesta
-            sessão. Nada foi apagado — a base de dados anterior está intacta.
-          </p>
+                           label={t("A base de dados não pôde ser migrada")} />
+          <p className="muted" style={{ fontSize: 13, marginTop: 10, lineHeight: 1.7 }}>{t("O NANO continua a responder, mas não guarda conversas nem memórias nesta sessão. Nada foi apagado — a base de dados anterior está intacta.")}</p>
           {overview.migration?.error && (
             <p className="dim mono" style={{ fontSize: 11, marginTop: 8 }}>
               {overview.migration.error}
@@ -202,26 +198,21 @@ export function MemoriesPage({
     <div className="page__inner">
       <div className="memory-head">
         <div className="memory-head__stats">
-          <span className="stat-chip"><strong>{counts.active}</strong> ativas</span>
-          <span className="stat-chip"><strong>{counts.candidate}</strong> sugestões</span>
+          <span className="stat-chip">{tj("{0} ativas", { 0: <strong>{counts.active}</strong> })}</span>
+          <span className="stat-chip">{tj("{0} sugestões", { 0: <strong>{counts.candidate}</strong> })}</span>
           <span className="stat-chip">
-            <strong>{overview?.knowledge?.nodes ?? 0}</strong> nós no Second Brain
-          </span>
+            {tj("{0} nós no Second Brain", { 0: <strong>{overview?.knowledge?.nodes ?? 0}</strong> })}</span>
           <span className="stat-chip">
-            <strong>{overview?.conversationCount ?? 0}</strong> conversas
+            {tj("{0} conversas", { 0: <strong>{overview?.conversationCount ?? 0}</strong> })}
           </span>
         </div>
         <span className="stage__spacer" />
-        <Button size="sm" variant="primary" onClick={() => setCreating(true)}>
-          Adicionar memória
-        </Button>
+        <Button size="sm" variant="primary" onClick={() => setCreating(true)}>{t("Adicionar memória")}</Button>
       </div>
 
       {!overview?.longTermEnabled && (
         <div className="notice notice--warn">
-          <strong>A memória de longo prazo está desligada.</strong> O NANO não guarda
-          nem consulta nada entre conversas. O que já está guardado continua aqui.
-          <Button size="sm" onClick={onOpenSettings}>Abrir definições</Button>
+          <strong>{t("A memória de longo prazo está desligada.")}</strong>{' '}{t("O NANO não guarda nem consulta nada entre conversas. O que já está guardado continua aqui.")}<Button size="sm" onClick={onOpenSettings}>{t("Abrir definições")}</Button>
         </div>
       )}
 
@@ -236,42 +227,39 @@ export function MemoriesPage({
           }))}
         />
         <span className="stage__spacer" />
-        <select className="input input--select" value={kind} aria-label="Filtrar por tipo"
+        <select className="input input--select" value={kind} aria-label={t("Filtrar por tipo")}
                 onChange={(event) => setKind(event.target.value)}>
-          <option value="">Todos os tipos</option>
+          <option value="">{t("Todos os tipos")}</option>
           {kinds.map((entry) => (
             <option key={entry} value={entry}>{kindLabel(entry)}</option>
           ))}
         </select>
         <SearchField id="memory-search" value={query} onChange={setQuery}
-                     placeholder="Procurar nas memórias…" />
+                     placeholder={t("Procurar nas memórias…")} />
       </div>
 
-      <div className="memory-views" aria-label="Vista das memórias">
+      <div className="memory-views" aria-label={t("Vista das memórias")}>
         <button className="chip" type="button" aria-pressed={viewMode === "all"}
-                onClick={() => setViewMode("all")}>Todas</button>
+                onClick={() => setViewMode("all")}>{t("Todas")}</button>
         <button className="chip" type="button" aria-pressed={viewMode === "recent"}
-                onClick={() => setViewMode("recent")}>Recentes</button>
+                onClick={() => setViewMode("recent")}>{t("Recentes")}</button>
         <button className="chip" type="button" aria-pressed={viewMode === "pinned"}
-                onClick={() => setViewMode("pinned")}>Fixadas</button>
-        <span className="memory-views__count" role="status">{rows.length} nesta vista</span>
+                onClick={() => setViewMode("pinned")}>{t("Fixadas")}</button>
+        <span className="memory-views__count" role="status">{t("{0} nesta vista", { 0: rows.length })}</span>
       </div>
 
       {scope === "candidate" && counts.candidate > 0 && (
-        <p className="dim memory-note">
-          Estas são coisas que o NANO <em>reparou</em> durante as conversas. Não são
-          usadas nas respostas enquanto não as guardares.
-        </p>
+        <p className="dim memory-note">{tj("Estas são coisas que o NANO {0} durante as conversas. Não são usadas nas respostas enquanto não as guardares.", { 0: <em>{t("reparou")}</em> })}</p>
       )}
 
       {rows.length === 0 ? (
         <EmptyState
-          title={query || kind || viewMode === "pinned" ? "Nada corresponde a esse filtro" : "Nada guardado aqui"}
+          title={query || kind || viewMode === "pinned" ? t("Nada corresponde a esse filtro") : t("Nada guardado aqui")}
           hint={scope === "active"
-            ? "Diz “lembra-te que…” numa conversa, ou adiciona uma memória à mão."
+            ? t("Diz “lembra-te que…” numa conversa, ou adiciona uma memória à mão.")
             : scope === "candidate"
-              ? "O NANO ainda não sugeriu nada. Sugere pouco, de propósito."
-              : "Memórias arquivadas aparecem aqui."}
+              ? t("O NANO ainda não sugeriu nada. Sugere pouco, de propósito.")
+              : t("Memórias arquivadas aparecem aqui.")}
         />
       ) : (
         <div className="stack stack--tight">
@@ -283,47 +271,38 @@ export function MemoriesPage({
                   <Badge tone="neutral">{kindLabel(memory.kind)}</Badge>
                   <OriginBadge memory={memory} />
                   {memory.pinned && (
-                    <span className="origin-chip origin-chip--pinned" title="Sempre no contexto">
-                      <Glyph d={PIN} size={11} /> fixada
+                    <span className="origin-chip origin-chip--pinned" title={t("Sempre no contexto")}>
+                      <Glyph d={PIN} size={11} /> {t("fixada")}
                     </span>
                   )}
                   {memory.tags.map((tag) => (
                     <span className="tag-chip" key={tag}>{tag}</span>
                   ))}
-                  <span className="dim">
-                    Atualizada {formatDateTime(memory.updatedAt)}
-                    {memory.useCount > 0 && ` · usada ${memory.useCount}×`}
+                  <span className="dim">{t("Atualizada {0}", { 0: formatDateTime(memory.updatedAt) })}
+                    {memory.useCount > 0 && t(" · usada {0}×", { 0: memory.useCount })}
                   </span>
                 </div>
               </div>
               <div className="memory-card__actions">
-                <Button size="sm" onClick={() => setInspectingId(memory.id)}>
-                  Detalhes
-                </Button>
+                <Button size="sm" onClick={() => setInspectingId(memory.id)}>{t("Detalhes")}</Button>
                 {memory.status === "candidate" ? (
                   <Button size="sm" variant="primary"
                           onClick={() => onUpdate(memory.id, { status: "active" })}
-                          title="Passar a memória permanente">
-                    Guardar
-                  </Button>
+                          title={t("Passar a memória permanente")}>{t("Guardar")}</Button>
                 ) : (
                   <Button size="sm" icon
-                          aria-label={memory.pinned ? "Deixar de fixar" : "Fixar"}
+                          aria-label={memory.pinned ? t("Deixar de fixar") : t("Fixar")}
                           title={memory.pinned
-                            ? "Deixar de incluir sempre no contexto"
-                            : "Incluir sempre no contexto"}
+                            ? t("Deixar de incluir sempre no contexto")
+                            : t("Incluir sempre no contexto")}
                           className={memory.pinned ? "is-active" : ""}
                           onClick={() => onUpdate(memory.id, { pinned: !memory.pinned })}>
                     <Glyph d={PIN} size={14} />
                   </Button>
                 )}
                 <Button size="sm"
-                        onClick={() => { setDraft(memory.text); setEditing(memory); }}>
-                  Editar
-                </Button>
-                <Button size="sm" variant="danger" onClick={() => setConfirmDelete(memory)}>
-                  Apagar
-                </Button>
+                        onClick={() => { setDraft(memory.text); setEditing(memory); }}>{t("Editar")}</Button>
+                <Button size="sm" variant="danger" onClick={() => setConfirmDelete(memory)}>{t("Apagar")}</Button>
               </div>
             </article>
           ))}
@@ -332,7 +311,7 @@ export function MemoriesPage({
 
       {profileEntries.length > 0 && (
         <>
-          <h3 className="page-title" style={{ marginTop: "var(--sp-8)" }}>Perfil</h3>
+          <h3 className="page-title" style={{ marginTop: "var(--sp-8)" }}>{t("Perfil")}</h3>
           <div className="card">
             <dl className="kv">
               {profileEntries.map(([key, value]) => (
@@ -354,79 +333,75 @@ export function MemoriesPage({
       )}
 
       <div className="memory-danger">
-        <Button size="sm" variant="danger" onClick={() => setConfirmClear(true)}>
-          Esquecer tudo
-        </Button>
-        <span className="dim" style={{ fontSize: 11 }}>
-          Apaga todas as memórias. As conversas não são afetadas.
-        </span>
+        <Button size="sm" variant="danger" onClick={() => setConfirmClear(true)}>{t("Esquecer tudo")}</Button>
+        <span className="dim" style={{ fontSize: 11 }}>{t("Apaga todas as memórias. As conversas não são afetadas.")}</span>
       </div>
 
       <RetrievalFooter overview={overview} />
 
       <Modal open={Boolean(inspecting)} onClose={() => setInspectingId(null)}
-             title="Detalhes da memória" width="narrow"
-             footer={<Button onClick={() => setInspectingId(null)}>Fechar</Button>}>
+             title={t("Detalhes da memória")} width="narrow"
+             footer={<Button onClick={() => setInspectingId(null)}>{t("Fechar")}</Button>}>
         {inspecting && (
           <div className="memory-detail">
             <p className="memory-detail__text">{inspecting.text}</p>
             <dl className="kv">
-              <dt>Tipo</dt><dd>{kindLabel(inspecting.kind)}</dd>
-              <dt>Origem</dt><dd>{originLabel(String(inspecting.origin))}</dd>
-              <dt>Estado</dt><dd>{inspecting.status === "candidate" ? "Sugestão" : inspecting.status === "active" ? "Ativa" : "Arquivada"}</dd>
-              <dt>Criada</dt><dd>{formatDateTime(inspecting.createdAt)}</dd>
-              <dt>Atualizada</dt><dd>{formatDateTime(inspecting.updatedAt)}</dd>
-              {inspecting.lastUsedAt && <><dt>Último uso</dt><dd>{formatDateTime(inspecting.lastUsedAt)}</dd></>}
-              <dt>Utilizações</dt><dd>{inspecting.useCount}</dd>
-              <dt>Importância</dt><dd>{inspecting.importance}</dd>
-              <dt>Contexto</dt><dd>{inspecting.pinned ? "Sempre incluída" : "Recuperada quando relevante"}</dd>
-              {inspecting.sourceConversationId && <><dt>Conversa de origem</dt><dd className="mono">{inspecting.sourceConversationId}</dd></>}
-              {inspecting.sourceMessageId != null && <><dt>Mensagem de origem</dt><dd>#{inspecting.sourceMessageId}</dd></>}
+              <dt>{t("Tipo")}</dt><dd>{kindLabel(inspecting.kind)}</dd>
+              <dt>{t("Origem")}</dt><dd>{originLabel(String(inspecting.origin))}</dd>
+              <dt>{t("Estado")}</dt><dd>{inspecting.status === "candidate" ? t("Sugestão") : inspecting.status === "active" ? t("Ativa") : t("Arquivada")}</dd>
+              <dt>{t("Criada")}</dt><dd>{formatDateTime(inspecting.createdAt)}</dd>
+              <dt>{t("Atualizada")}</dt><dd>{formatDateTime(inspecting.updatedAt)}</dd>
+              {inspecting.lastUsedAt && <><dt>{t("Último uso")}</dt><dd>{formatDateTime(inspecting.lastUsedAt)}</dd></>}
+              <dt>{t("Utilizações")}</dt><dd>{inspecting.useCount}</dd>
+              <dt>{t("Importância")}</dt><dd>{inspecting.importance}</dd>
+              <dt>{t("Contexto")}</dt><dd>{inspecting.pinned ? t("Sempre incluída") : t("Recuperada quando relevante")}</dd>
+              {inspecting.sourceConversationId && <><dt>{t("Conversa de origem")}</dt><dd className="mono">{inspecting.sourceConversationId}</dd></>}
+              {inspecting.sourceMessageId != null && <><dt>{t("Mensagem de origem")}</dt><dd>#{inspecting.sourceMessageId}</dd></>}
             </dl>
           </div>
         )}
       </Modal>
 
       <Modal
-        open={Boolean(editing)} onClose={() => setEditing(null)} title="Editar memória"
+        open={Boolean(editing)} onClose={() => setEditing(null)} title={t("Editar memória")}
         width="narrow"
         footer={
           <>
-            <Button onClick={() => setEditing(null)}>Cancelar</Button>
+            <Button onClick={() => setEditing(null)}>{t("Cancelar")}</Button>
             <Button variant="primary" onClick={() => {
               if (editing && draft.trim()) onUpdate(editing.id, { text: draft.trim() });
               setEditing(null);
-            }}>Guardar</Button>
+            }}>{t("Guardar")}</Button>
           </>
         }
       >
-        <Field label="Texto da memória"
-               hint="Escrito como o NANO vai lê-lo. Chaves e palavras-passe são recusadas.">
+        <Field label={t("Texto da memória")}
+               hint={t("Escrito como o NANO vai lê-lo. Chaves e palavras-passe são recusadas.")}>
           <textarea className="input input--area" rows={4} value={draft}
                     onChange={(event) => setDraft(event.target.value)} />
         </Field>
       </Modal>
 
       <Modal
-        open={creating} onClose={() => setCreating(false)} title="Nova memória"
+        open={creating} onClose={() => setCreating(false)} title={t("Nova memória")}
         width="narrow"
         footer={
           <>
-            <Button onClick={() => setCreating(false)}>Cancelar</Button>
+            <Button onClick={() => setCreating(false)}>{t("Cancelar")}</Button>
             <Button variant="primary" onClick={() => {
               if (newText.trim()) onCreate(newText.trim(), newKind, 4);
               setNewText("");
               setCreating(false);
-            }}>Guardar</Button>
+            }}>{t("Guardar")}</Button>
           </>
         }
       >
-        <Field label="O que queres que o NANO saiba"
-               hint="Uma frase. Ex.: “A minha placa gráfica é uma GTX 1660 Ti.”">
+        <Field label={t("O que queres que o NANO saiba")}
+               hint={t("Uma frase. Ex.: “A minha placa gráfica é uma GTX 1660 Ti.”")}>
           <textarea className="input input--area" rows={3} value={newText}
                     onChange={(event) => setNewText(event.target.value)} />
         </Field>
-        <Field label="Tipo">
+        <Field label={t("Tipo")}>
           <select className="input input--select" value={newKind}
                   onChange={(event) => setNewKind(event.target.value)}>
             {kinds.map((entry) => (
@@ -437,17 +412,17 @@ export function MemoriesPage({
       </Modal>
 
       <ConfirmDialog
-        open={Boolean(confirmDelete)} danger title="Apagar esta memória?"
-        confirmLabel="Apagar"
-        message={<>O NANO deixa de saber <strong>{confirmDelete?.text}</strong>.</>}
+        open={Boolean(confirmDelete)} danger title={t("Apagar esta memória?")}
+        confirmLabel={t("Apagar")}
+        message={<>{tj("O NANO deixa de saber {0}.", { 0: <strong>{confirmDelete?.text}</strong> })}</>}
         onConfirm={() => { if (confirmDelete) onDelete(confirmDelete.id); setConfirmDelete(null); }}
         onCancel={() => setConfirmDelete(null)}
       />
 
       <ConfirmDialog
-        open={confirmClear} danger title="Esquecer tudo?"
-        confirmLabel="Esquecer tudo"
-        message="Todas as memórias de longo prazo são apagadas deste computador. As conversas e o Second Brain não são afetados."
+        open={confirmClear} danger title={t("Esquecer tudo?")}
+        confirmLabel={t("Esquecer tudo")}
+        message={t("Todas as memórias de longo prazo são apagadas deste computador. As conversas e o Second Brain não são afetados.")}
         onConfirm={() => { setConfirmClear(false); onClearAll(); }}
         onCancel={() => setConfirmClear(false)}
       />
@@ -499,47 +474,45 @@ export function KnowledgePage({
     <div className="page__inner">
       <div className="memory-head">
         <div className="memory-head__stats">
-          <span className="stat-chip"><strong>{stats?.nodes ?? 0}</strong> nós</span>
-          <span className="stat-chip"><strong>{stats?.edges ?? 0}</strong> ligações</span>
+          <span className="stat-chip">{tj("{0} nós", { 0: <strong>{stats?.nodes ?? 0}</strong> })}</span>
+          <span className="stat-chip">{tj("{0} ligações", { 0: <strong>{stats?.edges ?? 0}</strong> })}</span>
         </div>
         <span className="stage__spacer" />
-        <Button size="sm" variant="primary" onClick={() => setCreating(true)}>Novo nó</Button>
+        <Button size="sm" variant="primary" onClick={() => setCreating(true)}>{t("Novo nó")}</Button>
       </div>
 
       <div className="memory-toolbar">
-        <select className="input input--select" value={type} aria-label="Filtrar por tipo"
+        <select className="input input--select" value={type} aria-label={t("Filtrar por tipo")}
                 onChange={(event) => setType(event.target.value)}>
-          <option value="">Todos os tipos</option>
+          <option value="">{t("Todos os tipos")}</option>
           {types.map((entry) => (
             <option key={entry} value={entry}>{nodeTypeLabel(entry)}</option>
           ))}
         </select>
         <span className="stage__spacer" />
         <SearchField id="knowledge-search" value={query} onChange={setQuery}
-                     placeholder="Procurar no Second Brain…" />
+                     placeholder={t("Procurar no Second Brain…")} />
       </div>
 
       {rows.length === 0 ? (
         <EmptyState
-          title={query || type ? "Nada corresponde a esse filtro" : "O Second Brain está vazio"}
+          title={query || type ? t("Nada corresponde a esse filtro") : t("O Second Brain está vazio")}
           hint={
-            "Os nós nascem das memórias que nomeiam alguma coisa concreta — um "
-            + "dispositivo, um programa, um projeto, uma pessoa. Guarda uma memória "
-            + "dessas, ou cria um nó à mão."
+            t("Os nós nascem das memórias que nomeiam alguma coisa concreta — um dispositivo, um programa, um projeto, uma pessoa. Guarda uma memória dessas, ou cria um nó à mão.")
           }
         />
       ) : (
         <div className="node-grid">
           {rows.map((node) => (
             <button type="button" className="node-card" key={node.id}
-                    onClick={() => onOpenNode(node.id)} title={`Abrir ${node.title}`}>
+                    onClick={() => onOpenNode(node.id)} title={t("Abrir {0}", { 0: node.title })}>
               <span className={`node-card__type node-type--${node.type}`}>
                 {nodeTypeLabel(node.type)}
               </span>
               <span className="node-card__title">{node.title}</span>
               {node.summary && <span className="node-card__summary">{node.summary}</span>}
               <span className="node-card__foot">
-                {node.mentionCount > 1 && <span>{node.mentionCount} menções</span>}
+                {node.mentionCount > 1 && <span>{t("{0} menções", { 0: node.mentionCount })}</span>}
                 {node.tags.slice(0, 2).map((tag) => (
                   <span className="tag-chip" key={tag}>{tag}</span>
                 ))}
@@ -552,22 +525,22 @@ export function KnowledgePage({
       <RetrievalFooter overview={overview} />
 
       <Modal
-        open={creating} onClose={() => setCreating(false)} title="Novo nó" width="narrow"
+        open={creating} onClose={() => setCreating(false)} title={t("Novo nó")} width="narrow"
         footer={
           <>
-            <Button onClick={() => setCreating(false)}>Cancelar</Button>
+            <Button onClick={() => setCreating(false)}>{t("Cancelar")}</Button>
             <Button variant="primary" onClick={() => {
               if (title.trim()) onCreate(title.trim(), nodeType, summary.trim());
               setTitle(""); setSummary(""); setCreating(false);
-            }}>Criar</Button>
+            }}>{t("Criar")}</Button>
           </>
         }
       >
-        <Field label="Nome" hint="Como lhe chamas. Ex.: “Projeto NANO”, “GTX 1660 Ti”.">
+        <Field label={t("Nome")} hint={t("Como lhe chamas. Ex.: “Projeto NANO”, “GTX 1660 Ti”.")}>
           <input className="input" value={title} maxLength={90}
                  onChange={(event) => setTitle(event.target.value)} />
         </Field>
-        <Field label="Tipo">
+        <Field label={t("Tipo")}>
           <select className="input input--select" value={nodeType}
                   onChange={(event) => setNodeType(event.target.value)}>
             {types.map((entry) => (
@@ -575,7 +548,7 @@ export function KnowledgePage({
             ))}
           </select>
         </Field>
-        <Field label="Resumo" hint="Opcional. Uma linha que explique o que isto é.">
+        <Field label={t("Resumo")} hint={t("Opcional. Uma linha que explique o que isto é.")}>
           <textarea className="input input--area" rows={3} value={summary}
                     onChange={(event) => setSummary(event.target.value)} />
         </Field>
@@ -616,9 +589,9 @@ export function NodeDetailModal({
         open={open} onClose={onClose} title={node.title}
         footer={
           <>
-            <Button variant="danger" onClick={() => setConfirmDelete(true)}>Apagar nó</Button>
+            <Button variant="danger" onClick={() => setConfirmDelete(true)}>{t("Apagar nó")}</Button>
             <span className="stage__spacer" />
-            <Button onClick={onClose}>Fechar</Button>
+            <Button onClick={onClose}>{t("Fechar")}</Button>
           </>
         }
       >
@@ -628,13 +601,12 @@ export function NodeDetailModal({
               {nodeTypeLabel(node.type)}
             </span>
             <span className="dim" style={{ fontSize: 11 }}>
-              {node.mentionCount} menç{node.mentionCount === 1 ? "ão" : "ões"} ·
-              atualizado {formatDateTime(node.updatedAt)}
+              {t(node.mentionCount === 1 ? "{0} menção · atualizado {1}" : "{0} menções · atualizado {1}", { 0: node.mentionCount, 1: formatDateTime(node.updatedAt) })}
             </span>
           </div>
 
           <section className="node-detail__section">
-            <h4 className="section-label">Resumo</h4>
+            <h4 className="section-label">{t("Resumo")}</h4>
             {editing ? (
               <>
                 <textarea className="input input--area" rows={3} value={summary}
@@ -643,28 +615,23 @@ export function NodeDetailModal({
                   <Button size="sm" variant="primary" onClick={() => {
                     onUpdate(node.id, { summary });
                     setEditing(false);
-                  }}>Guardar</Button>
-                  <Button size="sm" onClick={() => { setSummary(node.summary); setEditing(false); }}>
-                    Cancelar
-                  </Button>
+                  }}>{t("Guardar")}</Button>
+                  <Button size="sm" onClick={() => { setSummary(node.summary); setEditing(false); }}>{t("Cancelar")}</Button>
                 </div>
               </>
             ) : (
               <p className="node-detail__body">
-                {node.summary || <span className="dim">Sem resumo.</span>}
+                {node.summary || <span className="dim">{t("Sem resumo.")}</span>}
                 <Button size="sm" variant="ghost" onClick={() => setEditing(true)}
-                        style={{ marginLeft: 8 }}>Editar</Button>
+                        style={{ marginLeft: 8 }}>{t("Editar")}</Button>
               </p>
             )}
           </section>
 
           <section className="node-detail__section">
-            <h4 className="section-label">Ligações ({edges.length})</h4>
+            <h4 className="section-label">{t("Ligações ({0})", { 0: edges.length })}</h4>
             {edges.length === 0 ? (
-              <p className="dim" style={{ fontSize: 12 }}>
-                Ainda sem ligações. Uma ligação aparece quando duas coisas são
-                referidas na mesma memória.
-              </p>
+              <p className="dim" style={{ fontSize: 12 }}>{t("Ainda sem ligações. Uma ligação aparece quando duas coisas são referidas na mesma memória.")}</p>
             ) : (
               <div className="chip-row">
                 {edges.map((edge) => {
@@ -684,9 +651,9 @@ export function NodeDetailModal({
           </section>
 
           <section className="node-detail__section">
-            <h4 className="section-label">Memórias ({memories.length})</h4>
+            <h4 className="section-label">{t("Memórias ({0})", { 0: memories.length })}</h4>
             {memories.length === 0 ? (
-              <p className="dim" style={{ fontSize: 12 }}>Sem memórias associadas.</p>
+              <p className="dim" style={{ fontSize: 12 }}>{t("Sem memórias associadas.")}</p>
             ) : (
               <ul className="node-detail__list">
                 {memories.map((memory) => (
@@ -700,11 +667,9 @@ export function NodeDetailModal({
           </section>
 
           <section className="node-detail__section">
-            <h4 className="section-label">Conversas ({conversations.length})</h4>
+            <h4 className="section-label">{t("Conversas ({0})", { 0: conversations.length })}</h4>
             {conversations.length === 0 ? (
-              <p className="dim" style={{ fontSize: 12 }}>
-                Nenhuma conversa associada, ou a conversa de origem foi apagada.
-              </p>
+              <p className="dim" style={{ fontSize: 12 }}>{t("Nenhuma conversa associada, ou a conversa de origem foi apagada.")}</p>
             ) : (
               <ul className="node-detail__list">
                 {conversations.map((conversation) => (
@@ -717,13 +682,11 @@ export function NodeDetailModal({
       </Modal>
 
       <ConfirmDialog
-        open={confirmDelete} danger title="Apagar este nó?"
-        confirmLabel="Apagar"
+        open={confirmDelete} danger title={t("Apagar este nó?")}
+        confirmLabel={t("Apagar")}
         message={
           <>
-            <strong>{node.title}</strong> e as suas {edges.length} ligações são
-            apagados. As memórias associadas continuam guardadas.
-          </>
+            {tj("{0} e as suas {1} ligações são apagados. As memórias associadas continuam guardadas.", { 0: <strong>{node.title}</strong>, 1: edges.length })}</>
         }
         onConfirm={() => { setConfirmDelete(false); onDelete(node.id); }}
         onCancel={() => setConfirmDelete(false)}
@@ -974,8 +937,8 @@ export function GraphPage({
     return (
       <div className="page__inner">
         <EmptyState
-          title="Ainda não há nada para desenhar"
-          hint="O grafo mostra os nós do Second Brain e as ligações entre eles. Guarda algumas memórias sobre coisas concretas e volta aqui."
+          title={t("Ainda não há nada para desenhar")}
+          hint={t("O grafo mostra os nós do Second Brain e as ligações entre eles. Guarda algumas memórias sobre coisas concretas e volta aqui.")}
         />
       </div>
     );
@@ -984,15 +947,15 @@ export function GraphPage({
   return (
     <div className="page__inner graph-page">
       <div className="memory-toolbar">
-        <select className="input input--select" value={type} aria-label="Filtrar por tipo"
+        <select className="input input--select" value={type} aria-label={t("Filtrar por tipo")}
                 onChange={(event) => setType(event.target.value)}>
-          <option value="">Todos os tipos</option>
+          <option value="">{t("Todos os tipos")}</option>
           {types.map((entry) => (
             <option key={entry} value={entry}>{nodeTypeLabel(entry)}</option>
           ))}
         </select>
         <SearchField id="graph-search" value={query} onChange={setQuery}
-                     placeholder="Procurar um nó…" />
+                     placeholder={t("Procurar um nó…")} />
         <span className="stage__spacer" />
         <Button size="sm" onClick={() => {
           setView({ x: 0, y: 0, scale: 1 });
@@ -1001,9 +964,7 @@ export function GraphPage({
           // nodes where they were would make the button a partial undo, which is
           // the least predictable kind.
           setMoved({});
-        }}>
-          Repor vista
-        </Button>
+        }}>{t("Repor vista")}</Button>
       </div>
 
       <div className="graph-canvas">
@@ -1013,7 +974,7 @@ export function GraphPage({
           className="graph-svg"
           data-focused={focus ? "true" : undefined}
           role="img"
-          aria-label={`Grafo com ${nodes.length} nós e ${edges.length} ligações`}
+          aria-label={t("Grafo com {0} nós e {1} ligações", { 0: nodes.length, 1: edges.length })}
           onPointerDown={(event) => {
             // Empty canvas: pan. A node starts its own drag in its handler and
             // stops the event there, so the two gestures never both run.
@@ -1118,7 +1079,7 @@ export function GraphPage({
                   {selected === node.id && <circle r={radius + 9} className="graph-node__halo" />}
                   <circle r={radius} className="graph-node__dot" />
                   <text y={radius + 15} className="graph-node__label">{node.title}</text>
-                  <title>{`${node.title} · ${nodeTypeLabel(node.type)} · ${node.mentionCount} menções`}</title>
+                  <title>{t("{0} · {1} · {2} menções", { 0: node.title, 1: nodeTypeLabel(node.type), 2: node.mentionCount })}</title>
                 </g>
               );
             })}
@@ -1140,7 +1101,7 @@ export function GraphPage({
             <strong>{selectedNode.title}</strong>
             {selectedNode.summary && <span className="graph-selected__summary">{selectedNode.summary}</span>}
             <span className="graph-selected__links">
-              {selectedLinks.length} {selectedLinks.length === 1 ? "ligação real" : "ligações reais"}
+              {selectedLinks.length} {selectedLinks.length === 1 ? t("ligação real") : t("ligações reais")}
             </span>
             {selectedLinks.slice(0, 3).map((edge) => (
               <span className="graph-selected__link" key={edge.id}>
@@ -1149,7 +1110,7 @@ export function GraphPage({
                   : edge.sourceTitle ?? nodeTitles.get(edge.source) ?? edge.source}
               </span>
             ))}
-            <Button size="sm" onClick={() => onOpenNode(selectedNode.id)}>Abrir detalhe</Button>
+            <Button size="sm" onClick={() => onOpenNode(selectedNode.id)}>{t("Abrir detalhe")}</Button>
           </div>
         )}
       </div>
@@ -1164,17 +1125,14 @@ export function GraphPage({
           <span className={matches && matches.size ? "dim" : ""}
                 role="status" aria-live="polite">
             {matches && matches.size
-              ? `${matches.size} de ${nodes.length} nós `
-                + `${matches.size === 1 ? "corresponde" : "correspondem"} `
-                + `a “${query.trim()}”`
-              : `Nenhum nó corresponde a “${query.trim()}”`}
+              ? t(matches.size === 1 ? "{0} de {1} nós corresponde a “{2}”" : "{0} de {1} nós correspondem a “{2}”",
+                  { 0: matches.size, 1: nodes.length, 2: query.trim() })
+              : t("Nenhum nó corresponde a “{0}”", { 0: query.trim() })}
           </span>
         ) : (
           <span className="dim">
-            {nodes.length} nós · {edges.length} ligações
-            {graph?.truncated && ` · a mostrar os mais ligados de ${graph.total}`}
-            {" · arrasta o fundo para mover, arrasta um nó para o recolocar, "}
-            {"roda para ampliar, duplo-clique abre o detalhe"}
+            {t("{0} nós · {1} ligações", { 0: nodes.length, 1: edges.length })}{graph?.truncated && t(" · a mostrar os mais ligados de {0}", { 0: graph.total })}
+            {t(" · arrasta o fundo para mover, arrasta um nó para o recolocar, roda para ampliar, duplo-clique abre o detalhe")}
           </span>
         )}
       </div>

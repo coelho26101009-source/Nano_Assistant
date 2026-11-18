@@ -117,6 +117,19 @@ IA, Voz, PC Control, Memória, Privacidade, Sobre. Never hide a
 security-sensitive control, and never render an architectural guarantee as a
 switch.
 
+## Language
+
+The interface ships in English (the default) and European Portuguese. Every
+user-facing string in a component is the Portuguese original wrapped in `t()`
+(`t("Nova conversa")`), and English is a lookup in `frontend/lib/locales/en.ts`.
+A sentence with an element inside it uses `tj("Abre o NANO com {0}.", { 0: <code>…</code> })`
+so English can move the element. Never split a sentence into several `t()`
+fragments, and never build a plural by gluing on "s": pick between two whole
+keys. Backend sentences the UI shows go through `core.i18n.tr()` with
+`core/locales/en.py`. `tests/test_i18n.py` fails on any key without an English
+entry. The language is fixed per page load (`?lang=`), and the Chromium
+harnesses run in pt-PT.
+
 ## Motion
 
 Short transitions on colour and background only; no looping decoration.

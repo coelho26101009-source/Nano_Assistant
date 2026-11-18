@@ -35,6 +35,7 @@ from typing import Callable
 
 import httpx
 
+from core.i18n import tr
 from core import http_tls
 
 logger = logging.getLogger("nano.ollama")
@@ -222,7 +223,7 @@ def _cancelled_result(executable: str | None) -> dict:
     return {
         "available": False, "started": False, "reused": False, "executable": executable,
         "cancelled": True,
-        "detail": "O arranque do Ollama foi cancelado porque o Nano está a encerrar.",
+        "detail": tr("O arranque do Ollama foi cancelado porque o Nano está a encerrar."),
     }
 
 
@@ -256,20 +257,20 @@ def ensure_running(
         return {
             "available": True, "started": False, "reused": True,
             "executable": find_executable(),
-            "detail": "Ollama já estava a correr; a reutilizar a instância existente.",
+            "detail": tr("Ollama já estava a correr; a reutilizar a instância existente."),
         }
 
     executable = find_executable()
     if executable is None:
         return {
             "available": False, "started": False, "reused": False, "executable": None,
-            "detail": "O Ollama não está instalado (ollama.exe não encontrado). Instala em https://ollama.com para usar modelos locais.",
+            "detail": tr("O Ollama não está instalado (ollama.exe não encontrado). Instala em https://ollama.com para usar modelos locais."),
         }
 
     if not autostart:
         return {
             "available": False, "started": False, "reused": False, "executable": executable,
-            "detail": "Ollama está instalado mas não está a correr, e o arranque automático está desligado.",
+            "detail": tr("Ollama está instalado mas não está a correr, e o arranque automático está desligado."),
         }
 
     logger.info("Ollama não está a responder; a arrancar o servidor: %s serve", executable)
@@ -305,7 +306,7 @@ def ensure_running(
         logger.warning("Falha ao arrancar o Ollama: %s", exc)
         return {
             "available": False, "started": False, "reused": False, "executable": executable,
-            "detail": f"Não foi possível arrancar o Ollama: {exc}",
+            "detail": tr("Não foi possível arrancar o Ollama: {p0}", p0=exc),
         }
 
     # `ollama serve` binds its port in a few seconds; poll rather than sleep.
@@ -318,7 +319,7 @@ def ensure_running(
             logger.info("Ollama pronto ao fim de %.1fs (nenhum modelo carregado).", elapsed)
             return {
                 "available": True, "started": True, "reused": False, "executable": executable,
-                "detail": "Ollama arrancado pelo Nano. Nenhum modelo carregado até ser preciso.",
+                "detail": tr("Ollama arrancado pelo Nano. Nenhum modelo carregado até ser preciso."),
             }
         if control is not None:
             control.sleep(0.5)
@@ -327,7 +328,7 @@ def ensure_running(
 
     return {
         "available": False, "started": True, "reused": False, "executable": executable,
-        "detail": f"O Ollama foi arrancado mas a API não respondeu em {timeout_seconds:.0f}s.",
+        "detail": tr("O Ollama foi arrancado mas a API não respondeu em {p0:.0f}s.", p0=timeout_seconds),
     }
 
 
@@ -342,23 +343,23 @@ def describe_measurement(model: str, base_url: str, measurement: dict | None, *,
         return {
             "state": OllamaState.DISABLED, "ollamaUp": False, "modelReady": False,
             "model": model, "url": base_url, "installed": [],
-            "detail": "Modelos locais desativados na configuração.",
+            "detail": tr("Modelos locais desativados na configuração."),
         }
 
     if measurement is None:
         return {
             "state": OllamaState.UNKNOWN, "ollamaUp": False, "modelReady": False,
             "model": model, "url": base_url, "installed": [],
-            "detail": "O estado do Ollama ainda não foi confirmado; a verificação está em curso.",
+            "detail": tr("O estado do Ollama ainda não foi confirmado; a verificação está em curso."),
         }
 
     if not measurement.get("reachable"):
         installed_binary = bool(measurement.get("executable"))
         state = OllamaState.OLLAMA_UNAVAILABLE if installed_binary else OllamaState.NOT_INSTALLED
         detail = (
-            f"O Ollama está instalado mas a API não responde em {base_url}."
+            tr("O Ollama está instalado mas a API não responde em {p0}.", p0=base_url)
             if installed_binary
-            else "O Ollama não está instalado; os modelos locais não estão disponíveis."
+            else tr("O Ollama não está instalado; os modelos locais não estão disponíveis.")
         )
         return {
             "state": state, "ollamaUp": False, "modelReady": False,
@@ -372,15 +373,14 @@ def describe_measurement(model: str, base_url: str, measurement: dict | None, *,
             "model": model, "url": base_url, "installed": installed,
             # Never silently substitute a different model.
             "detail": (
-                f"O Ollama está a correr mas o modelo '{model}' não está instalado. "
-                f"Instalados: {', '.join(installed) or 'nenhum'}. Instala com: ollama pull {model}"
+                tr("O Ollama está a correr mas o modelo '{p0}' não está instalado. Instalados: {p1}. Instala com: ollama pull {p2}", p0=model, p1=', '.join(installed) or 'nenhum', p2=model)
             ),
         }
 
     return {
         "state": OllamaState.READY, "ollamaUp": True, "modelReady": True,
         "model": model, "url": base_url, "installed": installed,
-        "detail": f"Ollama disponível com '{model}'.",
+        "detail": tr("Ollama disponível com '{p0}'.", p0=model),
     }
 
 
@@ -595,8 +595,7 @@ class StatusMonitor:
     def _starting_status(self, model: str, base_url: str) -> dict:
         """UNKNOWN, saying why: startup is still checking or launching Ollama."""
         status = describe_measurement(model, base_url, None)
-        status["detail"] = ("O Nano está a verificar ou a arrancar o Ollama; o modelo local "
-                            "fica disponível assim que o Ollama responder.")
+        status["detail"] = (tr("O Nano está a verificar ou a arrancar o Ollama; o modelo local fica disponível assim que o Ollama responder."))
         status["starting"] = True
         status["ageSeconds"] = None
         return status

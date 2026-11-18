@@ -24,6 +24,7 @@
  * recognises come across with their titles and their order intact.
  */
 import type { ResponseMeta } from "../components/Conversation";
+import { t } from "../lib/i18n";
 
 /** A stored message, as core/conversation_store.messages returns it.
  *
@@ -65,10 +66,10 @@ export type ThreadSummary = {
 export type GroupKey = "today" | "yesterday" | "week" | "older";
 
 export const GROUP_LABEL: Record<GroupKey, string> = {
-  today: "Hoje",
-  yesterday: "Ontem",
-  week: "Esta semana",
-  older: "Mais antigas",
+  today: t("Hoje"),
+  yesterday: t("Ontem"),
+  week: t("Esta semana"),
+  older: t("Mais antigas"),
 };
 
 /** When a thread was last active. Falls back to its creation time. */
@@ -121,7 +122,7 @@ export function threadStamp(thread: Thread, now: Date = new Date()): string {
   if (key === "today") {
     return when.toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" });
   }
-  if (key === "yesterday") return "Ontem";
+  if (key === "yesterday") return t("Ontem");
   if (key === "week") return when.toLocaleDateString("pt-PT", { weekday: "short" }).replace(".", "");
   return when.toLocaleDateString("pt-PT", { day: "2-digit", month: "2-digit" });
 }
