@@ -34,6 +34,7 @@ from core.app_paths import DATA_DIR, FRONTEND_DIR, PLUGINS_DIR, ROOT, default_da
 from core.dotenv_gate import dotenv_allowed
 from core import data_migration
 from core import capability_catalogue, local_control_plane
+from core import agenda
 from core import version as nano_version
 from core.brain import Brain
 from core.config import CONFIG_PATH, load_config
@@ -2575,6 +2576,35 @@ def forget_all_memory_facts() -> dict:
 #: the renderer: the renderer is the least trusted process in Nano, and an
 #: irreversible wipe must not be one stray bridge call away.
 ERASE_ALL_CONFIRMATION = "APAGAR TUDO"
+
+
+# ── Agenda page: reminders and calendar events ─────────────────────────────
+# The user's own edits to Nano's own data, like the Memória page. Not model
+# tools; see core/agenda.py.
+
+@eel.expose
+def get_agenda(days: int = 30) -> dict:
+    return agenda.overview(days)
+
+
+@eel.expose
+def agenda_create_reminder(text: str, when: str) -> dict:
+    return agenda.create_reminder(text, when)
+
+
+@eel.expose
+def agenda_delete_reminder(reminder_id: int) -> dict:
+    return agenda.delete_reminder(reminder_id)
+
+
+@eel.expose
+def agenda_create_event(title: str, start: str, end: str | None = None, location: str = "") -> dict:
+    return agenda.create_event(title, start, end, location)
+
+
+@eel.expose
+def agenda_delete_event(event_id: int) -> dict:
+    return agenda.delete_event(event_id)
 
 
 @eel.expose

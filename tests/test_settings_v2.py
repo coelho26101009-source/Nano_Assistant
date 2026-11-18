@@ -95,9 +95,9 @@ def executor() -> ToolExecutor:
 
 # ── Navigation information architecture ──────────────────────────────────
 
-def test_the_five_destinations_are_intact(navigation):
+def test_the_six_destinations_are_intact(navigation):
     labels = re.findall(r'label:\s*"([^"]+)",\s*\n\s*views:', navigation)
-    assert labels == ["Chat", "Ferramentas", "PC", "Memória", "Definições"]
+    assert labels == ["Chat", "Agenda", "Ferramentas", "PC", "Memória", "Definições"]
 
 
 def test_ferramentas_leads_with_the_capability_catalogue(navigation):
@@ -800,7 +800,7 @@ def test_activity_never_shows_fake_rows(drive_report):
 
 def test_ai_selector_does_not_hide_the_navigation_when_open(drive_report):
     for label in (
-        "all five destinations are still present with the popover open",
+        "all six destinations are still present with the popover open",
         "the nav bar itself still has real, visible dimensions",
         "the Nano brand lockup is not hidden",
     ):

@@ -22,6 +22,11 @@ versioning policy.
 
 ### Added
 
+- New **Agenda** section in the sidebar: see pending reminders and the
+  calendar events of the next 7, 30 or 90 days (local, imported .ics and
+  Google, labelled), create reminders and events with a form, and delete them
+  after a confirmation. Google events are read-only. The page talks to the
+  running plugins through `core/agenda.py`; nothing here is a model tool.
 - Reminders now show up on the PC: Nano Desktop raises a Windows notification
   when one falls due (also with the window hidden in the tray; clicking it
   brings Nano forward), and the browser mode shows an in-app toast. The phone

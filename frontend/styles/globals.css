@@ -1990,3 +1990,15 @@ kbd {
 :root:not([data-theme="light"]) .window-control--close:hover { color: #1A1A1A; }
 :root:not([data-theme="light"]) .btn--danger:hover:not(:disabled) { color: #1A1A1A; }
 :root:not([data-theme="light"]) .composer__mic--live { color: #0E1F1D; }
+
+/* ── Agenda ───────────────────────────────────────────────────────────── */
+.agenda__grid {
+  display: grid; gap: var(--sp-4); align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
+}
+.agenda__form { display: flex; flex-direction: column; gap: var(--sp-3); margin-bottom: var(--sp-4); min-width: 0; }
+.agenda__form-row { display: grid; gap: var(--sp-3); grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr)); }
+.agenda__form-actions { display: flex; justify-content: flex-end; }
+.agenda__list { list-style: none; margin: 0; padding: 0; min-width: 0; }
+.agenda__list ul { list-style: none; margin: 0; padding: 0; }
+.agenda__day { margin: 0 0 var(--sp-2); }

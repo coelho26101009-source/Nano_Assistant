@@ -15,11 +15,11 @@
  */
 
 export type ViewId =
-  | "chat" | "tasks" | "activity"
+  | "chat" | "agenda" | "tasks" | "activity"
   | "permissions" | "agents" | "memory" | "knowledge" | "graph" | "integrations"
   | "capabilities" | "status" | "settings";
 
-export type SectionId = "chat" | "tools" | "pc" | "memory" | "settings";
+export type SectionId = "chat" | "agenda" | "tools" | "pc" | "memory" | "settings";
 
 export type NavCounts = Partial<Record<ViewId, number>>;
 
@@ -36,6 +36,13 @@ export const SECTIONS: SectionEntry[] = [
     section: "chat",
     label: "Chat",
     views: [{ id: "chat", label: "Conversa", hint: "Fala com o NANO" }],
+  },
+  {
+    // AGENDA is the user's time: reminders and calendar events, which used to
+    // be reachable only by asking in the chat.
+    section: "agenda",
+    label: "Agenda",
+    views: [{ id: "agenda", label: "Agenda", hint: "Lembretes e eventos" }],
   },
   {
     // FERRAMENTAS answers "what can this thing do for me?". It is a catalogue,

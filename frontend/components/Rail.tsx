@@ -45,6 +45,7 @@ export type RailMode = "expanded" | "collapsed" | "drawer";
 
 const SECTION_ICON: Record<SectionId, IconName> = {
   chat: "chat",
+  agenda: "calendar",
   tools: "tools",
   pc: "monitor",
   memory: "memory",

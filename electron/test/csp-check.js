@@ -157,7 +157,7 @@ app.whenReady().then(async () => {
   // demonstrably block what it claims to. A page that renders because the
   // policy was too loose is not a pass, and a policy with no violations
   // because nothing loaded is not either.
-  const renderedOk = rendered.hasTopbar && rendered.navCount === 5
+  const renderedOk = rendered.hasTopbar && rendered.navCount === 6
     && rendered.hasBrand && rendered.hasStage && rendered.textLength > 200;
   const enforcingOk = enforcement.inlineScriptBlocked && enforcement.externalScriptBlocked;
   const ok = renderedOk && enforcingOk && pageViolations.length === 0;

@@ -23,6 +23,7 @@ import ConfirmModal from "../components/Confirm";
 import PluginCodeModal from "../components/PluginCodeModal";
 import Rail, { type RailMode } from "../components/Rail";
 import CapabilitiesPage from "../components/CapabilitiesPage";
+import AgendaPage from "../components/AgendaPage";
 import SettingsPage, { type Section as SettingsSection } from "../components/SettingsPage";
 import TaskDetailModal from "../components/TaskDetailModal";
 import TopBar from "../components/TopBar";
@@ -1316,6 +1317,7 @@ export default function Home() {
                     />
                   )}
                   {view === "capabilities" && <CapabilitiesPage enabled={ready} />}
+                  {view === "agenda" && <AgendaPage enabled={ready} notify={notify} />}
                   {view === "integrations" && (
                     <IntegrationsPage
                       providers={providers} plugins={plugins} readiness={readiness}
