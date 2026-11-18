@@ -422,6 +422,32 @@ def send_message(user_text: str, msg_id: str | None = None) -> dict:
             owner = memory_stack.ensure_active()
     except Exception:
         logger.exception("Não foi possível determinar a conversa da mensagem")
+    return _dispatch_turn(user_text, request_id, owner)
+
+
+def _hold_owner(owner: str | None, held: bool) -> None:
+    """Hold (or release) the owning thread while a turn is in flight. Best-effort.
+
+    Until the coroutine writes the question, the owning thread is still empty,
+    and an empty thread is discarded when the user leaves it. A memory stack
+    that cannot do this must never cost the user their message, so a failure
+    here is logged and ignored -- exactly like the owner lookup above it.
+    """
+    try:
+        if memory_stack.ready:
+            (memory_stack.hold if held else memory_stack.release)(owner)
+    except Exception:
+        logger.debug("Não foi possível marcar a conversa da mensagem", exc_info=True)
+
+
+def _dispatch_turn(user_text: str, request_id: str, owner: str | None) -> dict:
+    """Hand one turn to the event loop: send_message and retry_last_turn.
+
+    The dispatch itself is `asyncio.run_coroutine_threadsafe`, never a blocking
+    run: the bridge returns the ACK at once and the answer arrives on the
+    stream events.
+    """
+    _hold_owner(owner, True)
     try:
         loop = _get_or_create_loop()
         asyncio.run_coroutine_threadsafe(
@@ -429,9 +455,46 @@ def send_message(user_text: str, msg_id: str | None = None) -> dict:
         )
     except Exception:
         logger.exception("Não foi possível aceitar a mensagem")
+        _hold_owner(owner, False)
         return {"ok": False, "accepted": False, "error": "dispatch_failed",
                 "request_id": request_id}
     return {"ok": True, "accepted": True, "request_id": request_id, "msg_id": request_id}
+
+
+@eel.expose
+def retry_last_turn(new_text: str = "", msg_id: str | None = None) -> dict:
+    """Ask the open thread's last question again -- as it was, or edited.
+
+    The last turn is taken back out of the thread first (question, answer and
+    any tool rows), the Brain's window is rebuilt from what is left, and the
+    question is then dispatched exactly like a new message. So the model never
+    sees the answer it is being asked to replace, and the stored transcript
+    holds one version of the turn, not two.
+
+    Returns the same ACK as send_message, plus the text that was sent, which is
+    the stored question when `new_text` is empty.
+    """
+    if not memory_stack.ready:
+        return {"ok": False, "accepted": False, "error": "memory_unavailable"}
+    try:
+        owner = memory_stack.ensure_active()
+        rewound = memory_stack.rewind_last_turn(owner)
+    except Exception:
+        logger.exception("Não foi possível desfazer a última pergunta")
+        return {"ok": False, "accepted": False, "error": "rewind_failed"}
+    if not rewound.get("ok"):
+        return {"ok": False, "accepted": False, "error": rewound.get("error") or "rewind_failed"}
+    text = str(new_text or "").strip() or str(rewound.get("text") or "").strip()
+    if not text:
+        return {"ok": False, "accepted": False, "error": "empty_message"}
+    try:
+        brain.switch_conversation(owner)
+    except Exception:
+        logger.exception("Não foi possível reconstruir o contexto da conversa")
+    request_id = msg_id or uuid.uuid4().hex
+    ack = _dispatch_turn(text, request_id, owner)
+    ack["text"] = text
+    return ack
 
 @eel.expose
 def get_last_response_meta() -> dict:
@@ -801,6 +864,10 @@ def list_conversations(query: str = "", limit: int = 60,
                 "activeId": None}
     threads = memory_stack.conversations.list(
         limit=int(limit), include_archived=bool(include_archived), query=str(query or ""))
+    # A thread nobody has written in yet is not a conversation to go back to.
+    # It stays the active one (the next message lands there) but has no row in
+    # the rail, the way a new chat behaves in every other chat app.
+    threads = [t for t in threads if int(t.get("messageCount") or t.get("message_count") or 0) > 0]
     return {"ok": True, "conversations": threads,
             "activeId": memory_stack.active_conversation_id}
 
@@ -3448,7 +3515,10 @@ async def _process_message(user_text: str, msg_id: str | None = None,
         owner = conversation_id or (memory_stack.ensure_active()
                                     if memory_stack.ready else None)
         if memory_stack.ready:
-            memory_stack.record_user_message(user_text, conversation_id=owner)
+            try:
+                memory_stack.record_user_message(user_text, conversation_id=owner)
+            finally:
+                _hold_owner(owner, False)
         else:
             memory.save_message("user", user_text)
         _emit_stream_start(msg_id, user_text)
@@ -3472,7 +3542,7 @@ async def _process_message(user_text: str, msg_id: str | None = None,
             # A 429 is a state the UI shows in its own affordance, not a wall
             # of red text inside the answer.
             _emit_rate_limited(msg_id, rate_limit)
-        full_response = full_response.strip() or "Desculpa Simão, não consegui gerar uma resposta."
+        full_response = full_response.strip() or "Desculpa, não consegui gerar uma resposta."
         # ONE shaping, used for BOTH the live payload and the stored row.
         #
         # The Brain's scratchpad is not shippable: it carries the provider's own
@@ -3508,7 +3578,7 @@ async def _process_message(user_text: str, msg_id: str | None = None,
         return result
     except Exception:
         logger.exception("Erro no _process_message")
-        error_result = {"msg_id": msg_id, "text": "Ups Simão, ocorreu um erro ao processar o teu pedido.", "ok": False, "error": "processing_error"}
+        error_result = {"msg_id": msg_id, "text": "Ocorreu um erro ao processar o teu pedido.", "ok": False, "error": "processing_error"}
         _emit_stream_error(msg_id, "processing_error", error_result["text"])
         _emit_stream_end(msg_id, error_result)
         return error_result

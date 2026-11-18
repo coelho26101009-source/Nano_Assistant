@@ -416,7 +416,7 @@ export function AgentsPage({ agents }: { agents: any[] | null }) {
     <div className="page__inner">
       <h2 className="page-title">Agentes registados <Badge tone="info">experimental</Badge></h2>
       <p className="dim" style={{ marginBottom: 16, maxWidth: "68ch" }}>
-        Estes agentes estão registados e são seleccionados ao planear uma tarefa, mas
+        Estes agentes estão registados e são selecionados ao planear uma tarefa, mas
         ainda não despacham execução própria: todas as ferramentas correm pela autoridade
         central de execução. O estado reflecte o registo, não capacidade autónoma.
       </p>

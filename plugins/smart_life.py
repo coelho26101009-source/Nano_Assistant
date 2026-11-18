@@ -164,7 +164,7 @@ def get_tools() -> list[dict]:
         }},
         {"type": "function", "function": {
             "name": "phone_notify",
-            "description": "Envia notificação push para o telemóvel do Simão.",
+            "description": "Envia notificação push para o telemóvel do utilizador.",
             "parameters": {"type": "object", "required": ["message"], "properties": {
                 "message":     {"type": "string"},
                 "webhook_url": {"type": "string"},
@@ -179,7 +179,7 @@ def get_tools() -> list[dict]:
         }},
         {"type": "function", "function": {
             "name": "rag_search",
-            "description": "Pesquisa semanticamente nos documentos indexados. Usa quando o Simão pergunta sobre os seus PDFs ou documentos.",
+            "description": "Pesquisa semanticamente nos documentos indexados. Usa quando o utilizador pergunta sobre os seus PDFs ou documentos.",
             "parameters": {"type": "object", "required": ["query"], "properties": {
                 "query":     {"type": "string"},
                 "n_results": {"type": "integer", "default": 5},

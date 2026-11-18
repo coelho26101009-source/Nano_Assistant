@@ -90,7 +90,7 @@ def _cooldown_passed(key: str) -> bool:
 
 
 def _alert(alerts: list[str]):
-    message = "⚠️ Atenção Simão: " + ", ".join(alerts) + "."
+    message = "⚠️ Atenção: " + ", ".join(alerts) + "."
     logger.warning(message)
     get_memory().save_message("assistant", message, {"source": "system_monitor"})
 

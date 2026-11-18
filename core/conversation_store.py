@@ -377,6 +377,52 @@ class ConversationStore:
         return {"id": message_id, "role": role, "content": text, "timestamp": stamp,
                 "conversationId": str(conversation_id), "trust": str(trust)}
 
+    def truncate_last_turn(self, conversation_id: str) -> dict:
+        """Remove the thread's LAST user message and everything after it.
+
+        This is what "tentar de novo" and "editar a última mensagem" stand on:
+        the turn is taken back out of the thread, so the Brain's window, the
+        stored transcript and the retrieval index all agree that it was never
+        asked, and the caller can ask it again (the same text, or an edited one).
+
+        ONLY THE LAST TURN, deliberately. Rewriting a message in the middle of a
+        thread would leave every later answer replying to a question that no
+        longer exists; branching is a different feature with a different model.
+        Tool and system rows written during the turn go with it -- they belong to
+        the answer being discarded. Long-term memories captured from the message
+        are NOT touched: they are separate objects with their own lifecycle and
+        their own delete in Memória, exactly as for a deleted thread.
+        """
+        conversation_id = str(conversation_id or "")
+        if not self.exists(conversation_id):
+            return {"ok": False, "error": "unknown_conversation"}
+        try:
+            with self._lock:
+                row = self.conn.execute(
+                    "SELECT id, content FROM messages WHERE conversation_id=? AND role='user'"
+                    " ORDER BY id DESC LIMIT 1", (conversation_id,)).fetchone()
+                if row is None:
+                    return {"ok": False, "error": "no_turn"}
+                first_id, text = int(row[0]), str(row[1] or "")
+                removed_ids = [int(r[0]) for r in self.conn.execute(
+                    "SELECT id FROM messages WHERE conversation_id=? AND id>=?",
+                    (conversation_id, first_id)).fetchall()]
+                self.conn.execute("DELETE FROM messages WHERE conversation_id=? AND id>=?",
+                                  (conversation_id, first_id))
+                count, last = self.conn.execute(
+                    "SELECT COUNT(*), MAX(timestamp) FROM messages WHERE conversation_id=?"
+                    " AND role IN ('user','assistant')", (conversation_id,)).fetchone()
+                self.conn.execute(
+                    "UPDATE conversations SET message_count=?, last_message_at=?, updated_at=?"
+                    " WHERE id=?", (int(count or 0), last, _now(), conversation_id))
+                self.conn.commit()
+        except sqlite3.Error as exc:
+            logger.exception("Falha a desfazer a última vez na conversa %s", conversation_id)
+            return {"ok": False, "error": "truncate_failed", "detail": str(exc)}
+        if self.index is not None and removed_ids:
+            self.index.remove_many(f"message:{mid}" for mid in removed_ids)
+        return {"ok": True, "text": text, "removed": len(removed_ids)}
+
     def _auto_title(self, conversation_id: str, role: str, text: str) -> None:
         """Name a thread after the user's first sentence. No model call.
 
