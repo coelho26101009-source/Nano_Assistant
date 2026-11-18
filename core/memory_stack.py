@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import sqlite3
 import threading
 from typing import Any, Callable
 
@@ -102,6 +103,12 @@ class MemoryStack:
         self._jobs: queue.Queue = queue.Queue(maxsize=_QUEUE_SIZE)
         self._worker: threading.Thread | None = None
         self._stopping = threading.Event()
+        #: Held by the worker for the whole of one job, and by
+        #: :meth:`purge_everything` while it erases. See the purge docstring.
+        self._job_gate = threading.Lock()
+        #: Bumped by every purge. A job carries the value it was queued under
+        #: and is skipped if a purge happened since.
+        self._purge_epoch = 0
         if self._background:
             self._start_worker()
 
@@ -218,11 +225,14 @@ class MemoryStack:
     def _pump(self) -> None:
         while not self._stopping.is_set():
             try:
-                job = self._jobs.get(timeout=0.5)
+                epoch, job = self._jobs.get(timeout=0.5)
             except queue.Empty:
                 continue
             try:
-                job()
+                with self._job_gate:
+                    # Queued before a purge: it holds text that was erased.
+                    if epoch == self._purge_epoch:
+                        job()
             except Exception:  # noqa: BLE001 - a bad job must not kill the worker
                 logger.exception("Trabalho de memória em segundo plano falhou")
             finally:
@@ -236,14 +246,14 @@ class MemoryStack:
                 logger.exception("Trabalho de memória falhou")
             return
         try:
-            self._jobs.put_nowait(job)
+            self._jobs.put_nowait((self._purge_epoch, job))
         except queue.Full:
             # Drop the OLDEST, keep the newest: stale derived work is the least
             # valuable thing in the queue.
             try:
                 self._jobs.get_nowait()
                 self._jobs.task_done()
-                self._jobs.put_nowait(job)
+                self._jobs.put_nowait((self._purge_epoch, job))
             except (queue.Empty, queue.Full):
                 logger.warning("Fila de memória cheia; trabalho derivado descartado")
 
@@ -703,15 +713,151 @@ class MemoryStack:
             "lastConversationAt": threads[0]["lastMessageAt"] if threads else None,
         }
 
+    #: Every table that holds something the user said, something derived from
+    #: it, or something Nano learned about them. Children before parents, so
+    #: the order is valid with foreign keys on or off. Settings, API keys,
+    #: permission policies and the permission audit log are NOT here: they
+    #: live in other files and are configuration or the security record, not
+    #: personal content (see ``erase_all_data`` in core/main.py).
+    _PURGE_TABLES = (
+        "conversation_facts",
+        "conversation_summaries",
+        "knowledge_links",
+        "knowledge_edges",
+        "knowledge_suppressions",
+        "knowledge_nodes",
+        "memories",
+        "messages",
+        "conversations",
+        "retrieval_entries",
+    )
+
+    #: Legacy key/value rows in ``preferences`` that are personal: the facts
+    #: written by ``remember_fact`` and older builds, and the user profile.
+    _PURGE_PREFERENCES = ("fact:%", "nano.user_profile")
+
     def purge_everything(self) -> dict:
-        """Delete conversations, memories and the graph. Confirmed in the UI first."""
-        conversations = self.conversations.delete_all()
-        memories = self.memories.clear()
-        knowledge = self.knowledge.clear()
+        """Erase every conversation, memory and piece of knowledge. ONE transaction.
+
+        Confirmed in the UI with a typed phrase before it gets here; see
+        ``erase_all_data`` in core/main.py for what is deliberately kept.
+
+        WHY ONE TRANSACTION AND NOT THE PER-STORE ``clear()`` CALLS. Those are
+        built for one store at a time and are bounded for the renderer --
+        ``ConversationStore.delete_all`` lists at most 200 threads, so a user
+        with 250 would have kept 50 after "apagar tudo". Here every table is
+        emptied with an unbounded DELETE, and either all of it lands or none
+        of it does: a half-erased profile that reports itself as erased is the
+        one outcome this must never produce.
+
+        BACKGROUND WORK CANNOT WRITE IT BACK. A summary or memory extraction
+        queued before the purge holds the text it was given, and would write
+        a derived copy of it after the purge returned. So the purge takes the
+        worker's job gate -- waiting for an in-flight job to finish -- bumps
+        the purge epoch, so a job queued earlier is skipped even if the worker
+        has already dequeued it, and throws away everything still queued.
+
+        THE BYTES GO TOO. A DELETE only marks pages free; the text stays in the
+        database file and the WAL until something overwrites it. After the
+        commit the WAL is checkpointed and the file is VACUUMed, best-effort,
+        and the result says whether that happened.
+        """
+        if not self.ready:
+            return {"ok": False, "error": "memory_unavailable"}
+
+        gate_held = self._job_gate.acquire(timeout=10.0)
+        if not gate_held:
+            logger.warning("Trabalho de memória ainda a correr; a apagar mesmo assim")
+        try:
+            # Bumped first: a job the worker has already dequeued and is
+            # waiting on the gate with is skipped when it gets it.
+            self._purge_epoch += 1
+            dropped = self._discard_queued_jobs()
+            counts = self._purge_tables()
+        finally:
+            if gate_held:
+                self._job_gate.release()
+        if not counts.get("ok"):
+            return counts
+
         self._active_id = None
-        return {"ok": True, "conversations": conversations.get("removed", 0),
-                "memories": memories.get("removed", 0),
-                "nodes": knowledge.get("removed", 0)}
+        counts["queuedJobsDiscarded"] = dropped
+        counts["compacted"] = self._compact()
+        logger.info("Todos os dados pessoais apagados: %d conversa(s), %d mensagem(ns),"
+                    " %d memória(s), %d nó(s), %d facto(s)",
+                    counts["conversations"], counts["messages"], counts["memories"],
+                    counts["nodes"], counts["facts"])
+        return counts
+
+    def _discard_queued_jobs(self) -> int:
+        dropped = 0
+        while True:
+            try:
+                self._jobs.get_nowait()
+            except queue.Empty:
+                return dropped
+            self._jobs.task_done()
+            dropped += 1
+
+    def _table_exists(self, name: str) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name=?", (name,)).fetchone()
+        return row is not None
+
+    def _count(self, sql: str, params: tuple = ()) -> int:
+        row = self.conn.execute(sql, params).fetchone()
+        return int(row[0]) if row else 0
+
+    def _purge_tables(self) -> dict:
+        with self._lock:
+            try:
+                counts = {
+                    "conversations": self._count("SELECT COUNT(*) FROM conversations"),
+                    "messages": self._count("SELECT COUNT(*) FROM messages"),
+                    "memories": self._count("SELECT COUNT(*) FROM memories"),
+                    "nodes": self._count("SELECT COUNT(*) FROM knowledge_nodes"),
+                    "facts": self._count(
+                        "SELECT COUNT(*) FROM preferences WHERE key LIKE ?", ("fact:%",)),
+                    "documents": 0,
+                }
+                # Explicit, so the DELETEs below are one unit regardless of the
+                # connection's isolation level.
+                self.conn.execute("SAVEPOINT nano_purge")
+                for table in self._PURGE_TABLES:
+                    self.conn.execute(f"DELETE FROM {table}")  # noqa: S608 - fixed names
+                for pattern in self._PURGE_PREFERENCES:
+                    self.conn.execute("DELETE FROM preferences WHERE key LIKE ?", (pattern,))
+                # FTS tables exist only where SQLite was built with FTS5.
+                if self._table_exists("retrieval_fts"):
+                    self.conn.execute("DELETE FROM retrieval_fts")
+                if self._table_exists("documents_fts"):
+                    counts["documents"] = self._count("SELECT COUNT(*) FROM documents_fts")
+                    self.conn.execute("DELETE FROM documents_fts")
+                self.conn.execute("RELEASE SAVEPOINT nano_purge")
+                self.conn.commit()
+            except sqlite3.Error as exc:
+                logger.exception("Falha a apagar todos os dados")
+                try:
+                    self.conn.execute("ROLLBACK TO SAVEPOINT nano_purge")
+                    self.conn.execute("RELEASE SAVEPOINT nano_purge")
+                except sqlite3.Error:
+                    self.conn.rollback()
+                return {"ok": False, "error": "purge_failed", "detail": str(exc)}
+        counts["ok"] = True
+        return counts
+
+    def _compact(self) -> bool:
+        """Checkpoint the WAL and VACUUM, so deleted text leaves the file."""
+        with self._lock:
+            try:
+                self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                self.conn.execute("VACUUM")
+                self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                return True
+            except sqlite3.Error:
+                logger.warning("Não foi possível compactar a base de dados após apagar",
+                               exc_info=True)
+                return False
 
 
 __all__ = ["MemoryStack"]

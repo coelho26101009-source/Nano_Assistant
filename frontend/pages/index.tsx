@@ -781,6 +781,39 @@ export default function Home() {
     });
   }, [notify, refreshMemory, refreshSettings]);
 
+  /**
+   * Erase everything NANO holds about the user. The typed phrase is passed
+   * through and checked by the backend too: the dialog is not the only gate.
+   * Resolves to whether it worked, so the dialog can stay open on a failure.
+   */
+  const eraseAllData = useCallback(async (confirmation: string): Promise<boolean> => {
+    const result = await call<any>("erase_all_data", confirmation);
+    if (result?.ok || result?.activeId) {
+      setMessages([]);
+      setThinking(false);
+      setStatus("");
+      setInput("");
+      setActiveThreadId(result.activeId ?? null);
+    }
+    reloadThreads();
+    refreshMemory();
+    refreshSettings();
+    refreshCC();
+    if (result?.ok) {
+      notify("Todos os dados foram apagados", "success");
+      return true;
+    }
+    notify(
+      result?.error === "tasks_not_cleared"
+        ? "Dados apagados, mas o histórico de tarefas não foi limpo"
+        : result?.error === "purge_failed"
+          ? "Não foi possível apagar os dados. Nada foi alterado."
+          : "Não foi possível apagar os dados.",
+      "error",
+    );
+    return false;
+  }, [notify, reloadThreads, refreshMemory, refreshSettings, refreshCC]);
+
   /** Open Settings on a specific category. Used by the AI pill. */
   const openSettingsSection = useCallback((section: SettingsSection) => {
     setSettingsSection(section);
@@ -1299,6 +1332,7 @@ export default function Home() {
                       onToggleEmergencyStop={toggleEmergencyStop}
                       onClearConversation={newConversation}
                       onForgetAllMemory={forgetAllMemory}
+                      onEraseAllData={eraseAllData}
                       onNavigate={setView}
                       onOpenFirstRun={() => { setShowFirstRun(true); setView("chat"); }}
                       section={settingsSection} onSection={setSettingsSection}

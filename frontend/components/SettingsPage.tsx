@@ -14,7 +14,9 @@ import { call } from "../lib/backend";
 import {
   retryShortcut, setAutoLaunch, setOverlayEnabled, useDesktopStatus,
 } from "../lib/desktop";
-import { AboutSection, MemorySection, PcControlSection } from "./SettingsSections";
+import {
+  AboutSection, EraseAllDataPanel, MemorySection, PcControlSection,
+} from "./SettingsSections";
 import {
   Badge, Button, ConfirmDialog, EmptyState, ErrorState, Field, MetricRow,
   Panel, SecretField, SegmentedControl, StatusIndicator, Toggle,
@@ -403,7 +405,8 @@ export default function SettingsPage({
   settings, providers, diagnostics, loading, busy, onSetMode, onSetPreferredCloud,
   onSaveCloudKey, onRemoveCloudKey, onTestCloud, onSetCloudModel,
   onSetLocalModel, onUpdate, onTestSpeaker, onTestMicrophone,
-  onToggleEmergencyStop, onClearConversation, onForgetAllMemory, onNavigate, onOpenFirstRun,
+  onToggleEmergencyStop, onClearConversation, onForgetAllMemory, onEraseAllData,
+  onNavigate, onOpenFirstRun,
   section, onSection,
   theme, onTheme, reduceMotion, onReduceMotion,
 }: {
@@ -431,6 +434,8 @@ export default function SettingsPage({
   onToggleEmergencyStop: (enabled: boolean) => void;
   onClearConversation: () => void;
   onForgetAllMemory: () => void;
+  /** Erase every personal store. Resolves to whether it worked. */
+  onEraseAllData: (confirmation: string) => Promise<boolean>;
   /** Jump to a top-level page (Permissões, Memória, Capacidades). */
   onNavigate: (view: "permissions" | "memory" | "capabilities") => void;
   onOpenFirstRun: () => void;
@@ -888,6 +893,8 @@ export default function SettingsPage({
                 página Memória.
               </p>
             </Panel>
+
+            <EraseAllDataPanel onErase={onEraseAllData} />
 
             {/* The former "Avançado" section is gone. Its three panels were all
                 statements about safety and data, so they live here with the rest

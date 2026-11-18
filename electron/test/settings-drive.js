@@ -229,6 +229,10 @@ app.whenReady().then(async () => {
                                   messageCount: 3, ragEnabled: false, documents: [],
                                   documentsSupported: false, documentsNote: '' }),
     get_data_location: () => ({ data_dir: 'C:\\Users\\test\\AppData\\Roaming\\Nano' }),
+    erase_all_data: (confirmation) => (confirmation === 'APAGAR TUDO'
+      ? { ok: true, activeId: 'conv_fresh', conversations: 2, messages: 6, memories: 1,
+          nodes: 1, facts: 1, tasks: 0 }
+      : { ok: false, error: 'confirmation_required' }),
     get_loaded_plugins: () => ({ pc_control: ['pc_app_launch'] }),
     get_system_readiness: () => ({ agent: { state: 'READY', pending_permissions: 0 },
       voice: { state: 'READY', blockers: [], enabled: true },
@@ -454,6 +458,52 @@ app.whenReady().then(async () => {
     const len = (body?.textContent || '').trim().length;
     ok('category ' + name + ' renders real content', len > 120, len + ' chars');
   }
+
+  /* ---- 7b. "Apagar todos os dados" is gated by a typed phrase -----------
+     One click opens the decision; it does not make it. The confirm button
+     stays disabled until the exact phrase is typed, and the phrase -- not a
+     boolean -- is what reaches the backend, which checks it again. */
+  railItem('Privacidade')?.click();
+  await sleep(500);
+  const typeInto = (input, value) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setter.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  const eraseButton = qa('.settings-body button')
+    .find((el) => (el.textContent || '').trim() === 'Apagar todos os dados');
+  ok('Privacidade offers "Apagar todos os dados"', !!eraseButton);
+  eraseButton?.click();
+  await sleep(400);
+  const eraseDialog = q('.modal[aria-label="Apagar todos os dados?"]');
+  ok('the erase opens a dialog instead of erasing', !!eraseDialog &&
+     !report.calls.some((c) => c.name === 'erase_all_data'));
+  const eraseText = eraseDialog?.textContent || '';
+  ok('the dialog says what is erased and what is kept',
+     /conversas/i.test(eraseText) && /chaves de API/i.test(eraseText), eraseText.slice(0, 200));
+  const eraseRect = eraseDialog?.getBoundingClientRect();
+  ok('the erase dialog fits the window', !!eraseRect && eraseRect.top >= 0 && eraseRect.left >= 0 &&
+     eraseRect.bottom <= window.innerHeight + 1 && eraseRect.right <= window.innerWidth + 1,
+     eraseRect ? Math.round(eraseRect.width) + 'x' + Math.round(eraseRect.height) +
+       ' in ' + window.innerWidth + 'x' + window.innerHeight : 'none');
+  const confirmErase = () => Array.from(eraseDialog?.querySelectorAll('button') || [])
+    .find((el) => /^Apagar tudo$|^A apagar/.test((el.textContent || '').trim()));
+  const phraseInput = eraseDialog?.querySelector('#erase-all-confirm');
+  ok('confirm is disabled before anything is typed', !!confirmErase() && confirmErase().disabled);
+  if (phraseInput) typeInto(phraseInput, 'apagar');
+  await sleep(150);
+  ok('a wrong phrase keeps confirm disabled', !!confirmErase() && confirmErase().disabled);
+  if (phraseInput) typeInto(phraseInput, 'APAGAR TUDO');
+  await sleep(150);
+  ok('the exact phrase enables confirm', !!confirmErase() && !confirmErase().disabled);
+  confirmErase()?.click();
+  await sleep(600);
+  const eraseCalls = report.calls.filter((c) => c.name === 'erase_all_data');
+  ok('confirming sends the typed phrase to the backend once',
+     eraseCalls.length === 1 && eraseCalls[0].args[0] === 'APAGAR TUDO',
+     JSON.stringify(eraseCalls.map((c) => c.args)));
+  ok('the dialog closes after a successful erase',
+     !q('.modal[aria-label="Apagar todos os dados?"]'));
 
   /* ---- 8. Sobre shows one version, from the canonical source ------------ */
   railItem('Sobre')?.click();

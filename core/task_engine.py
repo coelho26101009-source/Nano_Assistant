@@ -421,6 +421,32 @@ class TaskEngine:
             finally:
                 conn.close()
 
+    #: States a task never leaves on its own. Only these are erased by
+    #: :meth:`clear_finished`.
+    FINISHED_STATES = ("COMPLETED", "FAILED", "CANCELLED", "RECOVERABLE", "NEEDS_ATTENTION")
+
+    def clear_finished(self) -> int:
+        """Delete every task that is no longer running. Part of "apagar tudo".
+
+        A finished task's title, description and result carry what the user
+        asked for, so the history goes with the rest of their data. A task
+        that is queued or running is left alone: pulling its row out from
+        under the worker would turn an erase into a crash, and it finishes
+        (and can then be erased) in seconds. Same caveat as
+        :meth:`delete_task` -- the permission audit log is not touched.
+        """
+        marks = ",".join("?" * len(self.FINISHED_STATES))
+        with self._lock:
+            conn = sqlite3.connect(str(self.db_path), timeout=10)
+            try:
+                cursor = conn.execute(
+                    f"DELETE FROM tasks WHERE status IN ({marks})",  # noqa: S608 - fixed marks
+                    self.FINISHED_STATES)
+                conn.commit()
+                return int(cursor.rowcount or 0)
+            finally:
+                conn.close()
+
     def queue_size(self) -> int:
         with self._lock:
             conn = sqlite3.connect(str(self.db_path), timeout=10)

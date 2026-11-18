@@ -23,7 +23,7 @@ import DiagnosticsPanel from "./DiagnosticsPanel";
 import NanoLogo, { NanoWordmark } from "./NanoLogo";
 import { BRAND_NAME } from "../lib/brand";
 import {
-  Badge, Button, ConfirmDialog, MetricRow, Panel, StatusIndicator, Toggle,
+  Badge, Button, ConfirmDialog, MetricRow, Modal, Panel, StatusIndicator, Toggle,
 } from "./ui";
 
 /* ── PC Control ───────────────────────────────────────────────────────── */
@@ -216,6 +216,95 @@ export function MemorySection({
         onCancel={() => setConfirmForget(false)}
       />
     </div>
+  );
+}
+
+/* ── Apagar todos os dados ────────────────────────────────────────────── */
+
+/** What the user types. The backend checks the same phrase (core/main.py
+ *  ERASE_ALL_CONFIRMATION), so this is not the only gate. */
+export const ERASE_ALL_PHRASE = "APAGAR TUDO";
+
+/**
+ * The one-click erase, with the decision laid out before it is made.
+ *
+ * "One click" is the ENTRY point, not the confirmation. An erase that cannot be
+ * undone gets a typed phrase rather than a second button: a second button is
+ * pressed by the same reflex as the first, typing two words is not. The dialog
+ * says both what goes and what stays, because "apagar tudo" that silently keeps
+ * the API keys -- or silently deletes them -- would each be a surprise.
+ */
+export function EraseAllDataPanel({ onErase }: {
+  onErase: (confirmation: string) => Promise<boolean>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const matches = typed.trim() === ERASE_ALL_PHRASE;
+
+  const close = () => { if (!busy) { setOpen(false); setTyped(""); } };
+  const confirm = async () => {
+    if (!matches || busy) return;
+    setBusy(true);
+    try {
+      const ok = await onErase(typed.trim());
+      if (ok) { setOpen(false); setTyped(""); }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <Panel title="Apagar todos os dados">
+        <Button variant="danger" onClick={() => setOpen(true)}>Apagar todos os dados</Button>
+        <p className="dim" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>
+          Apaga de uma vez as conversas, as memórias, o Second Brain e o histórico de
+          tarefas deste computador. As definições e as chaves de API ficam.
+        </p>
+      </Panel>
+
+      <Modal
+        open={open} onClose={close} width="narrow"
+        eyebrow="Não pode ser desfeito"
+        title="Apagar todos os dados?"
+        footer={
+          <>
+            <Button onClick={close} disabled={busy}>Cancelar</Button>
+            <Button variant="danger" onClick={confirm} disabled={!matches || busy}>
+              {busy ? "A apagar…" : "Apagar tudo"}
+            </Button>
+          </>
+        }
+      >
+        <div className="cc-tile-label">É apagado</div>
+        <ul className="muted erase-list">
+          <li>Todas as conversas e mensagens</li>
+          <li>Todas as memórias e factos guardados</li>
+          <li>O Second Brain, incluindo os nós criados à mão</li>
+          <li>O histórico de tarefas terminadas</li>
+        </ul>
+        <div className="cc-tile-label" style={{ marginTop: 12 }}>Fica</div>
+        <ul className="muted erase-list">
+          <li>Definições, chaves de API e contas ligadas</li>
+          <li>Permissões e o registo de autorizações</li>
+          <li>O ficheiro de registos (<code>logs/nano.log</code>)</li>
+        </ul>
+        <form
+          className="field" style={{ marginTop: 16 }}
+          onSubmit={(event) => { event.preventDefault(); confirm(); }}
+        >
+          <label className="field__label" htmlFor="erase-all-confirm">
+            Escreve <strong>{ERASE_ALL_PHRASE}</strong> para confirmar
+          </label>
+          <input
+            id="erase-all-confirm" className="input" type="text"
+            value={typed} onChange={(event) => setTyped(event.target.value)}
+            autoComplete="off" spellCheck={false} disabled={busy}
+          />
+        </form>
+      </Modal>
+    </>
   );
 }
 
