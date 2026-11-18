@@ -188,6 +188,19 @@ def test_pc_subcategories_keep_unrelated_pc_tools_out_of_the_prompt():
     assert "pc_volume_set" not in apps
 
 
+@pytest.mark.parametrize("message", [
+    "lembra-me daqui a 1 minuto de beber água",
+    "Avisa-me em 10 minutos",
+    "lembra-me de tirar a roupa da máquina",
+    "remind me in 5 minutes to call mom",
+])
+def test_a_reminder_request_is_offered_set_reminder(message):
+    """Measured: 'lembra-me daqui a 1 minuto' got no reminder tool, so the
+    model said it would remind and nothing was ever scheduled."""
+    selected = {t["function"]["name"] for t in ms.select_tools(message, ALL_TOOLS)}
+    assert "set_reminder" in selected
+
+
 def test_a_search_request_sends_only_browser_tools():
     selected = {t["function"]["name"] for t in ms.select_tools("Pesquisa notícias sobre IA", ALL_TOOLS)}
     assert "web_search" in selected

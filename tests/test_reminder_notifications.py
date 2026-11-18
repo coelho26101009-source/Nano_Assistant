@@ -84,12 +84,55 @@ def test_main_sends_reminders_to_the_desktop_shell_and_the_ui(monkeypatch):
     emitted, ui = [], []
     monkeypatch.setattr(main, "_desktop_emit", lambda event, payload=None: emitted.append((event, payload)))
     monkeypatch.setattr(main, "_notify_ui", lambda name, *args: ui.append((name, args)))
+    monkeypatch.setattr(main, "_DESKTOP_BRIDGE", object())
     main._on_reminder_due({"id": 3, "text": "t" * 900, "due_label": "09:00", "secret": "x"})
     assert emitted[0][0] == "reminder_due"
     payload = emitted[0][1]
     assert set(payload) == {"id", "text", "due_label"}
     assert len(payload["text"]) == 500 and payload["due_label"] == "09:00"
     assert ui == [("on_reminder_due", (payload,))]
+
+
+def test_browser_mode_shows_the_windows_notification_itself(monkeypatch):
+    """NANO.bat has no Electron: the reminder must still reach Windows."""
+    import threading
+
+    from core import main, windows_toast
+
+    shown, ui = [], []
+    monkeypatch.setattr(main, "_DESKTOP_BRIDGE", None)
+    monkeypatch.setattr(main, "_notify_ui", lambda name, *args: ui.append((name, args)))
+    monkeypatch.setattr(windows_toast, "show", lambda title, body: shown.append((title, body)))
+    main._on_reminder_due({"id": 4, "text": "beber agua", "due_label": "21:05"})
+    for thread in threading.enumerate():
+        if thread.name == "nano-reminder-toast":
+            thread.join(timeout=5)
+    assert shown == [("Lembrete · 21:05", "beber agua")]
+    assert ui and ui[0][0] == "on_reminder_due"
+
+
+def test_windows_toast_never_puts_text_on_the_command_line(monkeypatch):
+    import subprocess
+
+    from core import windows_toast
+
+    calls = []
+
+    class Done:
+        returncode = 0
+        stderr = ""
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs["env"]))
+        return Done()
+
+    monkeypatch.setattr(windows_toast.sys, "platform", "win32")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    hostile = "'; Remove-Item C:\ -Recurse; '<x>"
+    assert windows_toast.show("Lembrete", hostile) is True
+    args, env = calls[0]
+    assert all(hostile not in a for a in args)
+    assert env["NANO_TOAST_BODY"] == hostile
 
 
 def test_main_registers_the_notifier_with_the_running_plugin_instance(monkeypatch):

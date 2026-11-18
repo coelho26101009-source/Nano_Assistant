@@ -3537,7 +3537,18 @@ def _on_reminder_due(reminder: dict) -> None:
         "text": str(reminder.get("text") or "")[:500],
         "due_label": str(reminder.get("due_label") or "")[:16],
     }
-    _desktop_emit("reminder_due", payload)
+    if _DESKTOP_BRIDGE is not None:
+        _desktop_emit("reminder_due", payload)
+    else:
+        # Browser mode (NANO.bat): no Electron to show a native notification,
+        # and the page toast is invisible when the tab is in the background.
+        # Show the Windows notification from here instead, off this thread so
+        # a slow PowerShell never delays the scheduler.
+        from core import windows_toast
+
+        title = f"Lembrete · {payload['due_label']}" if payload["due_label"] else "Lembrete"
+        threading.Thread(target=windows_toast.show, args=(title, payload["text"]),
+                         name="nano-reminder-toast", daemon=True).start()
     _notify_ui("on_reminder_due", payload)
 
 

@@ -359,6 +359,15 @@ _CATEGORY_KEYWORDS: dict[ToolCategory, tuple[str, ...]] = {
         "calendario", "evento", "eventos", "reuniao", "reunioes", "marca",
         "marcar", "compromisso", "amanha", "hoje as", "proxima semana",
         "reminder", "calendar", "schedule", "meeting", "event",
+        # The way people actually ask for a reminder. "lembra-me daqui a 1
+        # minuto de beber agua" named none of the nouns above, so set_reminder
+        # was never offered and the model answered "Entendido!" without
+        # creating anything: no reminder, no notification. "lembra-te" is
+        # deliberately absent -- that one asks Nano to remember a fact.
+        "lembra me", "lembrame", "lembra nos", "lembrar me", "avisa me", "avisame",
+        "alerta me", "acorda me", "desperta me", "despertador", "temporizador",
+        "daqui a", "dentro de", "minuto", "minutos",
+        "remind me", "alert me", "wake me", "timer",
     ),
     ToolCategory.IOT: (
         "luz", "luzes", "lampada", "tomada", "iot", "smart", "domotica",
