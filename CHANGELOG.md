@@ -22,6 +22,14 @@ versioning policy.
 
 ### Added
 
+- **Recurring reminders and everyday phrases.** Reminders understand
+  "amanhã às 9", "sexta às 15h", "depois de amanhã", "9 e meia" and "3 da
+  tarde", and can repeat: "todos os dias às 8", "nos dias úteis",
+  "todas as segundas às 9" or "todos os meses". A recurring reminder moves to
+  its next slot when it fires (claimed atomically, so it is delivered once
+  per slot), and slots missed while the PC was off are skipped rather than
+  fired in a burst. The Agenda page gains a "Repetir" choice and shows the
+  rule beside each reminder. Old databases gain the new column on first use.
 - **Read the text on screen, locally and only if you allow it.** New
   `pc_screen_read_text` uses Windows' own OCR on the active window, a window, a
   monitor or a region. It is off until Definições → Privacidade → "Ler texto

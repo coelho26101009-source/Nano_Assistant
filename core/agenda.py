@@ -79,7 +79,7 @@ def overview(days: int = 30) -> dict:
     return result
 
 
-def create_reminder(text: Any, when: Any) -> dict:
+def create_reminder(text: Any, when: Any, repeat: Any = None) -> dict:
     reminders_plugin = _plugin("reminders")
     if reminders_plugin is None:
         return _failure("reminders_unavailable", "Os lembretes estão desligados.")
@@ -89,9 +89,13 @@ def create_reminder(text: Any, when: Any) -> dict:
         return _failure("empty_text", "Escreve do que te devo lembrar.")
     if not when:
         return _failure("empty_when", "Indica quando, por exemplo '10 minutos' ou '18:30'.")
-    created = reminders_plugin.set_reminder(text, when)
+    repeat = _clean(repeat, 32) or None
+    if repeat is not None and repeat not in getattr(reminders_plugin, "RECURRENCES", {}):
+        return _failure("invalid_repeat", "Repetição inválida.")
+    created = reminders_plugin.set_reminder(text, when, repeat)
     if created.get("success"):
         return {"ok": True, "id": created.get("id"), "dueAt": created.get("due_at"),
+                "recurrence": created.get("recurrence"),
                 "message": created.get("message", "Lembrete criado.")}
     return _failure("invalid_when", str(created.get("error") or "Não consegui criar o lembrete."))
 

@@ -10,7 +10,15 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { call } from "../lib/backend";
 import { Badge, Button, ConfirmDialog, EmptyState, Field, Panel, Skeleton, Tabs } from "./ui";
 
-export type AgendaReminder = { id: number; text: string; due_at: string; fired?: boolean; recurrence?: string | null };
+export type AgendaReminder = { id: number; text: string; due_at: string; fired?: boolean; recurrence?: string | null; recurrence_label?: string | null };
+const REPEAT_OPTIONS = [
+  { value: "", label: "Não repetir" },
+  { value: "daily", label: "Todos os dias" },
+  { value: "weekdays", label: "Dias úteis" },
+  { value: "weekly", label: "Todas as semanas" },
+  { value: "monthly", label: "Todos os meses" },
+];
+
 export type AgendaEvent = {
   id: number | string; title: string; start: string; end?: string | null;
   location?: string | null; source?: string;
@@ -73,6 +81,7 @@ export default function AgendaPage({ enabled, notify }: { enabled: boolean; noti
 
   const [reminderText, setReminderText] = useState("");
   const [reminderWhen, setReminderWhen] = useState("");
+  const [reminderRepeat, setReminderRepeat] = useState("");
   const [eventTitle, setEventTitle] = useState("");
   const [eventStart, setEventStart] = useState("");
   const [eventEnd, setEventEnd] = useState("");
@@ -102,8 +111,8 @@ export default function AgendaPage({ enabled, notify }: { enabled: boolean; noti
 
   const addReminder = (event: React.FormEvent) => {
     event.preventDefault();
-    run("agenda_create_reminder", [reminderText, reminderWhen], "Lembrete criado.", () => {
-      setReminderText(""); setReminderWhen("");
+    run("agenda_create_reminder", [reminderText, reminderWhen, reminderRepeat || null], "Lembrete criado.", () => {
+      setReminderText(""); setReminderWhen(""); setReminderRepeat("");
     });
   };
 
@@ -153,9 +162,17 @@ export default function AgendaPage({ enabled, notify }: { enabled: boolean; noti
                          placeholder="Ligar ao dentista" onChange={(e) => setReminderText(e.target.value)} />
                 </Field>
                 <Field label="Quando" htmlFor="agenda-reminder-when"
-                       hint="Por exemplo: 10 minutos, 18:30, 25/12 09:00 ou 2026-12-25 09:00">
+                       hint="Por exemplo: 10 minutos, 18:30, amanhã às 9 ou sexta às 15h">
                   <input id="agenda-reminder-when" className="input" value={reminderWhen} maxLength={64}
                          placeholder="18:30" onChange={(e) => setReminderWhen(e.target.value)} />
+                </Field>
+                <Field label="Repetir" htmlFor="agenda-reminder-repeat">
+                  <select id="agenda-reminder-repeat" className="input input--select" value={reminderRepeat}
+                          onChange={(e) => setReminderRepeat(e.target.value)}>
+                    {REPEAT_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
                 </Field>
                 <div className="agenda__form-actions">
                   <Button type="submit" variant="primary"
@@ -180,7 +197,7 @@ export default function AgendaPage({ enabled, notify }: { enabled: boolean; noti
                           <div className="row-item__title" title={item.text}>{item.text}</div>
                           <div className="row-item__meta">
                             {due ? `${dayLabel(due)} · ${timeLabel(due)}` : item.due_at}
-                            {item.recurrence ? ` · repete ${item.recurrence}` : ""}
+                            {item.recurrence ? ` · repete ${item.recurrence_label || item.recurrence}` : ""}
                           </div>
                         </div>
                         <div className="row-item__actions">

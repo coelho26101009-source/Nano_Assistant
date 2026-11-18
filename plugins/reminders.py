@@ -8,6 +8,7 @@ later.
 """
 
 import asyncio
+import calendar
 import logging
 import re
 import sys
@@ -81,6 +82,10 @@ def _conn():
             fired    INTEGER NOT NULL DEFAULT 0
         )
     """)
+    # Recurring reminders (added after the first release): NULL = once.
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(reminders)")}
+    if "recurrence" not in columns:
+        conn.execute("ALTER TABLE reminders ADD COLUMN recurrence TEXT")
     conn.commit()
     return conn
 
@@ -101,28 +106,107 @@ _UNIT_SECONDS = {
 }
 
 
-def parse_when(when: str) -> datetime | None:
-    """Aceita ISO ('2026-01-02 18:30'), 'HH:MM' (hoje/amanhã) ou '10 minutos'."""
-    when = (when or "").strip()
+_WEEKDAYS = {
+    "segunda": 0, "segunda-feira": 0, "terca": 1, "terça": 1, "terca-feira": 1, "terça-feira": 1,
+    "quarta": 2, "quarta-feira": 2, "quinta": 3, "quinta-feira": 3, "sexta": 4, "sexta-feira": 4,
+    "sabado": 5, "sábado": 5, "domingo": 6,
+}
+_WEEKDAY_RE = "|".join(sorted((re.escape(k) for k in _WEEKDAYS), key=len, reverse=True))
+
+#: Recurrence codes stored in the database, and how they read in Portuguese.
+RECURRENCES = {
+    "daily": "todos os dias",
+    "weekdays": "nos dias úteis",
+    "weekly": "todas as semanas",
+    "monthly": "todos os meses",
+}
+_RECURRENCE_ALIASES = {
+    "daily": "daily", "diario": "daily", "diário": "daily", "diariamente": "daily",
+    "todos os dias": "daily", "todo dia": "daily", "todos dias": "daily",
+    "weekdays": "weekdays", "dias uteis": "weekdays", "dias úteis": "weekdays",
+    "nos dias uteis": "weekdays", "nos dias úteis": "weekdays",
+    "weekly": "weekly", "semanal": "weekly", "semanalmente": "weekly",
+    "todas as semanas": "weekly", "toda semana": "weekly",
+    "monthly": "monthly", "mensal": "monthly", "mensalmente": "monthly",
+    "todos os meses": "monthly", "todo mes": "monthly", "todo mês": "monthly",
+}
+
+
+def normalise_recurrence(value) -> str | None:
+    """A stored recurrence code, or None for a one-off. Raises on nonsense."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    key = " ".join(str(value).strip().lower().split())
+    if key in ("nao", "não", "none", "nunca", "once", "uma vez"):
+        return None
+    if key not in _RECURRENCE_ALIASES:
+        raise ValueError(f"Não sei repetir '{value}'. Usa: todos os dias, dias úteis, "
+                         "todas as semanas ou todos os meses.")
+    return _RECURRENCE_ALIASES[key]
+
+
+def _time_of_day(text: str) -> tuple[int, int] | None:
+    """'9', '9h', '9h30', '09:30', '9 e meia', 'meio-dia', '3 da tarde', '21h15'."""
+    t = text.strip().lower()
+    t = re.sub(r"^(?:às|as|à|a|pelas|pelas\s+|por\s+volta\s+das)\s+", "", t)
+    if t in ("meio-dia", "meio dia", "meiodia"):
+        return 12, 0
+    if t in ("meia-noite", "meia noite"):
+        return 0, 0
+    match = re.fullmatch(
+        r"(\d{1,2})(?:\s*(?::|h|horas?)\s*(\d{2})?)?(?:\s*e\s+(meia|um quarto|quarto))?"
+        r"(?:\s*(?:min|m))?(?:\s+(?:da|de)\s+(manhã|manha|tarde|noite|madrugada))?",
+        t)
+    if not match:
+        return None
+    hour = int(match.group(1))
+    minute = int(match.group(2) or 0)
+    if match.group(3):
+        minute = 30 if match.group(3) == "meia" else 15
+    period = match.group(4)
+    if period in ("tarde", "noite") and hour < 12:
+        hour += 12
+    if period == "noite" and hour == 24:
+        hour = 0
+    if hour > 23 or minute > 59:
+        return None
+    return hour, minute
+
+
+def _at(day: datetime, hm: tuple[int, int]) -> datetime:
+    return day.replace(hour=hm[0], minute=hm[1], second=0, microsecond=0)
+
+
+def parse_when(when: str, now: datetime | None = None) -> datetime | None:
+    """Turn what the user said into a moment.
+
+    Accepts ISO ('2026-01-02 18:30'), 'dd/mm[/aaaa] HH:MM', 'HH:MM' (today or
+    tomorrow), relative ('10 minutos', 'daqui a 2 horas') and Portuguese phrases:
+    'amanhã às 9', 'hoje às 15h30', 'depois de amanhã às 10', 'sexta às 18h',
+    'na segunda de manhã', 'às 9 da noite', 'meio-dia'.
+    """
+    when = " ".join((when or "").strip().split())
     if not when:
         return None
+    now = now or datetime.now()
 
     match = _RELATIVE.match(when)
     if match:
         amount, unit = int(match.group(1)), match.group(2).lower()
-        return datetime.now() + timedelta(seconds=amount * _UNIT_SECONDS[unit])
+        return now + timedelta(seconds=amount * _UNIT_SECONDS[unit])
 
     if re.fullmatch(r"\d{1,2}:\d{2}", when):
         hour, minute = (int(p) for p in when.split(":"))
-        target = datetime.now().replace(hour=hour, minute=minute, second=0, microsecond=0)
-        return target if target > datetime.now() else target + timedelta(days=1)
+        if hour > 23 or minute > 59:
+            return None
+        target = _at(now, (hour, minute))
+        return target if target > now else target + timedelta(days=1)
 
     for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%d/%m/%Y %H:%M", "%d/%m %H:%M"):
         try:
             if fmt == "%d/%m %H:%M":
                 # Parse with the year attached: strptime defaults to 1900,
                 # which is not a leap year, so "29/02 10:00" failed outright.
-                now = datetime.now()
                 parsed = datetime.strptime(f"{now.year}/{when}", "%Y/" + fmt)
                 if parsed <= now:
                     # "02/01 09:00" said in December means next January,
@@ -135,19 +219,138 @@ def parse_when(when: str) -> datetime | None:
             return datetime.strptime(when, fmt)
         except ValueError:
             continue
-    return None
+
+    return _parse_phrase(when.lower(), now)
+
+
+_PERIOD_DEFAULT = {"manhã": (9, 0), "manha": (9, 0), "tarde": (15, 0), "noite": (21, 0)}
+
+
+def _parse_phrase(text: str, now: datetime) -> datetime | None:
+    text = re.sub(r"^(?:para|pra)\s+", "", text)
+    day: datetime | None = None
+    rest = text
+    explicit_day = False
+
+    m = re.match(r"^(depois de amanhã|depois de amanha|amanhã|amanha|hoje)\b\s*(.*)$", text)
+    if m:
+        offset = {"hoje": 0, "amanhã": 1, "amanha": 1}.get(m.group(1), 2)
+        day, rest, explicit_day = now + timedelta(days=offset), m.group(2), True
+    else:
+        m = re.match(rf"^(?:na |no |nesta |neste |esta |este |próxima |proxima |próximo |proximo )?"
+                     rf"({_WEEKDAY_RE})\b\s*(.*)$", text)
+        if m:
+            target = _WEEKDAYS[m.group(1)]
+            ahead = (target - now.weekday()) % 7
+            day, rest, explicit_day = now + timedelta(days=ahead), m.group(2), True
+
+    rest = rest.strip()
+    period = re.fullmatch(r"(?:de |à |a )?(manhã|manha|tarde|noite)", rest)
+    if period:
+        hm = _PERIOD_DEFAULT[period.group(1)]
+    elif rest:
+        hm = _time_of_day(rest)
+        if hm is None:
+            return None
+    elif explicit_day:
+        hm = (9, 0)            # "amanhã" alone: the start of the day, not midnight
+    else:
+        return None
+
+    if day is None:
+        target = _at(now, hm)
+        return target if target > now else target + timedelta(days=1)
+    target = _at(day, hm)
+    if target <= now:
+        if explicit_day and m and m.group(1) in _WEEKDAYS:
+            target += timedelta(days=7)   # "sexta às 9" said on a Friday at 10 means next week
+        else:
+            return target                  # "hoje às 8" at 10: in the past; the caller refuses it
+    return target
+
+
+def parse_recurring(when: str) -> tuple[str, str | None]:
+    """Split 'todos os dias às 8' into ('às 8', 'daily'). Plain phrases pass through."""
+    text = " ".join((when or "").strip().split())
+    lowered = text.lower()
+    patterns = (
+        (r"^(?:todos os dias|todo dia|diariamente)\b\s*(.*)$", "daily"),
+        (r"^(?:nos |em )?dias [úu]teis\b\s*(.*)$", "weekdays"),
+        (r"^(?:todos os meses|todo m[eê]s|mensalmente)\b\s*(.*)$", "monthly"),
+        (r"^(?:todas as semanas|semanalmente)\b\s*(.*)$", "weekly"),
+    )
+    for pattern, code in patterns:
+        m = re.match(pattern, lowered)
+        if m:
+            return m.group(1).strip() or "", code
+    m = re.match(rf"^(?:todas as|todos os|às|as) ({_WEEKDAY_RE})s?\b\s*(.*)$", lowered)
+    if m and m.group(1) in _WEEKDAYS:
+        return f"{m.group(1)} {m.group(2)}".strip(), "weekly"
+    return text, None
+
+
+def next_occurrence(due: datetime, recurrence: str, now: datetime | None = None) -> datetime:
+    """The first occurrence of the series strictly after ``now``.
+
+    Missed occurrences (the PC was off) are skipped, not fired in a burst.
+    """
+    now = now or datetime.now()
+    candidate = due
+    for _ in range(4000):
+        if recurrence == "daily":
+            candidate += timedelta(days=1)
+        elif recurrence == "weekdays":
+            candidate += timedelta(days=1)
+            while candidate.weekday() >= 5:
+                candidate += timedelta(days=1)
+        elif recurrence == "weekly":
+            candidate += timedelta(weeks=1)
+        elif recurrence == "monthly":
+            month = candidate.month % 12 + 1
+            year = candidate.year + (candidate.month // 12)
+            day = min(due.day, calendar.monthrange(year, month)[1])
+            candidate = candidate.replace(year=year, month=month, day=day)
+        else:
+            raise ValueError(f"recorrência desconhecida: {recurrence}")
+        if candidate > now:
+            return candidate
+    raise ValueError("não encontrei a próxima ocorrência")
 
 
 # ─── Ferramentas ──────────────────────────────────────────────────────────────
 
-def set_reminder(text: str, when: str) -> dict:
-    """Cria um lembrete. 'when' aceita '10 minutos', '18:30' ou '2026-01-02 18:30'."""
-    due = parse_when(when)
+def _recurrence_label(code) -> str | None:
+    return RECURRENCES.get(code) if code else None
+
+
+def set_reminder(text: str, when: str, repeat: str | None = None) -> dict:
+    """Cria um lembrete, único ou recorrente.
+
+    'when' aceita '10 minutos', '18:30', '2026-01-02 18:30', 'amanhã às 9',
+    'sexta às 15h', 'todos os dias às 8' ou 'todas as segundas às 9'.
+    'repeat' (opcional): daily, weekdays, weekly ou monthly.
+    """
+    try:
+        repeat_code = normalise_recurrence(repeat)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    when_text, phrase_code = parse_recurring(when)
+    recurrence = repeat_code or phrase_code
+    if recurrence and not when_text:
+        return {"error": f"A que horas? Por exemplo: '{RECURRENCES[recurrence]} às 9'."}
+    due = parse_when(when_text) if when_text else None
     if due is None:
-        return {"error": f"Não percebi o momento '{when}'. Usa '10 minutos', '18:30' ou '2026-01-02 18:30'."}
+        return {"error": f"Não percebi o momento '{when}'. Usa '10 minutos', '18:30', "
+                         "'amanhã às 9', 'sexta às 15h' ou 'todos os dias às 8'."}
     if not (text or "").strip():
         return {"error": "Preciso de saber do que te devo lembrar."}
-    if due <= datetime.now():
+    now = datetime.now()
+    if recurrence:
+        # A series whose first slot already passed (e.g. "todos os dias às 8"
+        # said at 10:00) starts at its next slot instead of being refused.
+        if due <= now or (recurrence == "weekdays" and due.weekday() >= 5):
+            due = next_occurrence(due, recurrence, now)
+    elif due <= now:
         # An absolute time in the past used to be stored as due and fired on
         # the scheduler's next pass, i.e. "lembra-me às 2026-01-02 18:30" a
         # day late produced an immediate, confusing notification.
@@ -155,31 +358,38 @@ def set_reminder(text: str, when: str) -> dict:
 
     conn = _conn()
     cur = conn.execute(
-        "INSERT INTO reminders (text, due_at, created, fired) VALUES (?,?,?,0)",
-        (text.strip(), due.isoformat(timespec="seconds"), datetime.now().isoformat(timespec="seconds")),
+        "INSERT INTO reminders (text, due_at, created, fired, recurrence) VALUES (?,?,?,0,?)",
+        (text.strip(), due.isoformat(timespec="seconds"), now.isoformat(timespec="seconds"), recurrence),
     )
     conn.commit()
     start_scheduler()
-    logger.info(f"Lembrete #{cur.lastrowid} para {due:%Y-%m-%d %H:%M}: {text[:60]}")
+    logger.info(f"Lembrete #{cur.lastrowid} para {due:%Y-%m-%d %H:%M} ({recurrence or 'único'}): {text[:60]}")
+    label = _recurrence_label(recurrence)
+    message = f"Lembrete criado para {due:%d/%m às %H:%M}."
+    if label:
+        message = f"Lembrete criado, {label}. O primeiro é a {due:%d/%m às %H:%M}."
     return {
         "success": True,
         "id": cur.lastrowid,
         "text": text.strip(),
         "due_at": due.strftime("%Y-%m-%d %H:%M"),
-        "message": f"Lembrete criado para {due:%d/%m às %H:%M}.",
+        "recurrence": recurrence,
+        "recurrence_label": label,
+        "message": message,
     }
 
 
 def list_reminders(include_fired: bool = False) -> dict:
     """Lista os lembretes pendentes (ou todos)."""
-    query = "SELECT id, text, due_at, fired FROM reminders"
+    query = "SELECT id, text, due_at, fired, recurrence FROM reminders"
     if not include_fired:
         query += " WHERE fired = 0"
     query += " ORDER BY due_at"
     rows = _conn().execute(query).fetchall()
     return {
         "reminders": [
-            {"id": r[0], "text": r[1], "due_at": r[2], "fired": bool(r[3])} for r in rows
+            {"id": r[0], "text": r[1], "due_at": r[2], "fired": bool(r[3]),
+             "recurrence": r[4], "recurrence_label": _recurrence_label(r[4])} for r in rows
         ],
         "count": len(rows),
     }
@@ -197,18 +407,34 @@ def cancel_reminder(reminder_id: int) -> dict:
 
 # ─── Scheduler ────────────────────────────────────────────────────────────────
 
-def _fire(reminder_id: int, text: str, due_at: str | None = None) -> bool:
+def _fire(reminder_id: int, text: str, due_at: str | None = None,
+          recurrence: str | None = None) -> bool:
     """Deliver one due reminder exactly once.
 
     The row is claimed (``fired = 1``) *before* anything is delivered. It used
     to be marked only at the end, so a failure in between -- the memory write
     raising, say -- left it pending and the scheduler delivered it again every
     20 seconds, phone notification included, forever.
+
+    A recurring reminder is claimed by moving ``due_at`` to its next
+    occurrence, guarded by the old value, so it too is delivered once per slot.
     """
     conn = _conn()
-    claimed = conn.execute(
-        "UPDATE reminders SET fired = 1 WHERE id = ? AND fired = 0", (reminder_id,)
-    ).rowcount
+    following = None
+    if recurrence in RECURRENCES and due_at:
+        try:
+            following = next_occurrence(datetime.fromisoformat(due_at), recurrence)
+        except ValueError:
+            following = None
+    if following is not None:
+        claimed = conn.execute(
+            "UPDATE reminders SET due_at = ? WHERE id = ? AND fired = 0 AND due_at = ?",
+            (following.isoformat(timespec="seconds"), reminder_id, due_at),
+        ).rowcount
+    else:
+        claimed = conn.execute(
+            "UPDATE reminders SET fired = 1 WHERE id = ? AND fired = 0", (reminder_id,)
+        ).rowcount
     conn.commit()
     if not claimed:
         return False
@@ -241,10 +467,11 @@ def _loop():
         try:
             now = datetime.now().isoformat(timespec="seconds")
             due = _conn().execute(
-                "SELECT id, text, due_at FROM reminders WHERE fired = 0 AND due_at <= ?", (now,)
+                "SELECT id, text, due_at, recurrence FROM reminders WHERE fired = 0 AND due_at <= ?",
+                (now,),
             ).fetchall()
-            for reminder_id, text, due_at in due:
-                _fire(reminder_id, text, due_at)
+            for reminder_id, text, due_at, recurrence in due:
+                _fire(reminder_id, text, due_at, recurrence)
         except Exception as exc:
             logger.error(f"Scheduler de lembretes: {exc}")
         _stop.wait(CHECK_INTERVAL_SECONDS)
@@ -271,13 +498,17 @@ def get_tools() -> list[dict]:
         {"type": "function", "function": {
             "name": "set_reminder",
             "description": (
-                "Cria um lembrete/alarme. O Nano notifica quando chegar a hora, "
-                "mesmo com a janela fechada."
+                "Cria um lembrete/alarme, único ou recorrente. O Nano notifica quando "
+                "chegar a hora, mesmo com a janela fechada."
             ),
             "parameters": {"type": "object", "required": ["text", "when"], "properties": {
                 "text": {"type": "string", "description": "Do que lembrar"},
                 "when": {"type": "string",
-                          "description": "'10 minutos', '2 horas', '18:30' ou '2026-01-02 18:30'"},
+                          "description": ("'10 minutos', '18:30', 'amanhã às 9', 'sexta às 15h', "
+                                          "'todos os dias às 8', 'todas as segundas às 9' "
+                                          "ou '2026-01-02 18:30'")},
+                "repeat": {"type": "string", "enum": ["daily", "weekdays", "weekly", "monthly"],
+                           "description": "Repetição, só se o utilizador a pedir."},
             }},
         }},
         {"type": "function", "function": {

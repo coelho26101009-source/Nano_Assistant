@@ -2639,8 +2639,8 @@ def get_agenda(days: int = 30) -> dict:
 
 
 @eel.expose
-def agenda_create_reminder(text: str, when: str) -> dict:
-    return agenda.create_reminder(text, when)
+def agenda_create_reminder(text: str, when: str, repeat: str | None = None) -> dict:
+    return agenda.create_reminder(text, when, repeat)
 
 
 @eel.expose
