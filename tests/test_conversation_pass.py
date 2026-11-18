@@ -351,6 +351,10 @@ def test_send_message_returns_an_ack_and_not_the_answer():
     source = (ROOT / "core" / "main.py").read_text(encoding="utf-8")
     code = "\n".join(line.split("#")[0] for line in source.splitlines())
     body = code.split("def send_message(")[1].split("\ndef ")[0]
+    # The dispatch lives in one helper shared with retry_last_turn; the
+    # guarantee is about what send_message ends up running, so follow it there.
+    if "_dispatch_turn(" in body:
+        body += code.split("def _dispatch_turn(")[1].split("\ndef ")[0]
     assert "accepted" in body, "send_message must return an explicit ACK"
     assert "run_coro(" not in body, (
         "send_message still blocks on the full completion, which is what made "
