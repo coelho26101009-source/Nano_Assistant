@@ -35,7 +35,9 @@ import { SECTIONS, ViewId, sectionEntry, sectionOf } from "../lib/navigation";
 import { BRAND_NAME } from "../lib/brand";
 import FirstRunGuide from "../components/FirstRunGuide";
 import DiagnosticsPanel from "../components/DiagnosticsPanel";
-import { Composer, Conversation, Message, ToolEvent, cleanAssistantText } from "../components/Conversation";
+import {
+  Composer, Conversation, Message, SidePanel, ToolEvent, cleanAssistantText, type PanelDoc,
+} from "../components/Conversation";
 import {
   ActivityPage, AgentsPage, IntegrationsPage,
   PermissionsPage, StatusPage, TaskScope, TasksPage, pcActivityMatches,
@@ -168,6 +170,8 @@ export default function Home() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [voiceModeOpen, setVoiceModeOpen] = useState(false);
+  /** A long answer or code block open beside the chat. */
+  const [panelDoc, setPanelDoc] = useState<PanelDoc | null>(null);
   /** Text files waiting in the composer for the next message. */
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   // Appearance and personalisation live in the backend's settings (the
@@ -1111,6 +1115,9 @@ export default function Home() {
     return () => window.removeEventListener("keydown", onKey);
   }, [newConversation, startVoice, toggleRail]);
 
+  // The panel shows one message of the open thread; another thread closes it.
+  useEffect(() => { setPanelDoc(null); }, [activeThreadId]);
+
   /* ── Derived ────────────────────────────────────────────────────────── */
   /** The last exchange, for the voice mode: plain text, the answer clipped. */
   const voiceLast = useMemo(() => {
@@ -1435,6 +1442,7 @@ export default function Home() {
               )}
 
               {view === "chat" && (
+                <div className={`chat-split${panelDoc ? " chat-split--panel" : ""}`}>
                 <div className={`chat${hero ? " chat--hero" : ""}`}>
                   {showFirstRun ? (
                     <FirstRunGuide providers={providers} readiness={readiness}
@@ -1450,6 +1458,7 @@ export default function Home() {
                       onRetry={() => rerunLastTurn()}
                       onEdit={(text) => rerunLastTurn(text)}
                       onChoose={(reply) => sendMessage(reply)}
+                      onOpenPanel={setPanelDoc}
                     />
                   )}
                   {/* The provider's own wait, counted down, until it is over. It
@@ -1502,6 +1511,8 @@ export default function Home() {
                       -- slightly above the middle, where the eye lands. */}
                   {hero && <div className="chat__balance" aria-hidden="true" />}
                   <p className="stage__footer">{t("O {0} pode cometer erros. Ações sensíveis pedem sempre a tua autorização.", { 0: BRAND_NAME })}</p>
+                </div>
+                {panelDoc && <SidePanel doc={panelDoc} onClose={() => setPanelDoc(null)} />}
                 </div>
               )}
 

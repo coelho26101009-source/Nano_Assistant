@@ -48,3 +48,13 @@ def test_voice_mode_follows_the_phase_and_never_a_fake_level():
     shell = (FRONTEND / "pages" / "index.tsx").read_text(encoding="utf-8")
     # An approval asked during voice mode is shown as the dialog, above it.
     assert '!showFirstRun && !voiceModeOpen' in shell
+
+
+def test_long_answers_and_code_can_open_beside_the_chat():
+    source = (FRONTEND / "components" / "Conversation.tsx").read_text(encoding="utf-8")
+    assert "export function SidePanel(" in source
+    assert "PANEL_MIN_CODE_LINES" in source and "PANEL_MIN_TEXT_CHARS" in source
+    shell = (FRONTEND / "pages" / "index.tsx").read_text(encoding="utf-8")
+    assert "onOpenPanel={setPanelDoc}" in shell
+    # Another thread closes the panel: it only ever shows the open thread.
+    assert "useEffect(() => { setPanelDoc(null); }, [activeThreadId]);" in shell

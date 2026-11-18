@@ -107,6 +107,14 @@ microphone is a privacy state: `--information` border, filled mic button and
 the wave indicator. Voice that is not set up shows no chip in the composer;
 the disabled microphone carries the reason in its name and tooltip.
 
+## Side panel
+
+A long answer (1500+ characters) and a code block of 12+ lines offer "Abrir ao
+lado". `SidePanel` in `Conversation.tsx` shows that one message's own text, so
+it can't show anything the conversation doesn't hold. It is read-only, with a
+copy button, and Esc closes it. From 1024px up it sits beside the chat; below
+that it covers the chat. Opening another thread closes it.
+
 ## Voice mode
 
 `components/VoiceMode.tsx` is the full-screen view (Ctrl+Shift+M, the palette, or

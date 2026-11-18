@@ -290,7 +290,26 @@ export function highlight(code: string, lang?: string): React.ReactNode[] {
   return out;
 }
 
+/** Something long enough to read beside the chat. */
+export type PanelDoc = { kind: "code" | "text"; title: string; body: string; lang?: string };
+
+/** A code block or an answer this long offers "Abrir ao lado". */
+const PANEL_MIN_CODE_LINES = 12;
+const PANEL_MIN_TEXT_CHARS = 1500;
+
+/** How a message (or a code block inside it) asks for the side panel. Null
+ *  where there is no panel, such as the voice overlay. */
+const PanelContext = React.createContext<((doc: PanelDoc) => void) | null>(null);
+
+/** A short title for an answer: its first heading, else its first words. */
+function titleOf(text: string): string {
+  const heading = /^#{1,3}\s+(.+)$/m.exec(text)?.[1];
+  const first = (heading ?? text).replace(/[*_`#>]/g, "").trim().split("\n")[0];
+  return first.length > 60 ? `${first.slice(0, 60)}…` : first || t("Resposta");
+}
+
 function CodeBlock({ code, lang }: { code: string; lang?: string }) {
+  const openPanel = React.useContext(PanelContext);
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
@@ -304,6 +323,13 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
       <div className="code-block__head">
         <span>{lang || t("código")}</span>
         <span className="code-block__spacer" />
+        {openPanel && code.split("\n").length >= PANEL_MIN_CODE_LINES && (
+          <Button variant="ghost" size="sm" aria-label={t("Abrir o código ao lado")}
+                  onClick={() => openPanel({ kind: "code", title: lang || t("código"), body: code, lang })}>
+            <Icon name="panel" size={14} />
+            {t("Abrir ao lado")}
+          </Button>
+        )}
         <Button variant="ghost" size="sm" onClick={copy} aria-label={t("Copiar código")}>
           <Icon name={copied ? "check" : "copy"} size={14} />
           {copied ? t("Copiado") : t("Copiar")}
@@ -656,6 +682,8 @@ function MessageBubble({
 
   // The actions row only exists for a finished turn with something in it.
   const showActions = Boolean(text) && !message.streaming && !editing;
+  const openPanel = React.useContext(PanelContext);
+  const panelable = Boolean(openPanel) && !isUser && text.length >= PANEL_MIN_TEXT_CHARS;
   // The latest answer keeps its actions visible, as in every chat app; older
   // turns reveal theirs on hover and on keyboard focus.
   const pinned = Boolean(onRetry);
@@ -728,6 +756,13 @@ function MessageBubble({
           >
             <Icon name={copied ? "check" : "copy"} size={15} />
           </button>
+          {panelable && openPanel && (
+            <button type="button" className="msg__action"
+                    onClick={() => openPanel({ kind: "text", title: titleOf(text), body: text })}
+                    aria-label={t("Abrir a resposta ao lado")} title={t("Abrir ao lado")}>
+              <Icon name="panel" size={15} />
+            </button>
+          )}
           {onEdit && (
             <button type="button" className="msg__action" onClick={startEdit}
                     aria-label={t("Editar e reenviar")} title={t("Editar")}>
@@ -802,8 +837,11 @@ export function greeting(name?: string | null, now: Date = new Date()): string {
 
 export function Conversation({
   messages, status, thinking, userName, connecting = false, onRetry, onEdit, onChoose, advanced = false,
+  onOpenPanel,
 }: {
   messages: Message[];
+  /** Open a long answer or code block in the side panel. */
+  onOpenPanel?: (doc: PanelDoc) => void;
   /** Modo avançado: show each answer's technical details. */
   advanced?: boolean;
   /** Ask the last question again. Offered on the last answer only. */
@@ -893,6 +931,7 @@ export function Conversation({
   }
 
   return (
+    <PanelContext.Provider value={onOpenPanel ?? null}>
     <div className="conversation" role="log" aria-live="polite" aria-label={t("Conversa")}
          ref={scrollRef} onScroll={onScroll}>
       <div className="conversation__inner">
@@ -925,6 +964,50 @@ export function Conversation({
         </button>
       )}
     </div>
+    </PanelContext.Provider>
+  );
+}
+
+/**
+ * The side panel: one long answer or code block, beside the conversation.
+ *
+ * It reads; it does not edit. The content is the message's own text, rendered
+ * the same way as in the chat, so the panel cannot show something the
+ * conversation does not hold. Below 1024px it covers the chat instead of
+ * squeezing it.
+ */
+export function SidePanel({ doc, onClose }: { doc: PanelDoc; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => { closeRef.current?.focus(); }, [doc]);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(doc.body);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch { /* clipboard blocked; the text is still selectable */ }
+  };
+  return (
+    <aside className="side-panel" aria-label={t("Painel lateral")}
+           onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); onClose(); } }}>
+      <header className="side-panel__head">
+        <Icon name={doc.kind === "code" ? "tools" : "chat"} size={16} />
+        <h2 className="side-panel__title" title={doc.title}>{doc.title}</h2>
+        <Button variant="ghost" size="sm" onClick={copy} aria-label={t("Copiar")}>
+          <Icon name={copied ? "check" : "copy"} size={14} />
+          {copied ? t("Copiado") : t("Copiar")}
+        </Button>
+        <button ref={closeRef} type="button" className="side-panel__close" onClick={onClose}
+                aria-label={t("Fechar o painel (Esc)")} title={t("Fechar o painel (Esc)")}>
+          <Icon name="close" size={16} />
+        </button>
+      </header>
+      <div className="side-panel__body">
+        {doc.kind === "code"
+          ? <pre className="side-panel__code"><code>{highlight(doc.body, doc.lang)}</code></pre>
+          : <div className="msg__body side-panel__text"><Markdown text={doc.body} /></div>}
+      </div>
+    </aside>
   );
 }
 

@@ -2239,3 +2239,43 @@ kbd {
   .voice-mode__orb { width: 150px; height: 150px; }
   .voice-mode__answer { font-size: 16px; }
 }
+
+/* ============================================================================
+   SIDE PANEL — one long answer or code block, read beside the chat.
+   ========================================================================== */
+.chat-split { flex: 1; display: flex; min-height: 0; min-width: 0; }
+.chat-split > .chat { flex: 1 1 0; min-width: 0; }
+.side-panel {
+  flex: 0 0 min(46%, 720px); min-width: 0; display: flex; flex-direction: column;
+  border-left: 1px solid var(--border); background: var(--surface);
+  animation: fadeIn 140ms ease-out;
+}
+.side-panel__head {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  padding: 10px 12px 10px 16px; border-bottom: 1px solid var(--border); color: var(--text-secondary);
+}
+.side-panel__title {
+  flex: 1; min-width: 0; margin: 0; font-size: var(--fs-base); font-weight: 600; color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.side-panel__close {
+  width: 32px; height: 32px; display: grid; place-items: center; border-radius: var(--r-md);
+  background: transparent; border: none; color: var(--text-muted); cursor: pointer;
+}
+.side-panel__close:hover { background: var(--surface-hover); color: var(--text-primary); }
+.side-panel__body { flex: 1; min-height: 0; overflow: auto; }
+.side-panel__text { padding: 20px 24px; }
+/* Code blocks are dark in both themes, here as in the chat. */
+.side-panel__code {
+  margin: 0; min-height: 100%; padding: 16px 20px; overflow: auto; white-space: pre;
+  background: var(--code-bg);
+}
+.side-panel__code code {
+  font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.6;
+  background: none; border: none; padding: 0; color: var(--code-text);
+}
+/* Narrow windows: the panel covers the chat rather than squeezing it. */
+@media (max-width: 1023px) {
+  .chat-split { position: relative; }
+  .side-panel { position: absolute; inset: 0; z-index: 20; flex-basis: auto; border-left: none; }
+}
