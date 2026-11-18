@@ -542,9 +542,10 @@ function initialsOf(name?: string | null): string | null {
  * exchange scans as a steady rhythm of turns rather than as two columns.
  */
 function MessageBubble({
-  message, status, userName, onRetry, onEdit,
+  message, status, userName, onRetry, onEdit, advanced = false,
 }: {
   message: Message;
+  advanced?: boolean;
   status?: string;
   userName?: string | null;
   /** Set only on the LAST answer of the open thread, and only when idle. */
@@ -590,7 +591,7 @@ function MessageBubble({
         ) : (
           <NanoLogo size={22} className="msg__avatar" />
         )}
-        <span className="msg__author">{isUser ? (userName || "Tu") : BRAND_NAME}</span>
+        <span className="msg__author">{isUser ? (userName || t("Tu")) : BRAND_NAME}</span>
         <span className="msg__time">{formatTime(message.timestamp)}</span>
       </header>
 
@@ -665,7 +666,7 @@ function MessageBubble({
       {/* Technical details, collapsed by default so normal chat stays clean.
           Safe metadata only: provider, model, tokens and latency — and it is
           THIS message's, including for a message loaded from an older thread. */}
-      {!isUser && !message.streaming && message.meta?.model && (
+      {advanced && !isUser && !message.streaming && message.meta?.model && (
         <TechnicalDetails meta={message.meta} id={message.id} />
       )}
     </article>
@@ -700,10 +701,27 @@ export function needsStandaloneThinking(messages: Message[], thinking: boolean):
   return !messages.some((message) => message.streaming);
 }
 
+/** "Boa tarde, Ana" by the local clock; no name when the backend has none. */
+export function greeting(name?: string | null, now: Date = new Date()): string {
+  const hour = now.getHours();
+  const first = (name ?? "").trim().split(/\s+/)[0];
+  const part = hour >= 5 && hour < 12 ? "morning" : hour >= 12 && hour < 20 ? "afternoon" : "evening";
+  if (first) {
+    if (part === "morning") return t("Bom dia, {0}", { 0: first });
+    if (part === "afternoon") return t("Boa tarde, {0}", { 0: first });
+    return t("Boa noite, {0}", { 0: first });
+  }
+  if (part === "morning") return t("Bom dia");
+  if (part === "afternoon") return t("Boa tarde");
+  return t("Boa noite");
+}
+
 export function Conversation({
-  messages, status, thinking, userName, connecting = false, onRetry, onEdit,
+  messages, status, thinking, userName, connecting = false, onRetry, onEdit, advanced = false,
 }: {
   messages: Message[];
+  /** Modo avançado: show each answer's technical details. */
+  advanced?: boolean;
   /** Ask the last question again. Offered on the last answer only. */
   onRetry?: () => void;
   /** Re-send the last question with new text. Offered on the last question only. */
@@ -731,7 +749,8 @@ export function Conversation({
             one thing to do here is start talking. */}
         <div className="chat-hero">
           <NanoLogo size={56} className="chat-hero__mark" />
-          <h1 className="chat-hero__title">{t("Como posso ajudar?")}</h1>
+          <h1 className="chat-hero__title">{greeting(userName)}</h1>
+          <p className="chat-hero__sub">{t("Como posso ajudar?")}</p>
           {connecting && (
             <p className="chat-hero__hint" role="status">{t("A ligar ao motor do {0}…", { 0: BRAND_NAME })}</p>
           )}
@@ -750,6 +769,7 @@ export function Conversation({
           return (
             <MessageBubble
               key={message.id} message={message} status={status} userName={userName}
+              advanced={advanced}
               onRetry={!thinking && isLast && message.role === "assistant" && retryable ? onRetry : undefined}
               onEdit={!thinking && isLastQuestion && retryable ? onEdit : undefined}
             />

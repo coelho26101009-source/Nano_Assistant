@@ -55,8 +55,12 @@ ALLOWED_KEYS: frozenset[str] = frozenset({
     "voice_reply_tts",         # speak replies to messages the user SPOKE
     "input_device_index",
     "output_device_index",
-    "theme",
+    "theme",                   # system | dark | light
     "reduce_motion",
+    # Personalisation: what NANO calls the user, and whether developer details
+    # (technical panels, agents, components) are shown.
+    "display_name",
+    "advanced_mode",
     # Interface language: "system" follows the OS, or a fixed "en" / "pt-PT".
     # See core/i18n.py.
     "language",
@@ -75,7 +79,7 @@ _BOOLEAN_KEYS = frozenset({
     "onboarding_completed", "wake_phrase_enabled", "wake_phrase_allow_nano_only",
     "voice_enabled", "tts_enabled", "typed_chat_tts", "voice_reply_tts",
     "reduce_motion", "memory_facts_enabled", "memory_rag_enabled",
-    "memory_long_term_enabled", "memory_auto_capture",
+    "memory_long_term_enabled", "memory_auto_capture", "advanced_mode",
 })
 
 
@@ -97,6 +101,9 @@ def _valid_value(key: str, value: Any) -> bool:
         return isinstance(value, str) and value in {"groq", "google", "mistral"}
     if key == "theme":
         return isinstance(value, str) and value in {"system", "dark", "light"}
+    if key == "display_name":
+        return (isinstance(value, str) and len(value.strip()) <= 40
+                and not any(ord(ch) < 32 for ch in value))
     if key == "language":
         return isinstance(value, str) and value in {"system", "en", "pt-PT"}
     # Model IDs are bounded plain strings, never arbitrary JSON containers.

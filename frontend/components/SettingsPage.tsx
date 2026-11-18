@@ -389,6 +389,23 @@ function CloudProviderPanel({
  * Saving reloads the page in the new language, because every string is
  * translated once, when the page loads.
  */
+/** The name NANO greets the user by. Saved on Enter or when the field is left. */
+function NameField({ value, onSave }: { value: string; onSave: (value: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  React.useEffect(() => { setDraft(value); }, [value]);
+  const commit = () => { if (draft.trim() !== value) onSave(draft.trim()); };
+  return (
+    <Field label={t("Como te chamas?")} hint={t("O NANO usa-o para te cumprimentar. Fica só neste computador.")}>
+      <input
+        className="input" value={draft} maxLength={40} placeholder={t("O teu nome")}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commit(); } }}
+      />
+    </Field>
+  );
+}
+
 function LanguagePanel({ language }: { language?: SettingsPayload["language"] }) {
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -432,6 +449,7 @@ export default function SettingsPage({
   onNavigate, onOpenFirstRun,
   section, onSection,
   theme, onTheme, reduceMotion, onReduceMotion,
+  advancedMode, onAdvancedMode, displayName, onDisplayName,
 }: {
   settings: SettingsPayload | null;
   providers: ProviderPayload | null;
@@ -466,8 +484,13 @@ export default function SettingsPage({
    *  de IA" can land directly on IA rather than on whatever was open last. */
   section: Section;
   onSection: (section: Section) => void;
-  theme: "dark" | "light";
-  onTheme: (theme: "dark" | "light") => void;
+  theme: "system" | "dark" | "light";
+  onTheme: (theme: "system" | "dark" | "light") => void;
+  advancedMode: boolean;
+  onAdvancedMode: (value: boolean) => void;
+  /** What NANO calls the user; empty when they have not said. */
+  displayName: string;
+  onDisplayName: (value: string) => void;
   reduceMotion: boolean;
   onReduceMotion: (value: boolean) => void;
 }) {
@@ -758,28 +781,42 @@ export default function SettingsPage({
         {/* ── GENERAL ──────────────────────────────────────────────────── */}
         {section === "general" && (
           <div className="stack">
-            <DesktopPanel />
-            <Panel title={t("Arranque")}>
-              <p className="muted" style={{ fontSize: 13 }}>{tj("O NANO Desktop arranca com o {0}: o Electron valida o Python, arranca o motor, espera que fique realmente pronto e só então abre a janela. Nenhum separador do navegador é aberto.", { 0: <code>NANO_DESKTOP.bat</code> })}</p>
-              <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>
-                {tj("O {0} continua a existir para desenvolvimento e como alternativa: abre a mesma interface no navegador, sem atalho global, tabuleiro nem painel de voz.", { 0: <code>NANO.bat</code> })}</p>
-            </Panel>
-            <LanguagePanel language={settings.language} />
-            <Panel title={t("Tema")}>
-              <SegmentedControl<"dark" | "light">
-                label={t("Tema")} value={theme} onChange={onTheme}
-                options={[{ value: "dark", label: t("Escuro") }, { value: "light", label: t("Claro") }]}
-              />
-              <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>{t("Os dois temas cobrem toda a aplicação; o escuro é o predefinido.")}</p>
-            </Panel>
-            <Panel title={t("Movimento")}>
+            <Panel title={t("Personalização")}>
+              <NameField value={displayName} onSave={onDisplayName} />
+              <div style={{ height: 14 }} />
+              <Field label={t("Tema")}>
+                <SegmentedControl<"system" | "dark" | "light">
+                  label={t("Tema")} value={theme} onChange={onTheme}
+                  options={[
+                    { value: "system", label: t("Seguir o sistema") },
+                    { value: "dark", label: t("Escuro") },
+                    { value: "light", label: t("Claro") },
+                  ]}
+                />
+              </Field>
+              <div style={{ height: 6 }} />
               <Toggle
                 label={t("Reduzir animações")}
                 hint={t("Desliga transições e indicadores animados. Também respeita a definição do sistema.")}
                 checked={reduceMotion}
                 onChange={onReduceMotion}
               />
+              <Toggle
+                label={t("Modo avançado")}
+                hint={t("Mostra os detalhes técnicos de cada resposta e as páginas de agentes e componentes.")}
+                checked={advancedMode}
+                onChange={onAdvancedMode}
+              />
             </Panel>
+            <LanguagePanel language={settings.language} />
+            <DesktopPanel />
+            {advancedMode && (
+              <Panel title={t("Arranque")}>
+                <p className="muted" style={{ fontSize: 13 }}>{tj("O NANO Desktop arranca com o {0}: o Electron valida o Python, arranca o motor, espera que fique realmente pronto e só então abre a janela. Nenhum separador do navegador é aberto.", { 0: <code>NANO_DESKTOP.bat</code> })}</p>
+                <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>
+                  {tj("O {0} continua a existir para desenvolvimento e como alternativa: abre a mesma interface no navegador, sem atalho global, tabuleiro nem painel de voz.", { 0: <code>NANO.bat</code> })}</p>
+              </Panel>
+            )}
           </div>
         )}
 

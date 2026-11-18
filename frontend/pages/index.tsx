@@ -19,7 +19,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Head from "next/head";
 
 import CommandPalette, { Command } from "../components/CommandPalette";
-import ConfirmModal from "../components/Confirm";
+import ConfirmModal, { ConfirmCard } from "../components/Confirm";
 import PluginCodeModal from "../components/PluginCodeModal";
 import Rail, { type RailMode } from "../components/Rail";
 import CapabilitiesPage from "../components/CapabilitiesPage";
@@ -110,6 +110,25 @@ function useNarrow(query = "(max-width: 1024px)"): boolean {
   return narrow;
 }
 
+type ThemePref = "system" | "dark" | "light";
+
+/** Pages for developers, hidden until Modo avançado is on. */
+const ADVANCED_VIEWS: ReadonlySet<ViewId> = new Set<ViewId>(["agents", "integrations"]);
+
+/** A media query's live answer, with a fallback until it is known. */
+function useMediaQuery(query: string, fallback: boolean): boolean {
+  const [matches, setMatches] = useState(fallback);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const media = window.matchMedia(query);
+    const sync = () => setMatches(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, [query]);
+  return matches;
+}
+
 export default function Home() {
   const { ready, gaveUp } = useBridgeReady();
   const { toasts, notify } = useToasts();
@@ -136,8 +155,14 @@ export default function Home() {
   const [railOpen, setRailOpen] = useState(false);
   const [railCollapsed, setRailCollapsed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
-  const [reduceMotion, setReduceMotion] = useState(false);
+  // Appearance and personalisation live in the backend's settings (the
+  // frontend uses no browser storage). "system" follows the OS theme.
+  const [themePref, setThemePref] = useState<ThemePref>("system");
+  const systemDark = useMediaQuery("(prefers-color-scheme: dark)", true);
+  const theme: "dark" | "light" = themePref === "system" ? (systemDark ? "dark" : "light") : themePref;
+  const [reduceMotion, setReduceMotionState] = useState(false);
+  const [advancedMode, setAdvancedModeState] = useState(false);
+  const [displayName, setDisplayNameState] = useState("");
 
   /* ── Conversation ───────────────────────────────────────────────────── */
   const [messages, setMessages] = useState<Message[]>([]);
@@ -244,7 +269,7 @@ export default function Home() {
     firstRunChecked.current = true;
     if (threads.some((thread) => thread.messageCount > 0)) return;
     call<{ completed: boolean }>("get_onboarding_status").then((result) => {
-      if (result?.completed === false) setShowFirstRun(true);
+      if (result?.completed === false) { firstRunAuto.current = true; setShowFirstRun(true); }
     });
   }, [ready, threads, memoryReady]);
 
@@ -264,6 +289,8 @@ export default function Home() {
 
   useEffect(() => { document.documentElement.lang = locale(); }, []);
 
+  /** Opened by the app itself on a first run (not reopened from Sobre). */
+  const firstRunAuto = useRef(false);
   const finishFirstRun = useCallback(async () => {
     setSavingFirstRun(true);
     const result = await call<{ ok: boolean }>("update_setting", "onboarding_completed", true);
@@ -271,6 +298,39 @@ export default function Home() {
     if (result?.ok) setShowFirstRun(false);
     else notify(t("Não foi possível guardar o progresso. Tenta novamente."), "error");
   }, [notify]);
+
+  useEffect(() => {
+    if (!ready) return;
+    call<{ theme: ThemePref; reduceMotion: boolean; displayName: string; advancedMode: boolean }>("get_preferences")
+      .then((prefs) => {
+        if (!prefs) return;
+        setThemePref(prefs.theme ?? "system");
+        setReduceMotionState(prefs.reduceMotion === true);
+        setDisplayNameState(prefs.displayName ?? "");
+        setAdvancedModeState(prefs.advancedMode === true);
+      });
+  }, [ready]);
+
+  const savePreference = useCallback((key: string, value: unknown) => {
+    call<{ ok: boolean }>("update_setting", key, value).then((result) => {
+      if (!result?.ok) notify(t("Não foi possível guardar a preferência."), "error");
+    });
+  }, [notify]);
+  const setTheme = useCallback((next: ThemePref) => { setThemePref(next); savePreference("theme", next); }, [savePreference]);
+  const setReduceMotion = useCallback((next: boolean) => { setReduceMotionState(next); savePreference("reduce_motion", next); }, [savePreference]);
+  const setAdvancedMode = useCallback((next: boolean) => { setAdvancedModeState(next); savePreference("advanced_mode", next); }, [savePreference]);
+  const setDisplayName = useCallback((next: string) => { setDisplayNameState(next.trim()); savePreference("display_name", next.trim()); }, [savePreference]);
+  /** The name NANO greets: the one typed in Settings, else what memory knows. */
+  const userName = displayName || profileName;
+
+  // A provider that already works means there is nothing to set up: the
+  // automatic first-run guide steps aside (it stays reachable from Sobre).
+  useEffect(() => {
+    if (showFirstRun && firstRunAuto.current && providers?.route?.usable === true) {
+      firstRunAuto.current = false;
+      void finishFirstRun();
+    }
+  }, [showFirstRun, providers, finishFirstRun]);
 
   useEffect(() => { document.documentElement.setAttribute("data-theme", theme); }, [theme]);
   // Stamped on the root so rules that cannot see the React tree -- the drag
@@ -998,6 +1058,8 @@ export default function Home() {
   const agentState = readiness?.agent.state ?? (gaveUp ? "BACKEND_OFFLINE" : "UNKNOWN");
   const section = sectionOf(view);
   const sectionDef = sectionEntry(section);
+  /** Developer pages (agents, components) only in Modo avançado. */
+  const visibleTabs = sectionDef.views.filter((entry) => advancedMode || !ADVANCED_VIEWS.has(entry.id));
 
   /** The thread currently on screen, from the real list. */
   const activeThread = useMemo(
@@ -1130,7 +1192,14 @@ export default function Home() {
 
   const suggestions = useMemo(() => {
     if (messages.length > 0) return [];
-    const base = [t("Ajuda-me a planear o dia"), t("Explica um conceito"), t("Revê um texto")];
+    // What sets NANO apart is that it can act on this PC, so the offers lead
+    // with that. Each is a request NANO really fulfils with a narrow tool.
+    const base = [
+      t("Quanto espaço livre tenho no disco?"),
+      t("Põe as janelas lado a lado"),
+      t("Lembra-me de fazer uma pausa daqui a 1 hora"),
+      t("Ajuda-me a planear o dia"),
+    ];
     if (providers?.route?.usable === false) return [t("Ajuda")];
     return base;
   }, [messages.length, providers]);
@@ -1142,21 +1211,21 @@ export default function Home() {
 
   const commands: Command[] = useMemo(() => [
     { id: "new", label: t("Nova conversa"), hint: "Ctrl+N", run: newConversation },
-    ...SECTIONS.flatMap((entry) => entry.views.map((v) => ({
+    ...SECTIONS.flatMap((entry) => entry.views.filter((v) => advancedMode || !ADVANCED_VIEWS.has(v.id)).map((v) => ({
       id: `go-${v.id}`,
       label: entry.views.length > 1 ? t("Ir para {0} › {1}", { 0: entry.label, 1: v.label }) : t("Ir para {0}", { 0: v.label }),
       run: () => setView(v.id),
     }))),
     { id: "rail", label: t("Mostrar/ocultar barra lateral"), hint: "Ctrl+B", run: toggleRail },
     { id: "copy", label: t("Copiar conversa"), run: () => { copyConversation(); } },
-    { id: "theme", label: t("Alternar tema"), run: () => setTheme((current) => (current === "dark" ? "light" : "dark")) },
+    { id: "theme", label: t("Alternar tema"), run: () => setTheme(theme === "dark" ? "light" : "dark") },
     { id: "voice", label: t("Falar com o NANO"), hint: "Ctrl+M", run: startVoice },
     {
       id: "estop",
       label: readiness?.emergencyStop ? t("Retomar execução") : t("Paragem de emergência"),
       run: () => toggleEmergencyStop(!readiness?.emergencyStop),
     },
-  ], [newConversation, startVoice, copyConversation, readiness, toggleEmergencyStop, toggleRail]);
+  ], [newConversation, startVoice, copyConversation, readiness, toggleEmergencyStop, toggleRail, advancedMode, theme, setTheme]);
 
   /* ── Chat presentation ──────────────────────────────────────────────── */
   const isChat = view === "chat";
@@ -1170,7 +1239,8 @@ export default function Home() {
 
   /* The home screen: nothing said yet and nothing pending. It names itself
      ("Como posso ajudar?"), so the top bar carries no title there. */
-  const hero = isChat && !showFirstRun && messages.length === 0 && !thinking;
+  const approvalInline = view === "chat" && !showFirstRun;
+  const hero = isChat && !showFirstRun && messages.length === 0 && !thinking && !confirmReq;
 
   /* Every thread is writable now, so there is exactly one set of messages on
      screen and no read-only mode to explain. `readOnlyReason` is gone with it. */
@@ -1197,6 +1267,8 @@ export default function Home() {
             onView={(next) => { setView(next); if (narrow) setRailOpen(false); }}
             counts={navCounts}
             version={APP_VERSION}
+            userName={userName}
+            onProfile={() => { openSettingsSection("general"); if (narrow) setRailOpen(false); }}
             threads={threads ?? []}
             activeId={activeThreadId}
             query={chatQuery} onQuery={setChatQuery}
@@ -1257,9 +1329,9 @@ export default function Home() {
             />
 
             <main className="stage">
-              {!isChat && sectionDef.views.length > 1 && (
+              {!isChat && visibleTabs.length > 1 && (
                 <nav className="stage__tabs" aria-label={t("Secções de {0}", { 0: sectionDef.label })}>
-                  {sectionDef.views.map((entry) => (
+                  {visibleTabs.map((entry) => (
                     <button
                       key={entry.id} type="button" className="subtab"
                       aria-current={view === entry.id ? "page" : undefined}
@@ -1297,13 +1369,15 @@ export default function Home() {
                 <div className={`chat${hero ? " chat--hero" : ""}`}>
                   {showFirstRun ? (
                     <FirstRunGuide providers={providers} readiness={readiness}
+                      displayName={displayName} onDisplayName={setDisplayName}
                       saving={savingFirstRun} onFinish={finishFirstRun}
                       onSettings={openSettingsSection}
                       onRefresh={() => { refreshProviders(); refreshReadiness(); }} />
                   ) : (
                     <Conversation
                       messages={messages} status={activityLabel} thinking={thinking}
-                      userName={profileName} connecting={!ready && !gaveUp}
+                      userName={userName} connecting={!ready && !gaveUp}
+                      advanced={advancedMode}
                       onRetry={() => rerunLastTurn()}
                       onEdit={(text) => rerunLastTurn(text)}
                     />
@@ -1326,6 +1400,17 @@ export default function Home() {
                           secondary button sitting beside the sentence explaining
                           the block. */}
                       <Button size="sm" variant="primary" onClick={() => openSettingsSection("ai")}>{t("Configurar IA")}</Button>
+                    </div>
+                  )}
+                  {/* The approval sits in the conversation, where the request was
+                      made, instead of covering it with a dialog. */}
+                  {approvalInline && confirmReq && (
+                    <div className="chat__approval">
+                      <ConfirmCard
+                        message={confirmReq.message} meta={confirmReq.meta}
+                        onConfirm={() => { call("confirm_action", confirmReq.requestId, true); setConfirmReq(null); }}
+                        onCancel={() => { call("confirm_action", confirmReq.requestId, false); setConfirmReq(null); }}
+                      />
                     </div>
                   )}
                   {!showFirstRun && <Composer
@@ -1398,7 +1483,7 @@ export default function Home() {
                       overview={memoryData}
                     />
                   )}
-                  {view === "capabilities" && <CapabilitiesPage enabled={ready} />}
+                  {view === "capabilities" && <CapabilitiesPage enabled={ready} onTry={(text) => { setView("chat"); setShowFirstRun(false); sendMessage(text); }} />}
                   {view === "integrations" && (
                     <IntegrationsPage
                       providers={providers} plugins={plugins} readiness={readiness}
@@ -1429,10 +1514,12 @@ export default function Home() {
                       onForgetAllMemory={forgetAllMemory}
                       onEraseAllData={eraseAllData}
                       onNavigate={setView}
-                      onOpenFirstRun={() => { setShowFirstRun(true); setView("chat"); }}
+                      onOpenFirstRun={() => { firstRunAuto.current = false; setShowFirstRun(true); setView("chat"); }}
                       section={settingsSection} onSection={setSettingsSection}
-                      theme={theme} onTheme={setTheme}
+                      theme={themePref} onTheme={setTheme}
                       reduceMotion={reduceMotion} onReduceMotion={setReduceMotion}
+                      advancedMode={advancedMode} onAdvancedMode={setAdvancedMode}
+                      displayName={displayName} onDisplayName={setDisplayName}
                     />
                   )}
                 </div>
@@ -1445,7 +1532,7 @@ export default function Home() {
       <CommandPalette open={paletteOpen} commands={commands} onClose={() => setPaletteOpen(false)} />
       <ToastStack toasts={toasts} />
 
-      {confirmReq && (
+      {confirmReq && !approvalInline && (
         <ConfirmModal
           message={confirmReq.message} meta={confirmReq.meta}
           onConfirm={() => { call("confirm_action", confirmReq.requestId, true); setConfirmReq(null); }}
