@@ -748,14 +748,35 @@ export function Conversation({
     atEndRef.current = near;
     setAtEnd(near);
   };
-  const lastRole = messages[messages.length - 1]?.role;
-  const count = messages.length;
+  const stick = useCallback(() => {
+    const el = scrollRef.current;
+    // "instant", not the stylesheet's smooth scrolling: a smooth scroll is
+    // still on its way down when the next chunk lands, its scroll events
+    // report "not at the end", and following stopped half way.
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "instant" as ScrollBehavior });
+  }, []);
+  // A new question (or another thread opened) always starts at the end. The
+  // question and its empty answer arrive together, so this keys on the last
+  // QUESTION, not on the last row.
+  const lastQuestion = [...messages].reverse().find((m) => m.role === "user")?.id;
   useEffect(() => {
-    if (lastRole === "user") atEndRef.current = true;
-  }, [count, lastRole]);
+    atEndRef.current = true;
+    setAtEnd(true);
+  }, [lastQuestion]);
   useEffect(() => {
-    if (atEndRef.current) endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, status]);
+    if (atEndRef.current) stick();
+  }, [messages, status, stick]);
+  // Content also grows with no new message: a code block or a table laid out
+  // after the text arrived. Following the size, not only the messages, is
+  // what keeps the end in view while the reader is there.
+  const shown = messages.length > 0 || thinking;
+  useEffect(() => {
+    const inner = scrollRef.current?.firstElementChild;
+    if (!inner || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => { if (atEndRef.current) stick(); });
+    observer.observe(inner);
+    return () => observer.disconnect();
+  }, [shown, stick]);
   const toEnd = () => {
     atEndRef.current = true;
     setAtEnd(true);

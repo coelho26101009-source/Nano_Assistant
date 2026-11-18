@@ -35,5 +35,5 @@ def test_question_mark_does_not_steal_typing():
 
 def test_the_conversation_only_follows_new_text_when_already_at_the_end():
     source = (FRONTEND / "components" / "Conversation.tsx").read_text(encoding="utf-8")
-    assert "if (atEndRef.current) endRef.current?.scrollIntoView" in source
+    assert "if (atEndRef.current) stick();" in source
     assert 'className="conversation__to-end"' in source
