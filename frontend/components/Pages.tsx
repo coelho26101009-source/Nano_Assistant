@@ -17,6 +17,7 @@ import {
   Panel, RiskBadge, StatusIndicator, Tabs, ToolChip,
   elapsedSince, formatDateTime, formatTime, sanitizeArgs, usageTone,
 } from "./ui";
+import { t } from "../lib/i18n";
 
 const TERMINAL = ["COMPLETED", "CANCELLED", "FAILED"];
 
@@ -50,7 +51,7 @@ export function TasksPage({
     const rows = tasks ?? [];
     const needle = query.trim().toLowerCase();
     if (!needle) return rows;
-    return rows.filter((t) => t.title.toLowerCase().includes(needle) || t.id.startsWith(needle));
+    return rows.filter((row) => row.title.toLowerCase().includes(needle) || row.id.startsWith(needle));
   }, [tasks, query]);
 
   return (
@@ -59,33 +60,31 @@ export function TasksPage({
         <Tabs<TaskScope>
           value={scope} onChange={onScope}
           tabs={[
-            { value: "active", label: "Ativas", count: counts?.active },
-            { value: "attention", label: "Precisa de atenção", count: counts?.attention },
-            { value: "completed", label: "Concluídas", count: byStatus.COMPLETED },
-            { value: "cancelled", label: "Canceladas", count: byStatus.CANCELLED },
-            { value: "failed", label: "Falhadas", count: byStatus.FAILED },
+            { value: "active", label: t("Ativas"), count: counts?.active },
+            { value: "attention", label: t("Precisa de atenção"), count: counts?.attention },
+            { value: "completed", label: t("Concluídas"), count: byStatus.COMPLETED },
+            { value: "cancelled", label: t("Canceladas"), count: byStatus.CANCELLED },
+            { value: "failed", label: t("Falhadas"), count: byStatus.FAILED },
           ]}
         />
         <div className="inline">
           <input
-            className="input" style={{ width: 200 }} placeholder="Procurar tarefa…"
-            value={query} onChange={(e) => onQuery(e.target.value)} aria-label="Procurar tarefa"
+            className="input" style={{ width: 200 }} placeholder={t("Procurar tarefa…")}
+            value={query} onChange={(e) => onQuery(e.target.value)} aria-label={t("Procurar tarefa")}
           />
           <Button size="sm" onClick={() => setConfirmArchive(true)} disabled={finishedCount === 0}
-                  title={finishedCount === 0 ? "Não há tarefas terminadas para arquivar" : undefined}>
-            Arquivar terminadas ({finishedCount})
-          </Button>
+                  title={finishedCount === 0 ? t("Não há tarefas terminadas para arquivar") : undefined}>{t("Arquivar terminadas ({0})", { 0: finishedCount })}</Button>
         </div>
       </div>
 
       {loading && !tasks ? (
-        <EmptyState title="A carregar tarefas…" />
+        <EmptyState title={t("A carregar tarefas…")} />
       ) : visible.length === 0 ? (
         <EmptyState
-          title={scope === "active" ? "Nenhuma tarefa em execução" : "Nada nesta vista"}
+          title={scope === "active" ? t("Nenhuma tarefa em execução") : t("Nada nesta vista")}
           hint={scope === "active"
-            ? "As tarefas em segundo plano aparecem aqui com estado e progresso reais."
-            : "Muda de separador para ver tarefas noutro estado."}
+            ? t("As tarefas em segundo plano aparecem aqui com estado e progresso reais.")
+            : t("Muda de separador para ver tarefas noutro estado.")}
         />
       ) : (
         <div className="stack stack--tight">
@@ -99,13 +98,13 @@ export function TasksPage({
                   <div className="row-item__title">{task.title}</div>
                   <div className="row-item__meta">
                     {task.status} · {task.progress}% · {task.task_type}
-                    {task.retries ? ` · ${task.retries} tentativas` : ""} · {formatDateTime(task.updated_at)}
+                    {task.retries ? t(" · {0} tentativas", { 0: task.retries }) : ""} · {formatDateTime(task.updated_at)}
                   </div>
                 </button>
                 <div style={{ width: 80, flex: "none" }}><Meter value={task.progress ?? 0} /></div>
                 <div className="row-item__actions">
-                  <Button size="sm" onClick={() => onOpenTask(task.id)}>Detalhe</Button>
-                  {!terminal && <Button size="sm" variant="danger" onClick={() => onCancelTask(task.id)}>Cancelar</Button>}
+                  <Button size="sm" onClick={() => onOpenTask(task.id)}>{t("Detalhe")}</Button>
+                  {!terminal && <Button size="sm" variant="danger" onClick={() => onCancelTask(task.id)}>{t("Cancelar")}</Button>}
                 </div>
               </div>
             );
@@ -115,16 +114,11 @@ export function TasksPage({
 
       <ConfirmDialog
         open={confirmArchive}
-        title="Arquivar tarefas terminadas?"
-        confirmLabel="Arquivar"
+        title={t("Arquivar tarefas terminadas?")}
+        confirmLabel={t("Arquivar")}
         message={
-          <>
-            Vai remover {finishedCount} tarefa(s) concluídas, canceladas ou falhadas da fila.
-            <br /><br />
-            <strong>Isto limpa apenas a lista de tarefas.</strong> O registo de auditoria de
-            permissões e o histórico de atividade mantêm-se intactos — são o registo de
-            segurança e não são apagados a partir daqui.
-          </>
+          <>{t("Vai remover {0} tarefa(s) concluídas, canceladas ou falhadas da fila.", { 0: finishedCount })}<br /><br />
+            <strong>{t("Isto limpa apenas a lista de tarefas.")}</strong>{' '}{t("O registo de auditoria de permissões e o histórico de atividade mantêm-se intactos — são o registo de segurança e não são apagados a partir daqui.")}</>
         }
         onConfirm={() => { setConfirmArchive(false); onArchive(); }}
         onCancel={() => setConfirmArchive(false)}
@@ -157,10 +151,10 @@ export function TasksPage({
  * backend cannot actually tell apart.
  */
 const PC_ACTIVITY_TABS: { value: PcActivityCategory; label: string }[] = [
-  { value: "all", label: "Tudo" },
-  { value: "acoes", label: "Ações" },
-  { value: "permissoes", label: "Permissões" },
-  { value: "erros", label: "Erros" },
+  { value: "all", label: t("Tudo") },
+  { value: "acoes", label: t("Ações") },
+  { value: "permissoes", label: t("Permissões") },
+  { value: "erros", label: t("Erros") },
 ];
 
 /**
@@ -179,10 +173,10 @@ export function pcActivityMatches(entry: PcActivityEntry, category: PcActivityCa
 }
 
 const DECISION_LABEL: Record<PcActivityEntry["decision"], string> = {
-  executed: "Executada",
-  allow_once: "Permitida (uma vez)",
-  deny: "Recusada",
-  failed: "Falhou",
+  executed: t("Executada"),
+  allow_once: t("Permitida (uma vez)"),
+  deny: t("Recusada"),
+  failed: t("Falhou"),
 };
 
 const DECISION_TONE: Record<PcActivityEntry["decision"], "accent" | "info" | "neutral"> = {
@@ -209,16 +203,16 @@ export function ActivityPage({
 
       <div style={{ marginTop: 16 }}>
         {loading && entries === null ? (
-          <EmptyState title="A carregar atividade…" />
+          <EmptyState title={t("A carregar atividade…")} />
         ) : totalCount === 0 ? (
           <EmptyState
-            title="Ainda não há atividade recente"
-            hint="As ações do NANO neste computador aparecerão aqui."
+            title={t("Ainda não há atividade recente")}
+            hint={t("As ações do NANO neste computador aparecerão aqui.")}
           />
         ) : !entries?.length ? (
           <EmptyState
-            title="Sem eventos nesta categoria"
-            hint="Muda de filtro para ver outra atividade."
+            title={t("Sem eventos nesta categoria")}
+            hint={t("Muda de filtro para ver outra atividade.")}
           />
         ) : (
           <div className="stack stack--tight">
@@ -232,7 +226,7 @@ export function ActivityPage({
                   </div>
                   <div className="row-item__meta">
                     {entry.target}
-                    {entry.requiresConfirmation ? " · pediu confirmação" : ""}
+                    {entry.requiresConfirmation ? t(" · pediu confirmação") : ""}
                   </div>
                 </div>
                 <span className="row-item__meta" style={{ flex: "none" }}>{formatTime(entry.at)}</span>
@@ -250,31 +244,31 @@ export function ActivityPage({
    ====================================================================== */
 
 const SCOPE_LABEL: Record<string, string> = {
-  current_workspace: "Dentro do workspace",
-  current_project: "Dados da aplicação",
-  explicit_target: "Fora do workspace",
-  specific_path: "Caminho específico",
-  external_service: "Serviço externo",
-  system: "Sistema operativo",
+  current_workspace: t("Dentro do workspace"),
+  current_project: t("Dados da aplicação"),
+  explicit_target: t("Fora do workspace"),
+  specific_path: t("Caminho específico"),
+  external_service: t("Serviço externo"),
+  system: t("Sistema operativo"),
 };
 
 const CAPABILITY_VERB: Record<string, string> = {
-  "filesystem.read": "Ler o ficheiro", "filesystem.write": "Escrever no ficheiro",
+  "filesystem.read": t("Ler o ficheiro"), "filesystem.write": t("Escrever no ficheiro"),
   // No "shell.execute" entry: Nano has no shell, so no permission request can
   // ever carry that capability. See core/capabilities.py.
-  "filesystem.delete": "Apagar",
-  "process.start": "Iniciar o processo", "process.kill": "Terminar o processo",
-  "browser.read": "Abrir e ler", "browser.interact": "Interagir com a página",
-  "browser.submit": "Submeter na página", "external.send": "Enviar para o exterior",
-  "git.write": "Escrever no repositório", "git.destructive": "Alterar o repositório de forma destrutiva",
-  "credential.write": "Escrever credenciais em", "financial.transaction": "Executar uma transação em",
-  "system": "Alterar uma definição do sistema",
+  "filesystem.delete": t("Apagar"),
+  "process.start": t("Iniciar o processo"), "process.kill": t("Terminar o processo"),
+  "browser.read": t("Abrir e ler"), "browser.interact": t("Interagir com a página"),
+  "browser.submit": t("Submeter na página"), "external.send": t("Enviar para o exterior"),
+  "git.write": t("Escrever no repositório"), "git.destructive": t("Alterar o repositório de forma destrutiva"),
+  "credential.write": t("Escrever credenciais em"), "financial.transaction": t("Executar uma transação em"),
+  "system": t("Alterar uma definição do sistema"),
 };
 
 function describeIntent(request: any): string {
   const capability = String(request.capability || request.action || "").toLowerCase();
   const target = request.target && request.target !== "-" ? request.target : null;
-  const verb = CAPABILITY_VERB[capability] ?? `Executar '${capability || "ação desconhecida"}'`;
+  const verb = CAPABILITY_VERB[capability] ?? t("Executar '{0}'", { 0: capability || "ação desconhecida" });
   return target ? `${verb}: ${target}` : verb;
 }
 
@@ -293,7 +287,7 @@ export function PermissionCard({
   const hasTarget = Boolean(request.target && request.target !== "-");
 
   return (
-    <article className={`perm-card perm-card--${risk}`} aria-label={`Pedido de permissão: ${capability}`}>
+    <article className={`perm-card perm-card--${risk}`} aria-label={t("Pedido de permissão: {0}", { 0: capability })}>
       <header className="perm-card__head">
         <RiskBadge risk={risk} />
         <Badge tone="neutral">{capability}</Badge>
@@ -304,17 +298,17 @@ export function PermissionCard({
 
       <div className="perm-card__body">
         <dl className="kv">
-          <dt>Capability</dt><dd className="mono">{capability}</dd>
-          <dt>Alvo</dt><dd className="mono">{request.target || "—"}</dd>
-          <dt>Scope</dt><dd>{SCOPE_LABEL[request.scope ?? ""] ?? request.scope ?? "—"}</dd>
-          <dt>Ferramenta</dt><dd className="mono">{request.tool || capability}</dd>
-          <dt>Motivo</dt><dd>{request.reason || "Pedido pela tarefa atual."}</dd>
-          <dt>Tarefa</dt><dd className="mono">{request.task_id || "—"}</dd>
+          <dt>{t("Capability")}</dt><dd className="mono">{capability}</dd>
+          <dt>{t("Alvo")}</dt><dd className="mono">{request.target || "—"}</dd>
+          <dt>{t("Scope")}</dt><dd>{SCOPE_LABEL[request.scope ?? ""] ?? request.scope ?? "—"}</dd>
+          <dt>{t("Ferramenta")}</dt><dd className="mono">{request.tool || capability}</dd>
+          <dt>{t("Motivo")}</dt><dd>{request.reason || t("Pedido pela tarefa atual.")}</dd>
+          <dt>{t("Tarefa")}</dt><dd className="mono">{request.task_id || "—"}</dd>
         </dl>
 
         {details.length > 0 && (
           <div>
-            <div className="section-label" style={{ marginBottom: 6 }}>Argumentos</div>
+            <div className="section-label" style={{ marginBottom: 6 }}>{t("Argumentos")}</div>
             <div className="perm-card__args">
               {details.map(({ key, value }) => (
                 <div key={key}><strong>{key}</strong>: {value}</div>
@@ -325,21 +319,17 @@ export function PermissionCard({
       </div>
 
       <footer className="perm-card__actions">
-        <Button variant="danger" onClick={() => onResolve(id, "deny")} disabled={busy}>Recusar</Button>
-        <Button variant="allow-once" onClick={() => onResolve(id, "allow_once")} disabled={busy}>
-          Permitir uma vez
-        </Button>
+        <Button variant="danger" onClick={() => onResolve(id, "deny")} disabled={busy}>{t("Recusar")}</Button>
+        <Button variant="allow-once" onClick={() => onResolve(id, "allow_once")} disabled={busy}>{t("Permitir uma vez")}</Button>
         <Button
           variant="allow-task" onClick={() => onResolve(id, "allow_for_task")}
           disabled={busy || !hasTask || !hasTarget}
           title={
-            !hasTask ? "Só disponível para pedidos associados a uma tarefa"
-              : !hasTarget ? "Precisa de um alvo concreto"
-              : "Válido só para esta capability, este alvo e este scope, dentro desta tarefa"
+            !hasTask ? t("Só disponível para pedidos associados a uma tarefa")
+              : !hasTarget ? t("Precisa de um alvo concreto")
+              : t("Válido só para esta capability, este alvo e este scope, dentro desta tarefa")
           }
-        >
-          Permitir nesta tarefa
-        </Button>
+        >{t("Permitir nesta tarefa")}</Button>
       </footer>
     </article>
   );
@@ -356,14 +346,12 @@ export function PermissionsPage({
 }) {
   return (
     <div className="page__inner">
-      <h2 className="page-title">
-        Pedidos pendentes
-        {pending.length > 0 && <Badge tone="accent">{pending.length}</Badge>}
+      <h2 className="page-title">{t("Pedidos pendentes")}{pending.length > 0 && <Badge tone="accent">{pending.length}</Badge>}
       </h2>
       {pending.length === 0 ? (
         <EmptyState
-          title="Nada à espera de decisão"
-          hint="Quando o NANO precisar de sair do que pode fazer sozinho, o pedido aparece aqui com o alvo e o scope exactos."
+          title={t("Nada à espera de decisão")}
+          hint={t("Quando o NANO precisar de sair do que pode fazer sozinho, o pedido aparece aqui com o alvo e o scope exactos.")}
         />
       ) : (
         <div className="stack">
@@ -374,20 +362,16 @@ export function PermissionsPage({
         </div>
       )}
 
-      <h2 className="page-title">Decisões recentes</h2>
+      <h2 className="page-title">{t("Decisões recentes")}</h2>
       {auditEvents.length === 0 ? (
-        <EmptyState title="Sem decisões registadas" />
+        <EmptyState title={t("Sem decisões registadas")} />
       ) : (
         <div className="card"><ActivityTimeline events={auditEvents} limit={20} /></div>
       )}
 
-      <h2 className="page-title">
-        Policies <Badge tone="neutral">{policies.length}</Badge>
+      <h2 className="page-title">{t("Policies")}{' '}<Badge tone="neutral">{policies.length}</Badge>
       </h2>
-      <p className="dim" style={{ marginBottom: 12, maxWidth: "64ch" }}>
-        A autorização permanente está desativada por desenho: nenhuma capability pode ser
-        concedida para sempre. As decisões são sempre por execução ou por tarefa.
-      </p>
+      <p className="dim" style={{ marginBottom: 12, maxWidth: "64ch" }}>{t("A autorização permanente está desativada por desenho: nenhuma capability pode ser concedida para sempre. As decisões são sempre por execução ou por tarefa.")}</p>
       <div className="grid-auto">
         {policies.map((policy: any) => (
           <div className="tile" key={policy.capability}>
@@ -396,7 +380,7 @@ export function PermissionsPage({
               <RiskBadge risk={policy.risk} />
               <Badge tone="neutral">{policy.decision}</Badge>
             </div>
-            <p className="dim" style={{ fontSize: 11, marginTop: 6 }}>scope: {policy.scope}</p>
+            <p className="dim" style={{ fontSize: 11, marginTop: 6 }}>{t("âmbito: {0}", { 0: policy.scope })}</p>
           </div>
         ))}
       </div>
@@ -414,15 +398,11 @@ export function AgentsPage({ agents }: { agents: any[] | null }) {
 
   return (
     <div className="page__inner">
-      <h2 className="page-title">Agentes registados <Badge tone="info">experimental</Badge></h2>
-      <p className="dim" style={{ marginBottom: 16, maxWidth: "68ch" }}>
-        Estes agentes estão registados e são selecionados ao planear uma tarefa, mas
-        ainda não despacham execução própria: todas as ferramentas correm pela autoridade
-        central de execução. O estado reflecte o registo, não capacidade autónoma.
-      </p>
+      <h2 className="page-title">{t("Agentes registados")}{' '}<Badge tone="info">{t("experimental")}</Badge></h2>
+      <p className="dim" style={{ marginBottom: 16, maxWidth: "68ch" }}>{t("Estes agentes estão registados e são selecionados ao planear uma tarefa, mas ainda não despacham execução própria: todas as ferramentas correm pela autoridade central de execução. O estado reflecte o registo, não capacidade autónoma.")}</p>
 
       {list.length === 0 ? (
-        <EmptyState title="Sem agentes registados" />
+        <EmptyState title={t("Sem agentes registados")} />
       ) : (
         <div className="grid-auto">
           {list.map((agent: any) => (
@@ -446,17 +426,17 @@ export function AgentsPage({ agents }: { agents: any[] | null }) {
         <div className="card" style={{ marginTop: 20 }}>
           <div className="inline" style={{ justifyContent: "space-between", marginBottom: 12 }}>
             <h3 style={{ fontSize: 16, fontWeight: 600 }}>{selected.name}</h3>
-            <Button size="sm" variant="ghost" onClick={() => setSelected(null)}>Fechar</Button>
+            <Button size="sm" variant="ghost" onClick={() => setSelected(null)}>{t("Fechar")}</Button>
           </div>
           <p className="muted" style={{ marginBottom: 12 }}>{selected.description}</p>
           <dl className="kv">
-            <dt>Estado</dt><dd><StatusIndicator state={selected.state} /></dd>
-            <dt>Tipos</dt><dd>{(selected.taskTypes ?? []).join(", ") || "—"}</dd>
+            <dt>{t("Estado")}</dt><dd><StatusIndicator state={selected.state} /></dd>
+            <dt>{t("Tipos")}</dt><dd>{(selected.taskTypes ?? []).join(", ") || "—"}</dd>
           </dl>
-          <div className="section-label" style={{ margin: "14px 0 6px" }}>Capabilities</div>
+          <div className="section-label" style={{ margin: "14px 0 6px" }}>{t("Capabilities")}</div>
           <div className="inline">{(selected.capabilities ?? []).map((c: string) => <ToolChip key={c} name={c} muted />)}</div>
-          <div className="section-label" style={{ margin: "14px 0 6px" }}>Ferramentas</div>
-          <div className="inline">{(selected.tools ?? []).map((t: string) => <ToolChip key={t} name={t} />)}</div>
+          <div className="section-label" style={{ margin: "14px 0 6px" }}>{t("Ferramentas")}</div>
+          <div className="inline">{(selected.tools ?? []).map((tool: string) => <ToolChip key={tool} name={tool} />)}</div>
         </div>
       )}
     </div>
@@ -489,22 +469,18 @@ export function IntegrationsPage({
 
   return (
     <div className="page__inner">
-      <h2 className="page-title">
-        Componentes locais <Badge tone="neutral">{pluginEntries.length}</Badge>
+      <h2 className="page-title">{t("Componentes locais")}{' '}<Badge tone="neutral">{pluginEntries.length}</Badge>
       </h2>
-      <p className="dim" style={{ marginBottom: 12, maxWidth: "68ch" }}>
-        {toolTotal} ferramentas carregadas. Todas correm pela autoridade central de execução:
-        passam por policy, permissão e validação de scope antes de executar.
-      </p>
+      <p className="dim" style={{ marginBottom: 12, maxWidth: "68ch" }}>{t("{0} ferramentas carregadas. Todas correm pela autoridade central de execução: passam por policy, permissão e validação de scope antes de executar.", { 0: toolTotal })}</p>
       {pluginEntries.length === 0 ? (
-        <EmptyState title="Nenhum componente carregado" />
+        <EmptyState title={t("Nenhum componente carregado")} />
       ) : (
         <div className="grid-auto">
           {pluginEntries.map(([name, tools]) => (
             <button type="button" className="tile card--interactive" key={name}
                     onClick={() => onOpenPlugin(name)} style={{ textAlign: "left" }}>
               <div className="tile__label">{name}</div>
-              <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{tools.length} ferramentas</div>
+              <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{t("{0} ferramentas", { 0: tools.length })}</div>
               <div className="inline" style={{ marginTop: 8 }}>
                 {tools.slice(0, 3).map((tool) => <ToolChip key={tool} name={tool} muted />)}
                 {tools.length > 3 && <span className="dim" style={{ fontSize: 11 }}>+{tools.length - 3}</span>}
@@ -517,49 +493,47 @@ export function IntegrationsPage({
       {/* A read-only summary. Everything that CHANGES a provider - mode,
           key, models - lives in Definicoes -> IA, so there is exactly one
           place to configure one. */}
-      <h2 className="page-title">Provedores de IA</h2>
+      <h2 className="page-title">{t("Provedores de IA")}</h2>
       <div className="grid-auto">
         {providers ? (
           <>
             <div className="tile">
               <div className="inline" style={{ justifyContent: "space-between", marginBottom: 8 }}>
-                <div className="tile__label" style={{ margin: 0 }}>Groq · Cloud</div>
-                <Badge tone="accent">principal</Badge>
+                <div className="tile__label" style={{ margin: 0 }}>{t("Groq · Cloud")}</div>
+                <Badge tone="accent">{t("principal")}</Badge>
               </div>
               <StatusIndicator state={providers.groq.state} />
-              <MetricRow label="Modelo" value={providers.groq.model || "—"} />
-              <MetricRow label="Chave" value={providers.groq.secret.configured ? providers.groq.secret.masked : "não configurada"} />
+              <MetricRow label={t("Modelo")} value={providers.groq.model || "—"} />
+              <MetricRow label={t("Chave")} value={providers.groq.secret.configured ? providers.groq.secret.masked : t("não configurada")} />
               <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>{providers.groq.detail}</p>
-              <Button size="sm" block style={{ marginTop: 10 }} onClick={onOpenSettings}>Configurar</Button>
+              <Button size="sm" block style={{ marginTop: 10 }} onClick={onOpenSettings}>{t("Configurar")}</Button>
             </div>
             <div className="tile">
               <div className="inline" style={{ justifyContent: "space-between", marginBottom: 8 }}>
-                <div className="tile__label" style={{ margin: 0 }}>Ollama · Local</div>
-                <Badge tone="info">fallback</Badge>
+                <div className="tile__label" style={{ margin: 0 }}>{t("Ollama · Local")}</div>
+                <Badge tone="info">{t("alternativa")}</Badge>
               </div>
               <StatusIndicator state={providers.ollama.state} />
-              <MetricRow label="Modelo" value={providers.ollama.model || "—"} />
+              <MetricRow label={t("Modelo")} value={providers.ollama.model || "—"} />
               <MetricRow label="API" value={providers.ollama.url ?? "—"} />
               <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>{providers.ollama.detail}</p>
-              <Button size="sm" block style={{ marginTop: 10 }} onClick={onOpenSettings}>Configurar</Button>
+              <Button size="sm" block style={{ marginTop: 10 }} onClick={onOpenSettings}>{t("Configurar")}</Button>
             </div>
           </>
-        ) : <EmptyState title="Sem informação de provedores" />}
+        ) : <EmptyState title={t("Sem informação de provedores")} />}
       </div>
 
-      <h2 className="page-title">Capacidades externas</h2>
+      <h2 className="page-title">{t("Capacidades externas")}</h2>
       <div className="grid-auto">
         <div className="tile">
-          <div className="tile__label">Browser</div>
+          <div className="tile__label">{t("Browser")}</div>
           <StatusIndicator state={readiness?.browser.state} />
-          <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>
-            Navegação e extração web. Requer o Playwright instalado.
-          </p>
+          <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>{t("Navegação e extração web. Requer o Playwright instalado.")}</p>
         </div>
         <div className="tile">
-          <div className="tile__label">Visão</div>
+          <div className="tile__label">{t("Visão")}</div>
           <StatusIndicator state={readiness?.vision.state} />
-          <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>Ainda não implementado nesta versão.</p>
+          <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>{t("Ainda não implementado nesta versão.")}</p>
         </div>
       </div>
     </div>
@@ -587,14 +561,14 @@ function PcStatusSection({ snapshot, loading, onRefresh }: {
   loading: boolean;
   onRefresh: () => void;
 }) {
-  const unknown = <span className="muted">não consegui ler</span>;
+  const unknown = <span className="muted">{t("não consegui ler")}</span>;
 
   if (!loading && snapshot?.platform === "unsupported") {
     return (
       <>
-        <h2 className="page-title">Computador</h2>
-        <EmptyState title="O controlo de PC só funciona no Windows."
-                    hint="As outras funções do NANO continuam disponíveis." />
+        <h2 className="page-title">{t("Computador")}</h2>
+        <EmptyState title={t("O controlo de PC só funciona no Windows.")}
+                    hint={t("As outras funções do NANO continuam disponíveis.")} />
       </>
     );
   }
@@ -602,53 +576,53 @@ function PcStatusSection({ snapshot, loading, onRefresh }: {
   return (
     <>
       <div className="inline" style={{ alignItems: "baseline" }}>
-        <h2 className="page-title" style={{ marginBottom: 0 }}>Computador</h2>
+        <h2 className="page-title" style={{ marginBottom: 0 }}>{t("Computador")}</h2>
         <span style={{ flex: 1 }} />
         <Button onClick={onRefresh} disabled={loading}>
-          {loading ? "A ler…" : "Atualizar"}
+          {loading ? t("A ler…") : t("Atualizar")}
         </Button>
       </div>
 
       <div className="card" style={{ maxWidth: 560 }}>
         <MetricRow
-          label="Volume"
+          label={t("Volume")}
           value={snapshot?.volume
-            ? `${snapshot.volume.level}%${snapshot.volume.muted ? " (sem som)" : ""}`
+            ? `${snapshot.volume.level}%${snapshot.volume.muted ? t(" (sem som)") : ""}`
             : unknown}
         />
         <MetricRow
-          label="Janela em primeiro plano"
+          label={t("Janela em primeiro plano")}
           value={snapshot?.activeWindow?.title || unknown}
         />
         <MetricRow
-          label="Janelas abertas"
+          label={t("Janelas abertas")}
           value={snapshot?.windowCount ?? unknown}
         />
         <MetricRow
-          label="Monitores"
+          label={t("Monitores")}
           value={snapshot?.monitors
-            ? snapshot.monitors.map((m) => `${m.width}×${m.height}${m.primary ? " (principal)" : ""}`).join(" · ")
+            ? snapshot.monitors.map((m) => t("{0}×{1}{2}", { 0: m.width, 1: m.height, 2: m.primary ? " (principal)" : "" })).join(" · ")
             : unknown}
         />
         <MetricRow
-          label="Ligação"
+          label={t("Ligação")}
           value={snapshot?.network
             ? (snapshot.network.connected
                 ? `ligado${snapshot.network.connection_type ? ` (${snapshot.network.connection_type})` : ""}`
-                : "sem ligação")
+                : t("sem ligação"))
             : unknown}
         />
         <MetricRow
-          label="Espaço livre"
+          label={t("Espaço livre")}
           value={snapshot?.storage
-            ? `${snapshot.storage.free_gb} GB de ${snapshot.storage.total_gb} GB`
+            ? t("{0} GB de {1} GB", { 0: snapshot.storage.free_gb, 1: snapshot.storage.total_gb })
             : unknown}
         />
       </div>
 
       {snapshot?.applications && snapshot.applications.length > 0 && (
         <div className="card" style={{ maxWidth: 560, marginTop: 12 }}>
-          <div className="cc-tile-label">Aplicações abertas</div>
+          <div className="cc-tile-label">{t("Aplicações abertas")}</div>
           <div className="inline" style={{ flexWrap: "wrap", gap: 6, marginTop: 8 }}>
             {snapshot.applications.map((app) => (
               <ToolChip key={app.process} name={app.process} />
@@ -657,9 +631,9 @@ function PcStatusSection({ snapshot, loading, onRefresh }: {
         </div>
       )}
 
-      <h2 className="page-title">Ações recentes no computador</h2>
+      <h2 className="page-title">{t("Ações recentes no computador")}</h2>
       {snapshot && snapshot.recentActions.length === 0 ? (
-        <EmptyState title="O NANO ainda não fez nada no computador nesta sessão." />
+        <EmptyState title={t("O NANO ainda não fez nada no computador nesta sessão.")} />
       ) : (
         <div className="stack stack--tight">
           {(snapshot?.recentActions ?? []).map((entry, index) => (
@@ -697,13 +671,13 @@ export function StatusPage({
   const [confirmStop, setConfirmStop] = useState(false);
 
   const services = [
-    { name: "Motor do NANO", state: readiness ? "READY" : "BACKEND_OFFLINE", note: "Servidor Python e ponte com a UI" },
-    { name: "Groq (cloud)", state: providers?.groq.state, note: providers?.groq.detail },
-    { name: "Ollama (local)", state: providers?.ollama.state, note: providers?.ollama.detail },
-    { name: "Voz / STT", state: readiness?.voice.state, note: readiness?.voice.blockers?.join(" · ") || "Transcrição local" },
-    { name: "Wake phrase", state: readiness?.wakePhrase.state, note: `"${readiness?.wakePhrase.phrase ?? "ei nano"}"` },
-    { name: "Worker de tarefas", state: readiness?.worker.state, note: `Fila: ${readiness?.worker.queue_size ?? 0}` },
-    { name: "Browser", state: readiness?.browser.state, note: "Requer Playwright" },
+    { name: t("Motor do NANO"), state: readiness ? "READY" : "BACKEND_OFFLINE", note: t("Servidor Python e ponte com a UI") },
+    { name: t("Groq (cloud)"), state: providers?.groq.state, note: providers?.groq.detail },
+    { name: t("Ollama (local)"), state: providers?.ollama.state, note: providers?.ollama.detail },
+    { name: t("Voz / STT"), state: readiness?.voice.state, note: readiness?.voice.blockers?.join(" · ") || t("Transcrição local") },
+    { name: t("Wake phrase"), state: readiness?.wakePhrase.state, note: `"${readiness?.wakePhrase.phrase ?? "ei nano"}"` },
+    { name: t("Worker de tarefas"), state: readiness?.worker.state, note: t("Fila: {0}", { 0: readiness?.worker.queue_size ?? 0 }) },
+    { name: t("Browser"), state: readiness?.browser.state, note: t("Requer Playwright") },
   ];
 
   return (
@@ -711,14 +685,14 @@ export function StatusPage({
       {/* The live overview that used to be a permanent column beside every
           conversation. It belongs here, where it is the answer to a question
           the user came to ask, instead of competing with the chat. */}
-      <h2 className="page-title">Agora</h2>
+      <h2 className="page-title">{t("Agora")}</h2>
       <ContextPanels
         readiness={readiness} providers={providers}
         commandCenter={commandCenter} loading={loading}
         onOpenTask={onOpenTask} onCancelTask={onCancelTask} onNavigate={onNavigate}
       />
 
-      <h2 className="page-title">Serviços</h2>
+      <h2 className="page-title">{t("Serviços")}</h2>
       <div className="stack stack--tight">
         {services.map((service) => (
           <div className="row-item" key={service.name}>
@@ -739,33 +713,30 @@ export function StatusPage({
 
       <PcStatusSection snapshot={pcSnapshot} loading={pcLoading} onRefresh={onRefreshPc} />
 
-      <h2 className="page-title">Segurança</h2>
+      <h2 className="page-title">{t("Segurança")}</h2>
       <div className="card" style={{ maxWidth: 560 }}>
-        <MetricRow label="Modo de autonomia" value={readiness?.autonomyMode ?? "—"} />
+        <MetricRow label={t("Modo de autonomia")} value={readiness?.autonomyMode ?? "—"} />
         <div style={{ height: 12 }} />
-        <p className="muted" style={{ marginBottom: 12, fontSize: 13 }}>
-          A paragem de emergência bloqueia imediatamente toda a execução de ferramentas,
-          em qualquer caminho. Nada corre enquanto estiver ativa.
-        </p>
+        <p className="muted" style={{ marginBottom: 12, fontSize: 13 }}>{t("A paragem de emergência bloqueia imediatamente toda a execução de ferramentas, em qualquer caminho. Nada corre enquanto estiver ativa.")}</p>
         <div className="inline">
           <StatusIndicator
             state={readiness?.emergencyStop ? "OFFLINE" : "READY"}
-            label={readiness?.emergencyStop ? "Execução bloqueada" : "Execução permitida"}
+            label={readiness?.emergencyStop ? t("Execução bloqueada") : t("Execução permitida")}
           />
           <span style={{ flex: 1 }} />
           {readiness?.emergencyStop ? (
-            <Button variant="primary" onClick={() => onToggleEmergencyStop(false)}>Retomar execução</Button>
+            <Button variant="primary" onClick={() => onToggleEmergencyStop(false)}>{t("Retomar execução")}</Button>
           ) : (
-            <Button variant="danger" onClick={() => setConfirmStop(true)}>Parar tudo</Button>
+            <Button variant="danger" onClick={() => setConfirmStop(true)}>{t("Parar tudo")}</Button>
           )}
         </div>
       </div>
 
       <ConfirmDialog
         open={confirmStop} danger
-        title="Parar toda a execução?"
-        confirmLabel="Parar tudo"
-        message="Nenhuma ferramenta poderá correr até retomares. As tarefas em curso são bloqueadas."
+        title={t("Parar toda a execução?")}
+        confirmLabel={t("Parar tudo")}
+        message={t("Nenhuma ferramenta poderá correr até retomares. As tarefas em curso são bloqueadas.")}
         onConfirm={() => { setConfirmStop(false); onToggleEmergencyStop(true); }}
         onCancel={() => setConfirmStop(false)}
       />

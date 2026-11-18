@@ -21,6 +21,9 @@ import {
   Badge, Button, ConfirmDialog, EmptyState, ErrorState, Field, MetricRow,
   Panel, SecretField, SegmentedControl, StatusIndicator, Toggle,
 } from "./ui";
+import { LOCALES, locale, normaliseLocale, reloadInLocale, t } from "../lib/i18n";
+import type { Locale } from "../lib/i18n";
+import { tj } from "../lib/tj";
 
 /**
  * The seven Settings categories.
@@ -35,13 +38,13 @@ import {
 export type Section = "general" | "ai" | "voice" | "pccontrol" | "memory" | "privacy" | "about";
 
 const SECTIONS: { value: Section; label: string; hint: string }[] = [
-  { value: "general", label: "Geral", hint: "Arranque, janela e aparência" },
-  { value: "ai", label: "IA", hint: "Modo, provedores e modelos" },
-  { value: "voice", label: "Voz", hint: "Microfone, atalho e resposta falada" },
-  { value: "pccontrol", label: "PC Control", hint: "O que o NANO pode fazer no computador" },
-  { value: "memory", label: "Memória", hint: "O que o NANO guarda sobre ti" },
-  { value: "privacy", label: "Privacidade", hint: "Onde correm os teus dados" },
-  { value: "about", label: "Sobre", hint: "Versão e projeto" },
+  { value: "general", label: t("Geral"), hint: t("Arranque, janela e aparência") },
+  { value: "ai", label: t("IA"), hint: t("Modo, provedores e modelos") },
+  { value: "voice", label: t("Voz"), hint: t("Microfone, atalho e resposta falada") },
+  { value: "pccontrol", label: t("PC Control"), hint: t("O que o NANO pode fazer no computador") },
+  { value: "memory", label: t("Memória"), hint: t("O que o NANO guarda sobre ti") },
+  { value: "privacy", label: t("Privacidade"), hint: t("Onde correm os teus dados") },
+  { value: "about", label: t("Sobre"), hint: t("Versão e projeto") },
 ];
 
 type WakeTest = {
@@ -80,15 +83,9 @@ function DesktopPanel() {
 
   if (!status) {
     return (
-      <Panel title="Modo desktop">
-        <p className="muted" style={{ fontSize: 13 }}>
-          Esta janela está a correr no <strong>navegador</strong>, não na aplicação
-          de ambiente de trabalho. O atalho global, o tabuleiro do sistema e o painel
-          de voz só existem no NANO Desktop.
-        </p>
-        <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>
-          Abre o NANO com <code>NANO_DESKTOP.bat</code> para os ativar.
-        </p>
+      <Panel title={t("Modo desktop")}>
+        <p className="muted" style={{ fontSize: 13 }}>{tj("Esta janela está a correr no {0}, não na aplicação de ambiente de trabalho. O atalho global, o tabuleiro do sistema e o painel de voz só existem no NANO Desktop.", { 0: <strong>{t("navegador")}</strong> })}</p>
+        <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>{tj("Abre o NANO com {0} para os ativar.", { 0: <code>NANO_DESKTOP.bat</code> })}</p>
       </Panel>
     );
   }
@@ -100,16 +97,16 @@ function DesktopPanel() {
 
   return (
     <Panel
-      title="Modo desktop"
-      action={<Badge tone="accent">Ativo</Badge>}
+      title={t("Modo desktop")}
+      action={<Badge tone="accent">{t("Ativo")}</Badge>}
     >
-      <MetricRow label="Atalho global" value={<code>{status.shortcut}</code>} />
+      <MetricRow label={t("Atalho global")} value={<code>{status.shortcut}</code>} />
       <MetricRow
-        label="Estado do atalho"
+        label={t("Estado do atalho")}
         value={
           <StatusIndicator
             state={status.shortcutRegistered ? "READY" : "ERROR"}
-            label={status.shortcutRegistered ? "Registado" : "Em conflito"}
+            label={status.shortcutRegistered ? t("Registado") : t("Em conflito")}
             title={status.shortcutError ?? undefined}
           />
         }
@@ -117,16 +114,11 @@ function DesktopPanel() {
       {!status.shortcutRegistered && (
         <>
           <p className="field__error" style={{ marginTop: 8 }}>
-            {status.shortcutError ?? "Não foi possível registar o atalho."}
+            {status.shortcutError ?? t("Não foi possível registar o atalho.")}
           </p>
-          <p className="dim" style={{ fontSize: 11, marginTop: 6 }}>
-            Outra aplicação está a usar esta combinação. Fecha-a e tenta novamente —
-            o resto do NANO continua a funcionar, incluindo o botão de microfone.
-          </p>
+          <p className="dim" style={{ fontSize: 11, marginTop: 6 }}>{t("Outra aplicação está a usar esta combinação. Fecha-a e tenta novamente — o resto do NANO continua a funcionar, incluindo o botão de microfone.")}</p>
           <div className="inline" style={{ marginTop: 10 }}>
-            <Button size="sm" disabled={busy} onClick={() => run(retryShortcut)}>
-              Tentar registar outra vez
-            </Button>
+            <Button size="sm" disabled={busy} onClick={() => run(retryShortcut)}>{t("Tentar registar outra vez")}</Button>
           </div>
         </>
       )}
@@ -134,17 +126,17 @@ function DesktopPanel() {
       <div style={{ height: 12 }} />
 
       <Toggle
-        label="Mostrar o painel de voz"
-        hint="Uma pequena janela sobre as outras aplicações a dizer o que o NANO está a fazer durante um turno de voz."
+        label={t("Mostrar o painel de voz")}
+        hint={t("Uma pequena janela sobre as outras aplicações a dizer o que o NANO está a fazer durante um turno de voz.")}
         checked={status.overlayEnabled}
         onChange={(value) => run(() => setOverlayEnabled(value))}
       />
       <Toggle
-        label="Iniciar com o Windows"
+        label={t("Iniciar com o Windows")}
         hint={
           status.autoLaunch.supported
-            ? "O NANO arranca minimizado no tabuleiro, pronto para o atalho global."
-            : "Disponível apenas na aplicação instalada — em desenvolvimento o atalho de arranque apontaria para o Electron, não para o NANO."
+            ? t("O NANO arranca minimizado no tabuleiro, pronto para o atalho global.")
+            : t("Disponível apenas na aplicação instalada — em desenvolvimento o atalho de arranque apontaria para o Electron, não para o NANO.")
         }
         checked={status.autoLaunch.enabled}
         disabled={!status.autoLaunch.supported || busy}
@@ -153,11 +145,7 @@ function DesktopPanel() {
       />
 
       <div style={{ height: 12 }} />
-      <p className="dim" style={{ fontSize: 11, lineHeight: 1.6 }}>
-        Fechar a janela esconde o NANO no tabuleiro para que o atalho continue a
-        funcionar. Para o encerrar mesmo, usa <strong>Sair do Nano</strong> no menu do
-        tabuleiro.
-      </p>
+      <p className="dim" style={{ fontSize: 11, lineHeight: 1.6 }}>{tj("Fechar a janela esconde o NANO no tabuleiro para que o atalho continue a funcionar. Para o encerrar mesmo, usa {0} no menu do tabuleiro.", { 0: <strong>{t("Sair do Nano")}</strong> })}</p>
     </Panel>
   );
 }
@@ -186,11 +174,8 @@ function WakePhraseTester({ phrase }: { phrase: string }) {
   };
 
   return (
-    <Panel title="Testar frase de ativação">
-      <p className="dim" style={{ fontSize: 12, marginBottom: 10 }}>
-        Carrega numa frase e di-la em voz alta. O NANO mostra o que ouviu, sem
-        acordar nem responder. Repete algumas vezes para veres se é fiável.
-      </p>
+    <Panel title={t("Testar frase de ativação")}>
+      <p className="dim" style={{ fontSize: 12, marginBottom: 10 }}>{t("Carrega numa frase e di-la em voz alta. O NANO mostra o que ouviu, sem acordar nem responder. Repete algumas vezes para veres se é fiável.")}</p>
       <div className="inline" style={{ flexWrap: "wrap", gap: 8 }}>
         {WAKE_CANDIDATES.map((candidate) => (
           <Button
@@ -200,7 +185,7 @@ function WakePhraseTester({ phrase }: { phrase: string }) {
             disabled={active !== null}
             onClick={() => run(candidate)}
           >
-            {active === candidate ? "A ouvir…" : candidate}
+            {active === candidate ? t("A ouvir…") : candidate}
           </Button>
         ))}
       </div>
@@ -217,7 +202,7 @@ function WakePhraseTester({ phrase }: { phrase: string }) {
               }}
             >
               <Badge tone={entry.matched ? "accent" : "neutral"}>
-                {entry.matched ? "MATCH" : "NO MATCH"}
+                {entry.matched ? "MATCH" : t("NO MATCH")}
               </Badge>
               <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
                 <span className="dim">{entry.phrase} → </span>
@@ -225,7 +210,7 @@ function WakePhraseTester({ phrase }: { phrase: string }) {
                   {entry.transcript ? `"${entry.transcript}"` : (entry.detail ?? "—")}
                 </span>
                 {entry.gate === false && entry.rms != null && (
-                  <span className="dim"> · nível {entry.rms} / limiar {entry.threshold}</span>
+                  <span className="dim">{t("· nível {0} / limiar {1}", { 0: entry.rms, 1: entry.threshold })}</span>
                 )}
               </span>
             </div>
@@ -243,20 +228,20 @@ function WakePhraseTester({ phrase }: { phrase: string }) {
  * state says so instead of implying the provider is fine.
  */
 function cloudStateHint(info?: ProviderInfo): string {
-  if (!info) return "Estado desconhecido";
-  if (info.temporarily_limited) return "Limite temporário atingido";
+  if (!info) return t("Estado desconhecido");
+  if (info.temporarily_limited) return t("Limite temporário atingido");
   switch (info.state) {
-    case "READY": return "Configurado";
+    case "READY": return t("Configurado");
     // SETUP_REQUIRED NO LONGER MEANS ONE THING. It is "no key" and also "a
     // valid key whose account offers nothing Nano can use" -- two different
     // problems with two different fixes. Reading secret.configured is what
     // stops Nano telling somebody to paste a key they already pasted.
     case "SETUP_REQUIRED":
-      return info.secret?.configured ? "Sem modelo utilizável" : "Falta a chave";
-    case "MODEL_UNAVAILABLE": return "Modelo indisponível";
-    case "ERROR": return "Chave recusada";
-    case "UNAVAILABLE": return "Sem ligação";
-    case "DISABLED": return "Não usado neste modo";
+      return info.secret?.configured ? t("Sem modelo utilizável") : t("Falta a chave");
+    case "MODEL_UNAVAILABLE": return t("Modelo indisponível");
+    case "ERROR": return t("Chave recusada");
+    case "UNAVAILABLE": return t("Sem ligação");
+    case "DISABLED": return t("Não usado neste modo");
     default: return info.state;
   }
 }
@@ -272,9 +257,9 @@ function modelCapabilityNote(info: ProviderInfo | undefined, model: string) {
   const record = info?.records?.find((entry) => entry.id === model);
   if (!record) return null;
   const facts: string[] = [];
-  if (record.tool_calling === false) facts.push("não suporta chamadas de ferramentas (sem PC Control)");
-  if (record.thinking) facts.push("suporta raciocínio configurável");
-  if (record.input_tokens) facts.push(`contexto até ${record.input_tokens.toLocaleString("pt-PT")} tokens`);
+  if (record.tool_calling === false) facts.push(t("não suporta chamadas de ferramentas (sem PC Control)"));
+  if (record.thinking) facts.push(t("suporta raciocínio configurável"));
+  if (record.input_tokens) facts.push(t("contexto até {0} tokens", { 0: record.input_tokens.toLocaleString("pt-PT") }));
   if (!facts.length) return null;
   return (
     <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>
@@ -293,9 +278,9 @@ function modelCapabilityNote(info: ProviderInfo | undefined, model: string) {
  * provider the UI cannot show is a provider the user cannot configure.
  */
 const CLOUD_PRESENTATION: Record<string, { title: string; placeholder: string }> = {
-  google: { title: "Google · Gemini", placeholder: "AIza..." },
-  groq: { title: "Groq · Cloud", placeholder: "gsk_..." },
-  mistral: { title: "Mistral · Cloud", placeholder: "Chave de API do Mistral" },
+  google: { title: t("Google · Gemini"), placeholder: "AIza..." },
+  groq: { title: t("Groq · Cloud"), placeholder: "gsk_..." },
+  mistral: { title: t("Mistral · Cloud"), placeholder: t("Chave de API do Mistral") },
 };
 
 /**
@@ -337,7 +322,7 @@ function CloudProviderPanel({
             missing. Hiding it would make the select silently display someone
             else's choice. */}
         {!models.includes(current) && (
-          <option value={current}>{current || "—"} (indisponível)</option>
+          <option value={current}>{t("{0} (indisponível)", { 0: current || "—" })}</option>
         )}
         {models.map((model) => <option key={model} value={model}>{model}</option>)}
       </select>
@@ -351,22 +336,22 @@ function CloudProviderPanel({
         {preferred === providerKey ? "preferido" : "cloud"}
       </Badge>}
     >
-      <MetricRow label="Estado" value={<StatusIndicator state={info?.state} />} />
+      <MetricRow label={t("Estado")} value={<StatusIndicator state={info?.state} />} />
       {info?.detail && <p className="dim" style={{ fontSize: 12 }}>{info.detail}</p>}
 
       <div style={{ height: 8 }} />
       <SecretField
-        label="Chave de API"
+        label={t("Chave de API")}
         masked={info?.secret.masked ?? ""}
         configured={Boolean(info?.secret.configured)}
         onSave={(key) => onSaveKey(providerKey, key)}
         onRemove={() => onRemoveKey(providerKey)}
         onTest={() => onTest(providerKey)}
-        placeholder={presentation?.placeholder ?? "Chave de API"}
+        placeholder={presentation?.placeholder ?? t("Chave de API")}
         hint={
           secretsEncrypted
-            ? "Guardada encriptada pelo Windows (DPAPI). Nunca é enviada para o navegador nem escrita em ficheiros do projeto."
-            : "Guardada localmente com permissões restritas. Nunca é enviada para o navegador."
+            ? t("Guardada encriptada pelo Windows (DPAPI). Nunca é enviada para o navegador nem escrita em ficheiros do projeto.")
+            : t("Guardada localmente com permissões restritas. Nunca é enviada para o navegador.")
         }
       />
 
@@ -379,24 +364,62 @@ function CloudProviderPanel({
           <div style={{ height: 12 }} />
           {/* Two tiers. Conversation must never pay for the big model, so they
               are configured -- and shown -- separately. */}
-          <Field label="Modelo de conversa"
-                 hint="Usado em conversa normal e em voz. Deve ser o mais rápido.">
+          <Field label={t("Modelo de conversa")}
+                 hint={t("Usado em conversa normal e em voz. Deve ser o mais rápido.")}>
             {tierSelect("fast")}
           </Field>
           <div style={{ height: 8 }} />
-          <Field label="Modelo complexo"
-                 hint="Só para análise, código e raciocínio. Nunca por a mensagem ser comprida.">
+          <Field label={t("Modelo complexo")}
+                 hint={t("Só para análise, código e raciocínio. Nunca por a mensagem ser comprida.")}>
             {tierSelect("complex")}
           </Field>
           {info?.tiers_ok && info.tiers_ok.complex === false && (
-            <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>
-              O modelo complexo configurado não existe nesta conta; os pedidos
-              complexos usam o modelo de conversa.
-            </p>
+            <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>{t("O modelo complexo configurado não existe nesta conta; os pedidos complexos usam o modelo de conversa.")}</p>
           )}
           {modelCapabilityNote(info, info?.tiers?.fast ?? info?.model ?? "")}
         </>
       ) : null}
+    </Panel>
+  );
+}
+
+/**
+ * Interface language. "Seguir o sistema" is the default: the backend resolves it
+ * from the operating system's language, English when NANO does not speak it.
+ * Saving reloads the page in the new language, because every string is
+ * translated once, when the page loads.
+ */
+function LanguagePanel({ language }: { language?: SettingsPayload["language"] }) {
+  const [saving, setSaving] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const choice = language?.setting ?? "system";
+  const systemLabel = LOCALES.find((entry) => entry.id === normaliseLocale(language?.system))?.label
+    ?? LOCALES[0].label;
+
+  const choose = async (value: string) => {
+    setSaving(true);
+    setFailed(false);
+    const result = await call<{ ok: boolean; resolved: string }>("set_language", value);
+    const next = normaliseLocale(result?.resolved);
+    if (result?.ok && next) {
+      if (next !== locale()) { reloadInLocale(next as Locale); return; }
+    } else {
+      setFailed(true);
+    }
+    setSaving(false);
+  };
+
+  return (
+    <Panel title={t("Idioma")}>
+      <Field label={t("Língua da interface")}
+             hint={t("As respostas do NANO seguem a língua em que escreves, seja qual for a escolhida aqui.")}>
+        <select className="select" value={choice} disabled={saving}
+                onChange={(e) => { void choose(e.target.value); }}>
+          <option value="system">{t("Seguir o sistema ({0})", { 0: systemLabel })}</option>
+          {LOCALES.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}
+        </select>
+      </Field>
+      {failed && <p className="dim" role="alert" style={{ fontSize: 11, marginTop: 6 }}>{t("Não foi possível mudar a língua.")}</p>}
     </Panel>
   );
 }
@@ -451,12 +474,12 @@ export default function SettingsPage({
   const [confirmClear, setConfirmClear] = useState(false);
 
   if (loading && !settings) {
-    return <div className="page__inner"><EmptyState title="A carregar definições…" /></div>;
+    return <div className="page__inner"><EmptyState title={t("A carregar definições…")} /></div>;
   }
   if (!settings) {
     return (
       <div className="page__inner">
-        <ErrorState error={{ message: "Não foi possível ler as definições.", component: "backend" }} />
+        <ErrorState error={{ message: t("Não foi possível ler as definições."), component: "backend" }} />
       </div>
     );
   }
@@ -486,7 +509,7 @@ export default function SettingsPage({
           at 940px, and a horizontally scrolling tab strip hides the categories
           a first-time user most needs to discover. The rail collapses to a
           scrollable chip row under the narrow breakpoint -- see globals.css. */}
-      <nav className="settings-rail" aria-label="Categorias de definições">
+      <nav className="settings-rail" aria-label={t("Categorias de definições")}>
         {SECTIONS.map((entry) => (
           <button
             key={entry.value}
@@ -510,19 +533,16 @@ export default function SettingsPage({
         {/* ── AI ───────────────────────────────────────────────────────── */}
         {section === "ai" && (
           <div className="stack">
-            <Panel title="Modo">
-              <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
-                A cloud é o cérebro normal do NANO: é rápida e não consome RAM local.
-                O Ollama fica como alternativa local e de privacidade.
-              </p>
+            <Panel title={t("Modo")}>
+              <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>{t("A cloud é o cérebro normal do NANO: é rápida e não consome RAM local. O Ollama fica como alternativa local e de privacidade.")}</p>
               <SegmentedControl<"AUTO" | "CLOUD" | "LOCAL">
-                label="Modo de provedor"
+                label={t("Modo de provedor")}
                 value={(providers?.mode ?? "AUTO") as any}
                 onChange={onSetMode}
                 options={[
-                  { value: "AUTO", label: "Automático", hint: "Provedor preferido, depois o outro, depois o Ollama" },
-                  { value: "CLOUD", label: "Cloud", hint: "Apenas o provedor cloud escolhido" },
-                  { value: "LOCAL", label: "Local", hint: "Apenas Ollama; o texto das mensagens não sai do computador" },
+                  { value: "AUTO", label: t("Automático"), hint: t("Provedor preferido, depois o outro, depois o Ollama") },
+                  { value: "CLOUD", label: t("Cloud"), hint: t("Apenas o provedor cloud escolhido") },
+                  { value: "LOCAL", label: t("Local"), hint: t("Apenas Ollama; o texto das mensagens não sai do computador") },
                 ]}
               />
 
@@ -533,7 +553,7 @@ export default function SettingsPage({
                 <>
                   <div style={{ height: 14 }} />
                   <SegmentedControl<CloudProviderKey>
-                    label="Provedor preferido"
+                    label={t("Provedor preferido")}
                     value={preferred as CloudProviderKey}
                     onChange={onSetPreferredCloud}
                     options={cloudKeys.map((key) => ({
@@ -573,8 +593,8 @@ export default function SettingsPage({
               />
             ))}
 
-            <Panel title="Ollama · Local" action={<Badge tone="info">fallback</Badge>}>
-              <MetricRow label="Estado" value={<StatusIndicator state={ollama?.state} />} />
+            <Panel title={t("Ollama · Local")} action={<Badge tone="info">{t("alternativa")}</Badge>}>
+              <MetricRow label={t("Estado")} value={<StatusIndicator state={ollama?.state} />} />
               <MetricRow label="API" value={ollama?.url || "—"} />
 
               {/* The list is what Ollama really reports as installed. When it
@@ -583,28 +603,24 @@ export default function SettingsPage({
               {ollama?.models?.length ? (
                 <>
                   <div style={{ height: 10 }} />
-                  <Field label="Modelo local"
-                         hint="Apenas modelos já instalados. O NANO não descarrega modelos por ti.">
+                  <Field label={t("Modelo local")}
+                         hint={t("Apenas modelos já instalados. O NANO não descarrega modelos por ti.")}>
                     <select className="select" value={ollama.model}
                             onChange={(e) => onSetLocalModel(e.target.value)}
                             disabled={busy}>
                       {!ollama.models.includes(ollama.model) && (
-                        <option value={ollama.model}>{ollama.model} (não instalado)</option>
+                        <option value={ollama.model}>{t("{0} (não instalado)", { 0: ollama.model })}</option>
                       )}
                       {ollama.models.map((model) => <option key={model} value={model}>{model}</option>)}
                     </select>
                   </Field>
                 </>
               ) : (
-                <MetricRow label="Modelo" value={ollama?.model || "—"} />
+                <MetricRow label={t("Modelo")} value={ollama?.model || "—"} />
               )}
 
               {ollama?.detail && <p className="dim" style={{ fontSize: 12, marginTop: 6 }}>{ollama.detail}</p>}
-              <p className="dim" style={{ fontSize: 11, marginTop: 10 }}>
-                O NANO arranca o servidor Ollama se ainda não estiver a correr, mas nunca
-                carrega o modelo antecipadamente: só é carregado quando um pedido precisa
-                mesmo dele.
-              </p>
+              <p className="dim" style={{ fontSize: 11, marginTop: 10 }}>{t("O NANO arranca o servidor Ollama se ainda não estiver a correr, mas nunca carrega o modelo antecipadamente: só é carregado quando um pedido precisa mesmo dele.")}</p>
             </Panel>
           </div>
         )}
@@ -612,56 +628,47 @@ export default function SettingsPage({
         {/* ── VOICE ────────────────────────────────────────────────────── */}
         {section === "voice" && (
           <div className="stack">
-            <Panel title="Ativação por voz (experimental)"
-                   action={<Badge tone="neutral">Experimental</Badge>}>
-              <p className="muted" style={{ fontSize: 13, marginBottom: 10 }}>
-                A forma normal de falar com o NANO é o atalho global{" "}
-                <code>Ctrl + Shift + Space</code>, que é instantâneo e não gasta nada
-                enquanto não é usado.
+            <Panel title={t("Ativação por voz (experimental)")}
+                   action={<Badge tone="neutral">{t("Experimental")}</Badge>}>
+              <p className="muted" style={{ fontSize: 13, marginBottom: 10 }}>{tj("A forma normal de falar com o NANO é o atalho global {0}, que é instantâneo e não gasta nada enquanto não é usado.", { 0: <code>Ctrl + Shift + Space</code> })}</p>
+              <p className="dim" style={{ fontSize: 11, marginBottom: 12, lineHeight: 1.6 }}>{tj("Esta alternativa mantém o microfone aberto e passa tudo o que ouve pelo Whisper local. Consome CPU continuamente — e agora mais ainda, porque a transcrição passou para o modelo {0}, que é bastante mais exato mas também mais pesado que o antigo {1}. Por isso vem desligada.", { 0: <code>small</code>, 1: <code>tiny</code> })}
               </p>
-              <p className="dim" style={{ fontSize: 11, marginBottom: 12, lineHeight: 1.6 }}>
-                Esta alternativa mantém o microfone aberto e passa tudo o que ouve pelo
-                Whisper local. Consome CPU continuamente — e agora mais ainda, porque a
-                transcrição passou para o modelo <code>small</code>, que é bastante mais
-                exacto mas também mais pesado que o antigo <code>tiny</code>. Por isso
-                vem desligada.
-              </p>
-              <MetricRow label="Estado" value={<StatusIndicator state={voice.state} />} />
-              <MetricRow label="Frase" value={`"${voice.wakePhrase}"`} />
+              <MetricRow label={t("Estado")} value={<StatusIndicator state={voice.state} />} />
+              <MetricRow label={t("Frase")} value={`"${voice.wakePhrase}"`} />
               <div style={{ height: 8 }} />
               <Toggle
-                label={`Ativar "${voice.wakePhrase}"`}
-                hint="O NANO ouve continuamente à espera da frase, localmente."
+                label={t("Ativar \"{0}\"", { 0: voice.wakePhrase })}
+                hint={t("O NANO ouve continuamente à espera da frase, localmente.")}
                 checked={voice.wakePhraseEnabled}
                 onChange={(v) => onUpdate("wake_phrase_enabled", v)}
               />
               <Toggle
-                label='Aceitar apenas "Nano"'
-                hint='Desligado por omissão: "Nano" sozinho causava ativações falsas. Manter desligado torna a deteção muito mais fiável.'
+                label={t("Aceitar apenas \"Nano\"")}
+                hint={t("Desligado por omissão: \"Nano\" sozinho causava ativações falsas. Manter desligado torna a deteção muito mais fiável.")}
                 checked={voice.allowNanoOnly}
                 onChange={(v) => onUpdate("wake_phrase_allow_nano_only", v)}
               />
               <div style={{ height: 12 }} />
-              <Field label={`Tempo de espera pelo comando: ${voice.commandTimeoutSeconds}s`}
-                     hint="Depois do chime, quanto tempo o NANO espera por um comando antes de voltar a escutar.">
+              <Field label={t("Tempo de espera pelo comando: {0}s", { 0: voice.commandTimeoutSeconds })}
+                     hint={t("Depois do chime, quanto tempo o NANO espera por um comando antes de voltar a escutar.")}>
                 <input type="range" min={3} max={15} step={1} value={voice.commandTimeoutSeconds}
                        onChange={(e) => onUpdate("wake_command_timeout_seconds", Number(e.target.value))}
-                       aria-label="Tempo de espera pelo comando" />
+                       aria-label={t("Tempo de espera pelo comando")} />
               </Field>
-              <Field label={`Intervalo entre ativações: ${voice.cooldownSeconds}s`}
-                     hint="Impede que a mesma frase active o NANO várias vezes seguidas.">
+              <Field label={t("Intervalo entre ativações: {0}s", { 0: voice.cooldownSeconds })}
+                     hint={t("Impede que a mesma frase active o NANO várias vezes seguidas.")}>
                 <input type="range" min={1} max={10} step={0.5} value={voice.cooldownSeconds}
                        onChange={(e) => onUpdate("wake_phrase_cooldown_seconds", Number(e.target.value))}
-                       aria-label="Intervalo entre ativações" />
+                       aria-label={t("Intervalo entre ativações")} />
               </Field>
             </Panel>
 
-            <Panel title="Dispositivos">
-              <Field label="Microfone" hint="Usado para a wake phrase e para os comandos de voz.">
+            <Panel title={t("Dispositivos")}>
+              <Field label={t("Microfone")} hint={t("Usado para a wake phrase e para os comandos de voz.")}>
                 <select className="select"
                         value={String(settings.stored.input_device_index ?? "")}
                         onChange={(e) => onUpdate("input_device_index", e.target.value === "" ? null : Number(e.target.value))}>
-                  <option value="">Predefinido do sistema</option>
+                  <option value="">{t("Predefinido do sistema")}</option>
                   {settings.devices.inputs.map((device) => (
                     <option key={device.id} value={device.id}>{device.name}</option>
                   ))}
@@ -672,33 +679,33 @@ export default function SettingsPage({
               )}
               <div style={{ height: 12 }} />
               <div className="inline">
-                <Button size="sm" onClick={onTestMicrophone}>Testar microfone</Button>
-                <Button size="sm" onClick={onTestSpeaker}>Testar som</Button>
+                <Button size="sm" onClick={onTestMicrophone}>{t("Testar microfone")}</Button>
+                <Button size="sm" onClick={onTestSpeaker}>{t("Testar som")}</Button>
               </div>
             </Panel>
 
-            <Panel title="Resposta falada">
+            <Panel title={t("Resposta falada")}>
               <Toggle
-                label="Ler as respostas em voz alta"
-                hint="Interruptor geral. Desligado, o NANO nunca fala."
+                label={t("Ler as respostas em voz alta")}
+                hint={t("Interruptor geral. Desligado, o NANO nunca fala.")}
                 checked={voice.ttsEnabled}
                 onChange={(v) => onUpdate("tts_enabled", v)}
               />
               <Toggle
-                label="Falar respostas do chat escrito"
-                hint="Desligado por omissão: escreveres no chat não faz o NANO falar."
+                label={t("Falar respostas do chat escrito")}
+                hint={t("Desligado por omissão: escreveres no chat não faz o NANO falar.")}
                 checked={voice.typedChatTts}
                 onChange={(v) => onUpdate("typed_chat_tts", v)}
               />
               <Toggle
-                label="Falar respostas às perguntas por voz"
-                hint="Se falaste com o NANO, ouves a resposta."
+                label={t("Falar respostas às perguntas por voz")}
+                hint={t("Se falaste com o NANO, ouves a resposta.")}
                 checked={voice.voiceReplyTts}
                 onChange={(v) => onUpdate("voice_reply_tts", v)}
               />
               <Toggle
-                label="Voz ativada"
-                hint="Desligar suspende a wake phrase e os comandos de voz."
+                label={t("Voz ativada")}
+                hint={t("Desligar suspende a wake phrase e os comandos de voz.")}
                 checked={voice.enabled}
                 onChange={(v) => onUpdate("voice_enabled", v)}
               />
@@ -708,21 +715,21 @@ export default function SettingsPage({
 
             {/* Honest microphone diagnostics: what Nano is really hearing. */}
             {voice.audio && (
-              <Panel title="Diagnóstico do microfone">
+              <Panel title={t("Diagnóstico do microfone")}>
                 {voice.explain && (
                   <p className="dim" style={{ fontSize: 12, marginBottom: 10 }}>{voice.explain}</p>
                 )}
-                <MetricRow label="Ruído de fundo" value={String(voice.audio.noise_floor ?? "—")} />
-                <MetricRow label="Limiar de fala" value={String(voice.audio.threshold ?? "—")} />
-                <MetricRow label="Nível atual" value={String(voice.audio.last_rms ?? "—")} />
-                <MetricRow label="Pico observado" value={String(voice.audio.peak_rms ?? "—")} />
+                <MetricRow label={t("Ruído de fundo")} value={String(voice.audio.noise_floor ?? "—")} />
+                <MetricRow label={t("Limiar de fala")} value={String(voice.audio.threshold ?? "—")} />
+                <MetricRow label={t("Nível atual")} value={String(voice.audio.last_rms ?? "—")} />
+                <MetricRow label={t("Pico observado")} value={String(voice.audio.peak_rms ?? "—")} />
                 {voice.counters && (
                   <>
-                    <MetricRow label="Blocos captados" value={String(voice.counters.chunksCaptured ?? 0)} />
-                    <MetricRow label="Com fala" value={String(voice.counters.speechChunks ?? 0)} />
-                    <MetricRow label="Em silêncio" value={String(voice.counters.silentChunks ?? 0)} />
-                    <MetricRow label="Transcrições" value={String(voice.counters.transcriptsSeen ?? 0)} />
-                    <MetricRow label="Ativações" value={String(voice.counters.wakeMatches ?? 0)} />
+                    <MetricRow label={t("Blocos captados")} value={String(voice.counters.chunksCaptured ?? 0)} />
+                    <MetricRow label={t("Com fala")} value={String(voice.counters.speechChunks ?? 0)} />
+                    <MetricRow label={t("Em silêncio")} value={String(voice.counters.silentChunks ?? 0)} />
+                    <MetricRow label={t("Transcrições")} value={String(voice.counters.transcriptsSeen ?? 0)} />
+                    <MetricRow label={t("Ativações")} value={String(voice.counters.wakeMatches ?? 0)} />
                   </>
                 )}
                 {/* What the transcriber actually heard. A wake that does not
@@ -731,9 +738,7 @@ export default function SettingsPage({
                 {voice.recentTranscripts && voice.recentTranscripts.length > 0 && (
                   <>
                     <div style={{ height: 10 }} />
-                    <p className="dim" style={{ fontSize: 11, marginBottom: 4 }}>
-                      Últimas transcrições
-                    </p>
+                    <p className="dim" style={{ fontSize: 11, marginBottom: 4 }}>{t("Últimas transcrições")}</p>
                     <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
                       {voice.recentTranscripts.map((line, i) => (
                         <li key={i} style={{ fontFamily: "var(--font-mono)", fontSize: 11,
@@ -754,37 +759,23 @@ export default function SettingsPage({
         {section === "general" && (
           <div className="stack">
             <DesktopPanel />
-            <Panel title="Arranque">
-              <p className="muted" style={{ fontSize: 13 }}>
-                O NANO Desktop arranca com o <code>NANO_DESKTOP.bat</code>: o Electron
-                valida o Python, arranca o motor, espera que fique realmente pronto e só
-                então abre a janela. Nenhum separador do navegador é aberto.
-              </p>
+            <Panel title={t("Arranque")}>
+              <p className="muted" style={{ fontSize: 13 }}>{tj("O NANO Desktop arranca com o {0}: o Electron valida o Python, arranca o motor, espera que fique realmente pronto e só então abre a janela. Nenhum separador do navegador é aberto.", { 0: <code>NANO_DESKTOP.bat</code> })}</p>
               <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>
-                O <code>NANO.bat</code> continua a existir para desenvolvimento e como
-                alternativa: abre a mesma interface no navegador, sem atalho global,
-                tabuleiro nem painel de voz.
-              </p>
+                {tj("O {0} continua a existir para desenvolvimento e como alternativa: abre a mesma interface no navegador, sem atalho global, tabuleiro nem painel de voz.", { 0: <code>NANO.bat</code> })}</p>
             </Panel>
-            <Panel title="Idioma">
-              <MetricRow label="Interface" value="Português (Portugal)" />
-              <p className="dim" style={{ fontSize: 11, marginTop: 6 }}>
-                Só está disponível uma língua nesta versão.
-              </p>
-            </Panel>
-            <Panel title="Tema">
+            <LanguagePanel language={settings.language} />
+            <Panel title={t("Tema")}>
               <SegmentedControl<"dark" | "light">
-                label="Tema" value={theme} onChange={onTheme}
-                options={[{ value: "dark", label: "Escuro" }, { value: "light", label: "Claro" }]}
+                label={t("Tema")} value={theme} onChange={onTheme}
+                options={[{ value: "dark", label: t("Escuro") }, { value: "light", label: t("Claro") }]}
               />
-              <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>
-                Os dois temas cobrem toda a aplicação; o escuro é o predefinido.
-              </p>
+              <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>{t("Os dois temas cobrem toda a aplicação; o escuro é o predefinido.")}</p>
             </Panel>
-            <Panel title="Movimento">
+            <Panel title={t("Movimento")}>
               <Toggle
-                label="Reduzir animações"
-                hint="Desliga transições e indicadores animados. Também respeita a definição do sistema."
+                label={t("Reduzir animações")}
+                hint={t("Desliga transições e indicadores animados. Também respeita a definição do sistema.")}
                 checked={reduceMotion}
                 onChange={onReduceMotion}
               />
@@ -818,80 +809,52 @@ export default function SettingsPage({
         {/* ── PRIVACY ──────────────────────────────────────────────────── */}
         {section === "privacy" && (
           <div className="stack">
-            <Panel title="Onde correm os teus dados">
-              <p className="muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
-                A memória, o histórico de conversa, a transcrição de voz e a deteção da
-                wake phrase acontecem <strong>sempre neste computador</strong>.
-                <br /><br />
-                No modo Automático ou Cloud, o texto das tuas mensagens é enviado ao Groq
-                para gerar a resposta. No modo Local, o texto das mensagens não sai
-                do computador.
-              </p>
+            <Panel title={t("Onde correm os teus dados")}>
+              <p className="muted" style={{ fontSize: 13, lineHeight: 1.7 }}>{tj("A memória, o histórico de conversa, a transcrição de voz e a deteção da wake phrase acontecem {0}.", { 0: <strong>{t("sempre neste computador")}</strong> })}
+                <br /><br />{t("No modo Automático ou Cloud, o texto das tuas mensagens é enviado ao Groq para gerar a resposta. No modo Local, o texto das mensagens não sai do computador.")}</p>
             </Panel>
 
             {/* Stated separately and plainly because it is the one thing that
                 leaves the machine REGARDLESS of provider mode. Saying "no modo
                 Local nada sai do computador" without this would be false. */}
-            <Panel title="Resposta falada" action={<Badge tone="info">sai do computador</Badge>}>
-              <p className="muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
-                Quando o NANO lê uma resposta em voz alta, usa o serviço de voz da
-                Microsoft (<code>edge-tts</code>). O <strong>texto que vai ser lido</strong> é
-                enviado à Microsoft para gerar o áudio — <strong>em qualquer modo,
-                incluindo Local</strong>.
+            <Panel title={t("Resposta falada")} action={<Badge tone="info">{t("sai do computador")}</Badge>}>
+              <p className="muted" style={{ fontSize: 13, lineHeight: 1.7 }}>{tj("Quando o NANO lê uma resposta em voz alta, usa o serviço de voz da Microsoft ({0}). O {1} é enviado à Microsoft para gerar o áudio — {2}.", { 0: <code>edge-tts</code>, 1: <strong>{t("texto que vai ser lido")}</strong>, 2: <strong>{t("em qualquer modo, incluindo Local")}</strong> })}
               </p>
               <div style={{ height: 8 }} />
               <MetricRow
-                label="Estado"
+                label={t("Estado")}
                 value={
                   <StatusIndicator
                     state={voice.ttsEnabled ? "READY" : "DISABLED"}
-                    label={voice.ttsEnabled ? "ativa — o texto lido é enviado" : "desligada — nada é enviado"}
+                    label={voice.ttsEnabled ? t("ativa — o texto lido é enviado") : t("desligada — nada é enviado")}
                   />
                 }
               />
-              <p className="dim" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>
-                Para que nada saia do computador, desliga a resposta falada em
-                Definições → Voz. A transcrição do que dizes (Whisper) continua a
-                ser feita localmente e nunca é enviada.
-              </p>
+              <p className="dim" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>{t("Para que nada saia do computador, desliga a resposta falada em Definições → Voz. A transcrição do que dizes (Whisper) continua a ser feita localmente e nunca é enviada.")}</p>
             </Panel>
 
-            <Panel title="Permissões">
-              <MetricRow label="Modo de autonomia" value={settings.security.autonomyMode} />
+            <Panel title={t("Permissões")}>
+              <MetricRow label={t("Modo de autonomia")} value={settings.security.autonomyMode} />
               <MetricRow
-                label="Autorização permanente"
-                value={<StatusIndicator state="DISABLED" label="desativada por desenho" />}
+                label={t("Autorização permanente")}
+                value={<StatusIndicator state="DISABLED" label={t("desativada por desenho")} />}
               />
-              <p className="dim" style={{ fontSize: 12, marginTop: 8, lineHeight: 1.6 }}>
-                Nenhuma capability pode ser autorizada para sempre. Cada decisão vale para
-                uma execução, ou para uma tarefa com um alvo concreto. Ações destrutivas,
-                capturas de ecrã e envios para o exterior pedem confirmação. O modelo
-                não tem acesso a shell ou terminal.
-              </p>
+              <p className="dim" style={{ fontSize: 12, marginTop: 8, lineHeight: 1.6 }}>{t("Nenhuma capability pode ser autorizada para sempre. Cada decisão vale para uma execução, ou para uma tarefa com um alvo concreto. Ações destrutivas, capturas de ecrã e envios para o exterior pedem confirmação. O modelo não tem acesso a shell ou terminal.")}</p>
             </Panel>
 
-            <Panel title="Segredos">
+            <Panel title={t("Segredos")}>
               <MetricRow
-                label="Armazenamento"
+                label={t("Armazenamento")}
                 value={<StatusIndicator
                   state={settings.security.secretsEncrypted ? "READY" : "SETUP_REQUIRED"}
-                  label={settings.security.secretsEncrypted ? "encriptado pelo Windows" : "ficheiro protegido"} />}
+                  label={settings.security.secretsEncrypted ? t("encriptado pelo Windows") : t("ficheiro protegido")} />}
               />
-              <p className="dim" style={{ fontSize: 12, marginTop: 8 }}>
-                As chaves de API ficam apenas no backend. Nunca são enviadas para o
-                navegador, guardadas no armazenamento do browser, nem escritas em ficheiros
-                do projeto.
-              </p>
+              <p className="dim" style={{ fontSize: 12, marginTop: 8 }}>{t("As chaves de API ficam apenas no backend. Nunca são enviadas para o navegador, guardadas no armazenamento do browser, nem escritas em ficheiros do projeto.")}</p>
             </Panel>
 
-            <Panel title="Limpar dados">
-              <Button variant="danger" onClick={() => setConfirmClear(true)}>
-                Limpar conversa atual
-              </Button>
-              <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>
-                Limpa apenas a conversa em memória. Os factos guardados são geridos na
-                página Memória.
-              </p>
+            <Panel title={t("Limpar dados")}>
+              <Button variant="danger" onClick={() => setConfirmClear(true)}>{t("Limpar conversa atual")}</Button>
+              <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>{t("Limpa apenas a conversa em memória. Os factos guardados são geridos na página Memória.")}</p>
             </Panel>
 
             <EraseAllDataPanel onErase={onEraseAllData} />
@@ -900,37 +863,29 @@ export default function SettingsPage({
                 statements about safety and data, so they live here with the rest
                 of that story rather than in a category named after its own
                 obscurity. */}
-            <Panel title="Paragem de emergência">
+            <Panel title={t("Paragem de emergência")}>
               <div className="inline">
                 <StatusIndicator
                   state={settings.security.emergencyStop ? "OFFLINE" : "READY"}
-                  label={settings.security.emergencyStop ? "Execução bloqueada" : "Execução permitida"}
+                  label={settings.security.emergencyStop ? t("Execução bloqueada") : t("Execução permitida")}
                 />
                 <span style={{ flex: 1 }} />
                 {settings.security.emergencyStop ? (
-                  <Button variant="primary" onClick={() => onToggleEmergencyStop(false)}>Retomar</Button>
+                  <Button variant="primary" onClick={() => onToggleEmergencyStop(false)}>{t("Retomar")}</Button>
                 ) : (
-                  <Button variant="danger" onClick={() => onToggleEmergencyStop(true)}>Parar tudo</Button>
+                  <Button variant="danger" onClick={() => onToggleEmergencyStop(true)}>{t("Parar tudo")}</Button>
                 )}
               </div>
             </Panel>
 
-            <Panel title="Diagnóstico">
-              <p className="muted" style={{ fontSize: 13, marginBottom: 10 }}>
-                Para diagnosticar a deteção de voz, corre no terminal:
-              </p>
-              <div className="perm-card__args">python -m core.wake_phrase_debug</div>
-              <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>
-                Mostra cada transcrição ouvida e diz se o problema é o microfone, a
-                transcrição ou a correspondência da frase.
-              </p>
+            <Panel title={t("Diagnóstico")}>
+              <p className="muted" style={{ fontSize: 13, marginBottom: 10 }}>{t("Para diagnosticar a deteção de voz, corre no terminal:")}</p>
+              <div className="perm-card__args">{t("python -m core.wake_phrase_debug")}</div>
+              <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>{t("Mostra cada transcrição ouvida e diz se o problema é o microfone, a transcrição ou a correspondência da frase.")}</p>
             </Panel>
 
-            <Panel title="Registos">
-              <p className="muted" style={{ fontSize: 13 }}>
-                O registo completo é escrito em <code>logs/nano.log</code>, com rotação
-                automática.
-              </p>
+            <Panel title={t("Registos")}>
+              <p className="muted" style={{ fontSize: 13 }}>{tj("O registo completo é escrito em {0}, com rotação automática.", { 0: <code>logs/nano.log</code> })}</p>
             </Panel>
           </div>
         )}
@@ -938,9 +893,9 @@ export default function SettingsPage({
 
       <ConfirmDialog
         open={confirmClear} danger
-        title="Limpar a conversa?"
-        confirmLabel="Limpar"
-        message="A conversa atual é apagada da memória do NANO. Isto não apaga os factos guardados."
+        title={t("Limpar a conversa?")}
+        confirmLabel={t("Limpar")}
+        message={t("A conversa atual é apagada da memória do NANO. Isto não apaga os factos guardados.")}
         onConfirm={() => { setConfirmClear(false); onClearConversation(); }}
         onCancel={() => setConfirmClear(false)}
       />

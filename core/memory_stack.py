@@ -56,6 +56,7 @@ import sqlite3
 import threading
 from typing import Any, Callable
 
+from core.i18n import tr
 from core import memory_extraction, memory_schema, summarizer, text_normalize
 from core.context_composer import ComposedContext, ContextComposer
 from core.conversation_store import ConversationStore
@@ -492,7 +493,7 @@ class MemoryStack:
             return {"ok": False, "error": "memory_unavailable"}
         if not self.long_term_enabled:
             return {"ok": False, "error": "long_term_disabled",
-                    "detail": "a memória de longo prazo está desligada nas Definições"}
+                    "detail": tr("a memória de longo prazo está desligada nas Definições")}
         conversation_id = kwargs.pop("conversation_id", None) or self._active_id
         return self.memories.remember(text, source_conversation_id=conversation_id,
                                       **kwargs)

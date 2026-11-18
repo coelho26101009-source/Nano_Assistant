@@ -96,7 +96,8 @@ def executor() -> ToolExecutor:
 # ── Navigation information architecture ──────────────────────────────────
 
 def test_the_five_destinations_are_intact(navigation):
-    labels = re.findall(r'label:\s*"([^"]+)",\s*\n\s*views:', navigation)
+    # Labels are wrapped in t() for translation; the Portuguese key is the label.
+    labels = re.findall(r'label:\s*(?:t\()?"([^"]+)"\)?,\s*\n\s*views:', navigation)
     assert labels == ["Chat", "Ferramentas", "PC", "Memória", "Definições"]
 
 
@@ -582,7 +583,7 @@ def test_the_conversation_panel_can_show_both_halves():
     """
     code = _strip_comments(_read(FRONTEND / "components" / "Conversation.tsx"))
     for label, field in (("Provedor", "meta.provider"), ("Modelo", "meta.model")):
-        row = re.search(rf"<dt>{label}</dt>\s*<dd>(.*?)</dd>", code, re.S)
+        row = re.search(rf"<dt>(?:{{t\(\")?{label}(?:\"\)}})?</dt>\s*<dd>(.*?)</dd>", code, re.S)
         assert row, f"the technical-details panel has no {label} row"
         assert field in row.group(1), (
             f"the {label} row does not read {field}: {row.group(1).strip()[:80]}")

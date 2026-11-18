@@ -13,6 +13,7 @@
  * subscription rather than duplicated per component.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { t } from "../lib/i18n";
 
 /* ── Payload types ────────────────────────────────────────────────────── */
 
@@ -236,6 +237,8 @@ export type VoiceDiagnostics = {
 
 export type SettingsPayload = {
   providers: ProviderPayload;
+  /** Interface language: the choice, what it resolved to, and the OS's own. */
+  language?: { setting: "system" | "en" | "pt-PT"; resolved: string; system: string };
   voice: {
     enabled: boolean; ttsEnabled: boolean; wakePhrase: string;
     wakePhraseEnabled: boolean; allowNanoOnly: boolean;
@@ -391,7 +394,7 @@ export function usePolled<T>(name: string, intervalMs: number, enabled: boolean,
       const value = await call<T>(name, ...JSON.parse(argsKey));
       if (!mounted.current) return;
       setData(value);
-      setError(value === null ? "Sem resposta do motor do NANO." : null);
+      setError(value === null ? t("Sem resposta do motor do NANO.") : null);
     } finally {
       inFlight.current = false;
       if (mounted.current) setLoading(false);

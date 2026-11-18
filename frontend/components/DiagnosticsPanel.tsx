@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { desktop, type DesktopStatus } from "../lib/desktop";
 import { VERSION } from "../lib/version";
 import { Button, Panel } from "./ui";
+import { t } from "../lib/i18n";
 
 const ERROR_CODES = ["backend_start_failed", "backend_exited", "frontend_load_failed", "renderer_gone"];
 const version = (value: unknown) => typeof value === "string" && value.length <= 64 && /^\d+\.\d+\.\d+(?:\.\d+)?(?:[-+][a-zA-Z0-9.-]+)?$/.test(value) ? value : null;
@@ -39,19 +40,17 @@ export default function DiagnosticsPanel() {
     setReport(text);
     try {
       await navigator.clipboard.writeText(text);
-      setMessage("Diagnóstico copiado. Partilha-o apenas se quiseres.");
+      setMessage(t("Diagnóstico copiado. Partilha-o apenas se quiseres."));
     } catch {
-      setMessage("Não foi possível copiar automaticamente. Seleciona o relatório abaixo e copia-o.");
+      setMessage(t("Não foi possível copiar automaticamente. Seleciona o relatório abaixo e copia-o."));
     } finally { setBusy(false); }
   };
   return (
-    <Panel title="Diagnóstico local">
-      <p className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
-        Versão, sistema e estado do motor. Sem chaves, caminhos pessoais ou conteúdo das conversas. Nada é enviado automaticamente.
-      </p>
-      <Button size="sm" disabled={busy} onClick={copy}>{busy ? "A preparar…" : "Copiar diagnóstico"}</Button>
+    <Panel title={t("Diagnóstico local")}>
+      <p className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>{t("Versão, sistema e estado do motor. Sem chaves, caminhos pessoais ou conteúdo das conversas. Nada é enviado automaticamente.")}</p>
+      <Button size="sm" disabled={busy} onClick={copy}>{busy ? t("A preparar…") : t("Copiar diagnóstico")}</Button>
       <p role="status" className="dim" style={{ fontSize: 12 }}>{message}</p>
-      {report && <textarea className="input diagnostics-report" aria-label="Relatório de diagnóstico"
+      {report && <textarea className="input diagnostics-report" aria-label={t("Relatório de diagnóstico")}
         readOnly value={report} rows={10} onFocus={(event) => event.currentTarget.select()} />}
     </Panel>
   );

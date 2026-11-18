@@ -59,6 +59,7 @@ from typing import Any, AsyncIterator, Iterable
 
 import httpx
 
+from core.i18n import tr
 from core import http_tls, model_defaults, secret_store
 
 logger = logging.getLogger("nano.mistral")
@@ -300,26 +301,26 @@ def test_mistral(api_key: str | None = None) -> dict[str, Any]:
 
     if error == "no_api_key":
         return {"ok": False, "error": "no_api_key",
-                "detail": "Nenhuma chave de API configurada.", "models": []}
+                "detail": tr("Nenhuma chave de API configurada."), "models": []}
     if error == "invalid_api_key":
         return {"ok": False, "error": "invalid_api_key",
-                "detail": "A chave de API foi recusada pelo Mistral.", "models": []}
+                "detail": tr("A chave de API foi recusada pelo Mistral."), "models": []}
     if error == "rate_limited":
         return {"ok": False, "error": "rate_limited",
-                "detail": "O Mistral respondeu com limite de pedidos. Tenta daqui a pouco.",
+                "detail": tr("O Mistral respondeu com limite de pedidos. Tenta daqui a pouco."),
                 "models": []}
     if error:
         return {"ok": False, "error": error,
-                "detail": f"Não foi possível contactar o Mistral ({error}).", "models": []}
+                "detail": tr("Não foi possível contactar o Mistral ({p0}).", p0=error), "models": []}
     if not records:
         return {"ok": False, "error": "no_chat_models",
-                "detail": "A chave é válida mas a conta não expõe modelos de chat.",
+                "detail": tr("A chave é válida mas a conta não expõe modelos de chat."),
                 "models": []}
 
     ids = model_ids(records)
     return {
         "ok": True,
-        "detail": f"Ligação estabelecida ({len(ids)} modelos disponíveis).",
+        "detail": tr("Ligação estabelecida ({p0} modelos disponíveis).", p0=len(ids)),
         "models": ids,
         "records": records,
         # THE SAME RULE THE DESCRIBE PATH USES. Two implementations of "which
@@ -700,14 +701,14 @@ def describe_mistral(configured_model: str = "", complex_model: str = "") -> dic
 
     if not secret["configured"]:
         return {**base, "state": ProviderState.SETUP_REQUIRED.value,
-                "detail": "Adiciona uma chave de API do Mistral nas Definições para o usar."}
+                "detail": tr("Adiciona uma chave de API do Mistral nas Definições para o usar.")}
 
     records, error = list_mistral_models()
     if error:
         state = ProviderState.ERROR if error == "invalid_api_key" else ProviderState.UNAVAILABLE
-        detail = ("A chave de API do Mistral foi recusada. Verifica-a nas Definições."
+        detail = (tr("A chave de API do Mistral foi recusada. Verifica-a nas Definições.")
                   if error == "invalid_api_key"
-                  else f"O Mistral não está acessível ({error}).")
+                  else tr("O Mistral não está acessível ({p0}).", p0=error))
         return {**base, "state": state.value, "detail": detail}
 
     ids = model_ids(records)
@@ -725,21 +726,18 @@ def describe_mistral(configured_model: str = "", complex_model: str = "") -> dic
         return {**base, "state": ProviderState.SETUP_REQUIRED.value,
                 "models": ids, "records": records,
                 "model_source": model_defaults.SOURCE_NONE,
-                "detail": ("Nenhum modelo Mistral desta conta serve para o Nano. "
-                           f"Encontrados: {', '.join(ids[:4]) or 'nenhum'}.")}
+                "detail": (tr("Nenhum modelo Mistral desta conta serve para o Nano. Encontrados: {p0}.", p0=', '.join(ids[:4]) or 'nenhum'))}
 
     fast_ok = fast in ids
     strong_ok = strong in ids
     defaulted = source == model_defaults.SOURCE_DEFAULT
     if fast_ok and strong_ok:
-        detail = (f"Pronto com o modelo predefinido '{fast}'. Podes escolher outro nas Definições."
+        detail = (tr("Pronto com o modelo predefinido '{p0}'. Podes escolher outro nas Definições.", p0=fast)
                   if defaulted else f"Pronto. Conversa: '{fast}'. Complexo: '{strong}'.")
     elif fast_ok:
-        detail = (f"Conversa pronta com '{fast}'. O modelo complexo '{strong}' não existe "
-                  f"nesta conta; pedidos complexos usam '{fast}'.")
+        detail = (tr("Conversa pronta com '{p0}'. O modelo complexo '{p1}' não existe nesta conta; pedidos complexos usam '{p2}'.", p0=fast, p1=strong, p2=fast))
     else:
-        detail = (f"O modelo '{fast}' não existe nesta conta. "
-                  f"Disponíveis: {', '.join(ids[:4])}.")
+        detail = (tr("O modelo '{p0}' não existe nesta conta. Disponíveis: {p1}.", p0=fast, p1=', '.join(ids[:4])))
 
     return {
         **base,

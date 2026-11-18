@@ -27,6 +27,7 @@ import React, { useMemo, useState } from "react";
 
 import { useFetch } from "../lib/backend";
 import { Badge, EmptyState, Panel, Skeleton } from "./ui";
+import { t } from "../lib/i18n";
 
 export type CapabilityRow = {
   tool: string;
@@ -51,9 +52,9 @@ export type CapabilityCatalogue = {
 };
 
 const STATUS_LABEL: Record<CapabilityRow["status"], string> = {
-  available: "Disponível",
-  confirm: "Pede confirmação",
-  unsupported: "Indisponível",
+  available: t("Disponível"),
+  confirm: t("Pede confirmação"),
+  unsupported: t("Indisponível"),
 };
 
 /** Badge tones, from the existing Ember palette -- no new colours. "confirm"
@@ -85,11 +86,11 @@ function CapabilityItem({ row }: { row: CapabilityRow }) {
           is not what the page is for. */}
       {row.capability && (
         <details className="cap-item__more">
-          <summary>Detalhes técnicos</summary>
+          <summary>{t("Detalhes técnicos")}</summary>
           <dl className="kv">
-            <dt>Ferramenta</dt><dd className="mono">{row.tool}</dd>
-            <dt>Capability</dt><dd className="mono">{row.capability}</dd>
-            <dt>Risco</dt><dd>{row.risk}</dd>
+            <dt>{t("Ferramenta")}</dt><dd className="mono">{row.tool}</dd>
+            <dt>{t("Capability")}</dt><dd className="mono">{row.capability}</dd>
+            <dt>{t("Risco")}</dt><dd>{row.risk}</dd>
           </dl>
         </details>
       )}
@@ -112,7 +113,7 @@ export default function CapabilitiesPage({ enabled }: { enabled: boolean }) {
   if (loading && !data) {
     return (
       <div className="page__inner">
-        <h2 className="page-title">Capacidades</h2>
+        <h2 className="page-title">{t("Capacidades")}</h2>
         <Skeleton height={80} /><div style={{ height: 10 }} /><Skeleton height={80} />
       </div>
     );
@@ -122,8 +123,8 @@ export default function CapabilitiesPage({ enabled }: { enabled: boolean }) {
     return (
       <div className="page__inner">
         <EmptyState
-          title="Não foi possível ler as capacidades"
-          hint="O motor do NANO não respondeu. Nada é mostrado por omissão para não inventar uma lista."
+          title={t("Não foi possível ler as capacidades")}
+          hint={t("O motor do NANO não respondeu. Nada é mostrado por omissão para não inventar uma lista.")}
         />
       </div>
     );
@@ -131,18 +132,14 @@ export default function CapabilitiesPage({ enabled }: { enabled: boolean }) {
 
   return (
     <div className="page__inner">
-      <h2 className="page-title">Capacidades</h2>
-      <p className="dim" style={{ marginBottom: 14, maxWidth: "72ch" }}>
-        Tudo o que o NANO sabe fazer neste computador, lido diretamente do motor.
-        As ações sensíveis pedem sempre confirmação — e as que o NANO não faz
-        estão listadas também, porque nenhuma autorização as torna possíveis.
-      </p>
+      <h2 className="page-title">{t("Capacidades")}</h2>
+      <p className="dim" style={{ marginBottom: 14, maxWidth: "72ch" }}>{t("Tudo o que o NANO sabe fazer neste computador, lido diretamente do motor. As ações sensíveis pedem sempre confirmação — e as que o NANO não faz estão listadas também, porque nenhuma autorização as torna possíveis.")}</p>
 
-      <div className="cap-filters" role="group" aria-label="Filtrar capacidades">
+      <div className="cap-filters" role="group" aria-label={t("Filtrar capacidades")}>
         {([
-          { value: "all", label: `Todas (${data.totals.capabilities})` },
-          { value: "available", label: `Disponíveis (${data.totals.available})` },
-          { value: "confirm", label: `Pedem confirmação (${data.totals.confirm})` },
+          { value: "all", label: t("Todas ({0})", { 0: data.totals.capabilities }) },
+          { value: "available", label: t("Disponíveis ({0})", { 0: data.totals.available }) },
+          { value: "confirm", label: t("Pedem confirmação ({0})", { 0: data.totals.confirm }) },
         ] as const).map((option) => (
           <button
             key={option.value}
@@ -172,13 +169,10 @@ export default function CapabilitiesPage({ enabled }: { enabled: boolean }) {
 
         {filter === "all" && data.unsupported.length > 0 && (
           <Panel
-            title="O que o NANO não faz"
+            title={t("O que o NANO não faz")}
             action={<Badge tone="neutral">{data.unsupported.length}</Badge>}
           >
-            <p className="dim" style={{ fontSize: 12, marginBottom: 10 }}>
-              Estas capacidades não existem por decisão de arquitetura. Não são
-              permissões por conceder.
-            </p>
+            <p className="dim" style={{ fontSize: 12, marginBottom: 10 }}>{t("Estas capacidades não existem por decisão de arquitetura. Não são permissões por conceder.")}</p>
             <ul className="cap-list">
               {data.unsupported.map((row) => <CapabilityItem key={row.tool} row={row} />)}
             </ul>

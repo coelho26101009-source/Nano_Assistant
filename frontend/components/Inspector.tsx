@@ -21,6 +21,7 @@ import {
   Button, EmptyState, Meter, MetricRow, Panel, Skeleton,
   StatusIndicator, ToolChip, elapsedSince, formatTime, usageTone,
 } from "./ui";
+import { t } from "../lib/i18n";
 
 const EVENT_TONE: Record<string, string> = {
   "task.created": "accent", "task.planning": "info", "task.step": "info",
@@ -32,17 +33,17 @@ const EVENT_TONE: Record<string, string> = {
 };
 
 const EVENT_LABEL: Record<string, string> = {
-  "task.created": "Tarefa criada", "task.planning": "A planear", "task.step": "Passo",
-  "task.started": "Iniciada", "task.retrying": "Nova tentativa",
-  "task.needs_attention": "Precisa de atenção", "task.cancelled": "Cancelada",
-  "task.completed": "Concluída", "tool.executed": "Passou", "tool.failed": "Falhou",
-  "worker.started": "Worker ativo", "worker.stopped": "Worker parado",
-  "worker.error": "Erro no worker", "security.emergency_stop": "Paragem de emergência",
-  "security.untrusted_content": "Conteúdo externo sinalizado",
-  "PermissionRequested": "Autorização pedida", "PermissionGranted": "Autorização dada",
-  "PermissionDenied": "Autorização recusada", "WakeWordDetected": "Wake detetada",
-  "VoiceWakeCancelled": "Wake cancelada", "VoiceRequestCreated": "Pedido por voz",
-  "tasks.archived": "Histórico arquivado",
+  "task.created": t("Tarefa criada"), "task.planning": t("A planear"), "task.step": t("Passo"),
+  "task.started": t("Iniciada"), "task.retrying": t("Nova tentativa"),
+  "task.needs_attention": t("Precisa de atenção"), "task.cancelled": t("Cancelada"),
+  "task.completed": t("Concluída"), "tool.executed": t("Passou"), "tool.failed": t("Falhou"),
+  "worker.started": t("Worker ativo"), "worker.stopped": t("Worker parado"),
+  "worker.error": t("Erro no worker"), "security.emergency_stop": t("Paragem de emergência"),
+  "security.untrusted_content": t("Conteúdo externo sinalizado"),
+  "PermissionRequested": t("Autorização pedida"), "PermissionGranted": t("Autorização dada"),
+  "PermissionDenied": t("Autorização recusada"), "WakeWordDetected": t("Wake detetada"),
+  "VoiceWakeCancelled": t("Wake cancelada"), "VoiceRequestCreated": t("Pedido por voz"),
+  "tasks.archived": t("Histórico arquivado"),
 };
 
 export function eventLabel(event: string): string {
@@ -53,7 +54,7 @@ export function ActivityTimeline({
   events, limit = 12,
 }: { events: CommandCenterPayload["activities"]; limit?: number }) {
   if (!events?.length) {
-    return <EmptyState title="Sem atividade" hint="Os eventos aparecem aqui assim que o NANO fizer alguma coisa." />;
+    return <EmptyState title={t("Sem atividade")} hint={t("Os eventos aparecem aqui assim que o NANO fizer alguma coisa.")} />;
   }
   return (
     <div className="timeline">
@@ -118,9 +119,9 @@ export default function ContextPanels({
     <div className="grid-auto">
       {/* 1. TAREFA ATUAL */}
       <Panel
-        title="Tarefa atual"
+        title={t("Tarefa atual")}
         action={task ? (
-          <Button variant="ghost" size="sm" onClick={() => onCancelTask(task.id)}>Cancelar</Button>
+          <Button variant="ghost" size="sm" onClick={() => onCancelTask(task.id)}>{t("Cancelar")}</Button>
         ) : undefined}
       >
         {task ? (
@@ -135,22 +136,20 @@ export default function ContextPanels({
               )}
             </div>
             <Meter value={task.progress ?? 0} />
-            <MetricRow label="Progresso" value={`${task.progress ?? 0}%`} />
-            {task.retries > 0 && <MetricRow label="Tentativas" value={`${task.retries} / 3`} />}
-            <Button size="sm" block onClick={() => onOpenTask(task.id)} style={{ marginTop: 8 }}>
-              Ver detalhe
-            </Button>
+            <MetricRow label={t("Progresso")} value={`${task.progress ?? 0}%`} />
+            {task.retries > 0 && <MetricRow label={t("Tentativas")} value={`${task.retries} / 3`} />}
+            <Button size="sm" block onClick={() => onOpenTask(task.id)} style={{ marginTop: 8 }}>{t("Ver detalhe")}</Button>
           </>
         ) : (
-          <EmptyState title="Nenhuma tarefa em execução" />
+          <EmptyState title={t("Nenhuma tarefa em execução")} />
         )}
       </Panel>
 
       {/* Pending approvals surface above everything else. */}
       {pending.length > 0 && (
         <Panel
-          title={`Autorizações (${pending.length})`}
-          action={<Button size="sm" variant="allow-task" onClick={() => onNavigate("permissions")}>Rever</Button>}
+          title={t("Autorizações ({0})", { 0: pending.length })}
+          action={<Button size="sm" variant="allow-task" onClick={() => onNavigate("permissions")}>{t("Rever")}</Button>}
         >
           {pending.slice(0, 3).map((request: any) => (
             <MetricRow
@@ -166,15 +165,15 @@ export default function ContextPanels({
 
       {/* 2. MODELO & PROVEDOR */}
       <Panel
-        title="Modelo & provedor"
-        action={<Button variant="ghost" size="sm" onClick={() => onNavigate("integrations")} aria-label="Abrir integrações">↗</Button>}
+        title={t("Modelo & provedor")}
+        action={<Button variant="ghost" size="sm" onClick={() => onNavigate("integrations")} aria-label={t("Abrir integrações")}>↗</Button>}
       >
         {providers ? (
           <>
             <div className={`provider-row${route?.provider === "groq" ? " provider-row--primary" : ""}`}>
               <span className="provider-row__icon" aria-hidden="true">☁</span>
               <span className="provider-row__text">
-                <span className="provider-row__name">Groq (Cloud)</span>
+                <span className="provider-row__name">{t("Groq (Cloud)")}</span>
                 <span className="provider-row__model" title={providers.groq.model}>{providers.groq.model || "—"}</span>
               </span>
               <StatusIndicator state={providers.groq.state} />
@@ -182,34 +181,32 @@ export default function ContextPanels({
             <div className={`provider-row${route?.provider === "ollama" ? " provider-row--primary" : ""}`}>
               <span className="provider-row__icon" aria-hidden="true">▣</span>
               <span className="provider-row__text">
-                <span className="provider-row__name">Ollama (Local)</span>
+                <span className="provider-row__name">{t("Ollama (Local)")}</span>
                 <span className="provider-row__model" title={providers.ollama.model}>{providers.ollama.model || "—"}</span>
               </span>
               <StatusIndicator state={providers.ollama.state} />
             </div>
             {route?.fallback && (
-              <div className="tl-meta" style={{ whiteSpace: "normal", marginTop: 4 }}>
-                A usar o fallback local: {route.reason}
-              </div>
+              <div className="tl-meta" style={{ whiteSpace: "normal", marginTop: 4 }}>{t("A usar o fallback local: {0}", { 0: route.reason })}</div>
             )}
             {!route?.usable && (
               <div className="tl-meta" style={{ whiteSpace: "normal", marginTop: 4, color: "var(--st-error)" }}>
                 {route?.reason}
               </div>
             )}
-            <MetricRow label="Modo" value={providers.mode} />
+            <MetricRow label={t("Modo")} value={providers.mode} />
           </>
         ) : (
-          <EmptyState title="Sem informação de provedor" />
+          <EmptyState title={t("Sem informação de provedor")} />
         )}
       </Panel>
 
       {/* 3. VOZ & WAKE PHRASE */}
       <Panel
-        title="Voz & wake phrase"
-        action={<Button variant="ghost" size="sm" onClick={() => onNavigate("settings")} aria-label="Abrir definições de voz">↗</Button>}
+        title={t("Voz & wake phrase")}
+        action={<Button variant="ghost" size="sm" onClick={() => onNavigate("settings")} aria-label={t("Abrir definições de voz")}>↗</Button>}
       >
-        <MetricRow label="Voz" value={<StatusIndicator state={readiness?.voice.state} />} />
+        <MetricRow label={t("Voz")} value={<StatusIndicator state={readiness?.voice.state} />} />
         {readiness?.voice.blockers?.length ? (
           <div className="tl-meta" style={{ whiteSpace: "normal" }}>{readiness.voice.blockers.join(" · ")}</div>
         ) : null}
@@ -223,16 +220,16 @@ export default function ContextPanels({
       </Panel>
 
       {/* 4. FERRAMENTAS & AGENTES */}
-      <Panel title="Ferramentas & agentes">
+      <Panel title={t("Ferramentas & agentes")}>
         <button type="button" className="metric-row" style={{ background: "none", width: "100%" }}
                 onClick={() => onNavigate("agents")}>
-          <span className="metric-label">Agentes</span>
-          <span className="metric-value">{agents.length} registados ›</span>
+          <span className="metric-label">{t("Agentes")}</span>
+          <span className="metric-value">{t("{0} registados ›", { 0: agents.length })}</span>
         </button>
         <button type="button" className="metric-row" style={{ background: "none", width: "100%" }}
                 onClick={() => onNavigate("integrations")}>
-          <span className="metric-label">Integrações</span>
-          <span className="metric-value">ver ›</span>
+          <span className="metric-label">{t("Integrações")}</span>
+          <span className="metric-value">{t("ver ›")}</span>
         </button>
         {recentTools.length > 0 && (
           <div className="inline" style={{ marginTop: 6 }}>
@@ -247,27 +244,24 @@ export default function ContextPanels({
           This card absorbed the Estado page's separate "Recursos" tiles: they
           rendered the identical three numbers from the identical payload, one
           scroll apart. Used/total is carried here so nothing was lost. */}
-      <Panel title="Saúde do sistema">
+      <Panel title={t("Saúde do sistema")}>
         <MetricRow label="CPU" value={`${system.cpu ?? 0}%`} />
         <Meter value={Number(system.cpu ?? 0)} tone={usageTone(Number(system.cpu ?? 0))} />
         <MetricRow label="RAM" value={`${system.ramUsed ?? 0} / ${system.ramTotal ?? 0} GB`} />
         <Meter value={Number(system.ram ?? 0)} tone={usageTone(Number(system.ram ?? 0))} />
-        <MetricRow label="Disco" value={`${system.diskUsed ?? 0} / ${system.diskTotal ?? 0} GB`} />
+        <MetricRow label={t("Disco")} value={`${system.diskUsed ?? 0} / ${system.diskTotal ?? 0} GB`} />
         <Meter value={Number(system.disk ?? 0)} tone={usageTone(Number(system.disk ?? 0))} />
-        <MetricRow label="Worker" value={<StatusIndicator state={readiness?.worker.state} />} />
+        <MetricRow label={t("Worker")} value={<StatusIndicator state={readiness?.worker.state} />} />
         {/* Temperature is deliberately absent: psutil cannot read CPU
             temperature reliably on Windows, and a fabricated number is worse
             than none. */}
-        <p className="dim" style={{ fontSize: 11, marginTop: 4, lineHeight: 1.5 }}>
-          A temperatura do CPU não é apresentada: não é legível de forma fiável nesta
-          plataforma, e um valor inventado seria pior do que nenhum.
-        </p>
+        <p className="dim" style={{ fontSize: 11, marginTop: 4, lineHeight: 1.5 }}>{t("A temperatura do CPU não é apresentada: não é legível de forma fiável nesta plataforma, e um valor inventado seria pior do que nenhum.")}</p>
       </Panel>
 
       {/* 6. ATIVIDADE RECENTE */}
       <Panel
-        title="Atividade recente"
-        action={<Button variant="ghost" size="sm" onClick={() => onNavigate("activity")}>Ver tudo</Button>}
+        title={t("Atividade recente")}
+        action={<Button variant="ghost" size="sm" onClick={() => onNavigate("activity")}>{t("Ver tudo")}</Button>}
       >
         <ActivityTimeline events={commandCenter?.activities ?? []} limit={6} />
       </Panel>

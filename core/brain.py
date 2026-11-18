@@ -39,6 +39,8 @@ import time
 from typing import AsyncIterator, Any, NamedTuple
 import httpx
 from groq import AsyncGroq, DefaultAsyncHttpxClient
+from core.i18n import tr
+from core import i18n
 from core.config import load_config
 from core.local_runtime import choose_model
 from core.plugin_loader import get_all_tools
@@ -140,7 +142,7 @@ class RateLimited(RuntimeError):
 # most of the prompt, and prompt tokens are the scarce resource here (8000 TPM).
 NANO_PERSONA = """És o Nano Assistant (ou simplesmente Nano), um assistente virtual executivo, rápido e inteligente.
 O utilizador deve ser tratado com simpatia, empatia, precisão e foco.
-Responde em Português de Portugal com clareza e estilo direto. Sê conciso: responde
+Responde com clareza e estilo direto. Sê conciso: responde
 ao que foi perguntado, sem repetir perguntas anteriores nem adicionar secções que
 ninguém pediu.
 """
@@ -249,7 +251,10 @@ def base_system_sections(user_message: str, *, with_tools: bool) -> list[str]:
     it reads two module constants and one pure regex matcher, and returns
     strings.
     """
-    parts = [NANO_PERSONA]
+    # The reply language is chosen per turn, not baked into the persona: the
+    # model answers in the language the user writes in, with the interface
+    # language as the fallback. See core.i18n.reply_language_instruction.
+    parts = [NANO_PERSONA, i18n.reply_language_instruction() + "\n"]
     if with_tools:
         parts.append(NANO_TOOL_RULES)
         parts.append(TRUST_BOUNDARY_SYSTEM_RULES)
@@ -1435,7 +1440,7 @@ class Brain:
                     "content": self._tool_result_for_model(call["name"], result),
                 })
 
-        yield "Atingi o limite de operações encadeadas. Podes reformular o pedido?"
+        yield tr("Atingi o limite de operações encadeadas. Podes reformular o pedido?")
         outcome["done"] = True
 
     async def chat(self, user_message: str, stream: bool = True) -> AsyncIterator[str]:
@@ -1531,7 +1536,7 @@ class Brain:
             self.last_metadata["fallback_used"] = True
             self.last_metadata.setdefault("fallback_reason", "no_cloud_available")
             reason = ("Cloud temporariamente limitada" if cooled is not None
-                      else "Cloud indisponível")
+                      else tr("Cloud indisponível"))
             async for token in self._ollama_fallback(user_message, reason, system_prompt):
                 yield token
             return
@@ -1767,7 +1772,7 @@ class Brain:
             self.last_metadata["partial_answer"] = True
             self.conversation.append({"role": "assistant", "content": "", "_partial": True})
             self._rollback_turn()
-            yield "\n\n_(A resposta foi interrompida. Pede outra vez para continuar.)_"
+            yield tr("\n\n_(A resposta foi interrompida. Pede outra vez para continuar.)_")
             return
 
         self.last_provider_used = "ollama"
@@ -1965,7 +1970,7 @@ class Brain:
 
         if self.tool_executor is None:
             logger.error("Sem autoridade de execução; '%s' recusada", name)
-            return {"ok": False, "cancelled": True, "message": "Execução indisponível: falta a autoridade central."}
+            return {"ok": False, "cancelled": True, "message": tr("Execução indisponível: falta a autoridade central.")}
 
         self._sync_plugin_tools(name)
 
@@ -1984,7 +1989,7 @@ class Brain:
         # Guardrails stay as the human-readable layer in front of the policy
         # pipeline; the executor below re-checks everything independently.
         if self.guardrails.requires_confirmation(name, args) and not await self.guardrails.ask_confirmation(name, args):
-            return {"ok": False, "cancelled": True, "message": "Operação cancelada pelo utilizador."}
+            return {"ok": False, "cancelled": True, "message": tr("Operação cancelada pelo utilizador.")}
 
         # DUPLICATE-EXECUTION PROTECTION, AND THE REASON IT LIVES HERE.
         #
@@ -2167,8 +2172,8 @@ class Brain:
         a tool call that had already succeeded.
         """
         if not self.local_enabled:
-            yield ("Não consegui obter resposta da cloud nem do modelo local. "
-                   "O modelo local não está ativo.")
+            yield tr("Não consegui obter resposta da cloud nem do modelo local. "
+                     "O modelo local não está ativo.")
             return
         # The configured local model is an instruction, not a hint: scoring the
         # installed models here could silently substitute a different one.
@@ -2205,7 +2210,8 @@ class Brain:
         # Local models are far weaker at ignoring irrelevant tools, and the
         # local context window is small, so the same scoped subset applies.
         tools = model_selection.select_tools(message, get_all_tools())
-        sys_p = system_prompt or (SYSTEM_PROMPT + self._facts_block())
+        sys_p = system_prompt or (SYSTEM_PROMPT + i18n.reply_language_instruction() + "\n"
+                                  + self._facts_block())
 
         local_messages = [{"role": "system", "content": sys_p}]
         for m in self.conversation[-12:]:
@@ -2256,8 +2262,8 @@ class Brain:
                                 "Local model leaked a tool call as content (%d chars); "
                                 "replaced with a clean message.", len(text))
                             self.last_metadata["local_malformed_tool_call"] = True
-                            text = ("Não consegui completar esse pedido com o modelo local. "
-                                    "Tenta outra vez daqui a pouco.")
+                            text = tr("Não consegui completar esse pedido com o modelo local. "
+                                      "Tenta outra vez daqui a pouco.")
                         self.conversation.append({"role": "assistant", "content": text})
                         local_attempt["outcome"] = "ok"
                         if text:
@@ -2294,7 +2300,7 @@ class Brain:
                                        round_num, type(exc).__name__)
                         local_attempt["outcome"] = "unavailable"
                         self._rollback_turn()
-                        yield "O modelo local ainda não está disponível. Abre as definições do Nano para verificar o estado local."
+                        yield tr("O modelo local ainda não está disponível. Abre as definições do Nano para verificar o estado local.")
                         return
                     logger.warning("Ollama com tools falhou (round %d): %s. A tentar stream sem tools.", round_num, exc)
                     stream_payload = {
@@ -2330,7 +2336,7 @@ class Brain:
                         # No answer was produced, so the turn is undone rather
                         # than left half-recorded.
                         self._rollback_turn()
-                        yield "O modelo local ainda não está disponível. Abre as definições do Nano para verificar o estado local."
+                        yield tr("O modelo local ainda não está disponível. Abre as definições do Nano para verificar o estado local.")
                         return
 
                     text = "".join(streamed).strip()
@@ -2341,4 +2347,4 @@ class Brain:
                         local_attempt["outcome"] = "other"
                         self._rollback_turn()
                     return
-            yield "Atingi o limite de operações encadeadas offline. Podes reformular o pedido?"
+            yield tr("Atingi o limite de operações encadeadas offline. Podes reformular o pedido?")

@@ -1,3 +1,4 @@
+import { t } from "../lib/i18n";
 /**
  * The single source of truth for what can be navigated to.
  *
@@ -34,19 +35,19 @@ export type SectionEntry = { section: SectionId; label: string; views: ViewEntry
 export const SECTIONS: SectionEntry[] = [
   {
     section: "chat",
-    label: "Chat",
-    views: [{ id: "chat", label: "Conversa", hint: "Fala com o NANO" }],
+    label: t("Chat"),
+    views: [{ id: "chat", label: t("Conversa"), hint: t("Fala com o NANO") }],
   },
   {
     // FERRAMENTAS answers "what can this thing do for me?". It is a catalogue,
     // not a control surface: the providers that used to lead this section are
     // configuration and now live in Definições → IA, where they can be changed.
     section: "tools",
-    label: "Ferramentas",
+    label: t("Ferramentas"),
     views: [
-      { id: "capabilities", label: "Capacidades", hint: "Tudo o que o NANO sabe fazer" },
-      { id: "integrations", label: "Componentes", hint: "Módulos instalados que fornecem capacidades" },
-      { id: "agents", label: "Agentes", hint: "Agentes registados e o que sabem fazer" },
+      { id: "capabilities", label: t("Capacidades"), hint: t("Tudo o que o NANO sabe fazer") },
+      { id: "integrations", label: t("Componentes"), hint: t("Módulos instalados que fornecem capacidades") },
+      { id: "agents", label: t("Agentes"), hint: t("Agentes registados e o que sabem fazer") },
     ],
   },
   {
@@ -55,10 +56,10 @@ export const SECTIONS: SectionEntry[] = [
     section: "pc",
     label: "PC",
     views: [
-      { id: "status", label: "Estado", hint: "Recursos e saúde desta máquina" },
-      { id: "permissions", label: "Permissões", hint: "O que o NANO pode fazer neste computador" },
-      { id: "activity", label: "Atividade", hint: "O que o NANO tem feito aqui" },
-      { id: "tasks", label: "Tarefas", hint: "Trabalho em segundo plano" },
+      { id: "status", label: t("Estado"), hint: t("Recursos e saúde desta máquina") },
+      { id: "permissions", label: t("Permissões"), hint: t("O que o NANO pode fazer neste computador") },
+      { id: "activity", label: t("Atividade"), hint: t("O que o NANO tem feito aqui") },
+      { id: "tasks", label: t("Tarefas"), hint: t("Trabalho em segundo plano") },
     ],
   },
   {
@@ -71,17 +72,17 @@ export const SECTIONS: SectionEntry[] = [
     // Definições → Memória and Definições → Privacidade, and duplicating them
     // would create two places to change one thing.
     section: "memory",
-    label: "Memória",
+    label: t("Memória"),
     views: [
-      { id: "memory", label: "Memórias", hint: "O que o NANO sabe sobre ti" },
-      { id: "knowledge", label: "Second Brain", hint: "Pessoas, projetos e coisas que o NANO conhece" },
-      { id: "graph", label: "Grafo", hint: "Como tudo se liga" },
+      { id: "memory", label: t("Memórias"), hint: t("O que o NANO sabe sobre ti") },
+      { id: "knowledge", label: t("Second Brain"), hint: t("Pessoas, projetos e coisas que o NANO conhece") },
+      { id: "graph", label: t("Grafo"), hint: t("Como tudo se liga") },
     ],
   },
   {
     section: "settings",
-    label: "Definições",
-    views: [{ id: "settings", label: "Definições", hint: "Configurar o NANO" }],
+    label: t("Definições"),
+    views: [{ id: "settings", label: t("Definições"), hint: t("Configurar o NANO") }],
   },
 ];
 
