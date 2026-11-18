@@ -70,6 +70,26 @@ export interface ConfirmRequest {
 const userMessageId = (requestId: string) => `user:${requestId}`;
 
 /**
+ * The backend's narration of a turn, reduced to what a person needs to read.
+ *
+ * Routing narrates itself in full ("Cloud indisponível — a usar o Ollama
+ * local. Adiciona uma chave de API do Groq… do Mistral… do Google… — a usar
+ * qwen3:8b local…"), which is the right thing for the log and the wrong thing
+ * for the line under a pending answer: it was a paragraph about API keys on
+ * every single turn. Provider changes and local fallbacks become the generic
+ * "A pensar…" (the per-message technical details still say exactly which
+ * provider answered and why); anything else keeps its own short text.
+ */
+function friendlyStatus(raw: string): string {
+  const text = String(raw ?? "").replace(/^_thinking_:?\s*/, "").trim();
+  // 🧠 local fallback, 🔄 switching provider: routing, not activity.
+  if (/^[🧠🔄]/u.test(text) || /^\\?🔄/u.test(text)) return "";
+  const clean = text.replace(/^[⚙️]+\s*/u, "").trim();
+  // A long sentence is an explanation, not a status. The details panel has it.
+  return clean.length > 80 ? "" : clean;
+}
+
+/**
  * Whether the window matches a width query -- narrow enough that the sidebar
  * starts collapsed and expands as a drawer, or so narrow that it leaves the
  * layout entirely.
@@ -373,7 +393,7 @@ export default function Home() {
           return next;
         });
       } else {
-        setStatus(text.replace(/^_thinking_:?\s*/, "").replace(/^[🧠⚙️]\s*/u, ""));
+        setStatus(friendlyStatus(text));
       }
     }, "on_stream_status");
 
@@ -568,6 +588,46 @@ export default function Home() {
     });
   }, [input, thinking, ready, notify]);
 
+  /**
+   * Ask the last question again, as it was or with new text.
+   *
+   * The backend takes the last turn out of the thread first, so the model never
+   * sees the answer it is replacing; on screen the old pair is swapped for the
+   * new one in place, exactly as sendMessage would draw a fresh turn.
+   */
+  const rerunLastTurn = useCallback((newText?: string) => {
+    if (thinking || !ready) return;
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    const text = (newText ?? lastUser?.content ?? "").trim();
+    if (!text) return;
+    const msgId = crypto.randomUUID();
+    setMessages((prev) => {
+      let cut = prev.length;
+      for (let i = prev.length - 1; i >= 0; i -= 1) {
+        if (prev[i].role === "user") { cut = i; break; }
+      }
+      return [
+        ...prev.slice(0, cut),
+        { id: userMessageId(msgId), role: "user", content: text, timestamp: new Date() },
+        { id: msgId, role: "assistant", content: "", timestamp: new Date(), streaming: true },
+      ];
+    });
+    setThinking(true);
+    setStatus("");
+    call<any>("retry_last_turn", newText ?? "", msgId).then((ack) => {
+      if (ack?.accepted) return;
+      setThinking(false);
+      setStatus("");
+      notify("Não foi possível tentar de novo", "error");
+      setMessages((prev) => prev.map((m) => m.id === msgId
+        ? { ...m, streaming: false, error: true,
+            content: ack == null
+              ? "**Sem resposta do motor do NANO.** Recarrega a página e tenta outra vez."
+              : `**O pedido não foi aceite.** ${ack?.error ?? "motivo desconhecido"}.` }
+        : m));
+    });
+  }, [thinking, ready, messages, notify]);
+
   const stopWork = useCallback(() => {
     call("stop_voice");
     const current = commandCenter?.current_task;
@@ -640,7 +700,10 @@ export default function Home() {
    * message is answered against the right history.
    */
   const openThread = useCallback((thread: Thread) => {
-    if (thread.id === activeThreadId) { setView("chat"); return; }
+    // Picking the conversation already open must still close the drawer: on a
+    // phone the drawer covers the chat, and tapping the open thread is how a
+    // person says "take me back to it".
+    if (thread.id === activeThreadId) { setView("chat"); if (narrow) setRailOpen(false); return; }
     call<any>("open_conversation", thread.id).then((result) => {
       if (!result?.ok) { notify("Não foi possível abrir a conversa", "error"); return; }
       setActiveThreadId(result.conversation.id);
@@ -1149,14 +1212,30 @@ export default function Home() {
 
           <div className="main">
             <TopBar
-              title={pageTitle}
-              actions={isChat && messages.length > 0 ? (
-                <button
-                  type="button" className="icon-btn" onClick={copyConversation}
-                  aria-label="Copiar conversa" title="Copiar a conversa para a área de transferência"
-                >
-                  <Icon name="copy" size={17} />
-                </button>
+              // On a phone the bar holds menu, new chat, the AI selector and the bell;
+              // a conversation title squeezed to "Ajuda-…" beside them helped nobody.
+              title={mobile && isChat ? "" : pageTitle}
+              actions={isChat && (messages.length > 0 || mobile) ? (
+                <>
+                  {messages.length > 0 && !mobile && (
+                    <button
+                      type="button" className="icon-btn" onClick={copyConversation}
+                      aria-label="Copiar conversa" title="Copiar a conversa para a área de transferência"
+                    >
+                      <Icon name="copy" size={17} />
+                    </button>
+                  )}
+                  {/* On a phone the sidebar is off screen, so "new chat" has to
+                      live in the top bar, where every chat app puts it. */}
+                  {mobile && (
+                    <button
+                      type="button" className="icon-btn" onClick={newConversation}
+                      aria-label="Nova conversa" title="Nova conversa"
+                    >
+                      <Icon name="newChat" size={17} />
+                    </button>
+                  )}
+                </>
               ) : undefined}
               showMenu={mobile}
               railOpen={railOpen}
@@ -1223,6 +1302,8 @@ export default function Home() {
                     <Conversation
                       messages={messages} status={activityLabel} thinking={thinking}
                       userName={profileName} connecting={!ready && !gaveUp}
+                      onRetry={() => rerunLastTurn()}
+                      onEdit={(text) => rerunLastTurn(text)}
                       onChoose={(reply) => sendMessage(reply)}
                     />
                   )}

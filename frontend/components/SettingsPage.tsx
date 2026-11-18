@@ -637,7 +637,7 @@ export default function SettingsPage({
               />
               <Toggle
                 label='Aceitar apenas "Nano"'
-                hint='Desligado por omissão: "Nano" sozinho causava activações falsas. Manter desligado torna a deteção muito mais fiável.'
+                hint='Desligado por omissão: "Nano" sozinho causava ativações falsas. Manter desligado torna a deteção muito mais fiável.'
                 checked={voice.allowNanoOnly}
                 onChange={(v) => onUpdate("wake_phrase_allow_nano_only", v)}
               />
@@ -648,11 +648,11 @@ export default function SettingsPage({
                        onChange={(e) => onUpdate("wake_command_timeout_seconds", Number(e.target.value))}
                        aria-label="Tempo de espera pelo comando" />
               </Field>
-              <Field label={`Intervalo entre activações: ${voice.cooldownSeconds}s`}
+              <Field label={`Intervalo entre ativações: ${voice.cooldownSeconds}s`}
                      hint="Impede que a mesma frase active o NANO várias vezes seguidas.">
                 <input type="range" min={1} max={10} step={0.5} value={voice.cooldownSeconds}
                        onChange={(e) => onUpdate("wake_phrase_cooldown_seconds", Number(e.target.value))}
-                       aria-label="Intervalo entre activações" />
+                       aria-label="Intervalo entre ativações" />
               </Field>
             </Panel>
 

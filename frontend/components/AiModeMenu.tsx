@@ -68,10 +68,32 @@ const MODEL_LIMIT = 6;
 export function localModelLabel(model?: string | null): string {
   const raw = String(model ?? "").trim();
   if (!raw) return "Local";
-  // "library/qwen3:8b-instruct" -> "qwen3"
-  const family = raw.split("/").pop()!.split(":")[0];
+  // "library/qwen3:8b-instruct" -> "Qwen3 8B". The size is kept because it is
+  // the one thing that tells two installed variants of a family apart.
+  const [family, tag = ""] = raw.split("/").pop()!.split(":");
   if (!family) return "Local";
-  return family.charAt(0).toUpperCase() + family.slice(1);
+  const name = family.charAt(0).toUpperCase() + family.slice(1);
+  const size = /^(\d+(?:\.\d+)?[bm])\b/i.exec(tag)?.[1];
+  return size ? `${name} ${size.toUpperCase()}` : name;
+}
+
+/** The mode as a person says it, not as an enum. */
+export const MODE_LABEL: Record<ProviderMode, string> = { AUTO: "Auto", CLOUD: "Cloud", LOCAL: "Local" };
+
+/**
+ * Whether the route fell back because the cloud was never set up.
+ *
+ * A machine with only Ollama installed routes every AUTO turn to Ollama, and
+ * the backend rightly calls that a fallback. But to the person using it there
+ * is nothing to fall back FROM: local is their whole setup, and an amber
+ * "alternativa" tag on it forever reads as a fault. A configured provider that
+ * FAILED is different, and still shows the tag -- that is what it is for.
+ */
+export function expectedFallback(providers: ProviderPayload | null): boolean {
+  const route = providers?.route;
+  if (!route?.fallback || route.provider !== "ollama") return false;
+  const keys = (providers?.cloudProviders ?? []) as CloudProviderKey[];
+  return !keys.some((key) => providers?.[key]?.secret?.configured);
 }
 
 /**
@@ -97,7 +119,8 @@ export function providerLabel(providers: ProviderPayload | null, offline = false
   const route = providers?.route;
   if (!route) return "A ligar…";
   const mode = providers?.mode ?? route.mode;
-  if (!route.usable) return `Sem provedor · ${mode}`;
+  const modeLabel = MODE_LABEL[mode as ProviderMode] ?? mode;
+  if (!route.usable) return `Sem provedor · ${modeLabel}`;
   // Groq is named by its BRAND and the others by their MODEL, which looks
   // inconsistent and is not. Groq's ids are vendor-prefixed paths
   // ("openai/gpt-oss-20b"), so the prettified model reads worse than the one
@@ -115,7 +138,7 @@ export function providerLabel(providers: ProviderPayload | null, offline = false
     route.provider === "ollama" ? localModelLabel(route.model || providers?.ollama?.model)
     : route.provider === "groq" ? "Groq"
     : (cloudModelLabel(route.model) || info?.name || "—");
-  return `${name} · ${mode}`;
+  return `${name} · ${modeLabel}`;
 }
 
 /**
@@ -209,7 +232,9 @@ export default function AiModeMenu({
   const active = (providers?.mode ?? "AUTO") as ProviderMode;
   const label = providerLabel(providers, offline);
   const route = providers?.route;
-  const fellBack = Boolean(route?.fallback);
+  // An expected fallback (no cloud ever configured) is the person's normal
+  // setup and is shown as such; an unexpected one keeps its amber state.
+  const fellBack = Boolean(route?.fallback) && !expectedFallback(providers);
   // Presentation follows measured route availability; idle agent != usable AI.
   const routeState = offline ? "OFFLINE" : !route ? "UNKNOWN"
     : !route.usable ? "SETUP_REQUIRED" : fellBack ? "WAITING" : agentState;

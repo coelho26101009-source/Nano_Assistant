@@ -134,7 +134,7 @@ export default function CapabilitiesPage({ enabled }: { enabled: boolean }) {
       <h2 className="page-title">Capacidades</h2>
       <p className="dim" style={{ marginBottom: 14, maxWidth: "72ch" }}>
         Tudo o que o NANO sabe fazer neste computador, lido diretamente do motor.
-        As acções sensíveis pedem sempre confirmação — e as que o NANO não faz
+        As ações sensíveis pedem sempre confirmação — e as que o NANO não faz
         estão listadas também, porque nenhuma autorização as torna possíveis.
       </p>
 

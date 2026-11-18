@@ -13,7 +13,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Icon from "./Icon";
 import NanoLogo from "./NanoLogo";
-import { Button, StatusIndicator, formatTime } from "./ui";
+import { Button, formatTime } from "./ui";
 import { BRAND_NAME } from "../lib/brand";
 
 export type ToolEvent = {
@@ -109,6 +109,16 @@ const REASON_TEXT: Record<string, string> = {
   other: "motivo não classificado",
 };
 
+/**
+ * Reasons that mean "the cloud was never set up", not "the cloud failed".
+ *
+ * Someone who has only ever installed Ollama is not falling back to anything:
+ * local IS their setup. Tagging every one of their answers "fallback" in amber
+ * describes a failure that did not happen. A configured provider that failed
+ * keeps the tag -- that is the case the tag exists for.
+ */
+export const EXPECTED_FALLBACK = new Set(["setup_required", "no_cloud_available"]);
+
 export function reasonText(reason?: string): string {
   const key = String(reason ?? "").trim();
   if (!key) return "";
@@ -180,6 +190,68 @@ function renderInline(text: string, keyBase: string): React.ReactNode[] {
   return nodes;
 }
 
+/* ── Code highlighting ────────────────────────────────────────────────── */
+
+/**
+ * A small, dependency-free highlighter: comments, strings, numbers, keywords.
+ *
+ * WHY NOT A LIBRARY. A full grammar engine is hundreds of kilobytes for what a
+ * chat answer needs, and every dependency in this frontend is something the
+ * security review has to keep reading. Four token classes cover what makes code
+ * scannable at a glance; anything unrecognised is plain text, never wrong text.
+ * React renders every token as a text node, so nothing here can inject markup.
+ */
+const KEYWORDS = new Set((
+  "and as async await break case catch class const continue def default del do elif else enum " +
+  "except export extends false finally fn for from func function go if impl import in interface " +
+  "is lambda let match mod mut new nil none not null or package pass pub raise return self " +
+  "static struct super switch this throw true try type typeof use var void while with yield " +
+  "True False None echo fi then esac done local select where insert update delete create table"
+).split(" "));
+
+const TOKEN = new RegExp([
+  String.raw`(\/\/[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\/|--[^\n]*)`,          // 1 comment
+  String.raw`("(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|\x60(?:\\.|[^\x60\\])*\x60)`, // 2 string
+  String.raw`(\b\d+(?:\.\d+)?\b)`,                                           // 3 number
+  String.raw`([A-Za-z_][A-Za-z0-9_]*)`,                                     // 4 word
+].join("|"), "g");
+
+/** Languages where `#` starts a comment and `--` does not, and vice versa. */
+const HASH_COMMENT = /^(py|python|sh|bash|shell|zsh|ps1|powershell|rb|ruby|yaml|yml|toml|r|perl)$/i;
+const DASH_COMMENT = /^(sql|lua|haskell|hs)$/i;
+
+export function highlight(code: string, lang?: string): React.ReactNode[] {
+  const language = String(lang ?? "").trim();
+  const out: React.ReactNode[] = [];
+  let last = 0;
+  let index = 0;
+  let match: RegExpExecArray | null;
+  TOKEN.lastIndex = 0;
+  while ((match = TOKEN.exec(code)) !== null) {
+    let kind = "";
+    const [token, comment, str, num, word] = match;
+    if (comment) {
+      const hash = comment.startsWith("#");
+      const dash = comment.startsWith("--");
+      const slash = comment.startsWith("//") && HASH_COMMENT.test(language);
+      if (slash || (hash && !HASH_COMMENT.test(language)) || (dash && !DASH_COMMENT.test(language))) {
+        // Not a comment in this language: step one character and carry on.
+        TOKEN.lastIndex = match.index + 1;
+        continue;
+      }
+      kind = "comment";
+    } else if (str) kind = "string";
+    else if (num) kind = "number";
+    else if (word && KEYWORDS.has(word)) kind = "keyword";
+    if (!kind) continue;
+    if (match.index > last) out.push(code.slice(last, match.index));
+    out.push(<span key={index++} className={`tok-${kind}`}>{token}</span>);
+    last = match.index + token.length;
+  }
+  if (last < code.length) out.push(code.slice(last));
+  return out;
+}
+
 function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
@@ -199,7 +271,7 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
           {copied ? "Copiado" : "Copiar"}
         </Button>
       </div>
-      <pre><code>{code}</code></pre>
+      <pre><code>{highlight(code, lang)}</code></pre>
     </div>
   );
 }
@@ -273,6 +345,20 @@ function Markdown({ text }: { text: string }) {
         }
         const content = items.map((item, ii) => <li key={ii}>{renderInline(item, `li${ii}`)}</li>);
         out.push(ordered ? <ol key={`l${key++}`}>{content}</ol> : <ul key={`l${key++}`}>{content}</ul>);
+        continue;
+      }
+
+      // Block quote: consecutive "> " lines, rendered as one quote.
+      if (/^\s*>\s?/.test(line)) {
+        flushParagraph(paragraph);
+        const quoted: string[] = [];
+        while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
+          quoted.push(lines[i].replace(/^\s*>\s?/, ""));
+          i += 1;
+        }
+        out.push(
+          <blockquote key={`q${key++}`}>{renderInline(quoted.join(" "), `q${key}`)}</blockquote>
+        );
         continue;
       }
 
@@ -383,6 +469,12 @@ function TechnicalDetails({ meta, id }: { meta: ResponseMeta; id: string }) {
   const crossed = attempts.length > 1;
   const reason = reasonText(meta.fallback_reason);
   const fellBack = Boolean(meta.fallback_used);
+  // Tagged only when something actually FAILED on the way: a provider attempt
+  // that did not answer, or a reason other than "the cloud was never set up".
+  // A local-only setup records fallback_used with nothing having failed.
+  const failedHop = attempts.some((attempt) => attempt.outcome && attempt.outcome !== "ok");
+  const rawReason = String(meta.fallback_reason ?? "");
+  const surprising = fellBack && (failedHop || (Boolean(rawReason) && !EXPECTED_FALLBACK.has(rawReason)));
   const from = meta.fallback_from ?? meta.attempted_provider;
 
   return (
@@ -401,7 +493,7 @@ function TechnicalDetails({ meta, id }: { meta: ResponseMeta; id: string }) {
           </svg>
         </span>
         <span>Detalhes técnicos</span>
-        {fellBack && <span className="msg__meta-tag">fallback</span>}
+        {surprising && <span className="msg__meta-tag">fallback</span>}
       </button>
 
       <div id={panelId} className="msg__meta-panel" hidden={!open}>
@@ -409,7 +501,7 @@ function TechnicalDetails({ meta, id }: { meta: ResponseMeta; id: string }) {
           <dt>Provedor</dt>
           <dd>
             {providerName(meta.provider)}
-            {fellBack ? " · fallback" : ""}
+            {surprising ? " · fallback" : ""}
           </dd>
           <dt>Modelo</dt><dd>{meta.model}</dd>
           <dt>Modo</dt><dd>{[meta.mode, meta.tier].filter(Boolean).join(" · ")}</dd>
@@ -489,13 +581,21 @@ function initialsOf(name?: string | null): string | null {
  * exchange scans as a steady rhythm of turns rather than as two columns.
  */
 function MessageBubble({
-  message, status, userName, onChoose,
+  message, status, userName, onRetry, onEdit, onChoose,
 }: {
-  message: Message; status?: string; userName?: string | null;
+  message: Message;
+  status?: string;
+  userName?: string | null;
+  /** Set only on the LAST answer of the open thread, and only when idle. */
+  onRetry?: () => void;
+  /** Set only on the LAST question of the open thread, and only when idle. */
+  onEdit?: (text: string) => void;
   /** Only passed for the latest answer: older choices are history. */
   onChoose?: (reply: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
   const isUser = message.role === "user";
   const text = isUser ? message.content : cleanAssistantText(message.content);
   const initials = initialsOf(userName);
@@ -508,6 +608,19 @@ function MessageBubble({
     } catch { /* clipboard unavailable */ }
   };
 
+  const startEdit = () => { setDraft(text); setEditing(true); };
+  const saveEdit = () => {
+    const next = draft.trim();
+    setEditing(false);
+    if (next && onEdit) onEdit(next);
+  };
+
+  // The actions row only exists for a finished turn with something in it.
+  const showActions = Boolean(text) && !message.streaming && !editing;
+  // The latest answer keeps its actions visible, as in every chat app; older
+  // turns reveal theirs on hover and on keyboard focus.
+  const pinned = Boolean(onRetry);
+
   return (
     <article className={`msg msg--${message.role}${message.error ? " msg--error" : ""}`}>
       <header className="msg__head">
@@ -518,19 +631,8 @@ function MessageBubble({
         ) : (
           <NanoLogo size={22} className="msg__avatar" />
         )}
-        <span className="msg__author">{isUser ? (userName || "Você") : BRAND_NAME}</span>
+        <span className="msg__author">{isUser ? (userName || "Tu") : BRAND_NAME}</span>
         <span className="msg__time">{formatTime(message.timestamp)}</span>
-        {!isUser && text && !message.streaming && (
-          <span className="msg__actions">
-            <button
-              type="button" className="msg__action" onClick={copy}
-              aria-label={copied ? "Resposta copiada" : "Copiar resposta"}
-              title={copied ? "Copiado" : "Copiar resposta"}
-            >
-              <Icon name={copied ? "check" : "copy"} size={15} />
-            </button>
-          </span>
-        )}
       </header>
 
       {message.tools?.length ? (
@@ -539,24 +641,69 @@ function MessageBubble({
         </div>
       ) : null}
 
-      <div className="msg__body">
-        {isUser ? text : <Markdown text={text} />}
-        {/* THE ONLY THINKING INDICATOR IN THE APP.
-            There used to be a second one under the conversation, so a
-            pending turn showed "O Nano está a pensar…" in the bubble AND
-            "A pensar…" below it. The status line the other one carried is
-            not lost: it is rendered HERE, so tool activity still narrates
-            itself, in one place, inside the message it belongs to. That
-            also removes the layout jump the second element caused when the
-            first token arrived and it disappeared. */}
-        {message.streaming && !text && (
-          <span className="thinking" role="status" aria-live="polite">
-            <span className="thinking__mark" aria-hidden="true"><NanoLogo size={22} /></span>
-            <span>{status?.trim() || `O ${BRAND_NAME} está a pensar…`}</span>
-          </span>
-        )}
-        {message.streaming && text && <span className="caret" aria-hidden="true" />}
-      </div>
+      {editing ? (
+        <div className="msg__edit">
+          <label className="sr-only" htmlFor={`edit-${message.id}`}>Editar mensagem</label>
+          <textarea
+            id={`edit-${message.id}`} className="msg__edit-input" value={draft} autoFocus
+            rows={Math.min(8, Math.max(2, draft.split("\n").length))}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); saveEdit(); }
+              if (event.key === "Escape") { event.preventDefault(); setEditing(false); }
+            }}
+          />
+          <div className="msg__edit-bar">
+            <Button size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
+            <Button size="sm" variant="primary" onClick={saveEdit} disabled={!draft.trim()}>
+              Enviar
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="msg__body">
+          {isUser ? text : <Markdown text={text} />}
+          {/* THE ONLY THINKING INDICATOR IN THE APP.
+              There used to be a second one under the conversation, so a
+              pending turn showed "O Nano está a pensar…" in the bubble AND
+              "A pensar…" below it. The status line the other one carried is
+              not lost: it is rendered HERE, so tool activity still narrates
+              itself, in one place, inside the message it belongs to.
+
+              No second logo: the turn's header already carries the mark, and
+              a pending answer showed the N twice, one above the other. */}
+          {message.streaming && !text && (
+            <span className="thinking" role="status" aria-live="polite">
+              <span className="thinking__text">{status?.trim() || "A pensar…"}</span>
+            </span>
+          )}
+          {message.streaming && text && <span className="caret" aria-hidden="true" />}
+        </div>
+      )}
+
+      {showActions && (
+        <div className={`msg__actions${pinned ? " msg__actions--pinned" : ""}`}>
+          <button
+            type="button" className="msg__action" onClick={copy}
+            aria-label={copied ? "Copiado" : isUser ? "Copiar mensagem" : "Copiar resposta"}
+            title={copied ? "Copiado" : "Copiar"}
+          >
+            <Icon name={copied ? "check" : "copy"} size={15} />
+          </button>
+          {onEdit && (
+            <button type="button" className="msg__action" onClick={startEdit}
+                    aria-label="Editar e reenviar" title="Editar">
+              <Icon name="edit" size={15} />
+            </button>
+          )}
+          {onRetry && (
+            <button type="button" className="msg__action" onClick={onRetry}
+                    aria-label="Tentar de novo" title="Tentar de novo">
+              <Icon name="refresh" size={15} />
+            </button>
+          )}
+        </div>
+      )}
 
       {onChoose && !isUser && !message.streaming && message.clarification?.options?.length ? (
         <ClarificationChoices clarification={message.clarification} onChoose={onChoose} />
@@ -601,9 +748,13 @@ export function needsStandaloneThinking(messages: Message[], thinking: boolean):
 }
 
 export function Conversation({
-  messages, status, thinking, userName, connecting = false, onChoose,
+  messages, status, thinking, userName, connecting = false, onRetry, onEdit, onChoose,
 }: {
   messages: Message[];
+  /** Ask the last question again. Offered on the last answer only. */
+  onRetry?: () => void;
+  /** Re-send the last question with new text. Offered on the last question only. */
+  onEdit?: (text: string) => void;
   status: string;
   thinking: boolean;
   /** The user's name, only when the backend actually knows it. */
@@ -616,6 +767,10 @@ export function Conversation({
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => { endRef.current?.scrollIntoView({ block: "end" }); }, [messages, status]);
   const standalone = needsStandaloneThinking(messages, thinking);
+  const lastIndex = messages.length - 1;
+  // A turn the user can ask again must exist as a question + answer pair. A
+  // voice exchange is stored the same way, so it qualifies too.
+  const retryable = lastIndex >= 1 && messages[lastIndex - 1]?.role === "user";
 
   if (!messages.length && !thinking) {
     return (
@@ -637,14 +792,23 @@ export function Conversation({
   return (
     <div className="conversation" role="log" aria-live="polite" aria-label="Conversa">
       <div className="conversation__inner">
-        {messages.map((message, index) => (
-          <MessageBubble key={message.id} message={message} status={status} userName={userName}
-                         onChoose={index === messages.length - 1 && !thinking ? onChoose : undefined} />
-        ))}
+        {messages.map((message, index) => {
+          const isLast = index === lastIndex;
+          const isLastQuestion = message.role === "user" && index === lastIndex - 1
+            && messages[lastIndex]?.role === "assistant";
+          return (
+            <MessageBubble
+              key={message.id} message={message} status={status} userName={userName}
+              onRetry={!thinking && isLast && message.role === "assistant" && retryable ? onRetry : undefined}
+              onEdit={!thinking && isLastQuestion && retryable ? onEdit : undefined}
+              onChoose={isLast && !thinking ? onChoose : undefined}
+            />
+          );
+        })}
         {standalone && (
           <div className="thinking thinking--standalone" role="status" aria-live="polite">
             <span className="thinking__mark" aria-hidden="true"><NanoLogo size={22} /></span>
-            <span>{status?.trim() || `O ${BRAND_NAME} está a pensar…`}</span>
+            <span className="thinking__text">{status?.trim() || "A pensar…"}</span>
           </div>
         )}
         <div ref={endRef} />
@@ -726,13 +890,14 @@ export function Composer({
     ? readOnlyReason
     : listening
       ? "A ouvir — clica para cancelar"
-      : voiceReady ? `Falar com o ${BRAND_NAME} (Ctrl+M)` : "Voz indisponível";
+      : voiceReady ? `Falar com o ${BRAND_NAME} (Ctrl+M)`
+        : "Voz por configurar — abre Definições → Voz";
 
   // The placeholder and the line in the button bar are two halves of one
   // sentence, not the same sentence twice.
   const placeholder = readOnlyReason
     ? "Conversa anterior — só leitura."
-    : disabled ? `A aguardar o motor do ${BRAND_NAME}…` : `Envie uma mensagem para o ${BRAND_NAME}…`;
+    : disabled ? `A aguardar o motor do ${BRAND_NAME}…` : `Escreve uma mensagem ao ${BRAND_NAME}…`;
 
   return (
     <div className="composer-wrap">
@@ -766,9 +931,10 @@ export function Composer({
                 A ouvir…
               </span>
             )}
-            {!listening && !voiceReady && !readOnlyReason && (
-              <StatusIndicator state={voiceState} label="voz" />
-            )}
+            {/* No "voz" status chip here any more. Voice not being set up is
+                not news to someone who types, and an amber dot that never
+                goes away reads as a fault. The microphone itself is disabled
+                and says why when hovered or focused. */}
             {readOnlyReason && (
               <span id="composer-readonly" className="dim" style={{ fontSize: 12 }}>
                 {readOnlyReason}
