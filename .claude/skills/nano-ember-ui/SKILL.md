@@ -75,6 +75,14 @@ full-width band (`--msg-band`). The user's avatar shows initials only when the
 backend knows their name. Code blocks are dark in both themes. Errors use
 `--danger` and `--danger-soft`, never the accent.
 
+Under each finished turn sits a quiet actions row (copy; plus "Tentar de novo"
+on the last answer and "Editar" on the last question — the backend rewinds the
+last turn before asking again). The latest answer keeps its row visible; older
+turns reveal theirs on hover and focus. A pending answer shows one line,
+"A pensar…" (or a short tool status), with a text shimmer — never routing
+explanations, never a second logo. Code blocks are highlighted by the small
+in-house tokenizer in `Conversation.tsx`; block quotes render as quotes.
+
 ## Composer
 
 One rounded field: the text on top, a quiet row of controls under it (the
@@ -82,7 +90,8 @@ attachment slot, disabled with its reason, the voice status, the microphone and
 the neutral-primary send button). Focus turns the border the focus colour — a
 border, not a ring, because the composer holds focus by default. An open
 microphone is a privacy state: `--information` border, filled mic button and
-the wave indicator.
+the wave indicator. Voice that is not set up shows no chip in the composer;
+the disabled microphone carries the reason in its name and tooltip.
 
 ## State presentation
 

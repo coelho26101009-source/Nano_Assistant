@@ -99,6 +99,10 @@ class MemoryStack:
         self.capture_enabled = bool(capture_enabled)
 
         self._active_id: str | None = None
+        #: Threads a turn has been dispatched to but has not written yet. An
+        #: empty thread in this set is about to receive its first message and
+        #: must not be discarded as abandoned. See :meth:`hold`.
+        self._held: set[str] = set()
         self._background = bool(background)
         self._jobs: queue.Queue = queue.Queue(maxsize=_QUEUE_SIZE)
         self._worker: threading.Thread | None = None
@@ -300,15 +304,77 @@ class MemoryStack:
         thread = self.conversations.get(conversation_id)
         if thread is None:
             return None
+        if self._active_id != thread["id"]:
+            self._discard_if_empty(self._active_id)
         self._active_id = thread["id"]
         return thread
 
     def new_conversation(self, title: str | None = None) -> dict | None:
+        """Start a thread -- or hand back the empty one already open.
+
+        "Nova conversa" pressed twice used to leave two empty rows in the rail,
+        and every press after that another one: a list of "Nova conversa" that
+        nobody ever wrote in. A thread with no messages IS a new conversation,
+        so pressing the button while one is open returns it instead of minting
+        another, and an empty thread the user walks away from is removed.
+        """
         if not self.ready:
             return None
+        current = self._active_id
+        if (current and not title and current not in self._held
+                and self.conversations.exists(current)
+                and self.conversations.message_count(current) == 0):
+            thread = self.conversations.get(current)
+            if thread is not None:
+                return thread
+        self._discard_if_empty(current)
         thread = self.conversations.create(title)
         self._active_id = thread["id"]
         return thread
+
+    def hold(self, conversation_id: str | None) -> None:
+        """Mark a thread as about to receive a turn. See :meth:`release`.
+
+        A turn is dispatched on the bridge thread and written on the event loop
+        a moment later. A click on "Nova conversa" inside that gap would see an
+        empty thread and discard it, and the message would then have nowhere to
+        go. Holding it for the length of the gap closes that window.
+        """
+        if conversation_id:
+            self._held.add(str(conversation_id))
+
+    def release(self, conversation_id: str | None) -> None:
+        if conversation_id:
+            self._held.discard(str(conversation_id))
+
+    def _discard_if_empty(self, conversation_id: str | None) -> bool:
+        """Delete a thread the user left without ever writing in it."""
+        if not conversation_id or conversation_id in self._held:
+            return False
+        try:
+            if not self.conversations.exists(conversation_id):
+                return False
+            if self.conversations.message_count(conversation_id) != 0:
+                return False
+            thread = self.conversations.get(conversation_id) or {}
+            if thread.get("titleSource") == "user" or thread.get("title_source") == "user":
+                return False
+        except Exception:
+            logger.debug("Não foi possível verificar a conversa %s", conversation_id, exc_info=True)
+            return False
+        result = self.conversations.delete(conversation_id)
+        if result.get("ok") and self._active_id == conversation_id:
+            self._active_id = None
+        return bool(result.get("ok"))
+
+    def rewind_last_turn(self, conversation_id: str | None = None) -> dict:
+        """Take the thread's last turn back out. See ConversationStore.truncate_last_turn."""
+        if not self.ready:
+            return {"ok": False, "error": "memory_unavailable"}
+        thread_id = conversation_id or self._active_id
+        if not thread_id:
+            return {"ok": False, "error": "no_conversation"}
+        return self.conversations.truncate_last_turn(thread_id)
 
     def delete_conversation(self, conversation_id: str) -> dict:
         result = self.conversations.delete(conversation_id)
