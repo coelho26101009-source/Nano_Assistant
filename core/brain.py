@@ -42,6 +42,7 @@ from groq import AsyncGroq, DefaultAsyncHttpxClient
 from core import clarification
 from core.i18n import tr
 from core import i18n
+from core import attachments
 from core.config import load_config
 from core.local_runtime import choose_model
 from core.plugin_loader import get_all_tools
@@ -617,10 +618,17 @@ class Brain:
             if self.memory_stack is not None and getattr(self.memory_stack, "ready", False):
                 thread_id = conversation_id or self.memory_stack.ensure_active()
                 rows = self.memory_stack.recent_messages(thread_id,
-                                                         limit=self.history_messages)
+                                                         limit=self.history_messages,
+                                                         attachment_text=True)
+                per_message = self.max_history_chars // 4
+                # Files attached to a user turn are recomposed here, fenced
+                # exactly as on the live turn, and held to the same
+                # per-message budget as any other row.
                 self.conversation = [
                     {"role": row["role"],
-                     "content": _truncate(row["content"], self.max_history_chars // 4)}
+                     "content": attachments.compose(_truncate(row["content"], per_message),
+                                                    row.get("attachments"),
+                                                    max_chars=per_message)}
                     for row in rows
                     if row.get("role") in ("user", "assistant") and (row.get("content") or "").strip()
                 ]

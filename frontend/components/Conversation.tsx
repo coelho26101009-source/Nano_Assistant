@@ -16,6 +16,10 @@ import NanoLogo from "./NanoLogo";
 import { Button, formatTime } from "./ui";
 import { BRAND_NAME } from "../lib/brand";
 import { t } from "../lib/i18n";
+import {
+  ACCEPT, MAX_FILES, formatSize, readAttachment,
+  type AttachmentSummary, type PendingFile,
+} from "../lib/attachments";
 
 export type ToolEvent = {
   name: string;
@@ -144,6 +148,39 @@ export interface Message {
   error?: boolean;
   meta?: ResponseMeta;
   clarification?: Clarification;
+  /** Text files sent with a user turn: names and sizes only. */
+  attachments?: AttachmentSummary[];
+}
+
+/** The files on a sent message, or waiting in the composer. */
+function FileChips({ files, onRemove }: {
+  files: (AttachmentSummary & { id?: string })[];
+  onRemove?: (index: number) => void;
+}) {
+  return (
+    <ul className="file-chips" aria-label={t("Ficheiros anexados")}>
+      {files.map((file, index) => (
+        <li key={file.id ?? `${file.name}-${index}`} className="file-chip">
+          <Icon name="attach" size={14} />
+          <span className="file-chip__name" title={file.name}>{file.name}</span>
+          <span className="file-chip__size">{formatSize(file.size)}</span>
+          {file.truncated && (
+            <span className="file-chip__note" title={t("Ficheiro longo: o NANO leu só o início.")}>
+              {t("só o início")}
+            </span>
+          )}
+          {onRemove && (
+            <button
+              type="button" className="file-chip__remove" onClick={() => onRemove(index)}
+              aria-label={t("Remover {0}", { 0: file.name })} title={t("Remover")}
+            >
+              <Icon name="close" size={12} />
+            </button>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 /* ── Cleaning model output ────────────────────────────────────────────── */
@@ -662,6 +699,7 @@ function MessageBubble({
         </div>
       ) : (
         <div className="msg__body">
+          {isUser && message.attachments?.length ? <FileChips files={message.attachments} /> : null}
           {isUser ? text : <Markdown text={text} />}
           {/* THE ONLY THINKING INDICATOR IN THE APP.
               There used to be a second one under the conversation, so a
@@ -910,7 +948,7 @@ export function Conversation({
 export function Composer({
   value, onChange, onSend, onStop, onVoice, onCancelVoice,
   thinking, disabled, voiceState, listening, suggestions, onSuggestion,
-  readOnlyReason,
+  readOnlyReason, files = [], onFiles, onRemoveFile, onFileError,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -925,9 +963,33 @@ export function Composer({
   suggestions: string[];
   onSuggestion: (text: string) => void;
   readOnlyReason?: string;
+  /** Files waiting to go with the next message. */
+  files?: PendingFile[];
+  onFiles?: (files: PendingFile[]) => void;
+  onRemoveFile?: (index: number) => void;
+  onFileError?: (message: string) => void;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  const picker = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
   const locked = disabled || Boolean(readOnlyReason);
+  const canAttach = Boolean(onFiles) && !locked && files.length < MAX_FILES;
+
+  /** Read what was picked or dropped; refuse what cannot be read, with why. */
+  const addFiles = useCallback(async (list: FileList | null) => {
+    if (!list || !onFiles) return;
+    const room = MAX_FILES - files.length;
+    const chosen = Array.from(list);
+    if (chosen.length > room) onFileError?.(t("No máximo {0} ficheiros por mensagem.", { 0: MAX_FILES }));
+    const read = await Promise.all(chosen.slice(0, Math.max(0, room)).map(readAttachment));
+    const ok: PendingFile[] = [];
+    for (const result of read) {
+      if ("error" in result) onFileError?.(result.error);
+      else ok.push(result);
+    }
+    if (ok.length) onFiles(ok);
+    ref.current?.focus();
+  }, [files.length, onFiles, onFileError]);
 
   useEffect(() => { if (!locked) ref.current?.focus(); }, [locked]);
 
@@ -975,7 +1037,22 @@ export function Composer({
   return (
     <div className="composer-wrap">
       <div className="composer-inner">
-        <div className={`composer${listening ? " composer--listening" : ""}`}>
+        <div
+          className={`composer${listening ? " composer--listening" : ""}${dragging ? " composer--drop" : ""}`}
+          onDragOver={(event) => {
+            if (!canAttach || !event.dataTransfer.types.includes("Files")) return;
+            event.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(event) => {
+            setDragging(false);
+            if (!canAttach) return;
+            event.preventDefault();
+            void addFiles(event.dataTransfer.files);
+          }}
+        >
+          {files.length > 0 && <FileChips files={files} onRemove={onRemoveFile} />}
           <label className="sr-only" htmlFor="composer-input">{t("Mensagem para o {0}", { 0: BRAND_NAME })}</label>
           <textarea
             id="composer-input" ref={ref} className="composer__textarea" rows={1}
@@ -989,11 +1066,20 @@ export function Composer({
           />
 
           <div className="composer__bar">
-            {/* Attachments are not supported by the backend yet. Shown disabled
-                with the reason rather than silently doing nothing when clicked. */}
+            {/* Text files only; the window reads them and the backend fences
+                their text as untrusted data. Dropping a file on the field
+                works too. */}
+            <input
+              ref={picker} type="file" multiple accept={ACCEPT} hidden
+              onChange={(event) => { void addFiles(event.target.files); event.target.value = ""; }}
+            />
             <Button
-              variant="ghost" icon size="sm" disabled
-              title={t("Anexos: brevemente")} aria-label={t("Anexar ficheiro (brevemente)")}
+              variant="ghost" icon size="sm" disabled={!canAttach}
+              onClick={() => picker.current?.click()}
+              title={files.length >= MAX_FILES
+                ? t("No máximo {0} ficheiros por mensagem.", { 0: MAX_FILES })
+                : t("Anexar ficheiro de texto")}
+              aria-label={t("Anexar ficheiro de texto")}
             >
               <Icon name="attach" size={17} />
             </Button>

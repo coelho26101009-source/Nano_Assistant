@@ -57,6 +57,7 @@ import { useIsDesktop } from "../lib/desktop";
 // the UI said "v1.0" while the backend reported "8.1.0".
 import { APP_VERSION } from "../lib/version";
 import { locale, normaliseLocale, reloadInLocale, t } from "../lib/i18n";
+import type { PendingFile } from "../lib/attachments";
 
 
 export interface ConfirmRequest {
@@ -165,6 +166,8 @@ export default function Home() {
   const [railCollapsed, setRailCollapsed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  /** Text files waiting in the composer for the next message. */
+  const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   // Appearance and personalisation live in the backend's settings (the
   // frontend uses no browser storage). "system" follows the OS theme.
   const [themePref, setThemePref] = useState<ThemePref>("system");
@@ -404,6 +407,7 @@ export default function Home() {
       content: row.content,
       timestamp: new Date(row.timestamp),
       meta: row.meta,
+      attachments: row.attachments,
     })));
   }, []);
 
@@ -645,15 +649,20 @@ export default function Home() {
     const text = (override ?? input).trim();
     if (!text || thinking || !ready) return;
     const msgId = crypto.randomUUID();
+    // Suggestions and examples send their own text and never carry the files
+    // waiting in the composer; only the composer's own send does.
+    const files = override === undefined ? pendingFiles : [];
+    const shown = files.map(({ name, size }) => ({ name, size }));
     // The user bubble's id is derived from the turn id, so on_stream_start can
     // recognise that this turn's message is already on screen and never append
     // a second copy.
     setMessages((prev) => [
       ...prev,
-      { id: userMessageId(msgId), role: "user", content: text, timestamp: new Date() },
+      { id: userMessageId(msgId), role: "user", content: text, timestamp: new Date(),
+        attachments: shown.length ? shown : undefined },
       { id: msgId, role: "assistant", content: "", timestamp: new Date(), streaming: true },
     ]);
-    if (override === undefined) setInput("");
+    if (override === undefined) { setInput(""); setPendingFiles([]); }
     setThinking(true);
     setStatus("");
     setView("chat");
@@ -661,8 +670,16 @@ export default function Home() {
     // send_message returns an ACK, never the answer: the reply arrives on the
     // stream events. Treating a slow turn's missing return value as "offline"
     // is what produced a false "Motor offline" while the backend was working.
-    call<any>("send_message", text, msgId).then((ack) => {
-      if (ack?.accepted) return;               // healthy: the stream takes over
+    const payload = files.map(({ name, text: body }) => ({ name, text: body }));
+    call<any>("send_message", text, msgId, payload).then((ack) => {
+      if (ack?.accepted) {
+        // The backend says which files it cut to fit; the bubble shows it.
+        if (ack.attachments) {
+          setMessages((prev) => prev.map((m) => m.id === userMessageId(msgId)
+            ? { ...m, attachments: ack.attachments } : m));
+        }
+        return;                                // healthy: the stream takes over
+      }
 
       // Only a genuine transport failure lands here.
       setThinking(false);
@@ -677,7 +694,7 @@ export default function Home() {
             tools: (m.tools ?? []).map((tool) => tool.state === "running" ? { ...tool, state: "ok" as const } : tool) }
         : m));
     });
-  }, [input, thinking, ready, notify]);
+  }, [input, pendingFiles, thinking, ready, notify]);
 
   /**
    * Ask the last question again, as it was or with new text.
@@ -699,7 +716,9 @@ export default function Home() {
       }
       return [
         ...prev.slice(0, cut),
-        { id: userMessageId(msgId), role: "user", content: text, timestamp: new Date() },
+        // The files go again with the question; the backend keeps them.
+        { id: userMessageId(msgId), role: "user", content: text, timestamp: new Date(),
+          attachments: lastUser?.attachments },
         { id: msgId, role: "assistant", content: "", timestamp: new Date(), streaming: true },
       ];
     });
@@ -1461,6 +1480,10 @@ export default function Home() {
                     listening={listening}
                     suggestions={suggestions}
                     onSuggestion={(text) => { setShowFirstRun(false); sendMessage(text); }}
+                    files={pendingFiles}
+                    onFiles={(added) => setPendingFiles((prev) => [...prev, ...added])}
+                    onRemoveFile={(index) => setPendingFiles((prev) => prev.filter((_, i) => i !== index))}
+                    onFileError={(text) => notify(text, "error")}
                   />}
                   {/* Weighs the home screen's group -- mark, headline, composer
                       -- slightly above the middle, where the eye lands. */}

@@ -23,6 +23,7 @@
  * log into real threads during migration — so the conversations a user already
  * recognises come across with their titles and their order intact.
  */
+import type { AttachmentSummary } from "./attachments";
 import type { ResponseMeta } from "../components/Conversation";
 import { t } from "../lib/i18n";
 
@@ -39,6 +40,8 @@ export type ThreadMessage = {
   timestamp: string;
   trust?: string;
   meta?: ResponseMeta;
+  /** Text files the person attached to this turn: names and sizes. */
+  attachments?: AttachmentSummary[];
 };
 
 /** A conversation thread, as core/conversation_store returns it. */

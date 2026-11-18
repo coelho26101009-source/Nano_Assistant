@@ -752,11 +752,12 @@ class MemoryStack:
         return context
 
     def recent_messages(self, conversation_id: str | None = None, *,
-                        limit: int = 20) -> list[dict]:
+                        limit: int = 20, attachment_text: bool = False) -> list[dict]:
         thread_id = conversation_id or self.ensure_active()
         if not thread_id:
             return []
-        return self.conversations.messages(thread_id, limit=limit)
+        return self.conversations.messages(thread_id, limit=limit,
+                                           attachment_text=attachment_text)
 
     # ------------------------------------------------------------- overview
 

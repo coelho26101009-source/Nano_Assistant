@@ -97,9 +97,11 @@ Agentes and Componentes pages, the Arranque panel) show only in Modo avançado.
 
 ## Composer
 
-One rounded field: the text on top, a quiet row of controls under it (the
-attachment slot, disabled with its reason, the voice status, the microphone and
-the neutral-primary send button). Focus turns the border the focus colour — a
+One rounded field: the text on top, a quiet row of controls under it (attach,
+the voice status, the microphone and the neutral-primary send button). Attached
+files are text only; they show as chips above the text, in the field and on the
+sent turn, and a file cut to fit says "só o início". Dropping a file on the
+field shows a dashed focus-colour border. Focus turns the border the focus colour — a
 border, not a ring, because the composer holds focus by default. An open
 microphone is a privacy state: `--information` border, filled mic button and
 the wave indicator. Voice that is not set up shows no chip in the composer;

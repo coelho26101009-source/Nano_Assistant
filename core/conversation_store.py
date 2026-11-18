@@ -98,6 +98,17 @@ def _message_meta(raw: Any) -> dict:
     return shaped
 
 
+def _attachments(raw: Any) -> list[dict]:
+    """The files a user row carried, as stored by ``core.attachments``."""
+    parsed = _loads(raw, {})
+    files = parsed.get("attachments") if isinstance(parsed, dict) else None
+    if not isinstance(files, list):
+        return []
+    return [{"name": str(entry.get("name") or ""), "size": int(entry.get("size") or 0),
+             "truncated": bool(entry.get("truncated")), "text": str(entry.get("text") or "")}
+            for entry in files if isinstance(entry, dict)]
+
+
 class ConversationStore:
     """CRUD for threads and their messages. Owns no connection of its own."""
 
@@ -399,11 +410,12 @@ class ConversationStore:
         try:
             with self._lock:
                 row = self.conn.execute(
-                    "SELECT id, content FROM messages WHERE conversation_id=? AND role='user'"
-                    " ORDER BY id DESC LIMIT 1", (conversation_id,)).fetchone()
+                    "SELECT id, content, metadata FROM messages WHERE conversation_id=?"
+                    " AND role='user' ORDER BY id DESC LIMIT 1", (conversation_id,)).fetchone()
                 if row is None:
                     return {"ok": False, "error": "no_turn"}
                 first_id, text = int(row[0]), str(row[1] or "")
+                files = _attachments(row[2])
                 removed_ids = [int(r[0]) for r in self.conn.execute(
                     "SELECT id FROM messages WHERE conversation_id=? AND id>=?",
                     (conversation_id, first_id)).fetchall()]
@@ -421,7 +433,8 @@ class ConversationStore:
             return {"ok": False, "error": "truncate_failed", "detail": str(exc)}
         if self.index is not None and removed_ids:
             self.index.remove_many(f"message:{mid}" for mid in removed_ids)
-        return {"ok": True, "text": text, "removed": len(removed_ids)}
+        return {"ok": True, "text": text, "attachments": files,
+                "removed": len(removed_ids)}
 
     def _auto_title(self, conversation_id: str, role: str, text: str) -> None:
         """Name a thread after the user's first sentence. No model call.
@@ -470,8 +483,14 @@ class ConversationStore:
                       "conversationId": str(conversation_id)})
 
     def messages(self, conversation_id: str, *, limit: int = 200,
-                 roles: frozenset[str] | None = None) -> list[dict]:
-        """The tail of one thread, oldest first. Bounded, always."""
+                 roles: frozenset[str] | None = None,
+                 attachment_text: bool = False) -> list[dict]:
+        """The tail of one thread, oldest first. Bounded, always.
+
+        A user row that carried files gets ``attachments``: name, size and
+        whether it was cut, which is all the window shows. Only the Brain, which
+        rebuilds the model's view of the thread, asks for their text too.
+        """
         limit = max(1, min(int(limit), MAX_MESSAGE_LIMIT))
         wanted = roles or DISPLAY_ROLES
         marks = ",".join("?" * len(wanted))
@@ -500,6 +519,10 @@ class ConversationStore:
             meta = _message_meta(row[5])
             if meta:
                 message["meta"] = meta
+            files = _attachments(row[5]) if row[1] == "user" else []
+            if files:
+                message["attachments"] = files if attachment_text else [
+                    {k: v for k, v in entry.items() if k != "text"} for entry in files]
             out.append(message)
         return out
 

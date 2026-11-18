@@ -36,6 +36,7 @@ from core import data_migration
 from core import capability_catalogue, local_control_plane
 from core import agenda, clarification, work_modes
 from core import version as nano_version
+from core import attachments as chat_attachments
 from core import i18n
 from core.i18n import tr
 from core.brain import Brain
@@ -384,7 +385,7 @@ permission_manager.async_confirmation_callback = _permission_confirmation_async
 guardrails.set_confirm_callback(guardrails.request_from_ui)
 
 @eel.expose
-def send_message(user_text: str, msg_id: str | None = None) -> dict:
+def send_message(user_text: str, msg_id: str | None = None, attachments: list | None = None) -> dict:
     """Accept a message and answer it asynchronously over the stream events.
 
     This returns an ACK, not the answer. It used to block until the whole
@@ -395,6 +396,10 @@ def send_message(user_text: str, msg_id: str | None = None) -> dict:
 
     A transport failure (no ACK at all) and a model failure (ACK, then an error
     on the stream) are therefore distinguishable by the UI.
+
+    `attachments` are text files the person attached in the composer, each
+    ``{"name", "text"}``. ``core.attachments`` validates them and fences their
+    text as untrusted data before it reaches the model.
 
     THE THREAD THAT STARTS A TURN OWNS THE WHOLE TURN. The owning conversation
     is resolved HERE, synchronously, on the bridge thread -- at the instant the
@@ -411,6 +416,9 @@ def send_message(user_text: str, msg_id: str | None = None) -> dict:
     """
     if not user_text or not user_text.strip():
         return {"ok": False, "accepted": False, "error": "empty_message"}
+    files, problem = chat_attachments.normalise(attachments)
+    if problem:
+        return {"ok": False, "accepted": False, "error": problem}
     request_id = msg_id or uuid.uuid4().hex
     # Resolving the owner must never be able to cost the user their message.
     # This runs on the bridge thread and touches SQLite, so a locked or failing
@@ -425,7 +433,10 @@ def send_message(user_text: str, msg_id: str | None = None) -> dict:
             owner = memory_stack.ensure_active()
     except Exception:
         logger.exception("Não foi possível determinar a conversa da mensagem")
-    return _dispatch_turn(user_text, request_id, owner)
+    ack = _dispatch_turn(user_text, request_id, owner, files)
+    if files:
+        ack["attachments"] = chat_attachments.summary(files)
+    return ack
 
 
 def _hold_owner(owner: str | None, held: bool) -> None:
@@ -443,7 +454,8 @@ def _hold_owner(owner: str | None, held: bool) -> None:
         logger.debug("Não foi possível marcar a conversa da mensagem", exc_info=True)
 
 
-def _dispatch_turn(user_text: str, request_id: str, owner: str | None) -> dict:
+def _dispatch_turn(user_text: str, request_id: str, owner: str | None,
+                   files: list[dict] | None = None) -> dict:
     """Hand one turn to the event loop: send_message and retry_last_turn.
 
     The dispatch itself is `asyncio.run_coroutine_threadsafe`, never a blocking
@@ -454,7 +466,8 @@ def _dispatch_turn(user_text: str, request_id: str, owner: str | None) -> dict:
     try:
         loop = _get_or_create_loop()
         asyncio.run_coroutine_threadsafe(
-            _process_message(user_text, msg_id=request_id, conversation_id=owner), loop
+            _process_message(user_text, msg_id=request_id, conversation_id=owner,
+                             attachments=files), loop
         )
     except Exception:
         logger.exception("Não foi possível aceitar a mensagem")
@@ -495,8 +508,13 @@ def retry_last_turn(new_text: str = "", msg_id: str | None = None) -> dict:
     except Exception:
         logger.exception("Não foi possível reconstruir o contexto da conversa")
     request_id = msg_id or uuid.uuid4().hex
-    ack = _dispatch_turn(text, request_id, owner)
+    # The files go again with the question, edited or not: "tentar de novo"
+    # on a question about a file must still be about that file.
+    files = rewound.get("attachments") or []
+    ack = _dispatch_turn(text, request_id, owner, files)
     ack["text"] = text
+    if files:
+        ack["attachments"] = chat_attachments.summary(files)
     return ack
 
 @eel.expose
@@ -3650,7 +3668,8 @@ def _should_speak(source: str) -> bool:
 
 async def _process_message(user_text: str, msg_id: str | None = None,
                            blocking_tts: bool = False, source: str = "text",
-                           conversation_id: str | None = None) -> dict:
+                           conversation_id: str | None = None,
+                           attachments: list[dict] | None = None) -> dict:
     if not msg_id:
         msg_id = uuid.uuid4().hex
     try:
@@ -3671,7 +3690,9 @@ async def _process_message(user_text: str, msg_id: str | None = None,
                                     if memory_stack.ready else None)
         if memory_stack.ready:
             try:
-                memory_stack.record_user_message(user_text, conversation_id=owner)
+                memory_stack.record_user_message(
+                    user_text, conversation_id=owner,
+                    metadata={"attachments": attachments} if attachments else None)
             finally:
                 _hold_owner(owner, False)
         else:
@@ -3679,7 +3700,8 @@ async def _process_message(user_text: str, msg_id: str | None = None,
         _emit_stream_start(msg_id, user_text)
         full_response, status_updates = "", []
         rate_limit: dict | None = None
-        async for token in brain.chat(user_text, stream=True):
+        async for token in brain.chat(chat_attachments.compose(user_text, attachments),
+                                      stream=True):
             # Control tokens never reach the answer. The rate-limit payload used
             # to travel as a `_ratelimit_:{json}` token; it now lives in
             # brain.last_metadata and is read below, which is what stops it

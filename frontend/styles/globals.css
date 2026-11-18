@@ -1354,6 +1354,36 @@ kbd {
 .composer--listening,
 .composer--listening:focus-within { border-color: var(--information); box-shadow: 0 0 0 1px var(--information), var(--shadow-md); }
 
+/* A file held over the field: a dashed border in the focus colour, so the drop
+   target is a shape as well as a colour. */
+.composer--drop,
+.composer--drop:focus-within { border-color: var(--focus); border-style: dashed; }
+
+/* Attached text files: in the composer before sending, and on the sent turn. */
+.file-chips {
+  list-style: none; margin: 0; display: flex; flex-wrap: wrap; gap: 6px; min-width: 0;
+}
+.composer .file-chips { padding: 10px var(--sp-3) 0; }
+.msg__body .file-chips { margin-bottom: 8px; }
+.file-chip {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%;
+  padding: 4px 6px 4px 8px; border-radius: var(--r-md);
+  background: var(--surface); border: 1px solid var(--border);
+  font-size: var(--fs-sm); color: var(--text-secondary);
+}
+.file-chip__name {
+  color: var(--text-primary); min-width: 0; max-width: 28ch;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.file-chip__size { color: var(--text-muted); white-space: nowrap; }
+.file-chip__note { color: var(--warning); white-space: nowrap; }
+.file-chip__remove {
+  display: grid; place-items: center; width: 20px; height: 20px; border-radius: var(--r-sm);
+  background: transparent; border: none; color: var(--text-muted); cursor: pointer;
+}
+.file-chip__remove:hover { background: var(--surface-hover); color: var(--text-primary); }
+.file-chip__remove:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
 .composer__textarea {
   width: 100%; background: transparent; border: none; outline: none; resize: none;
   padding: 14px var(--sp-4) 4px;

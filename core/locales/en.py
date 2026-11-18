@@ -189,4 +189,6 @@ EN: dict[str, str] = {
     "Esta execução": "This run",
     "LER O TEXTO DO ECRÃ": "READ THE TEXT ON SCREEN",
     "O texto visível é lido localmente e enviado ao modelo (dados sensíveis ocultos)": "The visible text is read locally and sent to the model (sensitive data hidden)",
+    "Ficheiro anexado": "Attached file",
+    "(ficheiro cortado: só o início foi lido)": "(file cut: only the beginning was read)",
 }

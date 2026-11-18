@@ -448,9 +448,16 @@ def test_every_disabled_control_explains_itself():
 
 
 def test_not_yet_available_controls_say_brevemente():
-    """The agreed wording for a deliberately inert control."""
+    """The agreed wording for a deliberately inert control.
+
+    The attachment slot was the last such control and now works, so none is
+    left. Any that comes back must say "Brevemente" rather than some other
+    "coming soon" phrase, so the app speaks about unfinished things one way.
+    """
     joined = "\n".join(_read(path) for path in _tsx_files())
-    assert "revemente" in joined, "no control is marked as coming soon; check none were left silently dead"
+    for other in ("Em breve", "em breve", "Ainda não disponível", "Coming soon"):
+        assert other not in joined, f'an inert control says "{other}"; the agreed word is "Brevemente"'
+    assert "Anexos: brevemente" not in joined, "the attachment slot is live; it must not say it is coming"
 
 
 def test_error_states_carry_something_actionable():
