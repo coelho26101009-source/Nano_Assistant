@@ -83,7 +83,7 @@ ICS = (
 
 def test_ics_import_unfolds_unescapes_and_converts_utc(memory, tmp_path):
     path = tmp_path / "agenda.ics"
-    path.write_text(ICS, encoding="utf-8")
+    path.write_bytes(ICS.encode("utf-8"))  # keep CRLF as-is on Windows
     result = cal.import_ics(str(path))
     assert result["imported"] == 2
 
@@ -99,7 +99,7 @@ def test_ics_import_unfolds_unescapes_and_converts_utc(memory, tmp_path):
 
 def test_importing_the_same_ics_twice_does_not_duplicate(memory, tmp_path):
     path = tmp_path / "agenda.ics"
-    path.write_text(ICS, encoding="utf-8")
+    path.write_bytes(ICS.encode("utf-8"))  # keep CRLF as-is on Windows
     cal.import_ics(str(path))
     again = cal.import_ics(str(path))
     assert again["imported"] == 0 and again["skipped"] == 2
@@ -108,7 +108,7 @@ def test_importing_the_same_ics_twice_does_not_duplicate(memory, tmp_path):
 
 def test_imported_events_can_be_deleted(memory, tmp_path):
     path = tmp_path / "agenda.ics"
-    path.write_text(ICS, encoding="utf-8")
+    path.write_bytes(ICS.encode("utf-8"))  # keep CRLF as-is on Windows
     cal.import_ics(str(path))
     event_id = memory.conn.execute("SELECT id FROM calendar_events LIMIT 1").fetchone()[0]
     assert cal.delete_event(event_id)["success"] is True
