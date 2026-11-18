@@ -2016,3 +2016,15 @@ kbd {
 .choice-chip:disabled { cursor: default; opacity: 0.55; }
 .choice-chip[aria-pressed="true"] { opacity: 1; border-color: var(--accent); }
 .msg__choices-more { align-self: center; font-size: var(--fs-sm); }
+
+/* ── Work modes (PC -> Modos) ─────────────────────────────────────────── */
+.work-mode__steps { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 4px;
+  font-size: var(--fs-sm); color: var(--text-secondary); overflow-wrap: anywhere; }
+.work-mode__result { margin-bottom: var(--sp-4); }
+.work-mode__outcomes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); }
+.work-mode__outcome { display: flex; gap: var(--sp-2); flex-wrap: wrap; min-width: 0; overflow-wrap: anywhere; }
+.work-mode__outcome-state { flex: none; min-width: 72px; font-weight: 600; }
+.work-mode__outcome--ok .work-mode__outcome-state { color: var(--success); }
+.work-mode__outcome--skipped .work-mode__outcome-state { color: var(--text-muted); }
+.work-mode__outcome--denied .work-mode__outcome-state,
+.work-mode__outcome--failed .work-mode__outcome-state { color: var(--warning); }

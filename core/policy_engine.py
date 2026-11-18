@@ -185,6 +185,8 @@ class PolicyEngine:
         # pc_app_launch and the CAPABILITIES are pc.app.launch. This table is
         # the only place the two vocabularies meet.
         "pc_app_search": "pc.app.search",
+        "work_mode_list": "pc.mode.read",
+        "work_mode_plan": "pc.mode.read",
         "pc_app_launch": "pc.app.launch",
         "pc_app_switch": "pc.app.switch",
         "pc_app_list_running": "pc.app.read",
@@ -349,6 +351,9 @@ class PolicyEngine:
             # whose risk is HIGH or CRITICAL. The sensitive three below rely on
             # exactly that.
             "pc.app.search": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Listing installed applications is read-only."),
+            # Work modes: reading a plan is read-only; applying it is the
+            # narrow tools in the plan, each with its own rule.
+            "pc.mode.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Reading a work mode's plan executes nothing."),
             "pc.window.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Listing open windows is read-only."),
             "pc.volume.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Reading the volume is read-only."),
             "pc.system.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "The system snapshot is read-only and carries no identifiers."),

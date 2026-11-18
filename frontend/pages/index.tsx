@@ -24,6 +24,7 @@ import PluginCodeModal from "../components/PluginCodeModal";
 import Rail, { type RailMode } from "../components/Rail";
 import CapabilitiesPage from "../components/CapabilitiesPage";
 import AgendaPage from "../components/AgendaPage";
+import WorkModesPage, { type WorkModeResult } from "../components/WorkModesPage";
 import SettingsPage, { type Section as SettingsSection } from "../components/SettingsPage";
 import TaskDetailModal from "../components/TaskDetailModal";
 import TopBar from "../components/TopBar";
@@ -93,6 +94,9 @@ function useNarrow(query = "(max-width: 1024px)"): boolean {
 export default function Home() {
   const { ready, gaveUp } = useBridgeReady();
   const { toasts, notify } = useToasts();
+  // PC -> Modos: which mode is running, and how the last one went.
+  const [modeRunning, setModeRunning] = useState<string | null>(null);
+  const [modeResult, setModeResult] = useState<WorkModeResult | null>(null);
   // Capability detection, resolved after mount. In a browser this stays false
   // and the window controls are simply never rendered.
   const isDesktop = useIsDesktop();
@@ -493,6 +497,14 @@ export default function Home() {
       const when = String(reminder?.due_label ?? "").trim();
       notify(when ? `⏰ ${when} · ${text}` : `⏰ ${text}`, "default");
     }, "on_reminder_due");
+
+    // A work mode finished. Each step went through the permission pipeline;
+    // the result says what really happened to each one.
+    expose((result: WorkModeResult) => {
+      setModeRunning(null);
+      setModeResult(result ?? null);
+      notify(result?.message ?? "O modo terminou.", result?.ok ? "success" : "error");
+    }, "on_work_mode_done");
 
     // The thread list, and the messages of whichever thread the backend
     // resumed. The backend picks that thread (the most recently active one) so
@@ -1321,6 +1333,21 @@ export default function Home() {
                   )}
                   {view === "capabilities" && <CapabilitiesPage enabled={ready} />}
                   {view === "agenda" && <AgendaPage enabled={ready} notify={notify} />}
+                  {view === "modes" && (
+                    <WorkModesPage
+                      enabled={ready} running={modeRunning} result={modeResult}
+                      onActivate={(modeId) => {
+                        setModeRunning(modeId);
+                        setModeResult(null);
+                        call<any>("activate_work_mode", modeId).then((ack) => {
+                          if (!ack?.accepted) {
+                            setModeRunning(null);
+                            notify("Não foi possível ativar o modo.", "error");
+                          }
+                        });
+                      }}
+                    />
+                  )}
                   {view === "integrations" && (
                     <IntegrationsPage
                       providers={providers} plugins={plugins} readiness={readiness}

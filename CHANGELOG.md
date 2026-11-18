@@ -22,6 +22,15 @@ versioning policy.
 
 ### Added
 
+- **Work modes are back, safely** (PC → Modos). A mode in `config/modes/*.yaml`
+  compiles into ordinary PC Control actions (close apps, open apps and sites,
+  set the volume, open a Windows Settings page); the page shows every step
+  before anything runs, and "Ativar" sends each one through the permission
+  pipeline. Closing apps asks each time and never forces; apps that are not
+  open are skipped without a prompt. The model gets read-only
+  `work_mode_list` / `work_mode_plan` and applies a mode with the narrow tools.
+  Mode ids are a closed allow-list of the files in the folder; terminals,
+  interpreters, paths and non-http(s) URLs are refused.
 - When a PC Control target is ambiguous (two windows called "relatório", two
   apps matching "Spotify"), the chat now shows the candidates as buttons under
   Nano's question. Pressing one sends a normal message naming the exact

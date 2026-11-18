@@ -34,7 +34,7 @@ from core.app_paths import DATA_DIR, FRONTEND_DIR, PLUGINS_DIR, ROOT, default_da
 from core.dotenv_gate import dotenv_allowed
 from core import data_migration
 from core import capability_catalogue, local_control_plane
-from core import agenda, clarification
+from core import agenda, clarification, work_modes
 from core import version as nano_version
 from core.brain import Brain
 from core.config import CONFIG_PATH, load_config
@@ -2576,6 +2576,41 @@ def forget_all_memory_facts() -> dict:
 #: the renderer: the renderer is the least trusted process in Nano, and an
 #: irreversible wipe must not be one stray bridge call away.
 ERASE_ALL_CONFIRMATION = "APAGAR TUDO"
+
+
+# ── Work modes (PC -> Modos) ───────────────────────────────────────────────
+
+@eel.expose
+def get_work_modes() -> dict:
+    """Every mode in config/modes with the steps it would take. Read-only."""
+    return {"ok": True, "modes": work_modes.list_modes()}
+
+
+async def _run_work_mode(mode_id: str) -> None:
+    try:
+        result = await work_modes.run(mode_id, tool_executor)
+    except Exception:
+        logger.exception("Modo de trabalho falhou")
+        result = {"ok": False, "id": str(mode_id)[:32], "message": "O modo falhou.", "steps": []}
+    _notify_ui("on_work_mode_done", result)
+
+
+@eel.expose
+def activate_work_mode(mode_id: str) -> dict:
+    """Start a work mode. Returns an ACK; the outcome arrives on on_work_mode_done.
+
+    Each step runs through ToolExecutor and may wait on a confirmation dialog,
+    so this must not hold the bridge thread for the whole mode.
+    """
+    if str(mode_id or "").strip().casefold() not in work_modes.available_ids():
+        return {"ok": False, "accepted": False, "error": "unknown_mode"}
+    try:
+        asyncio.run_coroutine_threadsafe(_run_work_mode(str(mode_id).strip().casefold()),
+                                         _get_or_create_loop())
+    except Exception:
+        logger.exception("Não foi possível arrancar o modo")
+        return {"ok": False, "accepted": False, "error": "dispatch_failed"}
+    return {"ok": True, "accepted": True}
 
 
 # ── Agenda page: reminders and calendar events ─────────────────────────────

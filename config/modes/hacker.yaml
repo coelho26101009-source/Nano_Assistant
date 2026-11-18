@@ -1,24 +1,22 @@
-# Modo Hacker — ambiente de desenvolvimento intenso
-name: "Modo Hacker 🧑‍💻"
-description: "VS Code, Docker, terminal e foco total"
-message: "Modo Hacker activado, Simão. Vai à luta! 🔥"
+# Modo Programar — ambiente de desenvolvimento.
+# Ver config/modes/foco.yaml para o formato. Terminais e interpretadores
+# (wt, powershell, cmd, bash…) são recusados: um modo não os pode abrir.
+name: "Modo Programar"
+description: "Editor de código, GitHub e documentação; fecha distrações."
+message: "Modo Programar ativo. Bom código!"
 
 close_apps:
-  - "Spotify.exe"
-  - "Discord.exe"
-  - "slack.exe"
-  - "Teams.exe"
-  - "WhatsApp.exe"
-  - "chrome.exe"    # fecha abas distratoras; reabre focadas abaixo
+  - "spotify"
+  - "discord"
+  - "slack"
+  - "whatsapp"
 
 open_apps:
-  - "code"                      # VS Code (deve estar no PATH)
-  - "wt"                        # Windows Terminal
-  # - "C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe"
+  - "Visual Studio Code"
 
 open_urls:
   - "https://github.com"
   - "https://stackoverflow.com"
 
 volume: 45
-focus_assist: true
+settings_section: "notifications"

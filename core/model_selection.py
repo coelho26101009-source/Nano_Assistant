@@ -180,7 +180,9 @@ _CATEGORY_TOOLS: dict[ToolCategory, tuple[str, ...]] = {
         # line.
         "system_stats", "pc_system_info", "pc_network_status", "pc_storage_info",
         "pc_settings_open",
-        "context_activate_mode", "context_list_modes",
+        "work_mode_list", "work_mode_plan",
+        # Applying a mode calls these; they must be in the same payload.
+        "pc_app_launch", "pc_window_batch_close", "pc_web_open_url", "pc_volume_set",
         "monitor_status", "monitor_start", "monitor_stop",
         "clean_windows_cache",
     ),

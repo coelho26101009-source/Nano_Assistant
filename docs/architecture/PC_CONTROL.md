@@ -701,6 +701,17 @@ The tool, its handler and its risk classifier are gone. `_run_project_tests` is
 the only remaining subprocess call in the executor, and it picks its argv from
 a closed allow-list with `shell=False`.
 
+## Work modes
+
+`core/work_modes.py` rebuilds the withdrawn Context Switcher on the narrow
+tools, as its tombstone prescribed. A mode file is data; it compiles into calls
+to `pc_window_batch_close`, `pc_app_launch`, `pc_web_open_url`,
+`pc_volume_set` and `pc_settings_open`, validated with those tools' own rules.
+The UI (PC → Modos) runs each step through `ToolExecutor`; the model can only
+read a plan (`work_mode_plan`, capability `pc.mode.read`, autonomous and
+low-risk) and must call the narrow tools itself. Focus Assist is not toggled:
+the mode opens the Notifications page and the person decides.
+
 ## Future expansion points
 
 * **Media session state.** `pc_media_control` sends the transport key and says

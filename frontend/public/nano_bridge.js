@@ -93,5 +93,9 @@
   function on_reminder_due(reminder) { return dispatch("on_reminder_due", [reminder]); }
   eel.expose(on_reminder_due, "on_reminder_due");
 
-  console.info("[nano-bridge] ready: 12 Python -> UI callbacks registered.");
+  // A work mode finished (PC -> Modos), with what each step did.
+  function on_work_mode_done(result) { return dispatch("on_work_mode_done", [result]); }
+  eel.expose(on_work_mode_done, "on_work_mode_done");
+
+  console.info("[nano-bridge] ready: 13 Python -> UI callbacks registered.");
 })();

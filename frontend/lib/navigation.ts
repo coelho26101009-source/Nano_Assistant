@@ -15,7 +15,7 @@
  */
 
 export type ViewId =
-  | "chat" | "agenda" | "tasks" | "activity"
+  | "chat" | "agenda" | "tasks" | "activity" | "modes"
   | "permissions" | "agents" | "memory" | "knowledge" | "graph" | "integrations"
   | "capabilities" | "status" | "settings";
 
@@ -66,6 +66,7 @@ export const SECTIONS: SectionEntry[] = [
       { id: "permissions", label: "Permissões", hint: "O que o NANO pode fazer neste computador" },
       { id: "activity", label: "Atividade", hint: "O que o NANO tem feito aqui" },
       { id: "tasks", label: "Tarefas", hint: "Trabalho em segundo plano" },
+      { id: "modes", label: "Modos", hint: "Preparar o PC para uma atividade" },
     ],
   },
   {
