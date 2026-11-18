@@ -131,8 +131,10 @@ function RowMenu({
 export default function Rail({
   mode, onToggle, view, onView, counts, version,
   threads, activeId, query, onQuery, onNew, onOpen, onRename, onDelete, onDeleteMany,
-  loading, unavailable, userName, onProfile,
+  loading, unavailable, userName, onProfile, onHelp,
 }: {
+  /** Open the keyboard shortcuts list. */
+  onHelp?: () => void;
   /** The user's name, when they gave one or memory knows it. */
   userName?: string | null;
   /** Open the personalisation settings. */
@@ -283,7 +285,7 @@ export default function Rail({
             silently ticked it instead of opening it. */}
         <Button
           variant="primary" block={!collapsed} icon={collapsed}
-          className="rail__new" title={t("Nova conversa (Ctrl+N)")}
+          className="rail__new" title={t("Nova conversa (Ctrl+Shift+O)")}
           onClick={() => { exitSelection(); onNew(); }}
         >
           <Icon name="plus" size={18} strokeWidth={2} />
@@ -443,6 +445,10 @@ export default function Rail({
           entry={settings} active={current === "settings"} badge={0}
           collapsed={collapsed} onView={onView}
         />
+        {!collapsed && onHelp && (
+          <button type="button" className="icon-btn rail__help" onClick={onHelp}
+                  aria-label={t("Atalhos de teclado")} title={t("Atalhos de teclado (?)")}>?</button>
+        )}
         {!collapsed && version && <span className="rail__version">{version}</span>}
       </div>
 

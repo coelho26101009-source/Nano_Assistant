@@ -782,7 +782,54 @@ export function Conversation({
   onChoose?: (reply: string) => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ block: "end" }); }, [messages, status]);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  /* FOLLOW THE ANSWER ONLY WHILE THE READER IS AT THE END.
+     Scrolling up to reread something used to be undone by the next streamed
+     chunk. Now the view follows only when it was already at the bottom, and a
+     button offers the way back down. Sending a message always goes down. */
+  const [atEnd, setAtEnd] = useState(true);
+  const atEndRef = useRef(true);
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    atEndRef.current = near;
+    setAtEnd(near);
+  };
+  const stick = useCallback(() => {
+    const el = scrollRef.current;
+    // "instant", not the stylesheet's smooth scrolling: a smooth scroll is
+    // still on its way down when the next chunk lands, its scroll events
+    // report "not at the end", and following stopped half way.
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "instant" as ScrollBehavior });
+  }, []);
+  // A new question (or another thread opened) always starts at the end. The
+  // question and its empty answer arrive together, so this keys on the last
+  // QUESTION, not on the last row.
+  const lastQuestion = [...messages].reverse().find((m) => m.role === "user")?.id;
+  useEffect(() => {
+    atEndRef.current = true;
+    setAtEnd(true);
+  }, [lastQuestion]);
+  useEffect(() => {
+    if (atEndRef.current) stick();
+  }, [messages, status, stick]);
+  // Content also grows with no new message: a code block or a table laid out
+  // after the text arrived. Following the size, not only the messages, is
+  // what keeps the end in view while the reader is there.
+  const shown = messages.length > 0 || thinking;
+  useEffect(() => {
+    const inner = scrollRef.current?.firstElementChild;
+    if (!inner || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => { if (atEndRef.current) stick(); });
+    observer.observe(inner);
+    return () => observer.disconnect();
+  }, [shown, stick]);
+  const toEnd = () => {
+    atEndRef.current = true;
+    setAtEnd(true);
+    endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+  };
   const standalone = needsStandaloneThinking(messages, thinking);
   const lastIndex = messages.length - 1;
   // A turn the user can ask again must exist as a question + answer pair. A
@@ -808,7 +855,8 @@ export function Conversation({
   }
 
   return (
-    <div className="conversation" role="log" aria-live="polite" aria-label={t("Conversa")}>
+    <div className="conversation" role="log" aria-live="polite" aria-label={t("Conversa")}
+         ref={scrollRef} onScroll={onScroll}>
       <div className="conversation__inner">
         {messages.map((message, index) => {
           const isLast = index === lastIndex;
@@ -832,6 +880,12 @@ export function Conversation({
         )}
         <div ref={endRef} />
       </div>
+      {!atEnd && (
+        <button type="button" className="conversation__to-end" onClick={toEnd}
+                aria-label={t("Ir para o fim da conversa")} title={t("Ir para o fim da conversa")}>
+          <Icon name="arrowDown" size={18} />
+        </button>
+      )}
     </div>
   );
 }

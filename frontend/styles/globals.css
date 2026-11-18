@@ -2121,3 +2121,25 @@ kbd {
 }
 .rail__profile-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); font-weight: 500; }
 .rail[data-mode="collapsed"] .rail__profile { flex: none; justify-content: center; padding: 6px; }
+
+/* ── Back to the end of the conversation ────────────────────────────────── */
+.conversation__to-end {
+  position: sticky; bottom: 12px; align-self: center; z-index: 2;
+  display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%;
+  border: 1px solid var(--border-strong); background: var(--surface-raised); color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .18);
+  transition: background var(--transition);
+}
+.conversation__to-end:hover { background: var(--surface-hover); }
+
+/* ── Keyboard shortcuts list ────────────────────────────────────────────── */
+.shortcuts { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 16px; margin: 0; align-items: center; }
+.shortcuts dt { color: var(--text-secondary); font-size: var(--fs-sm); }
+.shortcuts dd { margin: 0; display: flex; align-items: center; gap: 4px; }
+.shortcuts kbd {
+  min-width: 26px; padding: 3px 7px; border-radius: 6px; text-align: center;
+  border: 1px solid var(--border-strong); background: var(--surface-hover);
+  font: 500 12px/1.2 var(--font-mono, ui-monospace, monospace); color: var(--text-primary);
+}
+.shortcuts__plus { color: var(--text-dim); font-size: 11px; }
+.rail__help { flex: none; width: 28px; height: 28px; font-weight: 600; font-size: 13px; color: var(--text-muted); }
