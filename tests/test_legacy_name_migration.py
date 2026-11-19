@@ -10,9 +10,23 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def _make_db(path: Path, text: str) -> None:
-    with sqlite3.connect(str(path)) as conn:
+    # Closed explicitly: `with sqlite3.connect()` only commits, and Windows
+    # refuses to rename a file another handle still has open.
+    conn = sqlite3.connect(str(path))
+    try:
         conn.execute("CREATE TABLE messages (content TEXT)")
         conn.execute("INSERT INTO messages VALUES (?)", (text,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _first_message(path: Path) -> str:
+    conn = sqlite3.connect(str(path))
+    try:
+        return conn.execute("SELECT content FROM messages").fetchone()[0]
+    finally:
+        conn.close()
 
 
 def test_an_old_helios_database_is_renamed_with_its_side_files(tmp_path):
@@ -23,8 +37,7 @@ def test_an_old_helios_database_is_renamed_with_its_side_files(tmp_path):
     assert memory_module.adopt_legacy_database(target) is True
     assert target.exists() and (tmp_path / "nano.db-wal").exists()
     assert not (tmp_path / "helios.db").exists()
-    with sqlite3.connect(str(target)) as conn:
-        assert conn.execute("SELECT content FROM messages").fetchone()[0] == "olá do passado"
+    assert _first_message(target) == "olá do passado"
 
 
 def test_an_existing_nano_database_is_never_overwritten(tmp_path):
@@ -32,9 +45,24 @@ def test_an_existing_nano_database_is_never_overwritten(tmp_path):
     _make_db(tmp_path / "nano.db", "new")
 
     assert memory_module.adopt_legacy_database(tmp_path / "nano.db") is False
-    with sqlite3.connect(str(tmp_path / "nano.db")) as conn:
-        assert conn.execute("SELECT content FROM messages").fetchone()[0] == "new"
+    assert _first_message(tmp_path / "nano.db") == "new"
     assert (tmp_path / "helios.db").exists()
+
+
+def test_a_failed_rename_puts_everything_back(tmp_path, monkeypatch):
+    _make_db(tmp_path / "helios.db", "old")
+    (tmp_path / "helios.db-wal").write_bytes(b"wal")
+    real_rename = Path.rename
+
+    def locked(self, target):
+        if self.name == "helios.db":
+            raise PermissionError("in use")
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", locked)
+    assert memory_module.adopt_legacy_database(tmp_path / "nano.db") is False
+    assert (tmp_path / "helios.db").exists() and (tmp_path / "helios.db-wal").exists()
+    assert not (tmp_path / "nano.db").exists() and not (tmp_path / "nano.db-wal").exists()
 
 
 def test_nothing_to_adopt_is_a_no_op(tmp_path):

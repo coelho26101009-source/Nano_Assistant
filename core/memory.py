@@ -30,13 +30,24 @@ def adopt_legacy_database(path=None) -> bool:
     legacy = target.with_name(LEGACY_DB_NAME)
     if target.exists() or not legacy.exists():
         return False
+    # The side files first and the database last, so a failure half-way never
+    # leaves a nano.db without the WAL that belongs to it; whatever was moved
+    # is moved back, and the next start tries again.
+    moved: list[tuple] = []
     try:
-        for suffix in _SQLITE_SIDE_FILES:
+        for suffix in reversed(_SQLITE_SIDE_FILES):
             source = legacy.with_name(LEGACY_DB_NAME + suffix)
             if source.exists():
-                source.rename(target.with_name(target.name + suffix))
+                destination = target.with_name(target.name + suffix)
+                source.rename(destination)
+                moved.append((destination, source))
     except OSError:
         logger.exception("Não foi possível renomear %s para %s", legacy.name, target.name)
+        for destination, source in reversed(moved):
+            try:
+                destination.rename(source)
+            except OSError:
+                logger.exception("Não foi possível repor %s", source.name)
         return False
     logger.info("Base de dados antiga %s renomeada para %s", legacy.name, target.name)
     return True

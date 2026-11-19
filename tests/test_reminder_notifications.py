@@ -128,7 +128,7 @@ def test_windows_toast_never_puts_text_on_the_command_line(monkeypatch):
 
     monkeypatch.setattr(windows_toast.sys, "platform", "win32")
     monkeypatch.setattr(subprocess, "run", fake_run)
-    hostile = "'; Remove-Item C:\ -Recurse; '<x>"
+    hostile = r"'; Remove-Item C:\ -Recurse; '<x>"
     assert windows_toast.show("Lembrete", hostile) is True
     args, env = calls[0]
     assert all(hostile not in a for a in args)
