@@ -28,9 +28,20 @@ SENSITIVE_TOOLS: dict[str, dict] = {
     "calendar_add_event": {"check": lambda _args: True, "message": "Vou criar um evento no teu calendário. Confirmas?"},
     "calendar_delete_event": {"check": lambda _args: True, "message": "Vou apagar um evento do teu calendário. Confirmas?"},
     "calendar_import_ics": {"check": lambda _args: True, "message": "Vou importar eventos para o teu calendário. Confirmas?"},
-    "set_reminder": {"check": lambda _args: True, "message": "Vou criar um lembrete que ficará ativo em segundo plano. Confirmas?"},
+    # set_reminder used to be here. A reminder only shows a notification on
+    # this PC at the time asked, and is cancelled in one click, so asking
+    # "Confirmas?" for "lembra-me daqui a 10 minutos" was a click too many.
+    # It still asks when the turn already read outside content (see
+    # UNATTENDED_AFTER_TRUSTED_ONLY and Brain._run_tool), and its message
+    # stays below for that case.
     "cancel_reminder": {"check": lambda _args: True, "message": "Vou cancelar um lembrete existente. Confirmas?"},
     "rag_index_pdf": {"check": lambda _args: True, "message": "Vou ler e indexar um documento local na memória do Nano Assistant. Confirmas?"},
+}
+
+#: Tools that run without a card only while the turn has read nothing from
+#: outside (pages, screen, documents). Brain asks for them otherwise.
+UNATTENDED_AFTER_TRUSTED_ONLY: dict[str, str] = {
+    "set_reminder": "Vou criar um lembrete que ficará ativo em segundo plano. Confirmas?",
 }
 
 ALWAYS_CONFIRM = {
@@ -74,7 +85,7 @@ class GuardrailsEngine:
 
     async def ask_confirmation(self, tool_name: str, args: dict) -> bool:
         rule = SENSITIVE_TOOLS.get(tool_name, {})
-        message = rule.get("message", f"Vou executar '{tool_name}'. Confirmas?")
+        message = rule.get("message") or UNATTENDED_AFTER_TRUSTED_ONLY.get(tool_name) or f"Vou executar '{tool_name}'. Confirmas?"
         if self._confirm_callback is None:
             logger.error("Guardrail sem callback — operação bloqueada")
             return False

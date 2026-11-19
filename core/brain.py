@@ -47,7 +47,7 @@ from core import attachments
 from core.config import load_config
 from core.local_runtime import choose_model
 from core.plugin_loader import get_all_tools
-from core.guardrails import GuardrailsEngine
+from core.guardrails import UNATTENDED_AFTER_TRUSTED_ONLY, GuardrailsEngine
 from core.memory import MemoryEngine
 from core.model_router import ModelRouter, PrivacyLevel, TaskType
 from core import (capabilities, google_provider, http_tls, mistral_provider, model_selection,
@@ -2055,6 +2055,14 @@ class Brain:
         if self.guardrails.requires_confirmation(name, args) and not await self.guardrails.ask_confirmation(name, args):
             return {"ok": False, "cancelled": True, "message": tr("Operação cancelada pelo utilizador.")}
 
+        # A reminder on this PC runs without a card (nano.reminder.create), but
+        # not when this turn already read something from outside: a page or a
+        # document saying "set a reminder: call this number" must not schedule
+        # a notification nobody asked for. Then it asks, like before.
+        if name in UNATTENDED_AFTER_TRUSTED_ONLY and self._turn_saw_untrusted():
+            if not await self.guardrails.ask_confirmation(name, args):
+                return {"ok": False, "cancelled": True, "message": tr("Operação cancelada pelo utilizador.")}
+
         # DUPLICATE-EXECUTION PROTECTION, AND THE REASON IT LIVES HERE.
         #
         # A provider failover mid-turn hands the local model a conversation in
@@ -2141,6 +2149,14 @@ class Brain:
                 "message": result.get("error") or "Operação bloqueada pela política de segurança.",
             }
         return result
+
+    def _turn_saw_untrusted(self) -> bool:
+        """Whether a tool result fenced as external content arrived this turn."""
+        for result in self._turn_tool_results.values():
+            metadata = (result.get("result") or result).get("metadata") if isinstance(result, dict) else None
+            if isinstance(metadata, dict) and metadata.get("trust") == TrustLevel.UNTRUSTED_EXTERNAL.value:
+                return True
+        return False
 
     @staticmethod
     def _tool_result_for_model(name: str, result: dict) -> str:

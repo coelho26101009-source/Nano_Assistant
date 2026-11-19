@@ -23,7 +23,7 @@ def test_reading_nanos_own_data_does_not_ask_or_block(tool):
 
 
 @pytest.mark.parametrize("tool", [
-    "set_reminder", "cancel_reminder", "calendar_add_event", "calendar_delete_event",
+    "cancel_reminder", "calendar_add_event", "calendar_delete_event",
     "remember_fact", "forget_fact", "rag_index_pdf", "iot_command", "phone_notify",
 ])
 def test_changing_or_sending_still_asks(tool):

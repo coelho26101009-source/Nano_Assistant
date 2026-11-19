@@ -170,7 +170,9 @@ class PolicyEngine:
         "calendar_add_event": "external.send",
         "calendar_delete_event": "external.send",
         "calendar_import_ics": "external.send",
-        "set_reminder": "external.send",
+        # A reminder is a notification on this PC, stored in nano.db; nothing
+        # leaves the computer. Cancelling one still asks (external.send).
+        "set_reminder": "nano.reminder.create",
         "cancel_reminder": "external.send",
         "organize_downloads": "filesystem.write",
         "clean_windows_cache": "filesystem.delete",
@@ -370,6 +372,7 @@ class PolicyEngine:
             # narrow tools in the plan, each with its own rule.
             "pc.mode.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Reading a work mode's plan executes nothing."),
             "nano.data.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Reading NANO's own agenda, facts and history changes nothing."),
+            "nano.reminder.create": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "A reminder only shows a notification on this PC and is cancelled in one click."),
             "nano.documents.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Searching documents the user indexed changes nothing; the text is untrusted."),
             "pc.window.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Listing open windows is read-only."),
             "pc.volume.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Reading the volume is read-only."),

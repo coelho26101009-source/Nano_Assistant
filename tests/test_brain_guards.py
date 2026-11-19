@@ -11,7 +11,8 @@ def test_mutating_tools_require_confirmation():
     assert guard.requires_confirmation("system_files", {"operation": "read"}) is False
     assert guard.requires_confirmation("system_files", {"operation": "move"}) is True
     assert guard.requires_confirmation("iot_command", {"device": "lamp", "action": "on"}) is True
-    assert guard.requires_confirmation("set_reminder", {"text": "test", "when": "10 minutos"}) is True
+    # A reminder on this PC no longer asks; see tests/test_reminder_no_card.py.
+    assert guard.requires_confirmation("set_reminder", {"text": "test", "when": "10 minutos"}) is False
 
 
 @pytest.mark.asyncio
