@@ -143,7 +143,7 @@ conversas fica à esquerda, e a cápsula de voz funciona fora da janela principa
 | **Memória** | Memória de longo prazo com extração determinística e recuperação (RAG) |
 | **Second Brain** | Nós e relações derivados das memórias ativas |
 | **Voz** | Hotkey global, STT local com faster-whisper, TTS através do Edge |
-| **PC Control** | 56 ferramentas estreitas: apps, janelas, áudio, teclado, ficheiros, web, ecrã, sistema, energia e capturas |
+| **PC Control** | 57 ferramentas estreitas: apps, janelas, áudio, teclado, ficheiros, web, ecrã, sistema, energia e capturas |
 | **Segurança** | Validação de esquema + PolicyEngine + PermissionManager + ToolExecutor + target binding |
 | **Extensibilidade** | Sistema de plugins/tools com autorização centralizada |
 

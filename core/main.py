@@ -39,6 +39,7 @@ from core import attachments as chat_attachments
 from core import i18n
 from core import vision
 from core import proactive
+from core import local_setup
 from core.i18n import tr
 from core.brain import Brain
 from core.config import CONFIG_PATH, load_config
@@ -1838,6 +1839,76 @@ def set_local_model(model: str) -> dict:
     brain.invalidate_provider_snapshot()
     logger.info("Modelo local: %s", chosen)
     return {"ok": True, "model": chosen, "providers": _providers_after_change()}
+
+
+local_downloader = local_setup.Downloader()
+_LOCAL_HARDWARE: dict | None = None
+
+
+def _local_base_url() -> str:
+    return brain.ollama_url.removesuffix("/api/chat")
+
+
+@eel.expose
+def get_local_setup() -> dict:
+    """Definições → Ollama: what this PC can run, the model to offer, the download.
+
+    The hardware is probed once per session (nvidia-smi is a subprocess) and
+    off the hub. Ollama's state is the shared measurement, read without
+    waiting. Nothing here downloads anything.
+    """
+    global _LOCAL_HARDWARE
+    if _LOCAL_HARDWARE is None:
+        try:
+            _LOCAL_HARDWARE = _off_hub(local_setup.detect_hardware, timeout=8.0)
+        except TimeoutError:
+            return {"ok": False, "error": "hardware_probe_timeout"}
+    status = ollama_service.STATUS.peek(brain.ollama_model, _local_base_url(),
+                                        local_enabled=brain.local_enabled)
+    installed = list(status.get("installed") or [])
+    recommendation = local_setup.recommend(_LOCAL_HARDWARE)
+    return {
+        "ok": True,
+        "hardware": _LOCAL_HARDWARE,
+        "recommended": recommendation,
+        "choices": [{**choice, "installed": ollama_service.model_installed(choice["model"], installed)}
+                    for choice in local_setup.choices()],
+        "ollama": {"state": str(getattr(status.get("state"), "value", status.get("state")) or ""),
+                   "up": bool(status.get("ollamaUp")),
+                   "installed": installed,
+                   "currentModel": brain.ollama_model,
+                   "downloadUrl": local_setup.OLLAMA_DOWNLOAD_URL},
+        "download": local_downloader.status(),
+    }
+
+
+def _activate_downloaded_model(model: str) -> None:
+    """After a guided download: make it the local model, live and persisted."""
+    user_settings.set_value("local_model", model)
+    CONFIG.setdefault("local", {})["model"] = model
+    brain.ollama_model = model
+    ollama_service.STATUS.invalidate()
+    brain.invalidate_provider_snapshot()
+    logger.info("Modelo local descarregado e ativado: %s", model)
+
+
+@eel.expose
+def start_local_download(model: str = "") -> dict:
+    """Download one of the offered light models, because the person pressed the button.
+
+    Only names from ``local_setup.RECOMMENDED`` are accepted. Progress is read
+    back with ``get_local_setup()["download"]``.
+    """
+    chosen = str(model or "").strip()
+    if not brain.local_enabled:
+        return {"ok": False, "error": "local_disabled"}
+    if chosen not in local_setup.ALLOWED_MODELS:
+        return {"ok": False, "error": "model_not_offered"}
+    status = ollama_service.STATUS.peek(brain.ollama_model, _local_base_url())
+    if status.get("state") == ollama_service.OllamaState.NOT_INSTALLED:
+        return {"ok": False, "error": "ollama_not_installed",
+                "detail": tr("Primeiro instala o Ollama (é grátis) e depois volta aqui.")}
+    return local_downloader.start(chosen, _local_base_url(), on_done=_activate_downloaded_model)
 
 
 @eel.expose

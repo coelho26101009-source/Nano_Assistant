@@ -10,8 +10,9 @@ Design rules this module exists to enforce:
   preload a model. On a 16 GB machine the idle cost of the server is tens of
   megabytes; an 8B model is several gigabytes, so it must only load when a real
   user request needs it.
-* **Never download.** No `ollama pull`, ever. A missing model is reported, not
-  fetched.
+* **Never download on its own.** No `ollama pull` from here, ever. A missing
+  model is reported, not fetched. The one pull in NANO is the guided setup in
+  ``core.local_setup``, started only by the person pressing its button.
 * **Nano does not own the user's Ollama.** We do not kill it on shutdown: it is
   a shared background service, other tools may be using it, and the model
   unloads by itself via OLLAMA_KEEP_ALIVE.

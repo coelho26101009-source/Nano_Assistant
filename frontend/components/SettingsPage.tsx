@@ -441,6 +441,103 @@ function LanguagePanel({ language }: { language?: SettingsPayload["language"] })
   );
 }
 
+type LocalSetup = {
+  ok: boolean;
+  hardware?: { ram_gb: number; cpu_cores: number; gpu: { name: string; vram_gb: number } | null; free_disk_gb: number };
+  recommended?: { model: string; sizeGb: number; label: string; why: string; warnings: string[] };
+  choices?: { model: string; sizeGb: number; label: string; installed: boolean }[];
+  ollama?: { state: string; up: boolean; installed: string[]; currentModel: string; downloadUrl: string };
+  download?: { state: string; model?: string; percent?: number; completedGb?: number; totalGb?: number; message?: string };
+};
+
+/**
+ * Guided local model (core/local_setup.py): looks at this PC, recommends ONE
+ * light model that writes, sees and uses tools, and downloads it only when the
+ * person presses the button. It is the fallback when the cloud fails or runs
+ * out, and the only model in LOCAL mode.
+ */
+function LocalSetupPanel() {
+  const [setup, setSetup] = useState<LocalSetup | null>(null);
+  const [choice, setChoice] = useState("");
+  const [error, setError] = useState("");
+  const refresh = React.useCallback(async () => {
+    const next = await call<LocalSetup>("get_local_setup");
+    if (next?.ok) setSetup(next);
+  }, []);
+  React.useEffect(() => { void refresh(); }, [refresh]);
+  const downloading = setup?.download?.state === "downloading";
+  React.useEffect(() => {
+    if (!downloading) return;
+    const timer = window.setInterval(() => { void refresh(); }, 1000);
+    return () => window.clearInterval(timer);
+  }, [downloading, refresh]);
+  if (!setup) return null;
+  const hw = setup.hardware;
+  const rec = setup.recommended;
+  const selected = choice || rec?.model || "";
+  const selectedInfo = setup.choices?.find((c) => c.model === selected);
+  const notInstalled = setup.ollama?.state === "NOT_INSTALLED";
+  const start = async () => {
+    setError("");
+    const result = await call<{ ok: boolean; error?: string; detail?: string }>("start_local_download", selected);
+    if (!result?.ok) setError(result?.detail || t("Não foi possível começar a descarga."));
+    void refresh();
+  };
+  return (
+    <Panel title={t("IA no teu PC: configuração guiada")} action={<Badge tone="info">{t("grátis e sem limite")}</Badge>}>
+      <p className="muted" style={{ fontSize: 13, marginBottom: 10 }}>{t("Um modelo leve no teu PC serve de segunda opção: quando a nuvem falha ou chega ao limite, o NANO continua a responder com ele. Escreve, vê imagens e o ecrã, e usa as ferramentas do NANO. Nada sai do computador.")}</p>
+      {hw && (
+        <MetricRow label={t("O teu PC")} value={
+          [t("{0} GB de RAM", { 0: hw.ram_gb }), t("{0} núcleos", { 0: hw.cpu_cores }),
+           hw.gpu ? `${hw.gpu.name} (${hw.gpu.vram_gb} GB)` : t("sem placa NVIDIA detetada")].join(" · ")
+        } />
+      )}
+      {rec && <p className="dim" style={{ fontSize: 12, margin: "8px 0", lineHeight: 1.6 }}>{rec.why}</p>}
+      {rec?.warnings?.map((warning) => (
+        <p key={warning} className="dim" role="alert" style={{ fontSize: 12, marginBottom: 6 }}>⚠ {warning}</p>
+      ))}
+      {notInstalled ? (
+        <>
+          <p className="muted" style={{ fontSize: 13, margin: "8px 0" }}>{t("Primeiro é preciso o Ollama, o programa grátis que corre os modelos no teu PC.")}</p>
+          <a className="btn btn--sm" href={setup.ollama?.downloadUrl} target="_blank" rel="noreferrer noopener">{t("Descarregar o Ollama")}</a>
+          <Button size="sm" variant="ghost" onClick={() => { void refresh(); }} style={{ marginLeft: 8 }}>{t("Já instalei")}</Button>
+        </>
+      ) : (
+        <>
+          <Field label={t("Modelo")}>
+            <select className="select" value={selected} disabled={downloading}
+                    onChange={(e) => setChoice(e.target.value)}>
+              {setup.choices?.map((c) => (
+                <option key={c.model} value={c.model}>
+                  {`${c.model} · ~${c.sizeGb} GB · ${c.label}`}{c.model === rec?.model ? ` (${t("recomendado")})` : ""}{c.installed ? ` ✓` : ""}
+                </option>
+              ))}
+            </select>
+          </Field>
+          {downloading ? (
+            <div style={{ marginTop: 8 }}>
+              <progress max={100} value={setup.download?.percent ?? 0} style={{ width: "100%" }} />
+              <p className="dim" style={{ fontSize: 12 }}>
+                {setup.download?.message} {setup.download?.totalGb ? `${setup.download?.completedGb} / ${setup.download?.totalGb} GB` : ""}
+              </p>
+            </div>
+          ) : (
+            <div style={{ marginTop: 8 }}>
+              <Button size="sm" onClick={() => { void start(); }}
+                      disabled={selectedInfo?.installed && setup.ollama?.currentModel === selected}>
+                {selectedInfo?.installed ? t("Usar este modelo") : t("Descarregar e usar")}
+              </Button>
+            </div>
+          )}
+          {setup.download?.state === "done" && <p className="dim" style={{ fontSize: 12, marginTop: 6 }}>✓ {setup.download.message}</p>}
+          {setup.download?.state === "error" && <p className="dim" role="alert" style={{ fontSize: 12, marginTop: 6 }}>{setup.download.message}</p>}
+          {error && <p className="dim" role="alert" style={{ fontSize: 12, marginTop: 6 }}>{error}</p>}
+        </>
+      )}
+    </Panel>
+  );
+}
+
 /**
  * NANO speaks first (core/proactive.py): a morning briefing and a heads-up
  * before events. Built locally from the agenda; no model, nothing sent.
@@ -675,7 +772,7 @@ export default function SettingsPage({
                 <>
                   <div style={{ height: 10 }} />
                   <Field label={t("Modelo local")}
-                         hint={t("Apenas modelos já instalados. O NANO não descarrega modelos por ti.")}>
+                         hint={t("Apenas modelos já instalados. Para descarregar um, usa a configuração guiada abaixo.")}>
                     <select className="select" value={ollama.model}
                             onChange={(e) => onSetLocalModel(e.target.value)}
                             disabled={busy}>
@@ -693,6 +790,7 @@ export default function SettingsPage({
               {ollama?.detail && <p className="dim" style={{ fontSize: 12, marginTop: 6 }}>{ollama.detail}</p>}
               <p className="dim" style={{ fontSize: 11, marginTop: 10 }}>{t("O NANO arranca o servidor Ollama se ainda não estiver a correr, mas nunca carrega o modelo antecipadamente: só é carregado quando um pedido precisa mesmo dele.")}</p>
             </Panel>
+            <LocalSetupPanel />
           </div>
         )}
 
