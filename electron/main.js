@@ -357,6 +357,16 @@ function showNativeNotification(toast) {
       icon: appIcon(),
     });
     notification.on('click', () => showMainWindow());
+    /* Windows can refuse the toast outright: with notifications turned off in
+       Settings → System → Notifications (or Do not disturb on) it fires
+       'failed' with "Settings prevent the notification type from being
+       delivered" -- seen on a real Windows 11 PC. A reminder that reaches
+       nobody is the worst outcome, so bring the window up without stealing
+       focus (the page shows the reminder itself) and flash the taskbar. */
+    notification.on('failed', (_event, error) => {
+      log('Notificação do Windows recusada:', String(error || ''));
+      revealForMissedNotification();
+    });
     notification.show();
     return true;
   } catch (err) {
@@ -703,6 +713,14 @@ function showMainWindow() {
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
+}
+
+/** A reminder Windows would not show: put Nano on screen, unfocused, and flash it. */
+function revealForMissedNotification() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  if (!mainWindow.isVisible()) mainWindow.showInactive();
+  if (typeof mainWindow.flashFrame === 'function') mainWindow.flashFrame(true);
 }
 
 function sendWindowState() {
