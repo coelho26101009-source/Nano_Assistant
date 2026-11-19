@@ -14,13 +14,18 @@ const archive = path.join(root, 'resources', 'app.asar');
 const resources = path.join(root, 'resources', 'app');
 const forbidden = /(^|\/)(?:\.env(?:\.[^/]*)?|\.git|\.agents|\.vscode|tests?|_probe\.json|secrets\.dat|user_settings\.json|permission_policies\.json|desktop-state\.json|credentials\.json)(\/|$)|\.(?:db|sqlite3?)(?:-(?:wal|shm|journal))?$|\.log(?:\.\d+)?$/i;
 const credential = /\b(?:gsk_[A-Za-z0-9]{32,}|sk-(?:proj-)?[A-Za-z0-9_-]{32,}|AIza[A-Za-z0-9_-]{35})\b|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/;
+// Same rule as verify-package-inputs.js: inside site-packages a PEM header on
+// its own is a parser constant (cryptography's ssh.py); only a header followed
+// by key material is a key.
+const vendoredCredential = /\b(?:gsk_[A-Za-z0-9]{32,}|sk-(?:proj-)?[A-Za-z0-9_-]{32,}|AIza[A-Za-z0-9_-]{35})\b|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----\s*[A-Za-z0-9+/=]{40,}/;
 const files = [];
 const failures = [];
 
 function check(name, bytes) {
   const normalized = name.replaceAll('\\', '/');
   if (forbidden.test(normalized)) failures.push(`forbidden path: ${normalized}`);
-  if (bytes && /\.(?:py|js|json|ya?ml|html|txt|ini|cfg)$/i.test(normalized) && credential.test(bytes.toString('utf8'))) {
+  const rule = normalized.includes('/site-packages/') ? vendoredCredential : credential;
+  if (bytes && /\.(?:py|js|json|ya?ml|html|txt|ini|cfg)$/i.test(normalized) && rule.test(bytes.toString('utf8'))) {
     failures.push(`credential-shaped content (withheld): ${normalized}`);
   }
 }
