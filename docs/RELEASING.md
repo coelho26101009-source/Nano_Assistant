@@ -8,6 +8,23 @@ the MSI is built by the workflow but not published. There is no automatic
 updater: Beta updates are manual. Notes:
 [RELEASE_NOTES_0.3.0-beta.1.md](RELEASE_NOTES_0.3.0-beta.1.md).
 
+How 0.3.0-beta.1 was actually built, because it did not follow the flow below
+exactly: the tag `v0.3.0-beta.1` points at `f40fd3e`, but the workflow at that
+tag could not build (Ubuntu 26.04 runners lack Python 3.12.10, `get-pip.py`
+changed upstream, and the package gates flagged `cryptography`'s OpenSSH
+header constant and pip's vendored certifi tests). Those were fixed on `main`
+and the installer was built from `059628a` with `publish_release: false`; the
+diff from the tag is build tooling and documentation only, no application
+code. The release was then created by hand with `gh release create`.
+
+| Asset | SHA-256 |
+| --- | --- |
+| `Nano-Setup-0.3.0-beta.1-x64.exe` | `27f20bb1896d5e8368115ea727b98050b1a41d4be59f532dbd8e4a87b749edf4` |
+| `NANO-Android-0.3.0-beta.1.apk` | `4ac996af8add52ac9a8f84e4fd8d1ff0b461ab3727baee716d35a7e98d85388e` |
+
+The next Beta can go back to the normal flow: tag, then dispatch the workflow on
+the tag with `publish_release: true`, then attach the APK.
+
 The first Beta shipped with the open items in
 [`PUBLIC_RELEASE_CHECKLIST.md`](PUBLIC_RELEASE_CHECKLIST.md) still unchecked,
 including clean Windows validation. Clean-machine validation remains open for
