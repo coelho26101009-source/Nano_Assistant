@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.2.0-beta.1"><img alt="Beta publica" src="https://img.shields.io/badge/Beta%20p%C3%BAblica-v0.2.0--beta.1-2F6FED?style=for-the-badge" /></a>
+  <a href="https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.3.0-beta.1"><img alt="Beta publica" src="https://img.shields.io/badge/Beta%20p%C3%BAblica-v0.3.0--beta.1-2F6FED?style=for-the-badge" /></a>
   <img alt="Licenca" src="https://img.shields.io/badge/Licen%C3%A7a-Apache%202.0-111111?style=for-the-badge" />
 </p>
 
@@ -26,11 +26,11 @@
 
 > ### Estado do projeto — Beta pública
 >
-> **Versão atual: `0.2.0-beta.1`.** Esta é a segunda Beta pública do Nano. Não
+> **Versão atual: `0.3.0-beta.1`.** Esta é a terceira Beta pública do Nano ("Beta 3"). Não
 > é uma versão estável e não é 1.0. Espera arestas por limar e guarda cópias do
 > que for importante para ti.
 >
-> O `version.json` diz `0.2.0-beta.1`: é a **versão canónica** que a interface,
+> O `version.json` diz `0.3.0-beta.1`: é a **versão canónica** que a interface,
 > a shell Electron, o backend e o instalador leem para não se contradizerem.
 > Segue a política pré-1.0 descrita em [`docs/RELEASING.md`](docs/RELEASING.md).
 >
@@ -45,20 +45,21 @@
 ## Descarregar
 
 <p align="center">
-  <a href="https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.2.0-beta.1"><strong>Descarregar o Nano 0.2.0-beta.1 para Windows</strong></a>
+  <a href="https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.3.0-beta.1"><strong>Descarregar o Nano 0.3.0-beta.1 para Windows</strong></a>
 </p>
 
 | | |
 |---|---|
-| **Instalador recomendado** | `Nano-Setup-0.2.0-beta.1-x64.exe` |
+| **Instalador recomendado** | `Nano-Setup-0.3.0-beta.1-x64.exe` |
 | **Sistema** | Windows 10/11 **x64** |
 | **Verificação** | `SHA256SUMS.txt`, na mesma página de release |
 | **Assinatura** | não assinado — ver o aviso acima |
+| **Telemóvel (Android)** | `NANO-Android-0.3.0-beta.1.apk`, na mesma página — ver [guia do telemóvel](docs/TESTAR_NO_TELEMOVEL.md) |
 | **Todas as versões** | [página de releases](https://github.com/coelho26101009-source/Nano_Assistant/releases) |
 
 ### Instalar
 
-1. Descarrega `Nano-Setup-0.2.0-beta.1-x64.exe` da página de release.
+1. Descarrega `Nano-Setup-0.3.0-beta.1-x64.exe` da página de release.
 2. Confirma a soma de verificação (abaixo).
 3. Executa o instalador. Se o Windows mostrar *Editor desconhecido*, isso é
    esperado numa Beta não assinada: escolhe **Mais informações → Executar
@@ -68,10 +69,18 @@
 Para confirmar a descarga, no PowerShell:
 
 ```powershell
-Get-FileHash .\Nano-Setup-0.2.0-beta.1-x64.exe -Algorithm SHA256
+Get-FileHash .\Nano-Setup-0.3.0-beta.1-x64.exe -Algorithm SHA256
 ```
 
 O valor tem de coincidir com a linha correspondente em `SHA256SUMS.txt`.
+
+### O que há de novo na Beta 3
+
+Voz em inglês e conversa contínua, o NANO a ver o ecrã e a ler PDFs e imagens,
+memória que liga o que sabe à agenda, um resumo de manhã e avisos antes dos
+eventos, IA local com configuração guiada, tarefas de vários passos e a app
+Android. Lista completa nas [notas da versão](docs/RELEASE_NOTES_0.3.0-beta.1.md)
+e no [CHANGELOG](CHANGELOG.md).
 
 ### A seguir
 

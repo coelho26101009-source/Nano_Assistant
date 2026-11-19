@@ -20,7 +20,89 @@ versioning policy.
 
 ## [Unreleased]
 
+Nothing yet.
+
+---
+
+## [0.3.0-beta.1] - 2026-11-19
+
+The third public Beta ("Beta 3"). Still a pre-release: the Windows installer is
+unsigned, updates are manual, and the Android app is a test build installed by
+hand. The numeric part moved from 0.2 to 0.3 so Windows treats it as newer than
+0.2.0-beta.1 (see [docs/RELEASING.md](docs/RELEASING.md)).
+
+### Highlights
+
+- **English by default, Portuguese too.** The interface follows the system
+  language (English when NANO does not speak it yet), with a selector in
+  Settings → General. NANO answers in the language you write in.
+- **Voice in English and continuous conversation.** Speech recognition, the
+  voice and the wake phrase ("hey nano" / "ei nano") follow the interface
+  language. After a spoken answer NANO keeps listening for a few seconds, so a
+  conversation does not need the hotkey every time. Full-screen voice mode:
+  Ctrl+Shift+M.
+- **NANO sees.** With your permission it can describe the screen with a vision
+  model, read the text on screen with Windows' own OCR, and watch the screen for
+  a while ("let me know when the download finishes"). Messages accept PDFs,
+  images and text files.
+- **Memory that knows you.** NANO remembers facts about you without repeating
+  them, refuses secrets and hearsay, and links what it knows to your agenda
+  ("Maths test tomorrow" → "you said maths is hard for you").
+- **NANO speaks first.** A morning briefing, a heads-up before events, and an
+  offer to get ready the evening before something important. Built locally from
+  your agenda; it never acts on its own.
+- **Local AI, guided.** Settings → AI → "AI on your PC: guided setup" looks at your PC, recommends one light
+  model that writes, sees and uses tools, and downloads it on one click.
+- **Tasks of several steps.** For a request that takes three or more actions,
+  NANO shows the plan once and carries it out after your yes.
+- **NANO on the phone (Android).** A companion app for the NANO on your PC, with
+  chat, voice, agenda and reminders, end-to-end encrypted.
+
 ### Added
+
+- **Languages.** Every interface string has an English entry
+  (`frontend/lib/locales/en.ts`, `core/locales/en.py`); `tests/test_i18n.py`
+  fails on a missing one. The erase-all phrase is accepted in either language.
+- **Voice follows the language** (`core/voice_language.py`): transcription
+  forced to the interface language, `en-US-GuyNeural` / `pt-PT-DuarteNeural`,
+  wake phrase and vocabulary hint switched live. **Continuous conversation**
+  (Settings → Voice, on by default) ends on silence, "that's all" / "é tudo" or
+  after 6 follow-ups. **Barge-in** (off by default) lets you interrupt NANO.
+- **Full-screen voice mode** (Ctrl+Shift+M, the command palette or the waves
+  button): one big control, the turn's phase as a ring, the last exchange.
+- **See the screen** (`core/vision.py`, `pc_screen_describe`): off by default
+  (Settings → Privacy → "See the screen with AI"), always asks, refuses password
+  managers, keeps no image. In LOCAL mode only an Ollama vision model is used.
+- **Watch the screen** (`core/screen_watch.py`, `pc_screen_watch`): up to 3
+  watches of up to 120 minutes for a window or a piece of text that appears or
+  disappears. NANO only tells you; it never acts.
+- **Attachments:** up to 5 text files per message, plus PDFs (read locally with
+  pypdf) and images (described by the vision model). File contents reach the
+  model inside the untrusted-content fence.
+- **Memory M2:** recall questions no longer become memories; English facts
+  ("I'm a…", "I like…", "call me…"); secrets in natural phrasing (short
+  passwords, PINs, card numbers, IBANs, more API key families) and permission
+  claims are refused. 53 regression cases.
+- **Memory meets the agenda** (`core/proactive.py`): between 18:00 and 23:00 NANO
+  offers to help prepare for tomorrow's exam, interview, meeting or trip, with up
+  to two related facts. Settings → General → "Help me get ready for tomorrow".
+- **Proactivity:** a daily briefing (08:00 by default) and a warning a few
+  minutes before events, in the chat and as a Windows notification. Settings →
+  General → "NANO speaks first".
+- **Guided local AI** (`core/local_setup.py`): reads RAM, cores, GPU memory and
+  free disk, recommends one Qwen3-VL size (2b / 4b / 8b), links to Ollama when it
+  is missing, and downloads only when you press the button.
+- **Tasks of several steps** (`plugins/task_plan.py`): the plan is shown once;
+  approving it skips only the extra "are you sure?" for the tools it listed in
+  that turn. Closing apps, power, deleting and sending still ask.
+- **Design review:** a three-step first run (brain, privacy, name); a personal
+  home; approval cards inside the conversation; pinned chats and projects in
+  the sidebar; "Open beside" for long answers and code; retry and edit on the
+  last turn; a keyboard shortcuts list; an Advanced mode switch that hides
+  developer pages by default; theme "Follow the system".
+- **Reminders on this PC are created without a confirmation card** (they still
+  ask when the same turn read outside content). Read-only tools (list reminders,
+  events, facts, documents) no longer ask either.
 
 - **NANO on the phone (Android).** A new app in `mobile/` (Capacitor + React)
   that is a remote for the NANO on your PC: the same conversations, memory and
@@ -30,8 +112,9 @@ versioning policy.
   European Portuguese. Pairing is a QR code in Settings → General → Phone plus a
   yes on the PC; every message is end-to-end sealed with AES-256-GCM
   (`core/mobile_link.py`). Away from home it works over Tailscale, with no port
-  opened to the internet. CI builds a test APK (`android-test` pre-release) and a
-  Play Store bundle (`.github/workflows/android.yml`).
+  opened to the internet. The APK is attached to this release; CI also builds a
+  rolling test APK (`android-test` pre-release) and a Play Store bundle
+  (`.github/workflows/android.yml`).
 
 ### Fixed
 
@@ -61,7 +144,7 @@ versioning policy.
 - `docs/CODE_SIGNING.md`: signing options for the installers, and the exact
   electron-builder and workflow changes to make once an account exists.
 
-### Added
+### Added (agenda, reminders, screen text and privacy)
 
 - **Recurring reminders and everyday phrases.** Reminders understand
   "amanhã às 9", "sexta às 15h", "depois de amanhã", "9 e meia" and "3 da
@@ -212,7 +295,7 @@ The first public Beta. Pre-release: not a stable version, not 1.0.
 
 ---
 
-## [Unreleased]
+## Milestones before the first release
 
 ### Documentation truth pass — 2026-09-09
 

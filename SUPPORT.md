@@ -1,7 +1,7 @@
 # Support
 
 Nano is in active development. The current public pre-release is
-[`0.2.0-beta.1`](https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.2.0-beta.1)
+[`0.3.0-beta.1`](https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.3.0-beta.1)
 for Windows x64. There is no support contract. What follows is where to put each
 kind of message so it reaches the right place.
 

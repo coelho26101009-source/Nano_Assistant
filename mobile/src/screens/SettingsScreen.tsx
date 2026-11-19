@@ -10,7 +10,7 @@ import { PrivacyPolicy } from "./Privacy";
 export type SpeakMode = "voice" | "always" | "never";
 export type ThemeChoice = "dark" | "light" | "system";
 
-export const APP_VERSION = "0.1.0";
+export const APP_VERSION = "0.3.0-beta.1";
 
 function stateText(state: LinkState, pcName: string): string {
   switch (state) {

@@ -54,6 +54,8 @@ Icons and store graphics: `python3 scripts/make_icons.py` (from the supplied art
 
 CI (`.github/workflows/android.yml`) builds both on every push to `mobile/`. On
 `main` it publishes the test APK as the rolling **android-test** pre-release.
+Official Betas attach the APK from the release commit to the version's own
+release (for example `v0.3.0-beta.1`).
 
 ### Your Play Store upload key (once, on your own computer)
 

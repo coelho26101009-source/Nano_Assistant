@@ -12,7 +12,8 @@ security fixes land on `main` and can be included in later Beta releases.
 | Version | Supported |
 | --- | --- |
 | `main` (development) | Yes — fixes land here |
-| `0.2.0-beta.1` | Current public Beta; update manually when a fix is released |
+| `0.3.0-beta.1` | Current public Beta; update manually when a fix is released |
+| `0.2.0-beta.1` | Previous Beta; update to the current Beta |
 | `0.1.0-beta.1` | Previous Beta; update to the current Beta |
 
 There is no automatic updater or promised backport schedule.
