@@ -93,26 +93,41 @@ e no [CHANGELOG](CHANGELOG.md).
 
 ## Como é
 
-Capturas da aplicação atual, feitas num perfil isolado com conteúdo de
-demonstração. A Beta continua em desenvolvimento.
+Capturas do NANO 0.3.0-beta.1 com a interface em inglês, feitas num perfil
+isolado com uma pessoa fictícia ("Alex") e dados de demonstração. Nenhuma
+mostra dados reais nem chaves.
 
 ### Ambiente de trabalho
 
 <p align="center">
-  <img src="docs/assets/screenshots/nano-home.png" alt="Ecrã inicial escuro do NANO, com o símbolo N e o compositor" width="900" />
+  <img src="docs/assets/screenshots/nano-home.png" alt="Ecrã inicial do NANO em inglês: conversas à esquerda, cumprimento pelo nome, campo de mensagem e sugestões" width="900" />
 </p>
 
-### Conversa local
+### Conversa com memória e painel lateral
 
 <p align="center">
-  <img src="docs/assets/screenshots/nano-thinking.png" alt="NANO a processar um pedido real num perfil de demonstração" width="440" />
-  <img src="docs/assets/screenshots/nano-conversation.png" alt="Resposta real do modelo local Ollama no NANO" width="440" />
+  <img src="docs/assets/screenshots/nano-chat.png" alt="Plano de estudo curto do modelo local que usa o que o NANO sabe sobre a pessoa" width="440" />
+  <img src="docs/assets/screenshots/nano-side-panel.png" alt="Resposta com código Python aberta no painel lateral, ao lado da conversa" width="440" />
 </p>
 
-### NANO Brain
+### Modo de voz e Agenda
 
 <p align="center">
-  <img src="docs/assets/screenshots/nano-brain.png" alt="Grafo do NANO Brain com três nós de demonstração e duas ligações reais" width="900" />
+  <img src="docs/assets/screenshots/nano-voice-mode.png" alt="Modo de voz em ecrã inteiro, com o estado de escuta simulado" width="440" />
+  <img src="docs/assets/screenshots/nano-agenda.png" alt="Agenda com lembretes que se repetem e eventos fictícios" width="440" />
+</p>
+
+### Memória
+
+<p align="center">
+  <img src="docs/assets/screenshots/nano-memory.png" alt="Página Memória com sete memórias de demonstração criadas pelo utilizador" width="900" />
+</p>
+
+### No telemóvel (Android)
+
+<p align="center">
+  <img src="docs/assets/screenshots/nano-phone-chat.png" alt="App Android do NANO: conversa sobre o teste de amanhã" width="260" />
+  <img src="docs/assets/screenshots/nano-phone-agenda.png" alt="App Android do NANO: agenda com lembretes e eventos" width="260" />
 </p>
 
 ### Overlay de voz
@@ -121,8 +136,10 @@ demonstração. A Beta continua em desenvolvimento.
   <img src="docs/assets/screenshots/nano-overlay.png" alt="Cápsula de voz NANO no estado de escuta, simulada em Electron sobre fundo claro" width="760" />
 </p>
 
-O estado de escuta na última captura foi simulado no renderer Electron para
-verificar a apresentação; não representa um teste humano do microfone.
+O estado de escuta no modo de voz e na cápsula foi simulado para mostrar a
+apresentação; não representa um teste humano do microfone. As capturas do
+telemóvel vêm da app a correr com dados de demonstração, sem ligação a um PC
+real.
 
 ## O que é o Nano?
 
