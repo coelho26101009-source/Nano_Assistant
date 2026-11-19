@@ -52,6 +52,25 @@ LATEST_BRIEFING_HOUR = 14
 
 _TIME = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 
+#: The evening before an event that needs getting ready for, NANO offers to
+#: help, from this hour until PREP_LATEST_HOUR.
+PREP_HOUR = 18
+PREP_LATEST_HOUR = 23
+#: Events worth getting ready for (accents and case ignored, whole words).
+PREP_KEYWORDS = (
+    "teste", "exame", "frequencia", "apresentacao", "entrevista", "prova", "oral",
+    "defesa", "reuniao", "consulta", "viagem", "voo", "jogo", "treino",
+    "test", "exam", "quiz", "presentation", "interview", "meeting", "appointment",
+    "flight", "trip", "match", "deadline", "entrega",
+)
+#: Short words that say nothing about what a fact and an event share.
+_STOPWORDS = frozenset({
+    "para", "com", "uma", "umas", "uns", "das", "dos", "que", "por", "mais", "como", "sobre",
+    "the", "and", "with", "for", "from", "this", "that", "meu", "minha", "teu", "tua",
+    "amanha", "hoje", "dia", "tomorrow", "today",
+})
+MAX_RELATED_FACTS = 2
+
 
 def valid_time(value: Any) -> bool:
     return isinstance(value, str) and bool(_TIME.match(value))
@@ -71,6 +90,7 @@ def _settings() -> dict[str, Any]:
         "briefing_time": briefing_time if valid_time(briefing_time) else DEFAULT_BRIEFING_TIME,
         "event_alerts": get("proactive_event_alerts", True) is not False,
         "lead_minutes": lead if lead in LEAD_MINUTES_CHOICES else DEFAULT_LEAD_MINUTES,
+        "prep": get("proactive_prep", True) is not False,
         "name": str(get("display_name", "") or "").strip(),
     }
 
@@ -89,6 +109,51 @@ def parse_when(value: Any) -> datetime | None:
     if moment.tzinfo is not None:
         moment = moment.astimezone().replace(tzinfo=None)
     return moment
+
+
+def _plain(text: str) -> str:
+    import unicodedata
+
+    decomposed = unicodedata.normalize("NFD", str(text or "").casefold())
+    return "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
+
+
+def _significant_words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]{4,}", _plain(text)) if w not in _STOPWORDS}
+
+
+def needs_preparation(title: str) -> bool:
+    words = set(re.findall(r"[a-z0-9]+", _plain(title)))
+    return any(keyword in words for keyword in PREP_KEYWORDS)
+
+
+def related_facts(title: str, facts: list[str], *, limit: int = MAX_RELATED_FACTS) -> list[str]:
+    """What NANO remembers that shares a meaningful word with an event title.
+
+    "Teste de matemática" finds "Tenho dificuldades em matemática" and
+    "O professor de matemática é o Rui"; generic words (para, amanhã, the...)
+    never count.
+    """
+    keys = _significant_words(title) - {k for k in PREP_KEYWORDS}
+    if not keys:
+        return []
+    scored = []
+    for fact in facts:
+        overlap = len(keys & _significant_words(fact))
+        if overlap:
+            scored.append((-overlap, len(fact), str(fact).strip()[:160]))
+    return [text for _, _, text in sorted(scored)[:limit]]
+
+
+def build_prep_notice(title: str, start: datetime, facts: list[str]) -> dict:
+    """The evening-before offer: "tens teste de matemática amanhã, queres rever?"."""
+    lines = [tr("Amanhã às {time} tens “{title}”. Queres preparar-te? Posso ajudar a rever, "
+                "fazer um resumo ou organizar o que precisas.", time=_hhmm(start), title=title)]
+    related = related_facts(title, facts)
+    if related:
+        lines.append(tr("O que me lembro sobre isto:"))
+        lines += [f"• {fact}" for fact in related]
+    return {"kind": "prep", "title": tr("Para amanhã"), "text": "\n".join(lines)}
 
 
 def _hhmm(moment: datetime) -> str:
@@ -120,7 +185,8 @@ def _items_on(day: datetime, overview: dict) -> tuple[list[tuple[datetime, str]]
     return sorted(events), sorted(reminders)
 
 
-def build_briefing(overview: dict, now: datetime, *, name: str = "") -> dict:
+def build_briefing(overview: dict, now: datetime, *, name: str = "",
+                   facts: list[str] | None = None) -> dict:
     """The morning briefing as ``{"title", "text"}``. Pure; no I/O."""
     events, reminders = _items_on(now, overview)
     later_events = [item for item in events if item[0] >= now - timedelta(minutes=30)]
@@ -130,7 +196,10 @@ def build_briefing(overview: dict, now: datetime, *, name: str = "") -> dict:
         lines.append(tr("Hoje não tens nada na agenda."))
     if later_events:
         lines.append(tr("Hoje na agenda:"))
-        lines += [f"• {_hhmm(start)} {title}" for start, title in later_events[:MAX_LISTED]]
+        for start, title in later_events[:MAX_LISTED]:
+            lines.append(f"• {_hhmm(start)} {title}")
+            # One thing NANO remembers about it, if anything matches.
+            lines += [f"   ↳ {fact}" for fact in related_facts(title, facts or [], limit=1)]
         if len(later_events) > MAX_LISTED:
             lines.append(tr("• e mais {count}", count=len(later_events) - MAX_LISTED))
     if reminders:
@@ -158,8 +227,10 @@ class ProactiveScheduler:
 
     def __init__(self, *, overview: Callable[[], dict], emit: Callable[[dict], None],
                  state_path: Path | None, settings: Callable[[], dict] = _settings,
-                 now: Callable[[], datetime] = datetime.now):
+                 now: Callable[[], datetime] = datetime.now,
+                 facts: Callable[[], list[str]] | None = None):
         self._overview = overview
+        self._facts = facts
         self._emit = emit
         self._settings = settings
         self._now = now
@@ -204,7 +275,7 @@ class ProactiveScheduler:
     def tick(self) -> list[dict]:
         """Emit whatever is due now. Returns what was emitted."""
         settings = self._settings()
-        if not settings.get("briefing") and not settings.get("event_alerts"):
+        if not (settings.get("briefing") or settings.get("event_alerts") or settings.get("prep")):
             return []
         now = self._now()
         try:
@@ -221,7 +292,8 @@ class ProactiveScheduler:
             today = now.date().isoformat()
             if (now >= due and now.hour < max(LATEST_BRIEFING_HOUR, hour + 1)
                     and self._state["last_briefing"] != today):
-                out.append(build_briefing(overview, now, name=settings.get("name", "")))
+                out.append(build_briefing(overview, now, name=settings.get("name", ""),
+                                          facts=self._read_facts()))
                 self._state["last_briefing"] = today
                 changed = True
 
@@ -240,6 +312,23 @@ class ProactiveScheduler:
                     self._state["announced"] = (self._state["announced"] + [key])[-200:]
                     changed = True
 
+        if settings.get("prep") and PREP_HOUR <= now.hour < PREP_LATEST_HOUR:
+            tomorrow = (now + timedelta(days=1)).date()
+            facts = None
+            for event in overview.get("events") or []:
+                start = parse_when(event.get("start"))
+                title = str(event.get("title") or "").strip()[:120]
+                if start is None or start.date() != tomorrow or not needs_preparation(title):
+                    continue
+                key = f"prep:{event.get('id')}@{start.date().isoformat()}"
+                if key in self._state["announced"]:
+                    continue
+                if facts is None:
+                    facts = self._read_facts()
+                out.append(build_prep_notice(title, start, facts))
+                self._state["announced"] = (self._state["announced"] + [key])[-200:]
+                changed = True
+
         if changed:
             self._save()
         for notice in out:
@@ -248,6 +337,15 @@ class ProactiveScheduler:
             except Exception:
                 logger.debug("Falha a mostrar um aviso proativo", exc_info=True)
         return out
+
+    def _read_facts(self) -> list[str]:
+        if self._facts is None:
+            return []
+        try:
+            return [str(f) for f in (self._facts() or [])][:300]
+        except Exception:
+            logger.debug("Memória indisponível para a proatividade", exc_info=True)
+            return []
 
     def _read_overview(self) -> dict:
         stamp = time.monotonic()
@@ -264,7 +362,8 @@ class ProactiveScheduler:
             overview = self._overview() or {}
         except Exception:
             overview = {}
-        return build_briefing(overview, self._now(), name=settings.get("name", ""))
+        return build_briefing(overview, self._now(), name=settings.get("name", ""),
+                              facts=self._read_facts())
 
     # ── the thread ───────────────────────────────────────────────────────
     def start(self) -> None:

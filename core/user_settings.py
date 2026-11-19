@@ -81,7 +81,7 @@ ALLOWED_KEYS: frozenset[str] = frozenset({
     "screen_vision_enabled",
     # Proactivity: NANO speaks first (core/proactive.py). On by default.
     "proactive_briefing", "proactive_briefing_time",
-    "proactive_event_alerts", "proactive_event_lead_minutes",
+    "proactive_event_alerts", "proactive_event_lead_minutes", "proactive_prep",
 })
 
 _BOOLEAN_KEYS = frozenset({
@@ -89,7 +89,7 @@ _BOOLEAN_KEYS = frozenset({
     "voice_enabled", "tts_enabled", "typed_chat_tts", "voice_reply_tts",
     "voice_conversation_mode", "voice_barge_in", "reduce_motion", "memory_facts_enabled", "memory_rag_enabled",
     "memory_long_term_enabled", "memory_auto_capture", "advanced_mode", "screen_text_enabled",
-    "screen_vision_enabled", "proactive_briefing", "proactive_event_alerts",
+    "screen_vision_enabled", "proactive_briefing", "proactive_event_alerts", "proactive_prep",
 })
 
 

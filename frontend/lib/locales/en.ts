@@ -1112,4 +1112,6 @@ export const EN: Record<string, string> = {
   "Depois de responder, o NANO fica uns segundos à escuta para a pergunta seguinte, sem atalho nem frase de ativação. Diz “obrigado” ou “é tudo” para terminar.": "After answering, NANO keeps listening for a few seconds for your next question, with no shortcut or wake phrase. Say “thanks” or “that's all” to finish.",
   "Interromper o NANO a falar": "Interrupt NANO while it talks",
   "Se falares por cima, o NANO cala-se e ouve-te. Funciona melhor com auscultadores: com colunas o NANO pode ouvir-se a si próprio.": "If you talk over NANO, it stops and listens. Works best with headphones: with speakers NANO may hear itself.",
+  "Ajudar a preparar o dia seguinte": "Help me get ready for tomorrow",
+  "Ao fim da tarde, se amanhã tens um teste, uma reunião ou uma viagem, o NANO pergunta se te queres preparar e lembra o que sabe sobre isso.": "In the evening, if you have a test, a meeting or a trip tomorrow, NANO asks whether you want to get ready and recalls what it knows about it.",
 };

@@ -2047,6 +2047,7 @@ def get_settings() -> dict:
             "briefingTime": user_settings.get("proactive_briefing_time", proactive.DEFAULT_BRIEFING_TIME),
             "eventAlerts": user_settings.get("proactive_event_alerts", True) is not False,
             "leadMinutes": user_settings.get("proactive_event_lead_minutes", proactive.DEFAULT_LEAD_MINUTES),
+            "prep": user_settings.get("proactive_prep", True) is not False,
         },
         "stored": user_settings.all_settings(),
         "runtime": get_runtime_info(),
@@ -3474,9 +3475,20 @@ def _on_proactive_notice(notice: dict) -> None:
     _notify_ui("on_proactive_notice", payload)
 
 
+def _remembered_facts() -> list[str]:
+    """What NANO remembers about the person, for the briefing and the evening
+    offer to prepare (core/proactive.py). Empty when memory is switched off."""
+    out: list[str] = []
+    if brain.facts_enabled:
+        out += [f"{key}: {value}" for key, value in (memory.get_facts() or {}).items()]
+    if memory_stack.ready and memory_stack.long_term_enabled:
+        out += [str(row.get("text") or "") for row in memory_stack.memories.list(limit=100)]
+    return [fact for fact in out if fact.strip()]
+
+
 proactive_scheduler = proactive.ProactiveScheduler(
     overview=lambda: agenda.overview(days=2), emit=_on_proactive_notice,
-    state_path=DATA_DIR / "proactive_state.json")
+    state_path=DATA_DIR / "proactive_state.json", facts=_remembered_facts)
 # Screen watches ("avisa-me quando o download acabar") speak the same way.
 screen_watch.WATCHER.configure(emit=_on_proactive_notice)
 

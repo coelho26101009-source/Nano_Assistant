@@ -298,4 +298,7 @@ EN: dict[str, str] = {
     "Cada passo precisa de 'label' e de uma ferramenta válida.": "Each step needs a 'label' and a valid tool.",
     "Vou fazer isto para “{goal}”:": "Here's what I'll do for “{goal}”:",
     "Avanço? O que mexer em coisas importantes ainda te pergunto à parte.": "Shall I go ahead? Anything that touches important things I'll still ask about separately.",
+    "Amanhã às {time} tens “{title}”. Queres preparar-te? Posso ajudar a rever, fazer um resumo ou organizar o que precisas.": "Tomorrow at {time} you have “{title}”. Want to get ready? I can help you review, make a summary or organise what you need.",
+    "O que me lembro sobre isto:": "What I remember about it:",
+    "Para amanhã": "For tomorrow",
 }

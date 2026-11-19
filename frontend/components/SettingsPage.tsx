@@ -582,6 +582,12 @@ function ProactivePanel({ proactive, onUpdate, onShowBriefing }: {
           </select>
         </Field>
       )}
+      <Toggle
+        label={t("Ajudar a preparar o dia seguinte")}
+        hint={t("Ao fim da tarde, se amanhã tens um teste, uma reunião ou uma viagem, o NANO pergunta se te queres preparar e lembra o que sabe sobre isso.")}
+        checked={proactive?.prep ?? true}
+        onChange={(value) => onUpdate("proactive_prep", value)}
+      />
       <div style={{ marginTop: 8 }}>
         <Button size="sm" onClick={onShowBriefing}>{t("Mostrar o resumo agora")}</Button>
       </div>
