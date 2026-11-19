@@ -40,6 +40,7 @@ from typing import AsyncIterator, Any, NamedTuple
 import httpx
 from groq import AsyncGroq, DefaultAsyncHttpxClient
 from core import clarification
+from core import reminder_intent
 from core.i18n import tr
 from core import i18n
 from core import attachments
@@ -1421,6 +1422,12 @@ class Brain:
             text = "".join(text_parts)
 
             if not calls:
+                # A model that SAYS it set a reminder when no reminder tool ran
+                # this turn is corrected on screen, never left standing.
+                note = self._unbacked_reminder_note(text)
+                if note:
+                    yield note
+                    text += note
                 self.conversation.append({"role": "assistant", "content": text})
                 outcome["done"] = True
                 return
@@ -1466,6 +1473,16 @@ class Brain:
         self.turn_clarification = None
         self.conversation.append({"role": "user", "content": user_message})
         self._trim_conversation()
+
+        # A CLEAR REMINDER REQUEST NEVER DEPENDS ON THE MODEL. Measured: Groq
+        # answered "Já registei um lembrete" to "lembra-me daqui a 1 minuto de
+        # beber água" without calling set_reminder, so nothing was scheduled.
+        # See core/reminder_intent.py.
+        reminder = reminder_intent.parse(user_message)
+        if reminder is not None:
+            async for token in self._direct_reminder(reminder):
+                yield token
+            return
 
         route = await self.route_for_async(user_message)
         task = route.get("task") or model_selection.TaskClass.SMALL_TALK.value
@@ -1625,6 +1642,61 @@ class Brain:
                     did_work=self._turn_has_tool_results()):
                 yield token
             return
+
+    def _unbacked_reminder_note(self, answer: str) -> str | None:
+        """The correction for "Já registei um lembrete" with no reminder created.
+
+        Only when no set_reminder call was made in this turn: a turn that did
+        call it reports its real result through the tool row.
+        """
+        if not reminder_intent.claims_a_reminder(answer):
+            return None
+        for entry in reversed(self.conversation):
+            if entry.get("role") == "user":
+                break
+            for call in entry.get("tool_calls") or ():
+                if (call.get("function") or {}).get("name") == "set_reminder":
+                    return None
+        logger.warning("The model claimed a reminder without calling set_reminder")
+        return "\n\n" + reminder_intent.unbacked_claim_note(answer)
+
+    async def _direct_reminder(self, request) -> AsyncIterator[str]:
+        """Create the reminder the person clearly asked for, then say so.
+
+        It goes through ``_run_tool`` -- guardrails, policy, permission and the
+        executor -- exactly like a call the model made. The conversation gets
+        the same assistant/tool rows a model call would leave, so a later turn
+        ("cancela esse lembrete") sees what happened.
+        """
+        self.last_provider_used = None
+        self.last_metadata = {
+            "task": "reminder", "tier": None, "mode": getattr(self, "provider_mode", "AUTO"),
+            "provider": None, "model": None, "fallback_used": False,
+            "tools_offered": 1, "direct_action": "set_reminder", "provider_attempts": [],
+        }
+        args = {"text": reminder_intent.default_text(request), "when": request.when}
+        call = {"id": "call_direct_reminder", "type": "function",
+                "function": {"name": "set_reminder",
+                             "arguments": json.dumps(args, ensure_ascii=False)}}
+        self.conversation.append({"role": "assistant", "content": None, "tool_calls": [call]})
+        yield "_thinking_:⚙️ set_reminder..."
+        try:
+            result = await self._run_tool({"function": call["function"]})
+        except Exception:
+            logger.exception("Direct reminder failed")
+            result = {"ok": False, "error": "tool_failed"}
+        output = result.get("output") if isinstance(result.get("output"), dict) else None
+        effective = dict(output) if output else {}
+        effective["success"] = bool(result.get("success")) and bool(
+            (output or {}).get("success", "error" not in (output or {})))
+        for key in ("cancelled", "message", "error"):
+            if key in result and key not in effective:
+                effective[key] = result[key]
+        self.conversation.append({"role": "tool", "tool_call_id": call["id"],
+                                  "content": self._tool_result_for_model("set_reminder", result)})
+        answer = reminder_intent.confirmation(request, effective)
+        self.conversation.append({"role": "assistant", "content": answer})
+        yield answer
 
     async def _late_alternatives(self, route: dict, *, tried: set[str]) -> list[tuple[str, str]]:
         """Cloud providers that could not be alternatives when this turn was

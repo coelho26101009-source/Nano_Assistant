@@ -231,6 +231,7 @@ EN: dict[str, str] = {
     '{message} ({done} de {total} passos feitos.)': '{message} ({done} of {total} steps done.)',
     '{mode}: {done} de {total} passos feitos.': '{mode}: {done} of {total} steps done.',
     'Lembrete criado.': 'Reminder created.',
+    'Lembrete': 'Reminder',
     'Evento criado.': 'Event created.',
     'Qual destas?': 'Which one?',
 }

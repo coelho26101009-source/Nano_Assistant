@@ -3546,7 +3546,7 @@ def _on_reminder_due(reminder: dict) -> None:
         # a slow PowerShell never delays the scheduler.
         from core import windows_toast
 
-        title = f"Lembrete · {payload['due_label']}" if payload["due_label"] else "Lembrete"
+        title = tr("Lembrete") + (f" · {payload['due_label']}" if payload["due_label"] else "")
         threading.Thread(target=windows_toast.show, args=(title, payload["text"]),
                          name="nano-reminder-toast", daemon=True).start()
     _notify_ui("on_reminder_due", payload)
