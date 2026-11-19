@@ -387,7 +387,9 @@ cryptography==50.0.2 \
     --hash=sha256:f9f6143a8c75945eb960d9eb98905a441394abfa24afaae239d514ffb2586480 \
     --hash=sha256:fa8f5efb344d6908a1ce62f4a24e2e5780f825d6f53f5f50ec5ffacac72936cb \
     --hash=sha256:fdd28f912fccfec1846a94e2e1e8f9b0012f557f0c46fe4f3eb0d7a87afcf90b
-    # via google-auth
+    # via
+    #   -c requirements/runtime.lock
+    #   google-auth
 ctranslate2==4.9.0 \
     --hash=sha256:02e43bfd939fc7d8786e1a450f918a04d6112c35a5c509817d1b3fbcab138260 \
     --hash=sha256:09b76668c5b9b7b583e65224713ab1964a79d2f1f22f80c2577e79b9eaa6e8e0 \

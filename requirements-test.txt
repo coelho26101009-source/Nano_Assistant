@@ -17,3 +17,6 @@ pypdf>=6.21.4,<7
 # It also pulls in bottle, bottle-websocket, gevent and gevent-websocket,
 # which core/local_control_plane.py needs. None of this is audio/GUI/hardware.
 eel>=0.18,<1
+# core/mobile_link.py (phone pairing and the sealed messages) and the QR code.
+cryptography>=46,<51
+segno>=1.6,<2

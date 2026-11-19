@@ -40,6 +40,7 @@ from core import i18n
 from core import vision
 from core import proactive
 from core import local_setup
+from core import mobile_link, mobile_server
 from core.i18n import tr
 from core.brain import Brain
 from core.config import CONFIG_PATH, load_config
@@ -2193,6 +2194,8 @@ def update_setting(key: str, value) -> dict:
     elif key == "memory_auto_capture":
         CONFIG.setdefault("memory", {})["auto_capture"] = bool(value)
         memory_stack.capture_enabled = bool(value)
+    elif key == "mobile_access_enabled":
+        _apply_mobile_access(value is True)
 
     return {"ok": True, "key": key, "value": value, "settings": get_settings()}
 
@@ -3041,6 +3044,284 @@ def get_system_stats() -> dict:
         "networkRecvMb": network_recv,
     }
 
+
+# ===========================================================================
+#  NANO ON THE PHONE
+# ===========================================================================
+# The phone app is a remote for this NANO (core/mobile_link.py explains the
+# pairing and the encryption, core/mobile_server.py the network side). The
+# methods below are the WHOLE surface a paired phone has: each is a thin,
+# typed wrapper over the same function the PC window calls, so a message sent
+# from the phone is answered by the same Brain, with the same memory, and every
+# tool it triggers goes through the same policy, guardrails and approvals.
+# Nothing here changes settings, keys, permissions or the emergency stop.
+
+def _mobile_pair_requested(info: dict) -> None:
+    _notify_ui("on_mobile_pair_request", info)
+
+
+MOBILE = mobile_link.MobileLink(on_pair_request=_mobile_pair_requested)
+_MOBILE_SERVER: mobile_server.MobileServer | None = None
+_MOBILE_LOCK = threading.Lock()
+_SECRETISH = re.compile(r"secret|token|password|key|credential", re.I)
+
+
+def _mobile_port() -> int:
+    try:
+        port = int(os.getenv("NANO_MOBILE_PORT") or 0)
+    except ValueError:
+        port = 0
+    return port if 1024 <= port <= 65535 else mobile_link.DEFAULT_PORT
+
+
+def _mobile_confirm_listener(phase: str, request_id: str, message, meta) -> bool:
+    """Show the PC's approval requests on the phone too, and take them down."""
+    if phase == "resolved":
+        # Both screens take the card down, whichever one answered it.
+        _notify_ui("on_confirm_resolved", request_id)
+        return True
+    server = _MOBILE_SERVER
+    if server is None or not server.running or not MOBILE.devices.has_devices():
+        return False
+    meta = dict(meta or {})
+    args = meta.get("args") if isinstance(meta.get("args"), dict) else {}
+    meta["args"] = {str(k): str(v)[:200] for k, v in args.items()
+                    if not str(k).startswith("_") and not _SECRETISH.search(str(k))}
+    for key in ("_task_id", "_pc_target"):
+        meta.pop(key, None)
+    MOBILE.publish("on_confirm_request", request_id, str(message or "")[:600], meta)
+    return True
+
+
+guardrails.add_confirm_listener(_mobile_confirm_listener)
+
+
+def _text(value, limit: int) -> str:
+    return str(value if value is not None else "")[:limit]
+
+
+def _m_hello() -> dict:
+    try:
+        name = (user_settings.get("display_name") or "").strip()
+    except Exception:
+        name = ""
+    return {"pcName": mobile_link.pc_name(), "version": nano_version.display(),
+            "language": i18n.current(), "displayName": name,
+            "protocol": mobile_link.PROTOCOL, "methods": MOBILE.methods()}
+
+
+def _m_status() -> dict:
+    try:
+        route = (describe_providers(stale_ok=True) or {}).get("route") or {}
+    except Exception:
+        route = {}
+    return {"route": {"provider": route.get("provider"), "model": route.get("model"),
+                      "usable": bool(route.get("usable")), "fallback": bool(route.get("fallback"))},
+            "emergencyStop": bool(get_emergency_stop_state().get("enabled"))}
+
+
+def _m_chat_send(text: str = "", msgId: str = "") -> dict:  # noqa: N803 - wire name
+    msg_id = _text(msgId, 64) or None
+    if msg_id and not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", msg_id):
+        msg_id = None
+    return send_message(_text(text, 8000), msg_id)
+
+
+def _m_chat_retry(text: str = "", msgId: str = "") -> dict:  # noqa: N803
+    msg_id = _text(msgId, 64) or None
+    if msg_id and not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", msg_id):
+        msg_id = None
+    return retry_last_turn(_text(text, 8000), msg_id)
+
+
+def _m_chat_history() -> dict:
+    messages = get_conversation_history() or []
+    rows = [{"id": m.get("id"), "role": m.get("role"), "content": _text(m.get("content"), 20000),
+             "timestamp": m.get("timestamp")}
+            for m in messages if m.get("role") in ("user", "assistant")]
+    return {"activeId": memory_stack.active_conversation_id if memory_stack.ready else None,
+            "messages": rows[-100:]}
+
+
+def _m_conversations_list(query: str = "") -> dict:
+    result = list_conversations(_text(query, 200), 60)
+    rows = [{"id": t.get("id"), "title": t.get("title"), "updatedAt": t.get("updatedAt") or t.get("updated_at"),
+             "pinned": bool(t.get("pinned")), "project": t.get("project") or ""}
+            for t in result.get("conversations", [])]
+    return {"ok": result.get("ok", False), "conversations": rows, "activeId": result.get("activeId")}
+
+
+def _m_conversations_open(id: str = "") -> dict:  # noqa: A002 - wire name
+    result = open_conversation(_text(id, 80))
+    if not result.get("ok"):
+        return {"ok": False, "error": result.get("error")}
+    return {"ok": True, **_m_chat_history()}
+
+
+def _m_conversations_create() -> dict:
+    result = create_conversation()
+    return {"ok": bool(result.get("ok")), "activeId": (result.get("conversation") or {}).get("id")}
+
+
+def _m_conversations_delete(id: str = "") -> dict:  # noqa: A002
+    result = delete_conversation(_text(id, 80))
+    return {"ok": bool(result.get("ok")), "activeId": memory_stack.active_conversation_id
+            if memory_stack.ready else None}
+
+
+def _m_confirm(requestId: str = "", confirmed: bool = False) -> dict:  # noqa: N803
+    return confirm_action(_text(requestId, 64), confirmed is True)
+
+
+def _m_agenda(days: int = 30) -> dict:
+    try:
+        days = max(1, min(90, int(days)))
+    except (TypeError, ValueError):
+        days = 30
+    return get_agenda(days)
+
+
+def _m_agenda_add_reminder(text: str = "", when: str = "", repeat: str = "") -> dict:
+    return agenda_create_reminder(_text(text, 300), _text(when, 64), _text(repeat, 16) or None)
+
+
+def _m_agenda_delete_reminder(id: int = 0) -> dict:  # noqa: A002
+    return agenda_delete_reminder(id)
+
+
+def _m_agenda_add_event(title: str = "", start: str = "", end: str = "", location: str = "") -> dict:
+    return agenda_create_event(_text(title, 200), _text(start, 64), _text(end, 64) or None,
+                               _text(location, 200))
+
+
+def _m_agenda_delete_event(id: int = 0) -> dict:  # noqa: A002
+    return agenda_delete_event(id)
+
+
+def _m_memory_list(query: str = "") -> dict:
+    result = list_memories(_text(query, 200), "", "active", 150)
+    rows = [{"id": m.get("id"), "text": m.get("text"), "kind": m.get("kind"),
+             "pinned": bool(m.get("pinned")), "updatedAt": m.get("updated_at") or m.get("updatedAt")}
+            for m in result.get("memories", [])]
+    return {"ok": result.get("ok", False), "memories": rows}
+
+
+def _m_memory_add(text: str = "") -> dict:
+    return create_memory(_text(text, 1000), "fact", 3, [])
+
+
+def _m_memory_delete(id: str = "") -> dict:  # noqa: A002
+    return delete_memory(_text(id, 80))
+
+
+for _name, _fn in {
+    "hello": _m_hello,
+    "status": _m_status,
+    "chat.send": _m_chat_send,
+    "chat.retry": _m_chat_retry,
+    "chat.history": _m_chat_history,
+    "conversations.list": _m_conversations_list,
+    "conversations.open": _m_conversations_open,
+    "conversations.create": _m_conversations_create,
+    "conversations.delete": _m_conversations_delete,
+    "confirm.respond": _m_confirm,
+    "agenda.get": _m_agenda,
+    "agenda.addReminder": _m_agenda_add_reminder,
+    "agenda.deleteReminder": _m_agenda_delete_reminder,
+    "agenda.addEvent": _m_agenda_add_event,
+    "agenda.deleteEvent": _m_agenda_delete_event,
+    "memory.list": _m_memory_list,
+    "memory.add": _m_memory_add,
+    "memory.delete": _m_memory_delete,
+}.items():
+    MOBILE.register(_name, _fn)
+
+
+def _apply_mobile_access(enabled: bool) -> dict:
+    """Start or stop the phone server. Returns the new status."""
+    global _MOBILE_SERVER
+    with _MOBILE_LOCK:
+        if enabled:
+            if _MOBILE_SERVER is None:
+                _MOBILE_SERVER = mobile_server.MobileServer(MOBILE, _mobile_port())
+            _MOBILE_SERVER.start()
+        else:
+            MOBILE.cancel_pairing()
+            if _MOBILE_SERVER is not None:
+                _MOBILE_SERVER.stop()
+    return get_mobile_status()
+
+
+def _qr_svg(text: str) -> str:
+    try:
+        import segno
+    except ImportError:
+        return ""
+    import io
+    buffer = io.BytesIO()
+    segno.make(text, error="m").save(buffer, kind="svg", scale=6, border=2,
+                                     dark="#000000", light="#ffffff", xmldecl=False,
+                                     svgns=True, nl=False)
+    return buffer.getvalue().decode("utf-8")
+
+
+@eel.expose
+def get_mobile_status() -> dict:
+    """Settings → Phone: is access on, is it listening, which phones are paired."""
+    server = _MOBILE_SERVER
+    return {
+        "ok": True,
+        "enabled": user_settings.get("mobile_access_enabled", False) is True,
+        "running": bool(server and server.running),
+        "error": (server.error if server else "") or "",
+        "port": server.port if server else _mobile_port(),
+        "addresses": mobile_link.local_addresses(),
+        "devices": MOBILE.devices.list(),
+        "pcName": mobile_link.pc_name(),
+    }
+
+
+@eel.expose
+def set_mobile_access(enabled: bool) -> dict:
+    result = user_settings.set_value("mobile_access_enabled", enabled is True)
+    if not result.get("ok"):
+        return {"ok": False, "error": "invalid_value"}
+    return _apply_mobile_access(enabled is True)
+
+
+@eel.expose
+def mobile_start_pairing() -> dict:
+    """A fresh QR code. Only while phone access is on and listening."""
+    server = _MOBILE_SERVER
+    if server is None or not server.running:
+        return {"ok": False, "error": "access_off"}
+    result = MOBILE.start_pairing(server.port)
+    result["qrSvg"] = _qr_svg(result["link"])
+    return result
+
+
+@eel.expose
+def mobile_pairing_state(session_id: str) -> dict:
+    return MOBILE.pairing_state(str(session_id or ""))
+
+
+@eel.expose
+def mobile_decide_pairing(session_id: str, approve: bool) -> dict:
+    """The yes or no on the PC. A phone can never answer this for itself."""
+    return MOBILE.decide_pairing(str(session_id or ""), approve is True)
+
+
+@eel.expose
+def mobile_cancel_pairing() -> dict:
+    MOBILE.cancel_pairing()
+    return {"ok": True}
+
+
+@eel.expose
+def mobile_remove_device(device_id: str) -> dict:
+    return {"ok": MOBILE.devices.remove(str(device_id or "")), "devices": MOBILE.devices.list()}
+
+
 _NOOP_CALLBACK = lambda *_args: None
 
 
@@ -3066,6 +3347,13 @@ def _notify_ui(name: str, *args) -> None:
     with it, which is exactly what used to happen to `_emit_voice_phase` and
     would have skipped its `_desktop_emit` call too.
     """
+    # The paired phone reads the same events (only the ones it needs; see
+    # mobile_link.FORWARDED_EVENTS). Independent of the window: a missing
+    # frontend build must not keep the phone from hearing the answer.
+    try:
+        MOBILE.publish(name, *args)
+    except Exception:
+        logger.debug("Phone event failed", exc_info=True)
     try:
         js_function = getattr(eel, name)
     except AttributeError:
@@ -3849,6 +4137,11 @@ def shutdown() -> None:
         control.cancel()
     proactive_scheduler.stop()
     screen_watch.WATCHER.shutdown()
+    if _MOBILE_SERVER is not None:
+        try:
+            _MOBILE_SERVER.stop()
+        except Exception:
+            logger.debug("Falha ao parar o acesso do telemóvel", exc_info=True)
     try:
         background_worker.stop()
     except Exception:
@@ -4081,6 +4374,11 @@ def main():
     # page before the server starts accepting them. See
     # core/local_control_plane.py for what this does and does not defend against.
     local_control_plane.install_origin_guard(port)
+
+    if user_settings.get("mobile_access_enabled", False) is True:
+        status = _apply_mobile_access(True)
+        _report("Phone", "READY" if status["running"] else "UNAVAILABLE",
+                f"port {status['port']}" if status["running"] else status["error"])
 
     try:
         start_options = {}

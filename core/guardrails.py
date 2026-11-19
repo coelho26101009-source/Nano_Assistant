@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 
 from core import capabilities
 
@@ -65,6 +65,29 @@ class GuardrailsEngine:
         self._confirm_callback: Callable[[str, dict], Awaitable[bool]] | None = None
         self._pending: dict[str, tuple[asyncio.AbstractEventLoop, asyncio.Future[bool]]] = {}
         self._lock = threading.RLock()
+        # Other places an approval request is shown besides the PC window
+        # (the paired phone, core.mobile_link). Each is called as
+        # listener("request", request_id, message, meta) -> bool (shown?) and
+        # listener("resolved", request_id, None, None) once it is answered or
+        # times out, so the other screens can take their card down.
+        self._listeners: list[Callable[[str, str, Any, Any], bool]] = []
+
+    def add_confirm_listener(self, listener: Callable[[str, str, Any, Any], bool]) -> None:
+        if listener not in self._listeners:
+            self._listeners.append(listener)
+
+    def remove_confirm_listener(self, listener: Callable[[str, str, Any, Any], bool]) -> None:
+        if listener in self._listeners:
+            self._listeners.remove(listener)
+
+    def _tell_listeners(self, phase: str, request_id: str, message: Any = None, meta: Any = None) -> bool:
+        shown = False
+        for listener in list(self._listeners):
+            try:
+                shown = bool(listener(phase, request_id, message, meta)) or shown
+            except Exception:
+                logger.exception("Falha num ecrã de confirmação adicional")
+        return shown
 
     def set_confirm_callback(self, cb: Callable[[str, dict], Awaitable[bool]]) -> None:
         self._confirm_callback = cb
@@ -116,13 +139,17 @@ class GuardrailsEngine:
         future = loop.create_future()
         with self._lock:
             self._pending[request_id] = (loop, future)
+        shown_on_pc = False
         try:
             import eel
             eel.on_confirm_request(request_id, message, meta)
+            shown_on_pc = True
         except Exception:
+            logger.exception("Não foi possível abrir confirmação na UI")
+        shown_elsewhere = self._tell_listeners("request", request_id, message, meta)
+        if not (shown_on_pc or shown_elsewhere):
             with self._lock:
                 self._pending.pop(request_id, None)
-            logger.exception("Não foi possível abrir confirmação na UI")
             return False
         try:
             return bool(await asyncio.wait_for(future, timeout=60))
@@ -131,6 +158,7 @@ class GuardrailsEngine:
         finally:
             with self._lock:
                 self._pending.pop(request_id, None)
+            self._tell_listeners("resolved", request_id)
 
     def resolve_confirmation(self, request_id: str, confirmed: bool) -> bool:
         with self._lock:

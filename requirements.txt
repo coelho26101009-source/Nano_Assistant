@@ -10,3 +10,7 @@ pypdf>=6.21.4,<7
 edge-tts>=7.0,<8
 pygame>=2.6,<3
 PyAudio>=0.2.14,<1
+# NANO on the phone (core/mobile_link.py): AES-256-GCM for every message
+# between the phone and the PC, and the pairing QR code. segno is pure Python.
+cryptography>=46,<51
+segno>=1.6,<2

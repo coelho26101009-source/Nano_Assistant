@@ -1,0 +1,37 @@
+/**
+ * The privacy policy, in the app. The same text is published at
+ * mobile/PRIVACY.md (the address the Play Store listing points to): change both.
+ */
+import { t } from "../lib/i18n";
+
+export function PrivacyPolicy() {
+  return (
+    <div className="prose">
+      <h2 style={{ marginTop: 0 }}>{t("Política de privacidade")}</h2>
+      <p>{t("O NANO para Android é um comando para o NANO que corre no teu próprio PC. Não tem servidores nossos, contas, publicidade nem estatísticas de utilização.")}</p>
+      <h2>{t("O que fica no telemóvel")}</h2>
+      <ul>
+        <li>{t("A chave de emparelhamento com o teu PC, guardada no cofre do Android (Keystore).")}</li>
+        <li>{t("As tuas escolhas: idioma, tema e voz.")}</li>
+        <li>{t("Os lembretes que a app agenda como notificações.")}</li>
+      </ul>
+      <p>{t("A cópia de segurança do Android está desligada para esta app, por isso nada disto sai do telemóvel.")}</p>
+      <h2>{t("O que vai para o teu PC")}</h2>
+      <p>{t("As mensagens que escreves ou dizes, as tuas respostas às autorizações e as alterações à agenda e à memória. Vão diretamente para o teu PC, cifradas com AES-256-GCM e uma chave que só o teu telemóvel e o teu PC conhecem. Quem o NANO do PC usa para responder (um modelo local ou um serviço de IA que escolheste) é decidido no PC, como sempre.")}</p>
+      <h2>{t("Voz")}</h2>
+      <p>{t("Quando carregas no microfone, o reconhecimento de voz do Android transforma a fala em texto. Dependendo do teu telemóvel, isso pode ser feito no aparelho ou pelo serviço de voz da Google. A app não grava áudio. Ler as respostas em voz alta usa o motor de voz do Android.")}</p>
+      <h2>{t("Permissões")}</h2>
+      <ul>
+        <li>{t("Rede: para falar com o teu PC.")}</li>
+        <li>{t("Microfone: só quando carregas no microfone.")}</li>
+        <li>{t("Notificações e alarmes exatos: para os lembretes tocarem na hora certa.")}</li>
+      </ul>
+      <p>{t("O leitor de QR é o da Google: devolve só o código lido, por isso a app não pede acesso à câmara.")}</p>
+      <h2>{t("Apagar os teus dados")}</h2>
+      <p>{t("Em Definições → Esquecer este PC, o telemóvel apaga a chave e o PC deixa de o aceitar. Desinstalar a app apaga tudo o que ela guardou. As conversas e memórias vivem no PC e apagam-se lá.")}</p>
+      <h2>{t("Contacto")}</h2>
+      <p>{t("Dúvidas ou pedidos: abre uma questão em github.com/coelho26101009-source/Nano_Assistant.")}</p>
+      <p className="dim">{t("Última atualização: 19 de novembro de 2026.")}</p>
+    </div>
+  );
+}
