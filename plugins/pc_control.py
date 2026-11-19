@@ -1115,6 +1115,83 @@ def pc_screen_read_text(arguments: dict[str, Any]) -> dict:
     return _guard("screen.read_text", run)
 
 
+def _screen_vision_enabled() -> bool:
+    try:
+        from core import user_settings
+        return user_settings.get("screen_vision_enabled", False) is True
+    except Exception:
+        return False
+
+
+def pc_screen_describe(arguments: dict[str, Any]) -> dict:
+    """Look at a window, monitor or region with a VISION model and describe it.
+
+    The same controls as reading screen text, in the same order: the person's
+    own switch (off by default), the sensitive-app check on the target, the
+    in-memory capture, the sensitive-app check on the area. Then the picture
+    goes to the vision model that the provider mode allows (core/vision.py),
+    and only the masked, bounded description comes back -- fenced as
+    untrusted content because the screen is not the person's words.
+    """
+    def run() -> dict:
+        if not _screen_vision_enabled():
+            raise PCControlError(
+                "disabled",
+                "Ver o ecrã com IA está desligado. Podes ligá-lo em Definições → "
+                "Privacidade → Ver o ecrã com IA.")
+        from core import vision
+        args = arguments or {}
+        mode = str(args.get("mode") or ocr.DEFAULT_OCR_MODE).strip().lower()
+        if mode not in ocr.OCR_MODES:
+            raise PCControlError("invalid_input", f"'{mode}' não é um modo conhecido.",
+                                 allowed=list(ocr.OCR_MODES))
+        if not vision.candidates():
+            raise PCControlError("unavailable", vision.no_model_message())
+
+        window = None
+        if mode == "window":
+            window = _resolve_window_arg(args, allow_partial=False)
+        elif mode == "active_window":
+            hwnd = winapi.foreground_window()
+            if not hwnd or not winapi.is_window(hwnd):
+                raise PCControlError("not_found", "Não há nenhuma janela em primeiro plano.")
+            window = windows.describe(hwnd)
+        if window is not None and ocr.is_blocked_process(window.get("process")):
+            raise PCControlError(
+                "blocked",
+                f"O Nano não olha para '{window.get('process')}': é uma aplicação de "
+                "palavras-passe ou de autenticação.")
+
+        shot = screen.grab("window" if window is not None else mode, window=window,
+                           monitor=args.get("monitor"),
+                           region=_region_arg(args) if mode == "region" else None)
+        if window is None:
+            sensitive = ocr.blocked_window_in(shot["rect"], _visible_windows_with_rects())
+            if sensitive is not None:
+                shot["rows"] = []
+                raise PCControlError(
+                    "blocked",
+                    f"Há uma janela de '{sensitive.get('process')}' nessa área. O Nano não "
+                    "olha para aplicações de palavras-passe ou de autenticação.")
+        import base64
+        png = screen.encode_png(int(shot["width"]), int(shot["height"]), shot["rows"])
+        shot["rows"] = []
+        question = str(args.get("question") or "").strip() or None
+        result = vision.describe(base64.b64encode(png).decode("ascii"), "image/png",
+                                 question=question)
+        del png
+        if not result["ok"]:
+            raise PCControlError("unavailable" if result["error"] == "no_vision_model" else "failed",
+                                 result["message"])
+        where = "no teu PC" if result["local"] else f"com {result['provider']}"
+        return ok("described", f"Vi {shot['subject']} ({where}).",
+                  subject=shot["subject"], text=result["text"], provider=result["provider"],
+                  model=result["model"], local=result["local"], masked=result["masked"],
+                  **shot["extra"])
+
+    return _guard("screen.describe", run)
+
+
 # --------------------------------------------------------------------------
 #  Declarations
 # --------------------------------------------------------------------------
@@ -1427,6 +1504,18 @@ def get_tools() -> list[dict]:
                "mode": {"type": "string", "enum": list(ocr.OCR_MODES),
                         "default": ocr.DEFAULT_OCR_MODE,
                         "description": "active_window (predefinido), window, monitor ou region."}}),
+        _tool("pc_screen_describe",
+              "Olha para uma janela, monitor ou região com um modelo de visão e descreve o que "
+              "lá está (apps, imagens, gráficos, texto). Usa-o quando o utilizador pergunta o "
+              "que está no ecrã ou pede ajuda com o que está a ver. Só funciona se o utilizador "
+              "o ligou em Definições → Privacidade, pede sempre confirmação e recusa gestores "
+              "de palavras-passe. Sem modo, usa a janela ativa.",
+              {**_WINDOW_TARGET_SCHEMA, **_SCREEN_AREA_SCHEMA,
+               "mode": {"type": "string", "enum": list(ocr.OCR_MODES),
+                        "default": ocr.DEFAULT_OCR_MODE,
+                        "description": "active_window (predefinido), window, monitor ou region."},
+               "question": {"type": "string",
+                            "description": "O que o utilizador quer saber sobre o ecrã (opcional)."}}),
     ]
 
 
@@ -1488,4 +1577,5 @@ TOOL_HANDLERS = {
     "pc_session_logoff": pc_session_logoff,
     "pc_screenshot_capture": pc_screenshot_capture,
     "pc_screen_read_text": pc_screen_read_text,
+    "pc_screen_describe": pc_screen_describe,
 }

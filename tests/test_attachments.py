@@ -65,7 +65,8 @@ def test_long_files_share_the_budget_and_say_they_were_cut():
     assert sum(len(f["text"]) for f in files) <= attachments.MAX_TOTAL_CHARS
     assert files[0]["truncated"] is True and files[0]["size"] == len(big)
     assert files[1]["truncated"] is False
-    assert attachments.summary(files)[0] == {"name": "um.txt", "size": len(big), "truncated": True}
+    assert attachments.summary(files)[0] == {"name": "um.txt", "size": len(big), "kind": "text",
+                                             "truncated": True}
 
 
 # ================================================================ the model's view

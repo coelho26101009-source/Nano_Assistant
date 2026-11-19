@@ -886,6 +886,17 @@ export default function SettingsPage({
               )}
             </Panel>
 
+            {/* Off by default. Unlike OCR the picture itself goes to a vision
+                model -- in the cloud unless the provider mode is LOCAL. */}
+            <Panel title={t("Ver o ecrã com IA")} action={<Badge tone="info">{t("opcional")}</Badge>}>
+              <Toggle
+                label={t("Permitir que o NANO veja o ecrã com um modelo de visão")}
+                hint={t("Quando pedes (\u201co que estou a ver?\u201d, \u201cajuda-me com este erro\u201d), o NANO tira uma imagem da janela, monitor ou região e pede a um modelo de visão que a descreva. Pede sempre confirmação, nunca olha para gestores de palavras-passe e não guarda a imagem. No modo AUTO ou CLOUD a imagem vai ao fornecedor na nuvem; no modo LOCAL só usa um modelo de visão do Ollama e nada sai do PC.")}
+                checked={Boolean(settings.screenVision?.enabled)}
+                onChange={(value) => onUpdate("screen_vision_enabled", value)}
+              />
+            </Panel>
+
             <Panel title={t("Permissões")}>
               <MetricRow label={t("Modo de autonomia")} value={settings.security.autonomyMode} />
               <MetricRow

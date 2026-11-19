@@ -935,7 +935,6 @@ export const EN: Record<string, string> = {
   "código: {0}": "code: {0}",
   "quando: {0}": "when: {0}",
   "Confirmar": "Confirm",
-  "{0}: só ficheiros de texto (por exemplo .txt, .md, .csv ou código).": "{0}: text files only (for example .txt, .md, .csv or code).",
   "{0} é demasiado grande (máximo {1}).": "{0} is too large (maximum {1}).",
   "Não foi possível ler {0}.": "Couldn't read {0}.",
   "{0} não parece ser um ficheiro de texto.": "{0} doesn't look like a text file.",
@@ -1079,4 +1078,10 @@ export const EN: Record<string, string> = {
   "Configura um provedor cloud ou um modelo local para conversar.": "Set up a cloud provider or a local model to chat.",
   "O {0} pode cometer erros. Ações sensíveis pedem sempre a tua autorização.": "{0} can make mistakes. Sensitive actions always ask for your approval.",
   "Não foi possível ativar o modo.": "Couldn't turn on the mode.",
+  "Ver o ecrã com IA": "See the screen with AI",
+  "opcional": "optional",
+  "Permitir que o NANO veja o ecrã com um modelo de visão": "Let NANO look at the screen with a vision model",
+  "Quando pedes (“o que estou a ver?”, “ajuda-me com este erro”), o NANO tira uma imagem da janela, monitor ou região e pede a um modelo de visão que a descreva. Pede sempre confirmação, nunca olha para gestores de palavras-passe e não guarda a imagem. No modo AUTO ou CLOUD a imagem vai ao fornecedor na nuvem; no modo LOCAL só usa um modelo de visão do Ollama e nada sai do PC.": "When you ask (“what am I looking at?”, “help me with this error”), NANO takes a picture of the window, monitor or region and asks a vision model to describe it. It always asks first, never looks at password managers and does not keep the picture. In AUTO or CLOUD mode the picture goes to the cloud provider; in LOCAL mode it only uses an Ollama vision model and nothing leaves the PC.",
+  "imagem": "image",
+  "{0}: só texto, PDF ou imagens (por exemplo .txt, .pdf, .png ou .jpg).": "{0}: only text, PDF or images (for example .txt, .pdf, .png or .jpg).",
 };

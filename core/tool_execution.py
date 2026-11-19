@@ -228,10 +228,11 @@ def _pc_control_target(tool_name: str, args: dict) -> str | None:
         return f"power:{tool_name.rsplit('_', 1)[-1]}"
 
     # --------------------------------------------------------------- screen
-    if tool_name in {"pc_screenshot_capture", "pc_screen_read_text"}:
+    if tool_name in {"pc_screenshot_capture", "pc_screen_read_text", "pc_screen_describe"}:
         default = "desktop" if tool_name == "pc_screenshot_capture" else "active_window"
         mode = str(args.get("mode") or default).strip().lower()
-        prefix = "screen" if tool_name == "pc_screenshot_capture" else "screen-text"
+        prefix = {"pc_screenshot_capture": "screen", "pc_screen_read_text": "screen-text",
+                  "pc_screen_describe": "screen-vision"}[tool_name]
         if mode == "window":
             return clamp(f"{prefix}:{_window_target(args)}")
         # A grant for monitor 1 must not capture monitor 2, and a grant for one

@@ -1,8 +1,8 @@
-"""Text files attached to a chat message.
+"""Files attached to a chat message: text, PDFs and images.
 
-The person picks a file in the composer; the window reads it as text and sends
-it with the message. This module is the one place that decides what such a
-file may be and how it reaches the model.
+The person picks a file in the composer; the window reads it and sends it with
+the message (text as text, PDFs and images as base64). This module is the one
+place that decides what such a file may be and how it reaches the model.
 
 WHAT AN ATTACHMENT IS, AS FAR AS TRUST GOES.
 
@@ -19,12 +19,22 @@ extraction and the retrieval index only ever see what the person typed. The
 files travel in that row's metadata, and are recomposed into the model's
 message when the thread is reopened or the turn is asked again.
 
-WHAT IS NOT SUPPORTED. Only text: plain text, Markdown, CSV, JSON, logs and
-source code. Images and PDFs need a different reader and are refused by the
-window before they are sent.
+PDFS AND IMAGES BECOME TEXT BEFORE THE TURN STARTS.
+
+``normalise`` only checks their shape, so the bridge answers at once.
+``prepare`` then runs on a worker thread, in the turn itself: a PDF's text is
+extracted locally with pypdf, and an image is described by a vision model
+(``core.vision``, which follows the person's provider mode, so LOCAL keeps the
+picture on the PC). The bytes are dropped there; only the extracted text or
+the description is stored and reaches the model, fenced like any file. A
+scanned PDF with no text layer says so instead of arriving empty.
 """
 from __future__ import annotations
 
+import base64
+import binascii
+import io
+import logging
 import re
 from typing import Any
 
@@ -39,6 +49,13 @@ MAX_FILES = 5
 MAX_TOTAL_CHARS = 12_000
 #: The longest file name kept.
 MAX_NAME_CHARS = 120
+#: The largest PDF accepted, decoded. Bigger ones are mostly text we would cut.
+MAX_PDF_BYTES = 15 * 1024 * 1024
+#: Pages read from one PDF. The text budget runs out long before this.
+MAX_PDF_PAGES = 60
+KINDS = ("text", "pdf", "image")
+
+logger = logging.getLogger("nano.attachments")
 
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
@@ -50,14 +67,29 @@ def _clean_name(raw: Any) -> str:
     return name[:MAX_NAME_CHARS] or "ficheiro"
 
 
+def _share(files: list[dict]) -> None:
+    """Cut every file's text so that all of them fit MAX_TOTAL_CHARS, evenly."""
+    if not files:
+        return
+    share = MAX_TOTAL_CHARS // len(files)
+    for entry in files:
+        if "data" in entry:
+            continue
+        entry["truncated"] = bool(entry.get("truncated")) or len(entry["text"]) > share
+        entry["text"] = entry["text"][:share]
+
+
 def normalise(raw: Any) -> tuple[list[dict], str | None]:
     """Validate what the window sent. Returns (attachments, error code).
 
-    Each attachment comes back as ``{"name", "size", "text", "truncated"}``.
-    The text is cut so that all files together stay inside MAX_TOTAL_CHARS,
-    shared evenly, and ``truncated`` says so -- the UI shows it, so a long file
-    is never silently read in part.
+    A text file comes back as ``{"name", "kind": "text", "size", "text",
+    "truncated"}``. A PDF or an image keeps its base64 ``data`` (and ``mime``)
+    until ``prepare`` turns it into text. The text is cut so that all files
+    together stay inside MAX_TOTAL_CHARS, shared evenly, and ``truncated``
+    says so -- the UI shows it, so a long file is never silently read in part.
     """
+    from core import vision
+
     if raw in (None, "", []):
         return [], None
     if not isinstance(raw, list):
@@ -66,19 +98,113 @@ def normalise(raw: Any) -> tuple[list[dict], str | None]:
         return [], "too_many_attachments"
     files: list[dict] = []
     for item in raw:
-        if not isinstance(item, dict) or not isinstance(item.get("text"), str):
+        if not isinstance(item, dict):
             return [], "bad_attachments"
-        text = item["text"]
-        if "\x00" in text:
-            return [], "binary_attachment"
-        files.append({"name": _clean_name(item.get("name")), "size": len(text), "text": text})
-    if not files:
-        return [], None
-    share = MAX_TOTAL_CHARS // len(files)
-    for entry in files:
-        entry["truncated"] = len(entry["text"]) > share
-        entry["text"] = entry["text"][:share]
+        kind = str(item.get("kind") or "text")
+        if kind not in KINDS:
+            return [], "bad_attachments"
+        name = _clean_name(item.get("name"))
+        if kind == "text":
+            if not isinstance(item.get("text"), str):
+                return [], "bad_attachments"
+            text = item["text"]
+            if "\x00" in text:
+                return [], "binary_attachment"
+            files.append({"name": name, "kind": "text", "size": len(text), "text": text})
+            continue
+        data = item.get("data")
+        if not isinstance(data, str) or not data:
+            return [], "bad_attachments"
+        size = len(data) * 3 // 4
+        if kind == "pdf":
+            if size > MAX_PDF_BYTES:
+                return [], "pdf_too_large"
+            files.append({"name": name, "kind": "pdf", "size": size, "data": data,
+                          "mime": "application/pdf", "text": ""})
+        else:
+            mime = str(item.get("mime") or "").lower()
+            problem = vision.check_image(data, mime)
+            if problem:
+                return [], problem
+            files.append({"name": name, "kind": "image", "size": size, "data": data,
+                          "mime": mime, "text": ""})
+    _share(files)
     return files, None
+
+
+def _decode(data: str) -> bytes:
+    try:
+        return base64.b64decode(data, validate=True)
+    except (binascii.Error, ValueError):
+        return b""
+
+
+def pdf_text(raw: bytes) -> tuple[str, bool]:
+    """The text layer of a PDF, read locally. Returns (text, truncated)."""
+    try:
+        import pypdf
+    except ImportError:
+        return tr("(não foi possível ler este PDF: falta o leitor de PDF)"), False
+    try:
+        reader = pypdf.PdfReader(io.BytesIO(raw))
+        if reader.is_encrypted:
+            try:
+                reader.decrypt("")
+            except Exception:
+                return tr("(este PDF está protegido por palavra-passe e não pode ser lido)"), False
+        pages = reader.pages
+        parts, cut = [], len(pages) > MAX_PDF_PAGES
+        for number, page in enumerate(pages[:MAX_PDF_PAGES], start=1):
+            text = (page.extract_text() or "").strip()
+            if text:
+                parts.append(f"[{tr('página')} {number}]\n{text}")
+            if sum(len(part) for part in parts) > MAX_TOTAL_CHARS:
+                cut = True
+                break
+    except Exception as exc:
+        logger.info("PDF ilegível: %s", type(exc).__name__)
+        return tr("(não foi possível ler este PDF: o ficheiro parece estar danificado)"), False
+    if not parts:
+        return tr("(este PDF não tem texto selecionável; pode ser uma digitalização)"), False
+    return "\n\n".join(parts), cut
+
+
+def prepare(files: list[dict], *, question: str | None = None) -> list[dict]:
+    """Turn PDFs and images into text, and drop their bytes. Blocking.
+
+    Runs in the turn, on a worker thread (``asyncio.to_thread``). Files that
+    are already text -- including those of a retried turn -- pass unchanged.
+    Never raises: a file that cannot be read carries a sentence that says why,
+    so the model can tell the person instead of guessing.
+    """
+    from core import vision
+
+    out: list[dict] = []
+    for entry in files or []:
+        if "data" not in entry:
+            out.append(entry)
+            continue
+        entry = dict(entry)
+        data = entry.pop("data")
+        if entry.get("kind") == "pdf":
+            entry["text"], entry["truncated"] = pdf_text(_decode(data))
+        else:
+            result = vision.describe(data, str(entry.get("mime") or "image/png"),
+                                     question=question)
+            if result.get("ok"):
+                where = tr("no teu PC") if result.get("local") else str(result.get("provider"))
+                entry["text"] = (tr("Descrição da imagem feita por um modelo de visão ({where}):",
+                                    where=where) + "\n" + result["text"])
+                entry["vision"] = {"provider": result.get("provider"), "model": result.get("model")}
+            else:
+                entry["text"] = tr("(não foi possível ver esta imagem: {why})",
+                                   why=result.get("message") or "")
+                entry["vision_error"] = result.get("error") or "vision_failed"
+            entry["truncated"] = False
+        entry.pop("mime", None)
+        out.append(entry)
+    _share(out)
+    return out
 
 
 def compose(user_text: str, attachments: list[dict] | None, *, max_chars: int | None = None) -> str:
@@ -106,5 +232,6 @@ def compose(user_text: str, attachments: list[dict] | None, *, max_chars: int | 
 def summary(attachments: list[dict] | None) -> list[dict]:
     """What the window shows for each file: the name, the size, whether it was cut."""
     return [{"name": entry.get("name"), "size": entry.get("size"),
+             "kind": entry.get("kind") or "text",
              "truncated": bool(entry.get("truncated"))}
             for entry in (attachments or [])]

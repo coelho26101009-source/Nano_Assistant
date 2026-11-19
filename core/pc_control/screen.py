@@ -67,6 +67,10 @@ class _BITMAPINFO(ctypes.Structure):
 
 
 def _write_png(path: Path, width: int, height: int, rows: list[bytes]) -> None:
+    path.write_bytes(encode_png(width, height, rows))
+
+
+def encode_png(width: int, height: int, rows: list[bytes]) -> bytes:
     """Minimal PNG encoder. Truecolour, 8-bit, filter type 0.
 
     zlib is in the standard library, so a correct PNG costs about thirty lines
@@ -79,7 +83,7 @@ def _write_png(path: Path, width: int, height: int, rows: list[bytes]) -> None:
                 + struct.pack(">I", zlib.crc32(tag + payload) & 0xFFFFFFFF))
 
     header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
-    path.write_bytes(
+    return (
         b"\x89PNG\r\n\x1a\n"
         + chunk(b"IHDR", header)
         + chunk(b"IDAT", zlib.compress(raw, 6))

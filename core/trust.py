@@ -45,6 +45,7 @@ class TrustLevel(str, Enum):
 UNTRUSTED_OUTPUT_CAPABILITIES = frozenset({
     # Whatever is on screen -- a web page, an email -- is external content.
     "pc.screen.read_text",
+    "pc.screen.describe",
     "browser.read",
     "browser.interact",
     "browser.submit",

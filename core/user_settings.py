@@ -75,6 +75,8 @@ ALLOWED_KEYS: frozenset[str] = frozenset({
     "memory_auto_capture",
     # Screen text (local OCR). Off until the user turns it on in Privacidade.
     "screen_text_enabled",
+    # Screen vision (a picture of the screen to a vision model). Off by default.
+    "screen_vision_enabled",
 })
 
 _BOOLEAN_KEYS = frozenset({
@@ -82,6 +84,7 @@ _BOOLEAN_KEYS = frozenset({
     "voice_enabled", "tts_enabled", "typed_chat_tts", "voice_reply_tts",
     "reduce_motion", "memory_facts_enabled", "memory_rag_enabled",
     "memory_long_term_enabled", "memory_auto_capture", "advanced_mode", "screen_text_enabled",
+    "screen_vision_enabled",
 })
 
 

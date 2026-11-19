@@ -148,7 +148,7 @@ export interface Message {
   error?: boolean;
   meta?: ResponseMeta;
   clarification?: Clarification;
-  /** Text files sent with a user turn: names and sizes only. */
+  /** Files sent with a user turn: names, sizes and kinds only. */
   attachments?: AttachmentSummary[];
 }
 
@@ -163,6 +163,8 @@ function FileChips({ files, onRemove }: {
         <li key={file.id ?? `${file.name}-${index}`} className="file-chip">
           <Icon name="attach" size={14} />
           <span className="file-chip__name" title={file.name}>{file.name}</span>
+          {file.kind === "image" && <span className="file-chip__note">{t("imagem")}</span>}
+          {file.kind === "pdf" && <span className="file-chip__note">PDF</span>}
           <span className="file-chip__size">{formatSize(file.size)}</span>
           {file.truncated && (
             <span className="file-chip__note" title={t("Ficheiro longo: o NANO leu só o início.")}>

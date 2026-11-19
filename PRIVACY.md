@@ -150,6 +150,9 @@ sees whatever the tool returned:
 | Look at system state, windows, volume | those values |
 | Take a screenshot | **the file path and its size — never the image** |
 | Read the text on screen (only if you turned it on) | **the text read by local OCR**, with keys, passwords, card numbers and IBANs masked, up to 4000 characters |
+| Look at the screen with AI (only if you turned it on) | **the vision provider sees a picture of that window, monitor or region**; the chat provider sees only the masked description |
+| Attach an image | **the vision provider sees the image**; the chat provider sees only its masked description |
+| Attach a PDF | **the PDF's text**, read locally with pypdf (the file itself is not sent) |
 
 Nano never reads any of these on its own initiative: each one is a tool the
 model must call, and the sensitive ones require your approval first. But
@@ -162,6 +165,16 @@ Privacidade → "Ler texto do ecrã". The OCR runs locally (Windows' own engine)
 it always asks first, it never reads password managers or authenticators, and
 it keeps no image. The text it returns does go to the provider, like any tool
 result.
+
+**Screen vision and image attachments send a picture.** This is the one place
+where pixels leave the PC, so it follows the provider mode you chose: in LOCAL
+mode only a vision model installed in Ollama is used and nothing leaves the
+computer; in AUTO or CLOUD the picture goes to your cloud provider (Groq,
+Mistral or Google). Seeing the screen is off by default (Definições →
+Privacidade → "Ver o ecrã com IA"), always asks first, never looks at password
+managers or authenticators, and keeps no image. An attached image or PDF is
+turned into text before the question is stored, so the database never holds
+the bytes (`core/vision.py`, `core/attachments.py`).
 
 **Screenshots are the genuine exception.** `core/pc_control/screen.py` returns a
 path, a size and dimensions — no base64, no pixels. The image is written to disk
@@ -311,7 +324,9 @@ link-local addresses, `file://` and other schemes are refused.
 
 * Never sends telemetry, analytics or crash reports anywhere. There is no
   reporting endpoint in the codebase.
-* Never uploads a screenshot image, and never reads a file, the clipboard or a
+* Never uploads a screenshot image (the only pictures that leave the PC are the
+  ones you attach or approve for "Ver o ecrã com IA", and only outside LOCAL
+  mode), and never reads a file, the clipboard or a
   web page except as a tool you asked for and, where it matters, approved.
 * Never stores an API key in the project folder or in browser storage, and never
   sends one to the interface.

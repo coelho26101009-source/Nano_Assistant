@@ -37,6 +37,7 @@ from core import agenda, clarification, work_modes
 from core import version as nano_version
 from core import attachments as chat_attachments
 from core import i18n
+from core import vision
 from core.i18n import tr
 from core.brain import Brain
 from core.config import CONFIG_PATH, load_config
@@ -158,6 +159,17 @@ logger.info("Ferramentas de plugin sob a autoridade central: %d", _PLUGIN_TOOLS_
 
 background_worker = BackgroundTaskWorker(task_engine=task_engine, event_bus=event_bus, context_engine=context_engine, memory=memory, tool_executor=tool_executor, permission_manager=permission_manager)
 brain = Brain(api_key=API_KEY, guardrails=guardrails, memory=memory, config=CONFIG, permission_manager=permission_manager, tool_executor=tool_executor, memory_stack=memory_stack)
+
+
+def _vision_settings() -> dict:
+    """Vision follows the chat's provider choice, so LOCAL keeps pictures on the PC."""
+    return {"mode": getattr(brain, "provider_mode", "AUTO"),
+            "preferred_cloud": getattr(brain, "preferred_cloud", "groq"),
+            "ollama_url": getattr(brain, "ollama_url", ""),
+            "local_enabled": bool(getattr(brain, "local_enabled", True))}
+
+
+vision.set_settings_source(_vision_settings)
 # Resume the thread the user was last in, rather than opening a blank one:
 # closing Nano mid-conversation and finding it gone is the behaviour threads
 # exist to remove.
@@ -1949,6 +1961,8 @@ def get_settings() -> dict:
             "knowledge": memory_stack.knowledge.stats() if memory_stack.ready else {},
         },
         "screenText": _screen_text_settings(),
+        # No provider probe here: get_settings runs on the bridge thread.
+        "screenVision": {"enabled": user_settings.get("screen_vision_enabled", False) is True},
         "stored": user_settings.all_settings(),
         "runtime": get_runtime_info(),
         "language": i18n.describe(),
@@ -3489,6 +3503,17 @@ async def _process_message(user_text: str, msg_id: str | None = None,
         # a conversation the user had merely switched to in the meantime.
         owner = conversation_id or (memory_stack.ensure_active()
                                     if memory_stack.ready else None)
+        if attachments and any("data" in entry for entry in attachments):
+            # PDFs are read and images described HERE, off the loop, before the
+            # question is stored: the bytes never reach the database, only the
+            # text the model will see. The owner is still held meanwhile.
+            try:
+                attachments = await asyncio.to_thread(
+                    chat_attachments.prepare, attachments, question=user_text)
+            except Exception:
+                logger.exception("Não foi possível preparar os anexos")
+                attachments = [{k: v for k, v in entry.items() if k not in {"data", "mime"}}
+                               for entry in attachments]
         if memory_stack.ready:
             try:
                 memory_stack.record_user_message(

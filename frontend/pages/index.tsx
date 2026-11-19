@@ -60,7 +60,7 @@ import { useIsDesktop } from "../lib/desktop";
 // the UI said "v1.0" while the backend reported "8.1.0".
 import { APP_VERSION } from "../lib/version";
 import { locale, normaliseLocale, reloadInLocale, t } from "../lib/i18n";
-import type { PendingFile } from "../lib/attachments";
+import { toPayload, type PendingFile } from "../lib/attachments";
 
 
 export interface ConfirmRequest {
@@ -658,7 +658,7 @@ export default function Home() {
     // Suggestions and examples send their own text and never carry the files
     // waiting in the composer; only the composer's own send does.
     const files = override === undefined ? pendingFiles : [];
-    const shown = files.map(({ name, size }) => ({ name, size }));
+    const shown = files.map(({ name, size, kind }) => ({ name, size, kind }));
     // The user bubble's id is derived from the turn id, so on_stream_start can
     // recognise that this turn's message is already on screen and never append
     // a second copy.
@@ -676,7 +676,7 @@ export default function Home() {
     // send_message returns an ACK, never the answer: the reply arrives on the
     // stream events. Treating a slow turn's missing return value as "offline"
     // is what produced a false "Motor offline" while the backend was working.
-    const payload = files.map(({ name, text: body }) => ({ name, text: body }));
+    const payload = files.map(toPayload);
     call<any>("send_message", text, msgId, payload).then((ack) => {
       if (ack?.accepted) {
         // The backend says which files it cut to fit; the bubble shows it.

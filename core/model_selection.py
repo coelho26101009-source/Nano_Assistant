@@ -219,7 +219,7 @@ _CATEGORY_TOOLS: dict[ToolCategory, tuple[str, ...]] = {
         "pc_session_lock", "pc_power_sleep", "pc_power_restart",
         "pc_power_shutdown", "pc_session_logoff",
     ),
-    ToolCategory.PC_SCREEN: ("pc_screenshot_capture", "pc_screen_read_text", "pc_window_list",
+    ToolCategory.PC_SCREEN: ("pc_screenshot_capture", "pc_screen_read_text", "pc_screen_describe", "pc_window_list",
                              "pc_display_info"),
     ToolCategory.FILES: (
         "organize_downloads", "rename_file_smart",
