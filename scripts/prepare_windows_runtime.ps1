@@ -125,6 +125,7 @@ Get-ChildItem $runtime -Recurse -Directory -Filter '__pycache__' -ErrorAction Si
 # here rather than on a user's machine.
 $prunable = @(
     'certifi\tests'
+    'pip\_vendor\certifi\tests'
     'future\tests'
     'future\moves\test'
     'greenlet\tests'

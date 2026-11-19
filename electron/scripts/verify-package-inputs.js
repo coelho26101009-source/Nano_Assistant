@@ -104,7 +104,13 @@ function scanForForbidden(absRoot, vendored = false) {
     }
     if (fs.statSync(full).isFile() && /\.(js|py|json|ya?ml|html|txt|ini|cfg)$/i.test(name)) {
       const content = fs.readFileSync(full, 'utf8');
-      if (/\b(?:gsk_[A-Za-z0-9]{32,}|sk-(?:proj-)?[A-Za-z0-9_-]{32,}|AIza[A-Za-z0-9_-]{35})\b|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(content)) {
+      // Inside a dependency, a PEM header on its own is a parser constant
+      // (cryptography's ssh.py has one); only a header followed by key material
+      // is a key. Nano's own trees keep the stricter header-only rule.
+      const privateKey = vendored
+        ? /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----\s*[A-Za-z0-9+/=]{40,}/
+        : /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/;
+      if (/\b(?:gsk_[A-Za-z0-9]{32,}|sk-(?:proj-)?[A-Za-z0-9_-]{32,}|AIza[A-Za-z0-9_-]{35})\b/.test(content) || privateKey.test(content)) {
         problems.push(`${path.relative(REPO, full)} contains a credential-shaped value (value withheld)`);
       }
     }
