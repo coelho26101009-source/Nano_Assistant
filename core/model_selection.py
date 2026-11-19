@@ -219,7 +219,8 @@ _CATEGORY_TOOLS: dict[ToolCategory, tuple[str, ...]] = {
         "pc_session_lock", "pc_power_sleep", "pc_power_restart",
         "pc_power_shutdown", "pc_session_logoff",
     ),
-    ToolCategory.PC_SCREEN: ("pc_screenshot_capture", "pc_screen_read_text", "pc_screen_describe", "pc_window_list",
+    ToolCategory.PC_SCREEN: ("pc_screenshot_capture", "pc_screen_read_text", "pc_screen_describe",
+                             "pc_screen_watch", "pc_screen_watch_stop", "pc_window_list",
                              "pc_display_info"),
     ToolCategory.FILES: (
         "organize_downloads", "rename_file_smart",
@@ -318,6 +319,11 @@ _CATEGORY_KEYWORDS: dict[ToolCategory, tuple[str, ...]] = {
         # Screen text (local OCR).
         "texto do ecra", "le o ecra", "ler o ecra", "o que diz", "o que esta escrito",
         "ocr", "le a janela", "ler a janela", "le o texto", "ler o texto",
+        # Watching the screen for a while (core/screen_watch.py).
+        "avisa-me quando", "avisa me quando", "diz-me quando", "diz me quando",
+        "diz-me se aparecer", "diz me se aparecer", "vigia", "vigiar", "vigiares",
+        "fica de olho", "let me know when", "tell me when", "notify me when",
+        "keep an eye", "watch the screen", "stop watching",
     ),
     ToolCategory.FILES: (
         "ficheiro", "ficheiros", "pasta", "pastas", "diretorio", "directorio",

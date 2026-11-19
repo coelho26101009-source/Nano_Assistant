@@ -78,6 +78,8 @@ PC_TOOLS = (
     "pc_screenshot_capture",
     "pc_screen_read_text",
     "pc_screen_describe",
+    "pc_screen_watch",
+    "pc_screen_watch_stop",
 )
 
 

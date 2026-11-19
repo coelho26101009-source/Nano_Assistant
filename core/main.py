@@ -54,6 +54,7 @@ from core.local_runtime import choose_model
 from core.voice import VoiceEngine, VoiceRuntime
 from core import wake_phrase as wake_phrase_mod
 from core import voice_language
+from core import screen_watch
 from core.wake_word import WakeWordEngine
 from core.events import EventBus
 from core import confirmation as confirmation_text
@@ -2790,6 +2791,7 @@ def erase_all_data(confirmation: str = "") -> dict:
 
     # What the briefing already said, and which events it announced.
     proactive_scheduler.forget()
+    screen_watch.WATCHER.stop()
 
     # Point the Brain at a fresh, empty thread, as deleting the active
     # conversation does, so the next message has somewhere real to go.
@@ -3475,6 +3477,8 @@ def _on_proactive_notice(notice: dict) -> None:
 proactive_scheduler = proactive.ProactiveScheduler(
     overview=lambda: agenda.overview(days=2), emit=_on_proactive_notice,
     state_path=DATA_DIR / "proactive_state.json")
+# Screen watches ("avisa-me quando o download acabar") speak the same way.
+screen_watch.WATCHER.configure(emit=_on_proactive_notice)
 
 
 @eel.expose
@@ -3832,6 +3836,7 @@ def shutdown() -> None:
         # spawn a server after this point, and stops waiting for its port.
         control.cancel()
     proactive_scheduler.stop()
+    screen_watch.WATCHER.shutdown()
     try:
         background_worker.stop()
     except Exception:

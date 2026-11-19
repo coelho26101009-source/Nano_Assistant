@@ -89,6 +89,7 @@ _APPROVAL_GATED_CAPABILITIES = frozenset({
     "pc.screen.capture",
     "pc.screen.read_text",
     "pc.screen.describe",
+    "pc.screen.watch",
     "pc.clipboard.read",
     "pc.clipboard.write",
     "pc.clipboard.clear",

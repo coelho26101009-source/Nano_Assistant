@@ -143,7 +143,7 @@ conversas fica à esquerda, e a cápsula de voz funciona fora da janela principa
 | **Memória** | Memória de longo prazo com extração determinística e recuperação (RAG) |
 | **Second Brain** | Nós e relações derivados das memórias ativas |
 | **Voz** | Hotkey global, STT local com faster-whisper, TTS através do Edge |
-| **PC Control** | 58 ferramentas estreitas: apps, janelas, áudio, teclado, ficheiros, web, ecrã, sistema, energia e capturas |
+| **PC Control** | 60 ferramentas estreitas: apps, janelas, áudio, teclado, ficheiros, web, ecrã, sistema, energia e capturas |
 | **Segurança** | Validação de esquema + PolicyEngine + PermissionManager + ToolExecutor + target binding |
 | **Extensibilidade** | Sistema de plugins/tools com autorização centralizada |
 
@@ -362,7 +362,7 @@ Documentação: [Voice](docs/VOICE.md) · [Speech Accuracy](docs/architecture/SP
 
 ## PC Control
 
-O Nano interage com o Windows através de **58 ferramentas estreitas e
+O Nano interage com o Windows através de **60 ferramentas estreitas e
 auditáveis** (as tools com prefixo `pc_`; o registo completo, incluindo memória,
 calendário, lembretes e web, tem 84 entradas). A ideia é sempre a mesma:
 cobertura larga através de muitas capabilities pequenas, nunca através de um

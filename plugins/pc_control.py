@@ -1115,6 +1115,66 @@ def pc_screen_read_text(arguments: dict[str, Any]) -> dict:
     return _guard("screen.read_text", run)
 
 
+# ── watching the screen for a while (core/screen_watch.py) ────────────────
+
+def _watch_screen_text() -> str | None:
+    """The primary monitor's text for a watch, read locally; None to skip a check."""
+    if not _screen_text_enabled() or not ocr.engine_status()["available"]:
+        return None
+    shot = screen.grab("monitor", monitor=None)
+    if ocr.blocked_window_in(shot["rect"], _visible_windows_with_rects()) is not None:
+        shot["rows"] = []
+        return None                 # a password manager is visible: skip this check
+    return str(ocr.read_text(shot).get("text") or "")
+
+
+def _watch_window_titles() -> list[str]:
+    return [str(w.get("title") or "") for w in windows.list_windows()
+            if not ocr.is_blocked_process(w.get("process"))]
+
+
+def _watcher():
+    from core import screen_watch
+
+    screen_watch.WATCHER.configure(read_text=_watch_screen_text, list_titles=_watch_window_titles)
+    return screen_watch.WATCHER
+
+
+def pc_screen_watch(arguments: dict[str, Any]) -> dict:
+    """Watch the screen for a while and tell the person when something changes.
+
+    Approval-gated (pc.screen.watch). Window titles need nothing else; screen
+    text needs "Ler texto do ecrã" on, is read locally and is never kept. What
+    the watch sees is shown to the person only, never returned to the model.
+    """
+    def run() -> dict:
+        args = arguments or {}
+        started = _watcher().start(
+            str(args.get("goal") or ""), appears=args.get("appears"),
+            disappears=args.get("disappears"), window_appears=args.get("window_appears"),
+            window_closes=args.get("window_closes"), minutes=args.get("minutes"),
+            text_allowed=_screen_text_enabled())
+        if not started["ok"]:
+            raise PCControlError(started["error"], started["message"])
+        return ok("watching", started["message"], watch=started["watch"])
+
+    return _guard("screen.watch", run)
+
+
+def pc_screen_watch_stop(arguments: dict[str, Any]) -> dict:
+    """Stop one watch (by id) or all of them; also lists what is being watched."""
+    def run() -> dict:
+        watch_id = str((arguments or {}).get("watch_id") or "").strip() or None
+        watcher = _watcher()
+        if (arguments or {}).get("list_only"):
+            active = watcher.status()
+            return ok("listed", f"{len(active)} vigia(s) ativa(s).", watches=active)
+        stopped = watcher.stop(watch_id)
+        return ok("stopped", stopped["message"], stopped=stopped["stopped"])
+
+    return _guard("screen.watch_stop", run)
+
+
 def _screen_vision_enabled() -> bool:
     try:
         from core import user_settings
@@ -1516,6 +1576,29 @@ def get_tools() -> list[dict]:
                         "description": "active_window (predefinido), window, monitor ou region."},
                "question": {"type": "string",
                             "description": "O que o utilizador quer saber sobre o ecrã (opcional)."}}),
+        _tool("pc_screen_watch",
+              "Vigia o ecrã durante algum tempo e avisa o utilizador quando algo muda, por "
+              "exemplo 'avisa-me quando o download acabar' ou 'diz-me se aparecer um erro'. "
+              "Usa window_appears/window_closes para janelas (título) e appears/disappears "
+              "para texto no ecrã (precisa de 'Ler texto do ecrã' ligado). Pede sempre "
+              "confirmação, só avisa, nunca faz nada sozinho.",
+              {"goal": {"type": "string", "description": "O que o utilizador pediu, numa frase curta."},
+               "appears": {"type": "array", "items": {"type": "string"},
+                           "description": "Avisa quando um destes textos aparecer no ecrã."},
+               "disappears": {"type": "array", "items": {"type": "string"},
+                              "description": "Avisa quando estes textos desaparecerem (ex.: '%' de um download)."},
+               "window_appears": {"type": "array", "items": {"type": "string"},
+                                  "description": "Avisa quando abrir uma janela com este título."},
+               "window_closes": {"type": "array", "items": {"type": "string"},
+                                 "description": "Avisa quando fechar a janela com este título."},
+               "minutes": {"type": "integer", "minimum": 1, "maximum": 120, "default": 30,
+                           "description": "Durante quanto tempo vigiar (máximo 120)."}},
+              ["goal"]),
+        _tool("pc_screen_watch_stop",
+              "Para de vigiar o ecrã (uma vigia pelo id, ou todas), ou lista as vigias ativas "
+              "com list_only.",
+              {"watch_id": {"type": "string", "description": "A vigia a parar; sem id, para todas."},
+               "list_only": {"type": "boolean", "description": "Só listar as vigias ativas."}}),
     ]
 
 
@@ -1578,4 +1661,6 @@ TOOL_HANDLERS = {
     "pc_screenshot_capture": pc_screenshot_capture,
     "pc_screen_read_text": pc_screen_read_text,
     "pc_screen_describe": pc_screen_describe,
+    "pc_screen_watch": pc_screen_watch,
+    "pc_screen_watch_stop": pc_screen_watch_stop,
 }
