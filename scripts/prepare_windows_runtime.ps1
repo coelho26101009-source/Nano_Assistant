@@ -68,8 +68,12 @@ New-Item -ItemType Directory -Force -Path $sitePackages | Out-Null
 # wheels have to be chosen by the interpreter that will actually import them --
 # a host Python of a different minor version would install unloadable binaries.
 $getPip = Join-Path $work 'get-pip.py'
-Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/pip/get-pip.py' -OutFile $getPip -UseBasicParsing
-$getPipSha256 = 'fb24e693bab954209a063d90953621412ccad4a500905a726286e038f508ddf6'
+# Pinned to one commit of pypa/get-pip, not the moving bootstrap.pypa.io URL:
+# that file changes with every pip release (pip 26.3 on 2026-11-02 broke the
+# 0.3.0-beta.1 build on the checksum below). This copy is byte-identical to
+# what bootstrap.pypa.io served on 2026-11-19; to update, compare both again.
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/pypa/get-pip/c7135ee10cd1b1fcb8fbf63d5d0004885cba7aa4/public/get-pip.py' -OutFile $getPip -UseBasicParsing
+$getPipSha256 = '356e0d0de21cdc348c3394084d90939b85e4246c4d14c76aee6ca4f46646ea98'
 if ((Get-FileHash -LiteralPath $getPip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $getPipSha256) {
     throw 'pip bootstrap checksum mismatch; review the upstream change before updating the pin.'
 }
