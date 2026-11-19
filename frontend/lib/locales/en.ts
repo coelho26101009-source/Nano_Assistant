@@ -1146,4 +1146,5 @@ export const EN: Record<string, string> = {
   "Visto pela última vez: {0}": "Last seen: {0}",
   "Remover telemóvel": "Remove phone",
   "\"{0}\" deixa de poder falar com o NANO. Para voltar, tem de ser ligado de novo.": "\"{0}\" will no longer be able to talk to NANO. To come back, it must be connected again.",
+  "Falta instalar uma parte do NANO para usar o telemóvel. Fecha o NANO e corre isto na pasta do NANO:": "A part of NANO needed for the phone is not installed yet. Close NANO and run this in the NANO folder:",
 };

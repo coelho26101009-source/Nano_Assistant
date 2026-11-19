@@ -3265,12 +3265,23 @@ def _qr_svg(text: str) -> str:
     return buffer.getvalue().decode("utf-8")
 
 
+def _mobile_missing_packages() -> list[str]:
+    """Packages phone access needs that this Python does not have yet.
+
+    An install updated by copying files keeps its old interpreter packages, so
+    the panel names the command instead of failing at the first pairing.
+    """
+    import importlib.util
+    return [name for name in ("cryptography", "segno") if importlib.util.find_spec(name) is None]
+
+
 @eel.expose
 def get_mobile_status() -> dict:
     """Settings → Phone: is access on, is it listening, which phones are paired."""
     server = _MOBILE_SERVER
     return {
         "ok": True,
+        "missing": _mobile_missing_packages(),
         "enabled": user_settings.get("mobile_access_enabled", False) is True,
         "running": bool(server and server.running),
         "error": (server.error if server else "") or "",
@@ -3283,6 +3294,8 @@ def get_mobile_status() -> dict:
 
 @eel.expose
 def set_mobile_access(enabled: bool) -> dict:
+    if enabled is True and _mobile_missing_packages():
+        return {**get_mobile_status(), "ok": False, "error": "missing_packages"}
     result = user_settings.set_value("mobile_access_enabled", enabled is True)
     if not result.get("ok"):
         return {"ok": False, "error": "invalid_value"}
@@ -4375,7 +4388,7 @@ def main():
     # core/local_control_plane.py for what this does and does not defend against.
     local_control_plane.install_origin_guard(port)
 
-    if user_settings.get("mobile_access_enabled", False) is True:
+    if user_settings.get("mobile_access_enabled", False) is True and not _mobile_missing_packages():
         status = _apply_mobile_access(True)
         _report("Phone", "READY" if status["running"] else "UNAVAILABLE",
                 f"port {status['port']}" if status["running"] else status["error"])

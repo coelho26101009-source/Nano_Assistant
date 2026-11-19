@@ -20,6 +20,19 @@ versioning policy.
 
 ## [Unreleased]
 
+### Added
+
+- **NANO on the phone (Android).** A new app in `mobile/` (Capacitor + React)
+  that is a remote for the NANO on your PC: the same conversations, memory and
+  agenda, chat with voice (Android speech recognition and text-to-speech),
+  approval cards for PC actions, reminders copied to the phone as notifications
+  so they ring with the app closed, dark design matching the PC, English with
+  European Portuguese. Pairing is a QR code in Settings → General → Phone plus a
+  yes on the PC; every message is end-to-end sealed with AES-256-GCM
+  (`core/mobile_link.py`). Away from home it works over Tailscale, with no port
+  opened to the internet. CI builds a test APK (`android-test` pre-release) and a
+  Play Store bundle (`.github/workflows/android.yml`).
+
 ### Fixed
 
 - **Desktop window no longer stays black.** The window now opens at once on a

@@ -15,7 +15,7 @@ import { Button, MetricRow, Modal, Panel, StatusIndicator, Toggle } from "./ui";
 type Address = { address: string; kind: "lan" | "private_network" };
 type Device = { id: string; name: string; platform: string; pairedAt?: number; lastSeen?: number };
 type MobileStatus = {
-  ok: boolean; enabled: boolean; running: boolean; error: string; port: number;
+  ok: boolean; enabled: boolean; running: boolean; error: string; port: number; missing?: string[];
   addresses: Address[]; devices: Device[]; pcName: string;
 };
 type Pairing = {
@@ -152,11 +152,19 @@ export default function PhonePanel() {
   return (
     <Panel title={t("Telemóvel")}>
       <p className="muted" style={{ fontSize: 13, marginBottom: 10 }}>{t("Usa o NANO no telemóvel Android, com as mesmas conversas, memória e agenda. Tudo vai cifrado entre o telemóvel e este PC, e nada fica aberto à internet.")}</p>
+      {(status.missing?.length ?? 0) > 0 && (
+        <div style={{ marginBottom: 10 }}>
+          <p className="field__error">{t("Falta instalar uma parte do NANO para usar o telemóvel. Fecha o NANO e corre isto na pasta do NANO:")}</p>
+          <code style={{ display: "block", fontSize: 11, marginTop: 6, userSelect: "all", wordBreak: "break-all" }}>
+            python -m pip install --require-hashes --no-build-isolation -r requirements\runtime.lock
+          </code>
+        </div>
+      )}
       <Toggle
         label={t("Acesso do telemóvel")}
         hint={t("Deixa telemóveis emparelhados falar com este NANO pela tua rede. Desligado, nada fica à escuta.")}
         checked={status.enabled}
-        disabled={busy}
+        disabled={busy || (!status.enabled && (status.missing?.length ?? 0) > 0)}
         onChange={(value) => void toggle(value)}
       />
       {status.enabled && (

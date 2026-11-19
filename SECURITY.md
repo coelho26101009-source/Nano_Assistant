@@ -113,12 +113,28 @@ it never executes in practice. See `docs/SECURITY_POLICY.md`.
 * **The Execution Ledger in `core/brain.py`** — per-turn deduplication of tool
   calls across a provider failover, including calls still in flight. A hole here
   means a real effect on the machine happening twice.
+* **`core/mobile_link.py` and `core/mobile_server.py`** — NANO on the phone.
+  Off by default. When on, a small HTTP server listens on the local network.
+  Pairing needs the one-time QR secret (256-bit, 5 minutes) AND an approval on
+  the PC; each phone then has its own 256-bit key, and every request and answer
+  is AES-256-GCM sealed and bound to the device, the request id and the
+  direction, with a ±5-minute window and replay rejection. A phone can call only
+  the methods registered in `core/main.py` (chat, conversations, agenda, memory,
+  approvals, status): never settings, keys, permissions or the emergency stop.
+  Approvals it answers are the same approvals the PC shows. Removing a phone on
+  the PC deletes its key. Anything that widens that method list, or lets a
+  phone pair without the PC's yes, is a vulnerability.
 * **Prompt injection** — external content (web pages, file contents, tool
   output) is data, never instructions. It may not grant a permission.
 
 ## Known limitations
 
 Stated plainly rather than left for someone to discover:
+
+* **A paired phone is as trusted as the PC window.** It can read your
+  conversations, agenda and memory and answer approval requests. Losing an
+  unlocked phone means removing it in Settings → General → Phone. The phone's
+  key lives in the Android Keystore and is excluded from backups.
 
 * **A native process running as the same user is not defended against.** The
   Origin check on the local control plane stops a malicious *web page*; it
