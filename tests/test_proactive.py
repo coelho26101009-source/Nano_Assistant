@@ -182,3 +182,13 @@ def test_erase_all_data_forgets_the_proactive_state():
     from core import main
 
     assert "proactive_scheduler.forget()" in inspect.getsource(main.erase_all_data)
+
+
+def test_the_agenda_is_not_read_on_every_tick(make):
+    reads = []
+    scheduler, _, clock = make(clock=Clock(DAY.replace(hour=6)))
+    scheduler._overview = lambda: reads.append(1) or _agenda()
+    for minute in range(5):
+        clock.moment = DAY.replace(hour=6, minute=minute)
+        scheduler.tick()
+    assert len(reads) == 1

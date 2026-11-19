@@ -274,4 +274,5 @@ EN: dict[str, str] = {
     "Muito leve: para PCs com pouca memória": "Very light: for PCs with little memory",
     "Leve e equilibrado: o recomendado para a maioria dos PCs": "Light and balanced: recommended for most PCs",
     "Mais inteligente: para PCs com placa gráfica de 8 GB ou mais": "Smarter: for PCs with a graphics card of 8 GB or more",
+    "Resumo do dia": "Today's briefing",
 }

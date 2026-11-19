@@ -64,6 +64,9 @@ export default function FirstRunGuide({
               <Button variant={usable ? "default" : "primary"} onClick={() => onSettings("ai")}>{t("Configurar IA")}</Button>
               <Button onClick={onRefresh}>{t("Verificar novamente")}</Button>
             </div>
+            {/* The guided local model (core/local_setup.py) lives on the same
+                settings page, below the cloud keys. */}
+            <p className="dim" style={{ fontSize: 12, marginTop: 10 }}>{t("Sem chave? Em Configurar IA → \u201cIA no teu PC\u201d o NANO vê o que o teu PC aguenta e instala um modelo leve e grátis com um clique. Também serve de reserva quando a nuvem chega ao limite.")}</p>
           </div>
         )}
 

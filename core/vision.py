@@ -156,16 +156,30 @@ def _http_json(method: str, url: str, *, headers: dict | None = None,
 TRANSPORT: Callable[..., dict] = _http_json
 
 
+#: base url -> (monotonic time, models). One screen look asks twice (the tool
+#: checks before capturing, then describe() picks the model), and a stopped
+#: Ollama costs ~2 s per ask on Windows, so the answer is kept briefly.
+_TAGS_CACHE: dict[str, tuple[float, list[str]]] = {}
+TAGS_TTL_SECONDS = 30.0
+
+
 def local_vision_models(ollama_url: str | None = None) -> list[str]:
     """Installed Ollama models that can read images. Empty when Ollama is off."""
+    import time
+
+    base = _ollama_base(ollama_url)
+    cached = _TAGS_CACHE.get(base)
+    if cached and time.monotonic() - cached[0] < TAGS_TTL_SECONDS and TRANSPORT is _http_json:
+        return list(cached[1])
     try:
-        payload = TRANSPORT("GET", _ollama_base(ollama_url) + "/api/tags",
-                            timeout=httpx.Timeout(3.0, connect=1.5))
+        payload = TRANSPORT("GET", base + "/api/tags", timeout=httpx.Timeout(3.0, connect=1.5))
     except Exception:
-        return []
+        payload = {}
     names = [str(item.get("name") or item.get("model") or "")
              for item in (payload.get("models") or []) if isinstance(item, dict)]
-    return [name for name in names if name and is_ollama_vision_model(name)]
+    found = [name for name in names if name and is_ollama_vision_model(name)]
+    _TAGS_CACHE[base] = (time.monotonic(), found)
+    return found
 
 
 def candidates(settings: dict[str, Any] | None = None) -> list[tuple[str, str]]:

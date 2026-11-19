@@ -27,6 +27,7 @@ import json
 import logging
 import re
 import threading
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
@@ -42,6 +43,10 @@ LEAD_MINUTES_CHOICES = (5, 10, 15, 30, 60)
 TICK_SECONDS = 30.0
 #: The most items one briefing lists of each kind; the rest is a count.
 MAX_LISTED = 5
+#: How long one read of the agenda is reused. The scheduler ticks every 30 s,
+#: and with Google Calendar connected every read is a network call; event
+#: times do not move, so a two-minute-old copy only delays a brand-new event.
+OVERVIEW_TTL_SECONDS = 120.0
 #: A briefing is not given after this hour: at 23:00 "bom dia" is noise.
 LATEST_BRIEFING_HOUR = 14
 
@@ -136,7 +141,7 @@ def build_briefing(overview: dict, now: datetime, *, name: str = "") -> dict:
     tomorrow = len(tomorrow_events) + len(tomorrow_reminders)
     if tomorrow:
         lines.append(tr("Amanhã tens {count} coisa(s) marcada(s).", count=tomorrow))
-    return {"kind": "briefing", "title": tr("Resumo da manhã"), "text": "\n".join(lines)}
+    return {"kind": "briefing", "title": tr("Resumo do dia"), "text": "\n".join(lines)}
 
 
 def build_event_alert(title: str, start: datetime, now: datetime) -> dict:
@@ -162,6 +167,7 @@ class ProactiveScheduler:
         self._state = self._load()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._cached: tuple[float, dict] | None = None
 
     # ── state ────────────────────────────────────────────────────────────
     def _load(self) -> dict:
@@ -187,6 +193,7 @@ class ProactiveScheduler:
     def forget(self) -> None:
         """Drop the state file (used by "Apagar todos os dados")."""
         self._state = {"last_briefing": "", "announced": []}
+        self._cached = None
         try:
             if self.state_path and self.state_path.exists():
                 self.state_path.unlink()
@@ -201,7 +208,7 @@ class ProactiveScheduler:
             return []
         now = self._now()
         try:
-            overview = self._overview() or {}
+            overview = self._read_overview()
         except Exception:
             logger.debug("Agenda indisponível para a proatividade", exc_info=True)
             return []
@@ -241,6 +248,14 @@ class ProactiveScheduler:
             except Exception:
                 logger.debug("Falha a mostrar um aviso proativo", exc_info=True)
         return out
+
+    def _read_overview(self) -> dict:
+        stamp = time.monotonic()
+        if self._cached and stamp - self._cached[0] < OVERVIEW_TTL_SECONDS:
+            return self._cached[1]
+        overview = self._overview() or {}
+        self._cached = (stamp, overview)
+        return overview
 
     def briefing_now(self) -> dict:
         """The briefing on demand (button), without marking the day as done."""

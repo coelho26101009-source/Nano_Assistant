@@ -1107,4 +1107,5 @@ export const EN: Record<string, string> = {
   "Usar este modelo": "Use this model",
   "Descarregar e usar": "Download and use",
   "Apenas modelos já instalados. Para descarregar um, usa a configuração guiada abaixo.": "Installed models only. To download one, use the guided setup below.",
+  "Sem chave? Em Configurar IA → “IA no teu PC” o NANO vê o que o teu PC aguenta e instala um modelo leve e grátis com um clique. Também serve de reserva quando a nuvem chega ao limite.": "No key? In Set up AI → “AI on your PC”, NANO checks what your PC can handle and installs a free, light model in one click. It also steps in when the cloud hits its limit.",
 };

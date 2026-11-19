@@ -23,6 +23,10 @@ jobs:
   python:
     name: Python tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # A normal run takes about 5 minutes. A test that hangs (Windows once sat
+    # for over 40) must fail the job, not hold it for GitHub's 6-hour limit;
+    # pytest.ini's faulthandler_timeout prints where it hung first.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:

@@ -938,9 +938,13 @@ export function Conversation({
          ref={scrollRef} onScroll={onScroll}>
       <div className="conversation__inner">
         {messages.map((message, index) => {
-          const isLast = index === lastIndex;
+          // A notice NANO said by itself (core/proactive.py) is not an answer:
+          // retrying or editing "the last turn" there would rewind the real
+          // last question behind it.
+          const lastIsNotice = messages[lastIndex]?.id.startsWith("notice-") ?? false;
+          const isLast = index === lastIndex && !lastIsNotice;
           const isLastQuestion = message.role === "user" && index === lastIndex - 1
-            && messages[lastIndex]?.role === "assistant";
+            && messages[lastIndex]?.role === "assistant" && !lastIsNotice;
           return (
             <MessageBubble
               key={message.id} message={message} status={status} userName={userName}

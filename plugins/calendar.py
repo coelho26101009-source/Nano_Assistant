@@ -77,9 +77,13 @@ def list_events(days: int = 7, include_google: bool = True) -> dict:
     """Lista os eventos dos próximos N dias (locais + Google, se configurado)."""
     now = datetime.now()
     until = now + timedelta(days=int(days))
+    # From the start of TODAY, not from this minute: a meeting that began ten
+    # minutes ago is still today's agenda, and "what do I have today?" asked
+    # at 15:00 must still list the 09:00 one.
+    since = now.replace(hour=0, minute=0, second=0, microsecond=0)
     rows = _conn().execute(
         "SELECT id, title, start_at, end_at, location, source FROM calendar_events WHERE start_at BETWEEN ? AND ? ORDER BY start_at",
-        (now.isoformat(timespec="minutes"), until.isoformat(timespec="minutes")),
+        (since.isoformat(timespec="minutes"), until.isoformat(timespec="minutes")),
     ).fetchall()
     events = [{"id": r[0], "title": r[1], "start": r[2], "end": r[3], "location": r[4], "source": r[5]} for r in rows]
 

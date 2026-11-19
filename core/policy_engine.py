@@ -185,6 +185,19 @@ class PolicyEngine:
         # pc_app_launch and the CAPABILITIES are pc.app.launch. This table is
         # the only place the two vocabularies meet.
         "pc_app_search": "pc.app.search",
+        # Reading NANO's OWN data (the agenda, saved facts, past chats) and
+        # the system snapshot. These used to have no mapping, so each fell
+        # into "unknown capability, ask first": "what's on my agenda?" asked
+        # for approval, and system_stats was blocked outright.
+        "list_reminders": "nano.data.read",
+        "calendar_list_events": "nano.data.read",
+        "list_facts": "nano.data.read",
+        "memory_search_history": "nano.data.read",
+        "rag_search": "nano.documents.read",
+        "rag_list_docs": "nano.documents.read",
+        "system_stats": "pc.system.read",
+        "monitor_status": "pc.system.read",
+        "monitor_stop": "pc.system.read",
         "work_mode_list": "pc.mode.read",
         "work_mode_plan": "pc.mode.read",
         "pc_app_launch": "pc.app.launch",
@@ -356,6 +369,8 @@ class PolicyEngine:
             # Work modes: reading a plan is read-only; applying it is the
             # narrow tools in the plan, each with its own rule.
             "pc.mode.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Reading a work mode's plan executes nothing."),
+            "nano.data.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Reading NANO's own agenda, facts and history changes nothing."),
+            "nano.documents.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Searching documents the user indexed changes nothing; the text is untrusted."),
             "pc.window.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Listing open windows is read-only."),
             "pc.volume.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Reading the volume is read-only."),
             "pc.system.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "The system snapshot is read-only and carries no identifiers."),
@@ -591,7 +606,7 @@ class PolicyEngine:
             "agent": agent,
             "tool": tool,
             "capability": self.canonical_capability(capability),
-            "risk": str(risk.value if hasattr(risk, "value") else (risk or RiskLevel.MEDIUM)).upper(),
+            "risk": str(risk.value if hasattr(risk, "value") else (risk or RiskLevel.MEDIUM.value)).upper(),
             "target": self._resolve_target(target),
             "scope": self._resolve_scope(scope, self._resolve_target(target)),
             "reason": reason or "Requested by current task.",
