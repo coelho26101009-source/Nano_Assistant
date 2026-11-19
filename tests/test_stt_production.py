@@ -239,7 +239,7 @@ def test_legacy_whisper_keys_are_stripped_and_cannot_pin_production_to_tiny(capl
         "whisper_compute_type": "float16",
         "stt": {"model": "small", "device": "cpu", "compute_type": "int8"},
     }
-    with caplog.at_level(logging.WARNING, logger="helios.config"):
+    with caplog.at_level(logging.WARNING, logger="nano.config"):
         removed = _strip_legacy_whisper_keys(voice_cfg)
 
     assert sorted(removed) == ["whisper_compute_type", "whisper_device", "whisper_model"]
@@ -249,7 +249,7 @@ def test_legacy_whisper_keys_are_stripped_and_cannot_pin_production_to_tiny(capl
 
 def test_stripping_legacy_keys_is_loud_not_silent(caplog):
     """A dead key that vanishes quietly is how the drift went unnoticed."""
-    with caplog.at_level(logging.WARNING, logger="helios.config"):
+    with caplog.at_level(logging.WARNING, logger="nano.config"):
         _strip_legacy_whisper_keys({"whisper_model": "tiny"})
     messages = [record.getMessage() for record in caplog.records]
     assert any("voice.whisper_model" in message for message in messages), messages

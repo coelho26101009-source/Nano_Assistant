@@ -23,7 +23,7 @@ from core.config import get_setting
 from core.memory import get_memory
 from plugins.smart_life import phone_notification
 
-logger = logging.getLogger("helios.plugins.system_monitor")
+logger = logging.getLogger("nano.plugins.system_monitor")
 
 _monitor: threading.Thread | None = None
 _stop = threading.Event()

@@ -45,7 +45,7 @@ from tests.test_ollama_status import MODEL, ClosingListener, FakeOllama, _Record
 ROOT = Path(__file__).resolve().parent.parent
 
 #: Every environment variable a cloud credential can come from.
-_CLOUD_ENV = ("NANO_API_KEY", "HELIOS_API_KEY", "GROQ_API_KEY", "NANO_GEMINI_API_KEY",
+_CLOUD_ENV = ("NANO_API_KEY", "GROQ_API_KEY", "NANO_GEMINI_API_KEY",
               "GEMINI_API_KEY", "GOOGLE_API_KEY", "NANO_MISTRAL_API_KEY", "MISTRAL_API_KEY")
 _FAKE_KEYS = {"GROQ_API_KEY": "gsk_" + "0" * 48,
               "MISTRAL_API_KEY": "mistral-" + "0" * 24,
@@ -927,7 +927,7 @@ def test_a_bare_pytest_run_is_isolated(tmp_path, override):
     Only core.app_paths is imported in that run, so even a regression here
     could not write anything into the real profile.
     """
-    env = {k: v for k, v in os.environ.items() if k not in ("NANO_DATA_DIR", "HELIOS_DATA_DIR")}
+    env = {k: v for k, v in os.environ.items() if k != "NANO_DATA_DIR"}
     from core import app_paths
 
     real = app_paths.default_data_root().resolve()

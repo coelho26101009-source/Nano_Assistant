@@ -11,8 +11,35 @@ from typing import Any
 
 from core.app_paths import DATA_DIR
 
-logger = logging.getLogger("helios.memory")
-DB_PATH, FACT_PREFIX = DATA_DIR / "helios.db", "fact:"
+logger = logging.getLogger("nano.memory")
+DB_PATH, FACT_PREFIX = DATA_DIR / "nano.db", "fact:"
+
+#: The file name the database had before the app was called Nano. An install
+#: that still has it is renamed once, on start, together with SQLite's side
+#: files (the WAL holds committed rows that are not in the main file yet).
+LEGACY_DB_NAME = "helios.db"
+_SQLITE_SIDE_FILES = ("", "-wal", "-shm", "-journal")
+
+
+def adopt_legacy_database(path=None) -> bool:
+    """Rename ``helios.db`` to ``nano.db`` in the same folder. Returns True if it did.
+
+    Never overwrites: when ``nano.db`` already exists the old file is left alone.
+    """
+    target = path or DB_PATH
+    legacy = target.with_name(LEGACY_DB_NAME)
+    if target.exists() or not legacy.exists():
+        return False
+    try:
+        for suffix in _SQLITE_SIDE_FILES:
+            source = legacy.with_name(LEGACY_DB_NAME + suffix)
+            if source.exists():
+                source.rename(target.with_name(target.name + suffix))
+    except OSError:
+        logger.exception("Não foi possível renomear %s para %s", legacy.name, target.name)
+        return False
+    logger.info("Base de dados antiga %s renomeada para %s", legacy.name, target.name)
+    return True
 
 
 def _truncate(text: str, max_chars: int) -> str:
@@ -29,6 +56,7 @@ def _fts_query(query: str) -> str:
 class MemoryEngine:
     def __init__(self):
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        adopt_legacy_database(DB_PATH)
         self._lock = threading.RLock()
         self.conn = sqlite3.connect(str(DB_PATH), check_same_thread=False, timeout=10)
         self.conn.execute("PRAGMA journal_mode=WAL")
@@ -259,6 +287,24 @@ class MemoryEngine:
         except Exception:
             logger.exception("Erro na pesquisa RAG")
             return []
+
+    def list_documents(self) -> list[dict]:
+        """One entry per indexed document: its id and file name."""
+        table = "documents_fts" if self._fts_available else "documents_fallback"
+        try:
+            with self._lock:
+                rows = self.conn.execute(f"SELECT doc_key, metadata FROM {table}").fetchall()
+        except sqlite3.OperationalError:
+            return []                     # nothing was ever indexed
+        seen: dict[str, str] = {}
+        for doc_key, metadata in rows:
+            try:
+                meta = json.loads(metadata) if metadata else {}
+            except json.JSONDecodeError:
+                meta = {}
+            doc_id = str(meta.get("doc_id") or str(doc_key).rsplit(":", 1)[0])
+            seen.setdefault(doc_id, str(meta.get("filename") or doc_id))
+        return [{"id": doc_id, "filename": name} for doc_id, name in seen.items()]
 
     def close(self):
         try:

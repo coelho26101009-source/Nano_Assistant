@@ -47,8 +47,8 @@ SENTINELS = {
 EXPLICIT_MISTRAL = "explicitly-exported-fake-mistral"
 
 #: Every variable that would change what a child loads, or where from.
-_SCRUBBED = ("NANO_SKIP_DOTENV", "NANO_DATA_DIR", "HELIOS_DATA_DIR", "NANO_APP_ROOT",
-             "HELIOS_APP_ROOT", "PYTHONPATH", "NANO_API_KEY", "HELIOS_API_KEY",
+_SCRUBBED = ("NANO_SKIP_DOTENV", "NANO_DATA_DIR", "NANO_APP_ROOT",
+             "PYTHONPATH", "NANO_API_KEY",
              "NANO_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
              "NANO_MISTRAL_API_KEY", *SENTINELS)
 
@@ -142,7 +142,7 @@ def test_the_gate(monkeypatch, frozen, flag, allowed):
 def test_a_credential_a_test_sets_itself_still_reaches_the_code(monkeypatch, tmp_path):
     """Only the implicit file is blocked; monkeypatch.setenv works as ever."""
     monkeypatch.setattr(secret_store, "_STORE_PATH", tmp_path / "secrets.dat")
-    for name in ("NANO_API_KEY", "HELIOS_API_KEY", "NANO_MISTRAL_API_KEY"):
+    for name in ("NANO_API_KEY", "NANO_MISTRAL_API_KEY"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("GROQ_API_KEY", "test-set-fake-groq")
     monkeypatch.setenv("MISTRAL_API_KEY", "test-set-fake-mistral")

@@ -118,9 +118,8 @@ Browser automation exists (`plugins/web_vision.py`, Playwright) but depends on
 an optional dependency and is restricted to public HTTP(S) destinations.
 
 **There is no generic shell, PowerShell, CMD or script-execution tool anywhere
-reachable by the model.** The plugins that once offered one were withdrawn and
-their files kept as the record of why — see `plugins/god_mode.py` and
-`plugins/context_switcher.py`.
+reachable by the model.** The plugins that once offered one (`god_mode` and
+`context_switcher`) were withdrawn and later deleted; the CHANGELOG records why.
 
 ### 6. Security layer
 
@@ -157,8 +156,8 @@ in a row. Nothing is dropped destructively: the two legacy tables keep their
 shape and their rows, and pre-existing messages were back-filled into real
 threads rather than discarded.
 
-The file is named `helios.db` for compatibility with existing installs. See
-[`../README.md`](../README.md) for the other legacy identifiers kept on purpose.
+The file is `nano.db`. An install from before the rename still has `helios.db`;
+`core.memory.adopt_legacy_database` renames it (with its WAL side files) on start.
 
 ## Task queue
 

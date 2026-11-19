@@ -9,7 +9,9 @@ from typing import Any
 
 import httpx
 
-logger = logging.getLogger("helios.plugins.smart_life")
+from core.memory import get_memory
+
+logger = logging.getLogger("nano.plugins.smart_life")
 
 
 # ─── IoT / Smart Home ─────────────────────────────────────────────────────────
@@ -61,7 +63,7 @@ async def phone_notification(message: str, webhook_url: str | None = None) -> di
 # ─── RAG sobre PDFs locais ────────────────────────────────────────────────────
 
 def index_pdf(file_path: str) -> dict:
-    """Indexa um PDF para pesquisa semântica RAG."""
+    """Indexa um PDF para pesquisa local (RAG)."""
     path = Path(file_path)
     if not path.exists():
         return {"error": f"Ficheiro não encontrado: {file_path}"}
@@ -83,11 +85,7 @@ def index_pdf(file_path: str) -> dict:
         if not text.strip():
             return {"error": f"PDF sem texto extraível: {path.name}"}
 
-        # Indexa no ChromaDB via MemoryEngine
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-        from core.memory import MemoryEngine
-        mem    = MemoryEngine()
+        mem = get_memory()
         success = mem.index_document(
             doc_id   = path.stem,
             text     = text,
@@ -107,13 +105,9 @@ def index_pdf(file_path: str) -> dict:
 
 
 def search_documents(query: str, n_results: int = 5) -> dict:
-    """Pesquisa semântica nos documentos indexados (RAG)."""
+    """Pesquisa nos documentos indexados (RAG local, SQLite FTS5)."""
     try:
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-        from core.memory import MemoryEngine
-        mem     = MemoryEngine()
-        results = mem.search_documents(query, n_results)
+        results = get_memory().search_documents(query, n_results)
         if not results:
             return {"message": "Não encontrei documentos relevantes. Já indexaste algum PDF?",
                     "results": []}
@@ -125,29 +119,10 @@ def search_documents(query: str, n_results: int = 5) -> dict:
 def list_indexed_documents() -> dict:
     """Lista todos os documentos indexados no RAG."""
     try:
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-        from core.memory import MemoryEngine
-        mem    = MemoryEngine()
-        client = mem._get_chroma()
-        if client is None:
-            return {"docs": [], "message": "ChromaDB não disponível."}
-        # Legacy name kept deliberately: this is a persisted Chroma
-        # collection, not branding. Renaming it would orphan every
-        # document a user has already indexed.
-        col    = client.get_or_create_collection("helios_docs")
-        data   = col.get()
-        ids    = data.get("ids", [])
-        metas  = data.get("metadatas", [])
-        seen   = {}
-        for doc_id, meta in zip(ids, metas):
-            base = meta.get("doc_id", doc_id.split("_chunk_")[0])
-            if base not in seen:
-                seen[base] = meta.get("filename", base)
-        return {"docs": [{"id": k, "filename": v} for k, v in seen.items()],
-                "count": len(seen)}
+        docs = get_memory().list_documents()
     except Exception as exc:
         return {"error": str(exc)}
+    return {"docs": docs, "count": len(docs)}
 
 
 def get_tools() -> list[dict]:

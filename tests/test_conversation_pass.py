@@ -285,7 +285,7 @@ def test_the_groq_client_is_constructed_without_hidden_retries(monkeypatch):
             f"AsyncGroq built at line {call.lineno} without max_retries=0; the "
             "SDK default of 2 sleeps silently through a 429")
 
-    for name in ("NANO_API_KEY", "HELIOS_API_KEY"):
+    for name in ("NANO_API_KEY",):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("GROQ_API_KEY", "gsk_" + "1" * 48)
     brain = Brain(api_key="gsk_" + "1" * 48, guardrails=GuardrailsEngine(),

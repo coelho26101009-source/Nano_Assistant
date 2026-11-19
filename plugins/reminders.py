@@ -23,7 +23,7 @@ from core.config import get_setting
 from core.memory import get_memory
 from plugins.smart_life import phone_notification
 
-logger = logging.getLogger("helios.plugins.reminders")
+logger = logging.getLogger("nano.plugins.reminders")
 
 CHECK_INTERVAL_SECONDS = 20
 

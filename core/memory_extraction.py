@@ -657,7 +657,7 @@ def entities(text: str, *, limit: int = 2) -> list[str]:
 #: explicitly rather than because they were inferred:
 #:
 #:   the user's machine   "o meu PC", "o meu portátil", "a minha máquina"
-#:   a named project      "o projeto Nano", "a app Helios"
+#:   a named project      "o projeto Nano", "a app Aurora"
 #:
 #: The machine collapses onto ONE canonical node no matter which word the user
 #: chose, which is what makes every hardware fact accumulate on the same node

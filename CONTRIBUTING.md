@@ -113,8 +113,8 @@ Do not add:
 
 This has been violated three times in this project's history — by
 `plugins/god_mode.py`, by a live `shell.execute` tool in the executor, and by
-`plugins/context_switcher.py`. Each looked harmless. Each is now a tombstone
-file that explains exactly what went wrong; they are worth reading.
+`plugins/context_switcher.py`. Each looked harmless. All three were removed;
+the CHANGELOG and `docs/architecture/PC_CONTROL.md` explain what went wrong.
 
 If you genuinely need the OS to do something, add a **narrow tool**.
 

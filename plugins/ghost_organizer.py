@@ -14,7 +14,7 @@ from typing import Any
 
 import psutil
 
-logger = logging.getLogger("helios.plugins.ghost_organizer")
+logger = logging.getLogger("nano.plugins.ghost_organizer")
 
 DOWNLOADS_DIR = Path.home() / "Downloads"
 

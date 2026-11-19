@@ -99,7 +99,7 @@ def wired(monkeypatch, tmp_path):
     """
     import core.main as main
 
-    monkeypatch.setattr(memory_module, "DB_PATH", tmp_path / "helios.db")
+    monkeypatch.setattr(memory_module, "DB_PATH", tmp_path / "nano.db")
     engine = MemoryEngine()
     stack = MemoryStack(engine, background=False)
 

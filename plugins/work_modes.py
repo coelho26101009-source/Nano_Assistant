@@ -8,8 +8,8 @@ in one call: to apply one it calls the narrow PC Control tools in the plan
 confirmation and target binding. The one-click "Ativar" lives in the UI
 (PC -> Modos), and it too runs every step through ToolExecutor.
 
-See core/work_modes.py for the format and validation, and
-plugins/context_switcher.py for why the previous implementation was withdrawn.
+See core/work_modes.py for the format and validation, and for why the previous
+implementation (context_switcher) was withdrawn.
 """
 from __future__ import annotations
 

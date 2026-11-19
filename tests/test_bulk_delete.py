@@ -23,7 +23,7 @@ from core.memory_stack import MemoryStack
 
 @pytest.fixture
 def stack(tmp_path, monkeypatch):
-    monkeypatch.setattr(memory_module, "DB_PATH", tmp_path / "helios.db")
+    monkeypatch.setattr(memory_module, "DB_PATH", tmp_path / "nano.db")
     engine = MemoryEngine()
     built = MemoryStack(engine, background=False)
     try:

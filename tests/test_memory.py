@@ -3,10 +3,10 @@ from core.memory import MemoryEngine
 
 
 def test_memory_roundtrip(tmp_path, monkeypatch):
-    monkeypatch.setattr(memory_module, "DB_PATH", tmp_path / "helios.db")
+    monkeypatch.setattr(memory_module, "DB_PATH", tmp_path / "nano.db")
     engine = MemoryEngine()
     try:
-        engine.save_message("user", "Olá HELIOS")
+        engine.save_message("user", "Olá NANO")
         engine.save_message("assistant", "Olá! Como posso ajudar?")
         history = engine.get_recent_messages(10)
         assert [item["role"] for item in history] == ["user", "assistant"]
@@ -16,12 +16,12 @@ def test_memory_roundtrip(tmp_path, monkeypatch):
 
 
 def test_local_rag_roundtrip(tmp_path, monkeypatch):
-    monkeypatch.setattr(memory_module, "DB_PATH", tmp_path / "helios.db")
+    monkeypatch.setattr(memory_module, "DB_PATH", tmp_path / "nano.db")
     engine = MemoryEngine()
     try:
         assert engine.index_document(
             "doc1",
-            "O HELIOS pode funcionar com um modelo local e guardar memória no computador.",
+            "O NANO pode funcionar com um modelo local e guardar memória no computador.",
             {"filename": "manual.txt"},
         )
         results = engine.search_documents("modelo local", 3)

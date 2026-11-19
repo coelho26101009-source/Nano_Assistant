@@ -21,7 +21,7 @@ from core.app_paths import DATA_DIR
 from core.config import get_setting
 from core.memory import get_memory
 
-logger = logging.getLogger("helios.plugins.calendar")
+logger = logging.getLogger("nano.plugins.calendar")
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 GOOGLE_CREDS = DATA_DIR / "google_credentials.json"

@@ -76,22 +76,21 @@ def test_context_switcher_exposes_no_tools(advertised, executor):
         assert name not in executor.registry, f"{name} is executable again"
 
 
-def test_context_switcher_has_no_executable_process_calls():
-    """The tombstone must stay a tombstone. Comments are stripped via the AST,
-    so the docstring describing what was removed cannot satisfy this."""
-    stripped = executable_source(ROOT / "plugins" / "context_switcher.py")
-    for forbidden in ("subprocess", "powershell", "taskkill", "Popen", "webbrowser"):
-        assert forbidden not in stripped, f"{forbidden} is live code in context_switcher"
+def test_the_withdrawn_plugins_stay_deleted():
+    """god_mode and context_switcher ran PowerShell, force-killed processes
+    and wrote the registry. Both were emptied, then deleted: neither may return."""
+    for gone in ("god_mode.py", "context_switcher.py"):
+        assert not (ROOT / "plugins" / gone).exists(), f"plugins/{gone} came back"
+    assert not (ROOT / "core" / "desktop_agent.py").exists(), "core/desktop_agent.py came back"
 
 
 def test_the_mode_yaml_files_can_no_longer_drive_anything(executor):
-    """config/modes/*.yaml still exist as data; nothing may execute them."""
+    """config/modes/*.yaml are data for work modes; no context_* tool runs them."""
     assert (ROOT / "config" / "modes").exists(), "the fixture files moved; update this test"
-    handlers = __import__("plugins.context_switcher", fromlist=["TOOL_HANDLERS"]).TOOL_HANDLERS
-    assert handlers == {}, "context_switcher registered a handler again"
+    assert not any(name.startswith("context_") for name in executor.registry)
 
 
-# ── Finding 2: shell=True primitives in desktop_agent ────────────────────
+# ── Finding 2: shell=True primitives ─────────────────────────────────────
 
 def test_no_live_shell_true_anywhere_in_core_or_plugins():
     """`shell=True` on a model-influenced string is the exact primitive that
@@ -113,13 +112,6 @@ def test_no_live_shell_true_anywhere_in_core_or_plugins():
                         and keyword.value.value is True):
                     offenders.append(f"{path.relative_to(ROOT)}:{node.lineno}")
     assert offenders == [], f"live shell=True call sites: {offenders}"
-
-
-def test_desktop_agent_no_longer_spawns_processes():
-    stripped = executable_source(ROOT / "core" / "desktop_agent.py")
-    assert "subprocess" not in stripped, "desktop_agent imports subprocess again"
-    for gone in ("launch_process", "kill_process"):
-        assert f"def {gone}" not in stripped, f"{gone} was reintroduced"
 
 
 def test_the_only_subprocess_in_the_executor_is_the_allow_listed_test_runner():

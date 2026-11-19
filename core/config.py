@@ -9,7 +9,7 @@ import yaml
 
 from core.app_paths import CONFIG_DIR
 
-logger = logging.getLogger("helios.config")
+logger = logging.getLogger("nano.config")
 CONFIG_PATH = CONFIG_DIR / "settings.yaml"
 _cache: dict | None = None
 

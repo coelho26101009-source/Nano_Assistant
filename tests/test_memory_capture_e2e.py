@@ -22,7 +22,7 @@ ones.
 THE DATABASE IS ALWAYS A TEMPORARY ONE
 --------------------------------------
 ``memory_module.DB_PATH`` is redirected to ``tmp_path`` before any engine is
-constructed, so no test in this file can reach the user's real ``helios.db``.
+constructed, so no test in this file can reach the user's real ``nano.db``.
 Every message posted here is synthetic and written by these tests.
 """
 from __future__ import annotations
@@ -36,7 +36,7 @@ from core.memory_stack import MemoryStack
 
 @pytest.fixture
 def db_path(tmp_path, monkeypatch):
-    path = tmp_path / "helios.db"
+    path = tmp_path / "nano.db"
     monkeypatch.setattr(memory_module, "DB_PATH", path)
     return path
 

@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 def app_root() -> Path:
-    configured = os.getenv("NANO_APP_ROOT") or os.getenv("HELIOS_APP_ROOT")
+    configured = os.getenv("NANO_APP_ROOT")
     if configured:
         return Path(configured).expanduser().resolve()
     if getattr(sys, "frozen", False):
@@ -23,7 +23,7 @@ def default_data_root() -> Path:
 
 
 def data_root() -> Path:
-    configured = os.getenv("NANO_DATA_DIR") or os.getenv("HELIOS_DATA_DIR")
+    configured = os.getenv("NANO_DATA_DIR")
     if configured:
         return Path(configured).expanduser().resolve()
     return default_data_root()

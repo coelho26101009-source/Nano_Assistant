@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, quote_plus, urlparse
 
 from core.browser_agent import validate_public_http_url
 
-logger = logging.getLogger("helios.plugins.web_vision")
+logger = logging.getLogger("nano.plugins.web_vision")
 
 _browser = None
 _context = None

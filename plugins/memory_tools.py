@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.memory import get_memory
 
-logger = logging.getLogger("helios.plugins.memory_tools")
+logger = logging.getLogger("nano.plugins.memory_tools")
 
 
 def _stack():

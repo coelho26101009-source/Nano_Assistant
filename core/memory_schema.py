@@ -2,9 +2,8 @@
 
 ONE DATABASE, MIGRATED — NEVER REPLACED
 ---------------------------------------
-Nano has always stored its conversation in ``helios.db`` (the name predates the
-rename and is deliberately kept: ``core.data_migration`` copies that exact file
-between data directories, and renaming it would strand every existing install).
+Nano stores its conversation in ``nano.db`` (an install from before the rename
+still has ``helios.db``; ``core.memory.adopt_legacy_database`` renames it once).
 This module adds the threads / long-term-memory / Second Brain tables to the
 *same* file, in place, with a versioned migration.
 
@@ -473,7 +472,7 @@ def apply(conn: sqlite3.Connection) -> dict:
         report["ok"] = False
         report["error"] = "database_newer_than_this_build"
         logger.warning(
-            "helios.db is at schema v%d but this build knows v%d; leaving it alone.",
+            "nano.db is at schema v%d but this build knows v%d; leaving it alone.",
             version, SCHEMA_VERSION)
         return report
 
@@ -487,11 +486,11 @@ def apply(conn: sqlite3.Connection) -> dict:
             version = target
             report["applied"].append({"version": target, "description": description,
                                       **detail})
-            logger.info("helios.db migrated to v%d (%s): %s", target, description, detail)
+            logger.info("nano.db migrated to v%d (%s): %s", target, description, detail)
         except Exception as exc:  # noqa: BLE001 - migration must not stop startup
             report["ok"] = False
             report["error"] = f"v{target}: {exc}"
-            logger.exception("Falha a migrar helios.db para a versão %d", target)
+            logger.exception("Falha a migrar nano.db para a versão %d", target)
             break
 
     report["to"] = version

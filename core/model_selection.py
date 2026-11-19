@@ -175,9 +175,8 @@ _CATEGORY_TOOLS: dict[ToolCategory, tuple[str, ...]] = {
     ToolCategory.PC: (
         # Every PowerShell-backed tool that used to live here was withdrawn --
         # system_run_powershell, system_wifi, system_volume, system_brightness
-        # and system_bluetooth. See plugins/god_mode.py for what each one was
-        # and why it went; none of them has a replacement that builds a command
-        # line.
+        # and system_bluetooth (the old god_mode plugin, since deleted). None
+        # of them has a replacement that builds a command line.
         "system_stats", "pc_system_info", "pc_network_status", "pc_storage_info",
         "pc_settings_open",
         "work_mode_list", "work_mode_plan",

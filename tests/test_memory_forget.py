@@ -60,7 +60,7 @@ LEGACY_MARK = "LEGACY_GHOST_MARKER_0B0B"
 
 @pytest.fixture
 def db_path(tmp_path, monkeypatch):
-    path = tmp_path / "helios.db"
+    path = tmp_path / "nano.db"
     monkeypatch.setattr(memory_module, "DB_PATH", path)
     return path
 

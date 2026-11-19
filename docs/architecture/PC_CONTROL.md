@@ -186,8 +186,8 @@ though the registry and the Store aliases list them.
 
 ### Three arbitrary-execution tools were withdrawn in the V2 audit
 
-`plugins/god_mode.py` is now a tombstone: no tools, no PowerShell, and a
-docstring recording what was there. On top of V1's withdrawals
+The old `god_mode` plugin was emptied and then deleted (its history is in git
+and in the CHANGELOG). On top of V1's withdrawals
 (`system_run_powershell`, `system_wifi`, `system_volume`), the V2 audit removed:
 
 * **`system_bluetooth`** — a live command-injection sink. Its argument was
@@ -711,7 +711,7 @@ tool running `subprocess.run(["cmd", "/c", <model string>])`, gated by nothing
 but an approval dialog. It was never *advertised* to the model — but
 `Brain._run_tool` dispatches whatever name the model emits, so invisibility was
 not de-authorisation, and one confirmed call would have run arbitrary
-PowerShell. `plugins/god_mode.py` claimed no PowerShell call site remained
+PowerShell. The old `god_mode` plugin claimed no PowerShell call site remained
 anywhere in the repository; that claim was false while this registration stood.
 The tool, its handler and its risk classifier are gone. `_run_project_tests` is
 the only remaining subprocess call in the executor, and it picks its argv from

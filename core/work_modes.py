@@ -5,10 +5,9 @@ close distracting apps, open the ones you need, open a few sites, set the
 volume, and open a Windows Settings page the user may want to change (Focus
 Assist / notifications).
 
-The first implementation (plugins/context_switcher.py, now a tombstone) shelled
-out to PowerShell, force-killed processes, edited the registry and resolved the
-mode file from a model-supplied path. This one follows the recipe that
-tombstone left behind:
+The first implementation (the old context_switcher plugin, since deleted)
+shelled out to PowerShell, force-killed processes, edited the registry and
+resolved the mode file from a model-supplied path. This one does the opposite:
 
 * A mode is DATA, loaded only from ``config/modes/<id>.yaml`` where ``<id>`` is
   one of the files actually in that folder (closed allow-list, no path from

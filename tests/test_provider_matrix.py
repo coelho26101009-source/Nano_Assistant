@@ -60,7 +60,7 @@ READY, SETUP = ProviderState.READY, ProviderState.SETUP_REQUIRED
 DOWN, UNKNOWN = ProviderState.UNAVAILABLE, ProviderState.UNKNOWN
 
 #: Every variable a cloud credential can come from, and fake values for three.
-CLOUD_ENV = ("NANO_API_KEY", "HELIOS_API_KEY", "GROQ_API_KEY", "NANO_GEMINI_API_KEY",
+CLOUD_ENV = ("NANO_API_KEY", "GROQ_API_KEY", "NANO_GEMINI_API_KEY",
              "GEMINI_API_KEY", "GOOGLE_API_KEY", "NANO_MISTRAL_API_KEY", "MISTRAL_API_KEY")
 # Both spellings: on Linux they are separate variables and urllib/httpx prefer
 # the lower-case one, so an inherited https_proxy (CI, a corporate shell, a

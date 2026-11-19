@@ -17,7 +17,7 @@ imports, a single test module. The rules:
 * Default: a new directory under ``%TEMP%/nano-pytest-profiles``, one per
   session, removed when the session ends (best effort: Windows keeps files
   that SQLite still holds open, and those go at the next session's pruning).
-* An explicit ``NANO_DATA_DIR`` or ``HELIOS_DATA_DIR`` that is NOT the real
+* An explicit ``NANO_DATA_DIR`` that is NOT the real
   profile is respected: a CI job or a developer that chose a scratch profile
   keeps it.
 * One that IS the real profile is overridden. The real profile is never a
@@ -129,7 +129,7 @@ def _isolate_nano_profile() -> tuple[Path, bool]:
         raise RuntimeError(
             "core.app_paths was imported before tests/conftest.py could isolate the "
             "Nano profile; refusing to run against whatever DATA_DIR it resolved")
-    explicit = os.getenv("NANO_DATA_DIR") or os.getenv("HELIOS_DATA_DIR")
+    explicit = os.getenv("NANO_DATA_DIR")
     if explicit and Path(explicit).expanduser().resolve() != _real_profile():
         os.environ["NANO_DATA_DIR"] = str(Path(explicit).expanduser().resolve())
         return Path(os.environ["NANO_DATA_DIR"]), False

@@ -211,8 +211,8 @@ The data directory is `%LOCALAPPDATA%\NanoAssistant` on Windows
 Definições → Sobre shows the real path.
 
 Conversations, memories and the Second Brain share **one SQLite database** in
-that directory. Its filename is `helios.db` — a legacy name kept deliberately so
-existing installs are not stranded; see [`docs/README.md`](docs/README.md).
+that directory, `nano.db` (an older install's `helios.db` is renamed to it on the
+first start).
 
 | What | Where | Retention | Can you delete it? |
 | --- | --- | --- | --- |

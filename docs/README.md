@@ -37,7 +37,6 @@ The provider fallback order is backed by a committed measurement:
 
 | Document | Status |
 |---|---|
-| [AJUDA.txt](AJUDA.txt) | **Historical.** The HELIOS V7 Portuguese help guide, kept as a record. It describes `start.bat`, a `HELIOS_V7` directory, a Google speech-to-text provider and configuration keys that no longer apply. Do not read it as current documentation. |
 | `legacy/wakeword/` | **Historical.** Custom ONNX wake-word training material — see below. |
 
 ### Wake-word training material
@@ -59,13 +58,12 @@ python -m core.wake_phrase_debug     # microphone -> STT -> phrase match
 Prints every transcript it hears and reports whether the microphone, the
 speech-to-text, or the phrase matching is the thing failing.
 
-## Legacy names still in the code
+## The old name
 
-These are kept on purpose; they are not branding:
+Nano was once called HELIOS. The name is gone from the code; the only places
+that still say it are the ones that bring an old install's data across:
 
 | Identifier | Why it stays |
 |---|---|
-| `HELIOS_MODE`, `HELIOS_APP_ROOT`, `HELIOS_DATA_DIR` | Read as a fallback after `NANO_*` so older installs and packaged builds keep working |
-| `helios.*` logger namespaces | Still used by several modules; `setup_logger()` configures both so nothing loses its log output |
-| `helios_docs` Chroma collection | Persisted data. Renaming it would orphan every already-indexed document |
-| `helios.db` | Existing memory database filename |
+| `helios.db` | The memory database's old name. `core.memory.adopt_legacy_database` renames it to `nano.db` on the first start |
+| `%LOCALAPPDATA%\HeliosAssistant` | The old data folder. `core.data_migration` copies its files into the Nano folder once |

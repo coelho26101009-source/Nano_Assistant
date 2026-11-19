@@ -34,7 +34,7 @@ _LOCK = threading.RLock()
 # Environment variables checked as a read-only fallback, so an existing .env
 # keeps working. Writing always goes to the encrypted store, never back to .env.
 _ENV_FALLBACK: dict[str, tuple[str, ...]] = {
-    "groq_api_key": ("NANO_API_KEY", "HELIOS_API_KEY", "GROQ_API_KEY"),
+    "groq_api_key": ("NANO_API_KEY", "GROQ_API_KEY"),
     # Google/Gemini. NANO_GEMINI_API_KEY is the name Nano documents; the two
     # vendor names are accepted because a machine that already has one should
     # not need a second copy. Each provider has its OWN entry -- one key must

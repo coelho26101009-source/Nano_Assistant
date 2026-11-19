@@ -29,7 +29,7 @@ const os = require('os');
  * @param {object} env - process.env, injectable for tests.
  */
 function canonicalDataDir(env = process.env) {
-  const configured = env.NANO_DATA_DIR || env.HELIOS_DATA_DIR;
+  const configured = env.NANO_DATA_DIR;
   if (configured) return path.resolve(configured);
   if (process.platform === 'win32') {
     const local = env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');

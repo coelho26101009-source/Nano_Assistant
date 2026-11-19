@@ -1,8 +1,8 @@
 """Master volume, through the Windows audio endpoint API.
 
-No PowerShell. The existing `god_mode.system_volume` tool shells out to build a
-script string, and its non-nircmd fallback allocates a buffer, copies bytes
-into it and returns success WITHOUT CHANGING THE VOLUME AT ALL -- a tool that
+No PowerShell. The old `god_mode.system_volume` tool (since deleted) shelled out to build a
+script string, and its non-nircmd fallback allocated a buffer, copied bytes
+into it and returned success WITHOUT CHANGING THE VOLUME AT ALL -- a tool that
 reports a result it did not produce. This module talks to
 IAudioEndpointVolume directly (see winapi.AudioEndpoint) and every operation
 re-reads the level afterwards, so what is reported is what the device is

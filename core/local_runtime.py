@@ -8,7 +8,7 @@ from typing import AsyncIterator
 
 import httpx
 
-logger = logging.getLogger("helios.local_runtime")
+logger = logging.getLogger("nano.local_runtime")
 DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 
 @dataclass(frozen=True)

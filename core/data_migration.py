@@ -60,7 +60,8 @@ MIGRATABLE_FILES = (
     "user_settings.json",         # settings chosen in the UI
     "permission_policies.json",   # the security policy store
     "nano_tasks.db",              # task queue
-    "helios.db",                  # conversation memory and facts (legacy name)
+    "nano.db",                    # conversation memory and facts
+    "helios.db",                  # the same, from before the rename (core.memory renames it)
 )
 
 # Written to the destination once a migration has been considered, so startup

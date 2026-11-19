@@ -366,7 +366,7 @@ class ToolExecutor:
         # the model -- but Brain._run_tool dispatches whatever name the model
         # emits, so invisibility was not de-authorisation, and a single
         # confirmed call would have run arbitrary PowerShell. That is exactly
-        # the primitive plugins/god_mode.py was emptied out to remove, and its
+        # the primitive the old god_mode plugin was emptied out to remove, and its
         # docstring's claim that no PowerShell call site remained in the repo
         # was false while this registration stood.
         #

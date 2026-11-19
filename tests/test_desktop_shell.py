@@ -89,7 +89,6 @@ def _canonical_resolution(monkeypatch) -> None:
     directory they name.
     """
     monkeypatch.delenv("NANO_DATA_DIR", raising=False)
-    monkeypatch.delenv("HELIOS_DATA_DIR", raising=False)
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")

@@ -357,7 +357,7 @@ absence of one is enforced rather than assumed.
 
 - There is **no** PowerShell, CMD, shell or script-execution tool reachable by
   the model. The plugins that once offered one (`god_mode`, `context_switcher`)
-  were withdrawn; their files are kept as the record of why.
+  were withdrawn and deleted; the CHANGELOG records why.
 - There is **no** process-termination primitive in PC Control. A test walks the
   AST of every module and asserts no `terminate`/`kill`/`unlink`/`rmtree` call
   exists, with one audited exception (`screen.cleanup`, which deletes Nano's own

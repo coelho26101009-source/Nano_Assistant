@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Callable, NamedTuple
 
 # Suporte ao caminho de arranque empacotado ou local
-_APP_ROOT_ENV = os.getenv("NANO_APP_ROOT") or os.getenv("HELIOS_APP_ROOT")
+_APP_ROOT_ENV = os.getenv("NANO_APP_ROOT")
 if _APP_ROOT_ENV:
     _bootstrap_root = Path(_APP_ROOT_ENV).expanduser().resolve()
 else:
@@ -92,7 +92,7 @@ guardrails = GuardrailsEngine()
 memory = get_memory()
 
 # Conversation threads, long-term memory and the Second Brain, all in the same
-# helios.db the flat message log has always lived in. Constructing the stack
+# nano.db the flat message log has always lived in. Constructing the stack
 # runs the versioned migration; it is idempotent, it never drops a row, and a
 # failure leaves `ready` False so chat keeps working with the legacy window
 # rather than refusing to start. See core/memory_stack.py.
@@ -110,7 +110,7 @@ elif memory_stack.migration.get("applied"):
 voice = VoiceEngine(CONFIG.get("voice", {}))
 # The key the user saved in Settings wins over anything in the environment.
 # secret_store.get_secret() already implements exactly this precedence (the
-# encrypted store first, then NANO_API_KEY / HELIOS_API_KEY / GROQ_API_KEY),
+# encrypted store first, then NANO_API_KEY / GROQ_API_KEY),
 # so it is the single source of truth.
 #
 # Reading the environment first was a real failure: a stale key left in .env
@@ -3844,7 +3844,7 @@ def _release_single_instance() -> None:
 
 def _parse_args():
     parser = argparse.ArgumentParser(description="Nano Assistant")
-    parser.add_argument("--mode", default=os.getenv("NANO_MODE", os.getenv("HELIOS_MODE", "electron")))
+    parser.add_argument("--mode", default=os.getenv("NANO_MODE", "electron"))
     parser.add_argument("--port", type=int, default=0)
     # Opt-in, never inferred. Started unconditionally, a blocking reader on
     # stdin would swallow the console input of a plain NANO.bat session; the

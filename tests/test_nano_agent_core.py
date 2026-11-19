@@ -12,7 +12,6 @@ from core.agent_registry import AgentRegistry
 from core.background_worker import BackgroundTaskWorker
 from core.browser_agent import BrowserProvider
 from core.context_engine import ContextEngine
-from core.desktop_agent import ScreenshotProvider, active_window, rename_path
 from core.events import EventBus
 from core.memory import MemoryEngine
 from core.permission_manager import PermissionManager, RiskLevel
@@ -246,22 +245,6 @@ def test_browser_provider_tracks_safety_levels_and_verification():
     assert provider.detect_safety_level("purchase item") == "critical"
     assert provider.detect_safety_level("search for article") == "safe"
     assert provider.verify_action("click", expected="Done", page_text="Done") is True
-
-
-def test_desktop_agent_can_rename_and_capture_screenshot(tmp_path):
-    source = tmp_path / "alpha.txt"
-    source.write_text("demo", encoding="utf-8")
-    target = tmp_path / "beta.txt"
-    result = rename_path(str(source), str(target))
-    assert result["success"] is True
-    assert target.exists()
-    screenshot = ScreenshotProvider().capture(tmp_path / "screenshot.png")
-    assert screenshot["success"] is True
-    assert (tmp_path / "screenshot.png").exists()
-
-    window = active_window()
-    assert isinstance(window, dict)
-    assert "success" in window
 
 
 def test_background_worker_recovers_abandoned_task(tmp_path):

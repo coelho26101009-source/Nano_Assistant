@@ -178,7 +178,7 @@ async function phase(restart) {
 (async () => {
   await phase(false);
   await phase(true);
-  assert.ok(fs.existsSync(path.join(profile, 'data', 'helios.db')));
+  assert.ok(fs.existsSync(path.join(profile, 'data', 'nano.db')));
   report.ok = true;
 })().catch((error) => { report.error = error.message; process.exitCode = 1; }).finally(() => {
   fs.writeFileSync(path.join(profile, 'report.json'), JSON.stringify(report, null, 2));

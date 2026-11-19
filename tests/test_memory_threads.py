@@ -27,7 +27,7 @@ from core.trust import TrustLevel
 @pytest.fixture
 def stack(tmp_path, monkeypatch):
     """A real memory stack over a throwaway database."""
-    monkeypatch.setattr(memory_module, "DB_PATH", tmp_path / "helios.db")
+    monkeypatch.setattr(memory_module, "DB_PATH", tmp_path / "nano.db")
     engine = MemoryEngine()
     built = MemoryStack(engine, background=False)
     try:
@@ -643,7 +643,7 @@ def test_deleting_a_conversation_prunes_its_knowledge_links(stack):
 # ================================================================= migration
 
 def test_migration_is_idempotent(tmp_path, monkeypatch):
-    monkeypatch.setattr(memory_module, "DB_PATH", tmp_path / "helios.db")
+    monkeypatch.setattr(memory_module, "DB_PATH", tmp_path / "nano.db")
     engine = MemoryEngine()
     try:
         first = memory_schema.apply(engine.conn)
@@ -662,7 +662,7 @@ def test_an_existing_flat_log_is_upgraded_into_real_threads(tmp_path, monkeypatc
     them on, so the conversations the user already recognises survive with their
     titles intact — instead of collapsing into one enormous thread.
     """
-    monkeypatch.setattr(memory_module, "DB_PATH", tmp_path / "helios.db")
+    monkeypatch.setattr(memory_module, "DB_PATH", tmp_path / "nano.db")
     legacy = MemoryEngine()
     try:
         with legacy._lock:
@@ -696,7 +696,7 @@ def test_an_existing_flat_log_is_upgraded_into_real_threads(tmp_path, monkeypatc
 
 
 def test_a_database_from_a_newer_build_is_left_alone(tmp_path, monkeypatch):
-    monkeypatch.setattr(memory_module, "DB_PATH", tmp_path / "helios.db")
+    monkeypatch.setattr(memory_module, "DB_PATH", tmp_path / "nano.db")
     engine = MemoryEngine()
     try:
         engine.conn.execute(f"PRAGMA user_version = {memory_schema.SCHEMA_VERSION + 5}")
@@ -715,7 +715,7 @@ def test_messages_that_predate_the_index_become_searchable(tmp_path, monkeypatch
     anything said before it, which reads as Nano not remembering rather than as
     a missing index.
     """
-    monkeypatch.setattr(memory_module, "DB_PATH", tmp_path / "helios.db")
+    monkeypatch.setattr(memory_module, "DB_PATH", tmp_path / "nano.db")
     legacy = MemoryEngine()
     try:
         with legacy._lock:

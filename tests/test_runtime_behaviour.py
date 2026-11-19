@@ -299,12 +299,12 @@ def message_pipeline(monkeypatch, tmp_path):
     # the stack at tmp_path lets the test assert the stronger thing instead:
     # that after the turn the conversation actually CONTAINS both messages, in
     # order, exactly once. It also keeps the test out of the user's real
-    # helios.db, which a stack on the default path would write into.
+    # nano.db, which a stack on the default path would write into.
     import core.memory as memory_module
     from core.memory import MemoryEngine
     from core.memory_stack import MemoryStack
 
-    monkeypatch.setattr(memory_module, "DB_PATH", tmp_path / "helios.db")
+    monkeypatch.setattr(memory_module, "DB_PATH", tmp_path / "nano.db")
     engine = MemoryEngine()
     stack = MemoryStack(engine, background=False)
     monkeypatch.setattr(main, "memory_stack", stack)
@@ -815,7 +815,7 @@ def test_data_is_rescued_when_the_canonical_directory_is_empty(tmp_path, monkeyp
     old = _seed(tmp_path / "legacy",
                 **{"secrets.dat": b"\x01\x02encrypted",
                    "user_settings.json": '{"provider_mode": "CLOUD"}',
-                   "helios.db": b"sqlite-ish"})
+                   "nano.db": b"sqlite-ish"})
     new = tmp_path / "canonical"
     monkeypatch.setattr(dm, "legacy_candidates", lambda _destination: [old])
 
@@ -823,7 +823,7 @@ def test_data_is_rescued_when_the_canonical_directory_is_empty(tmp_path, monkeyp
 
     assert summary["status"] == "migrated"
     assert sorted(item["file"] for item in summary["copied"]) == [
-        "helios.db", "secrets.dat", "user_settings.json"]
+        "nano.db", "secrets.dat", "user_settings.json"]
     assert (new / "secrets.dat").read_bytes() == b"\x01\x02encrypted"
     # The source is never deleted: if anything here is wrong the data is still
     # in both places.
@@ -848,7 +848,7 @@ def test_migration_never_overwrites_the_destination(tmp_path, monkeypatch):
 def test_migration_runs_once(tmp_path, monkeypatch):
     from core import data_migration as dm
 
-    old = _seed(tmp_path / "legacy", **{"helios.db": b"data"})
+    old = _seed(tmp_path / "legacy", **{"nano.db": b"data"})
     new = tmp_path / "canonical"
     monkeypatch.setattr(dm, "legacy_candidates", lambda _destination: [old])
 
@@ -864,7 +864,7 @@ def test_an_empty_receipt_does_not_suppress_the_migration(tmp_path, monkeypatch)
     """
     from core import data_migration as dm
 
-    old = _seed(tmp_path / "legacy", **{"helios.db": b"data"})
+    old = _seed(tmp_path / "legacy", **{"nano.db": b"data"})
     new = tmp_path / "canonical"
     new.mkdir(parents=True)
     (new / dm.RECEIPT_NAME).write_text("", encoding="utf-8")

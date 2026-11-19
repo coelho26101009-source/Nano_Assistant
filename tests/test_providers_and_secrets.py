@@ -31,7 +31,7 @@ BULLET = "•"
 def isolated_store(tmp_path, monkeypatch):
     """Point the store at a temp file so tests never touch the real key."""
     monkeypatch.setattr(secret_store, "_STORE_PATH", tmp_path / "secrets.dat")
-    for name in ("NANO_API_KEY", "HELIOS_API_KEY", "GROQ_API_KEY"):
+    for name in ("NANO_API_KEY", "GROQ_API_KEY"):
         monkeypatch.delenv(name, raising=False)
     return tmp_path / "secrets.dat"
 

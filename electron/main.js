@@ -169,7 +169,7 @@ function findPython() {
 function loadEnvFile() {
   const env = { ...process.env };
   // An explicit profile is an isolation boundary for tests and portable use.
-  if (env.NANO_DATA_DIR || env.HELIOS_DATA_DIR) return env;
+  if (env.NANO_DATA_DIR) return env;
   const userEnv = path.join(app.getPath('userData'), '.env');
   const devEnv = path.join(APP_ROOT, '.env');
   const envFile = fs.existsSync(userEnv) ? userEnv : (IS_DEV && fs.existsSync(devEnv) ? devEnv : null);
@@ -189,14 +189,10 @@ function backendEnv() {
   const dataDir = canonicalDataDir(process.env);
   return {
     ...loadEnvFile(),
-    ...(process.env.NANO_DATA_DIR || process.env.HELIOS_DATA_DIR ? { NANO_SKIP_DOTENV: '1' } : {}),
+    ...(process.env.NANO_DATA_DIR ? { NANO_SKIP_DOTENV: '1' } : {}),
     NANO_MODE: 'electron',
     NANO_APP_ROOT: APP_ROOT,
     NANO_DATA_DIR: dataDir,
-    // Compatibility aliases; core/app_paths.py reads NANO_* first.
-    HELIOS_MODE: 'electron',
-    HELIOS_APP_ROOT: APP_ROOT,
-    HELIOS_DATA_DIR: dataDir,
     PYTHONPATH: [APP_ROOT, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
     PYTHONUNBUFFERED: '1',
     PYTHONIOENCODING: 'utf-8',

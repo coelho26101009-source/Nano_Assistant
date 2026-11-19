@@ -9,7 +9,7 @@ from typing import Awaitable, Callable
 
 from core import capabilities
 
-logger = logging.getLogger("helios.guardrails")
+logger = logging.getLogger("nano.guardrails")
 
 SENSITIVE_TOOLS: dict[str, dict] = {
     "web_interact": {"check": lambda args: str(args.get("action", "")).lower() in {"click", "type"}, "message": "Vou interagir com uma página web e alterar o estado dela. Confirmas?"},

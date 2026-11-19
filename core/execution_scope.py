@@ -48,7 +48,7 @@ _PROTECTED_NAMES = frozenset({
     ".env",
     ".env.local",
     "permission_policies.json",
-    "helios.db",
+    "nano.db",
     "nano_tasks.db",
 })
 

@@ -18,7 +18,7 @@ import threading
 import time
 from typing import Callable
 
-logger = logging.getLogger("helios.wake_word")
+logger = logging.getLogger("nano.wake_word")
 
 DEFAULT_PHRASE      = "nano"
 DEFAULT_SENSITIVITY = 0.6

@@ -33,7 +33,7 @@ no tabuleiro; escolhe **Sair do Nano** no tabuleiro para encerrar completamente.
 ## Dados e privacidade
 
 Conversas, Memória e Second Brain ficam em
-`%LOCALAPPDATA%\NanoAssistant\helios.db`. A mesma pasta guarda
+`%LOCALAPPDATA%\NanoAssistant\nano.db`. A mesma pasta guarda
 `user_settings.json`, `permission_policies.json`, `secrets.dat`, tarefas e logs.
 O caminho efetivo aparece em **Sobre**; `NANO_DATA_DIR` permite um perfil separado.
 Estado da janela e cache Electron ficam no perfil Electron em `%APPDATA%`.
