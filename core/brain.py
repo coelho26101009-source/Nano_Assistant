@@ -49,8 +49,7 @@ from core.local_runtime import choose_model
 from core.plugin_loader import get_all_tools
 from core.guardrails import GuardrailsEngine
 from core.memory import MemoryEngine
-from core.errors import ToolExecutionError, GuardrailError
-from core.model_router import ModelRequest, ModelRouter, PrivacyLevel, TaskType
+from core.model_router import ModelRouter, PrivacyLevel, TaskType
 from core import (capabilities, google_provider, http_tls, mistral_provider, model_selection,
                   provider_failures, provider_status, providers, schema_validation)
 from core.trust import TRUST_BOUNDARY_SYSTEM_RULES, TrustLevel, wrap_untrusted
@@ -1114,25 +1113,6 @@ class Brain:
                                    status=getattr(view, "status", None))
         route["_status_deadline"] = deadline
         return route
-
-    def _legacy_route_model(self, *, task_type: str = "chat", requires_tools: bool = False, requires_vision: bool = False, requires_coding: bool = False, requires_reasoning: bool = False, privacy_level: str | PrivacyLevel = PrivacyLevel.NORMAL, latency_preference: str = "balanced", local_only: bool = False):
-        if not self.model_router:
-            return {"provider": "ollama", "model": self.ollama_model, "reason": "default fallback"}
-        request = ModelRequest(
-            task_type=task_type,
-            requires_tools=requires_tools,
-            requires_vision=requires_vision,
-            requires_coding=requires_coding,
-            requires_reasoning=requires_reasoning,
-            privacy_level=privacy_level,
-            latency_preference=latency_preference,
-            local_only=local_only,
-            context_size=self.local_context,
-        )
-        selection = self.model_router.select(request)
-        if selection.get("model"):
-            return selection
-        return {"provider": "ollama", "model": self.ollama_model, "reason": "fallback to local default"}
 
     async def _groq_round(self, model: str, messages: list[dict], tools: list[dict],
                           collector: dict, max_tokens: int = 4096) -> AsyncIterator[str]:

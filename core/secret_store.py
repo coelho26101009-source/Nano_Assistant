@@ -13,13 +13,11 @@ a masked hint (`sk-••••••••1234`) and a boolean.
 """
 from __future__ import annotations
 
-import base64
 import json
 import logging
 import os
 import sys
 import threading
-from pathlib import Path
 from typing import Any
 
 from core.app_paths import DATA_DIR

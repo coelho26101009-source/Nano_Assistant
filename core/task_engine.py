@@ -371,13 +371,6 @@ class TaskEngine:
             conn.close()
         return self.get_task(task_id)
 
-    def recover_pending_tasks(self) -> list[dict]:
-        pending = []
-        for task in self.list_tasks():
-            if task["status"] not in {"COMPLETED", "FAILED", "RECOVERABLE", "NEEDS_ATTENTION", "CANCELLED"}:
-                pending.append(task)
-        return pending
-
     def cancel_task(self, task_id: str) -> dict | None:
         return self.update_task(task_id, status="CANCELLED", progress=100, last_event="cancelled")
 

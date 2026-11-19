@@ -1,7 +1,6 @@
 """Nano Assistant plugin loader with defensive contract validation."""
 from __future__ import annotations
 
-import asyncio
 import importlib.util
 import logging
 import weakref
@@ -209,22 +208,3 @@ def get_plugin_source(plugin_name: str, plugins_dir: Path | None = None) -> dict
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
-
-async def reload_plugin(plugin_name: str, plugins_dir: Path | None = None) -> bool:
-    plugins_dir = plugins_dir or Path(__file__).parent.parent / "plugins"
-    plugin_path = plugins_dir / f"{plugin_name}.py"
-    if not plugin_path.exists():
-        return False
-    old = _loaded_plugins.pop(plugin_name, None)
-    if old and hasattr(old, "get_tools"):
-        for tool in old.get_tools() or []:
-            if isinstance(tool, dict):
-                name = (tool.get("function") or {}).get("name")
-                if name:
-                    _all_handlers.pop(name, None)
-                    _all_tools[:] = [t for t in _all_tools if (t.get("function") or {}).get("name") != name]
-    try:
-        return _register_plugin(plugin_name, _import_module(plugin_name, plugin_path))
-    except Exception:
-        logger.exception("Falha ao recarregar '%s'", plugin_name)
-        return False

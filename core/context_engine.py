@@ -79,21 +79,3 @@ class ContextEngine:
             generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         )
         return snapshot
-
-    def build_prompt_context(self, request: str, *, extra: dict | None = None) -> str:
-        snapshot = self.build_context(request, extra=extra)
-        profile = snapshot.user_profile or {}
-        facts = [f"- {key}: {value}" for key, value in profile.items()]
-        memories = [f"- {item.get('content', '')}" for item in snapshot.relevant_memories[:5]]
-        tasks = [f"- {item.get('title', '')} [{item.get('status', '')}]" for item in snapshot.active_tasks[:5]]
-        lines = ["Contexto relevante do Nano:"]
-        if facts:
-            lines.append("Perfil do utilizador:")
-            lines.extend(facts)
-        if memories:
-            lines.append("Memórias relevantes:")
-            lines.extend(memories)
-        if tasks:
-            lines.append("Tarefas ativas:")
-            lines.extend(tasks)
-        return "\n".join(lines)

@@ -94,9 +94,6 @@ class AgentRegistry:
     def register(self, agent: SpecializedAgent) -> None:
         self._agents[agent.name] = agent
 
-    def get_agent(self, name: str) -> SpecializedAgent | None:
-        return self._agents.get(name)
-
     def select_for_task(self, task_type: str) -> SpecializedAgent | None:
         task_type = (task_type or "").lower()
         preference = {

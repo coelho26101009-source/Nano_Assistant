@@ -6,11 +6,9 @@ The browser is treated as a public-internet-only tool: local URLs,
 private/link-local addresses, file:// and other schemes are not accepted.
 """
 
-import asyncio
 import base64
-import json
 import logging
-from urllib.parse import parse_qs, quote_plus, urlparse
+from urllib.parse import quote_plus, urlparse
 
 from core.browser_agent import validate_public_http_url
 
@@ -74,22 +72,6 @@ async def _safe_goto(page, url: str, timeout: int = 20_000):
         return {"error": error}
     await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
     return None
-
-
-async def close_browser():
-    global _browser, _context, _page, _playwright
-    for obj in [_page, _context, _browser]:
-        if obj:
-            try:
-                await obj.close()
-            except Exception:
-                pass
-    if _playwright:
-        try:
-            await _playwright.stop()
-        except Exception:
-            pass
-    _browser = _context = _page = _playwright = None
 
 
 async def navigate_and_extract(url: str, extract_mode: str = "text") -> dict:

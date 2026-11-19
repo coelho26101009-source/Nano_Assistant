@@ -2,17 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
-import json
-import os
 import platform
 import sys
-from typing import Any, Iterable
+from typing import Any
 
 from core.config import load_config
-from core.local_runtime import choose_model, model_available, ollama_available
-from core.model_router import ModelRequest, ModelRouter, PrivacyLevel, TaskType
-from core.voice import LocalSTTProvider, LocalTTSProvider, LocalWakeWordProvider
-from core.wake_word import WakeWordEngine, resolve_wake_word_model_path, validate_wake_word_model
+from core.local_runtime import ollama_available
+from core.model_router import ModelRouter, PrivacyLevel, TaskType
+from core.wake_word import resolve_wake_word_model_path, validate_wake_word_model
 
 
 READY = "READY FOR LIVE TEST"
@@ -43,22 +40,6 @@ def _describe_python() -> dict[str, Any]:
         "ok": True,
         "status": "OK",
         "detail": f"{platform.python_version()} on {platform.system()} {platform.release()} ({platform.machine()})",
-    }
-
-
-def _summarize_devices(inputs: Iterable[dict[str, Any]], outputs: Iterable[dict[str, Any]]) -> dict[str, Any]:
-    input_devices = list(inputs)
-    output_devices = list(outputs)
-    return {
-        "inputs": input_devices,
-        "outputs": output_devices,
-        "input_ok": bool(input_devices),
-        "output_ok": bool(output_devices),
-        "message": (
-            "Audio input device detected."
-            if input_devices
-            else "No audio input device was detected. Check Windows Settings → System → Sound → Input."
-        ),
     }
 
 

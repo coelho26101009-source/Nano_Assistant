@@ -5,7 +5,6 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 from core.task_engine import TaskEngine
 from core.events import EventBus
@@ -369,19 +368,3 @@ class BackgroundTaskWorker:
                         pass
                 self.event_bus.publish("worker.error", {"error": str(exc), "task_id": (task or {}).get("id")})
                 time.sleep(self.poll_interval)
-
-    def claim_task(self, task_id: str) -> dict | None:
-        task = self.task_engine.get_task(task_id)
-        if not task:
-            return None
-        if task.get("status") not in {"QUEUED", "RETRYING"}:
-            return task
-        self.task_engine.update_task(task_id, status="RUNNING", progress=5, last_event="claimed")
-        return self.task_engine.get_task(task_id)
-
-    def execute_now(self, task_id: str) -> dict | None:
-        task = self.task_engine.get_task(task_id)
-        if not task:
-            return None
-        self.claim_task(task_id)
-        return self.process_task(self.task_engine.get_task(task_id))

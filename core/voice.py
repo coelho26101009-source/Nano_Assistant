@@ -1722,13 +1722,6 @@ class VoiceRuntime:
         except Exception:
             logger.debug("could not play the error tone", exc_info=True)
 
-    async def process_manual(self, transcript: str, *, speak: bool = False, session_context: dict | None = None) -> dict:
-        result = await self.process_request(transcript, session_context=session_context)
-        if speak and result.get("response"):
-            await self.speak_response(str(result.get("response")))
-        return result
-
-
 def _clean_for_tts(text: str) -> str:
     clean = text.replace("```", " ")
     clean = clean.replace("`", " ")

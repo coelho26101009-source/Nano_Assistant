@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-import json
 import logging
 from typing import Any, Iterable
 
@@ -21,7 +20,6 @@ class CapabilityState(str, Enum):
     UNKNOWN = "UNKNOWN"
 
 from core.config import load_config
-from core.local_runtime import choose_model
 
 logger = logging.getLogger("nano.model_router")
 
@@ -129,12 +127,6 @@ class ModelProvider:
 
     def list_models(self) -> list[ModelInfo]:
         return list(self._models)
-
-    def get_model(self, name: str) -> ModelInfo | None:
-        for model in self._models:
-            if model.name == name:
-                return model
-        return None
 
     async def generate(self, request: ModelRequest, messages: list[dict[str, Any]], *, stream: bool = False, **kwargs):
         raise NotImplementedError
@@ -315,11 +307,6 @@ class CloudProvider(ModelProvider):
             return response.json()
 
 
-class FutureProvider(ModelProvider):
-    def __init__(self, name: str = "future_provider"):
-        super().__init__(name, online=False)
-
-
 class ModelRegistry:
     def __init__(self, providers: Iterable[ModelProvider] | None = None):
         self.providers = list(providers or [])
@@ -332,9 +319,6 @@ class ModelRegistry:
         for provider in self.providers:
             result.extend(provider.list_models())
         return result
-
-    def by_provider(self, provider_name: str) -> list[ModelInfo]:
-        return [model for model in self.models() if model.provider == provider_name]
 
     def get(self, name: str) -> ModelInfo | None:
         for model in self.models():
@@ -408,12 +392,6 @@ class ModelRouter:
             return CapabilityState.UNSUPPORTED.value
         return CapabilityState.UNKNOWN.value
 
-    def _privacy_allowed(self, privacy_level: str | PrivacyLevel) -> bool:
-        value = str(privacy_level).lower()
-        if value in {"high", "strict_local"}:
-            return False
-        return True
-
     def _resource_fit(self, model: ModelInfo, request: ModelRequest) -> float:
         limit = request.max_model_memory_gb
         if limit is not None and model.estimated_memory > limit:
@@ -465,52 +443,6 @@ class ModelRouter:
         if state == CapabilityState.UNKNOWN.value:
             return not required
         return False
-
-    def explain_selection(self, request: ModelRequest | dict[str, Any]) -> dict[str, Any]:
-        if isinstance(request, dict):
-            request = ModelRequest(**request)
-        privacy = request.privacy_level if isinstance(request.privacy_level, PrivacyLevel) else PrivacyLevel(str(request.privacy_level).lower())
-        request.privacy_level = privacy
-        candidates = [model for model in self.models() if model.online]
-        if request.local_only:
-            candidates = [model for model in candidates if model.local]
-        if privacy in {PrivacyLevel.STRICT_LOCAL, PrivacyLevel.HIGH}:
-            candidates = [model for model in candidates if model.local]
-        if request.requires_vision:
-            candidates = [model for model in candidates if self._capability_ok(model, "vision", required=True)]
-        if request.requires_tools:
-            candidates = [model for model in candidates if self._capability_ok(model, "tools", required=True)]
-        if request.requires_coding:
-            candidates = [model for model in candidates if self._capability_ok(model, "coding", required=True)]
-        if request.requires_reasoning:
-            candidates = [model for model in candidates if self._capability_ok(model, "reasoning", required=True)]
-        scored = []
-        for model in candidates:
-            score = self._score_model(model, request)
-            scored.append({
-                "model": model.name,
-                "provider": model.provider,
-                "score": score,
-                "accepted": True,
-                "rejection_reason": None,
-                "capability_states": {
-                    "tools": self._capability_state(model, "tools"),
-                    "vision": self._capability_state(model, "vision"),
-                    "coding": self._capability_state(model, "coding"),
-                    "reasoning": self._capability_state(model, "reasoning"),
-                    "streaming": self._capability_state(model, "streaming"),
-                    "json": self._capability_state(model, "json"),
-                },
-            })
-        selection = self.select(request)
-        explain = {
-            "task": request.task_type,
-            "selected": selection.get("model"),
-            "provider": selection.get("provider"),
-            "reason": selection.get("reason"),
-            "candidates": scored,
-        }
-        return explain
 
     def select(self, request: ModelRequest | dict[str, Any], *, allow_fallback: bool = True) -> dict[str, Any]:
         if isinstance(request, dict):

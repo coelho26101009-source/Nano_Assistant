@@ -10,6 +10,3 @@ class NanoError(Exception):
 
 class ToolExecutionError(NanoError):
     """Raised when a tool fails to execute correctly."""
-
-class GuardrailError(NanoError):
-    """Raised when a guardrail blocks execution or a confirmation fails."""

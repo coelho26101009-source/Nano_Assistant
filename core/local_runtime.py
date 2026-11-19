@@ -2,9 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 import logging
-from typing import AsyncIterator
 
 import httpx
 
@@ -43,47 +41,3 @@ async def ollama_available(base_url: str = DEFAULT_OLLAMA_URL) -> bool:
             return (await client.get(base_url.rstrip("/") + "/api/tags")).is_success
     except Exception:
         return False
-
-async def model_available(model: str, base_url: str = DEFAULT_OLLAMA_URL) -> bool:
-    try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            response = await client.get(base_url.rstrip("/") + "/api/tags")
-            if not response.is_success:
-                return False
-            names = {str(m.get("name")) for m in response.json().get("models", [])}
-            return model in names
-    except Exception:
-        return False
-
-async def pull_model(model: str, base_url: str = DEFAULT_OLLAMA_URL) -> AsyncIterator[dict]:
-    """Pull a model from an already-running Ollama service.
-
-    This deliberately does not install software or execute shell commands. The
-    caller can present progress in the UI and decide when the local service is
-    enabled. Errors are returned as structured events rather than leaking URLs
-    or credentials into the model conversation.
-    """
-    url = base_url.rstrip("/") + "/api/pull"
-    try:
-        async with httpx.AsyncClient(timeout=None) as client:
-            async with client.stream("POST", url, json={"name": model, "stream": True}) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line:
-                        continue
-                    try:
-                        data = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    yield {
-                        "status": str(data.get("status") or ""),
-                        "completed": data.get("completed"),
-                        "total": data.get("total"),
-                        "done": bool(data.get("done")),
-                    }
-    except Exception:
-        logger.exception("Falha ao descarregar modelo local '%s'", model)
-        yield {"ok": False, "error": "local_model_pull_failed", "done": True}
-
-def profile_summary(profile: LocalProfile) -> dict:
-    return {"model": profile.model, "ram_gb": round(profile.ram_gb, 1), "reason": profile.reason}

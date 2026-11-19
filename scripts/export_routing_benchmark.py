@@ -182,8 +182,6 @@ def summarise(records: list[dict]) -> dict:
 
 
 def build(stamp: str, decision: dict) -> dict:
-    from core import providers
-
     merged, sources = _merge(stamp)
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),

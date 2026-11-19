@@ -29,7 +29,6 @@ from core.execution_scope import (
     ResolvedTarget,
     Scope,
     resolve_target,
-    workspace_root,
 )
 from core.permission_manager import PermissionManager
 from core.policy_engine import RiskLevel
@@ -273,24 +272,6 @@ class ToolExecutor:
         if not tool:
             return RetryPolicy.NOT_SAFE_TO_RETRY
         return str(tool.get("retry_policy", RetryPolicy.SAFE_TO_RETRY)).upper()
-
-    def _validate_path(
-        self,
-        value: str | None,
-        *,
-        allow_absolute: bool = False,
-        must_exist: bool = False,
-        workspace_root: str | Path | None = None,
-    ) -> Path:
-        """Backwards-compatible path validation returning a resolved Path.
-
-        Kept for existing callers; new code should use ``resolve_tool_target``
-        which also reports the scope the path landed in.
-        """
-        target = self.resolve_tool_target(value, base=workspace_root, must_exist=must_exist)
-        if not allow_absolute and target.scope == Scope.SYSTEM:
-            raise ToolExecutionError("absolute_path_blocked")
-        return target.path
 
     def resolve_tool_target(
         self,
@@ -1002,21 +983,6 @@ class ToolExecutor:
         response = httpx.get(url, timeout=20)
         response.raise_for_status()
         return {"url": url, "status_code": response.status_code, "text": response.text[:12000], "success": True}
-
-    def list_tools(self) -> list[dict]:
-        return [
-            {
-                "name": meta["name"],
-                "description": meta["description"],
-                "risk": meta["risk"],
-                "timeout": meta["timeout"],
-                "provider": meta["provider"],
-                "retry_policy": meta.get("retry_policy", RetryPolicy.SAFE_TO_RETRY),
-                "capabilities": meta.get("capabilities", []),
-            }
-            for meta in self.registry.values()
-        ]
-
 
 def _python_executable() -> str:
     import sys

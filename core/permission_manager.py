@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
 from typing import Any, Callable
 
@@ -724,11 +723,3 @@ class PermissionManager:
             return False
         callback = self.confirmation_callback
         return bool(await asyncio.to_thread(callback, action_name, prepared))
-
-    def is_blocked(self, action_name: str, args: dict | None = None, *, task_id: str | None = None) -> bool:
-        if self.is_emergency_stopped():
-            return True
-        decision = self.evaluate(action_name, args, task_id=task_id)
-        if decision.requires_confirmation:
-            return not self.ask_for_confirmation(action_name, args, task_id=task_id)
-        return not decision.allowed

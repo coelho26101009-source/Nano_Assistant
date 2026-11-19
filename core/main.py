@@ -6,7 +6,6 @@ streaming, tool execution, guardrails and voice mode.
 from __future__ import annotations
 import argparse
 import asyncio
-import json
 import logging
 import os
 import re
@@ -52,7 +51,6 @@ from core.local_runtime import choose_model
 from core.voice import VoiceEngine, VoiceRuntime
 from core import wake_phrase as wake_phrase_mod
 from core.wake_word import WakeWordEngine
-from core.errors import NanoError
 from core.events import EventBus
 from core import confirmation as confirmation_text
 from core.permission_manager import PermissionManager
@@ -62,10 +60,9 @@ from core.agent_orchestrator import AgentOrchestrator
 from core.agent_registry import AgentRegistry
 from core.tool_execution import ToolExecutor
 from core.background_worker import BackgroundTaskWorker
-from core import (audio_feedback, desktop_bridge, google_provider, http_tls, mistral_provider,
-                  ollama_service,
-                  provider_failures, provider_status, providers, response_meta,
-                  secret_store, speech_filter, user_settings)
+from core import (audio_feedback, desktop_bridge, http_tls, ollama_service, provider_failures,
+                  provider_status, providers, response_meta, secret_store, speech_filter,
+                  user_settings)
 
 # The repository .env, for the default profile only: an explicit profile is an
 # isolation boundary. dotenv_allowed() is False in a frozen build and under
@@ -770,11 +767,6 @@ def set_autonomy_mode(mode: str) -> dict:
     return {"ok": True, "mode": permission_manager.policy_engine.autonomy_mode.value}
 
 @eel.expose
-def get_autonomy_mode() -> dict:
-    """Retorna o nível atual de autonomia do sistema."""
-    return {"ok": True, "mode": permission_manager.policy_engine.autonomy_mode.value}
-
-@eel.expose
 def set_emergency_stop(enabled: bool) -> dict:
     """Activa ou desactiva o kill switch global do Nano."""
     state = bool(permission_manager.set_emergency_stop(enabled))
@@ -785,11 +777,6 @@ def set_emergency_stop(enabled: bool) -> dict:
 def get_emergency_stop_state() -> dict:
     """Retorna o estado global do kill switch do Nano."""
     return {"ok": True, "enabled": permission_manager.is_emergency_stopped()}
-
-@eel.expose
-def revoke_permission_policy(capability: str) -> dict:
-    """Remove uma policy de permissão por capability."""
-    return {"ok": permission_manager.revoke_policy(capability), "capability": capability}
 
 @eel.expose
 def get_data_location() -> dict:
@@ -834,18 +821,6 @@ def start_voice_listen() -> dict:
     except Exception:
         logger.exception("Erro de voz")
         return {"ok": False, "error": "Não foi possível usar o microfone."}
-
-@eel.expose
-def start_voice_session() -> dict:
-    """Inicia uma sessão manual de voz para teste local."""
-    try:
-        response = run_coro(voice_runtime.listen_once())
-        if not response:
-            return {"ok": False, "error": "no_transcript"}
-        return {"ok": True, "text": response}
-    except Exception:
-        logger.exception("Erro ao iniciar a sessão de voz")
-        return {"ok": False, "error": "voice_session_failed"}
 
 @eel.expose
 def get_conversation_history() -> list:
@@ -1001,57 +976,6 @@ def delete_conversations(conversation_ids: list) -> dict:
     result["activeId"] = memory_stack.active_conversation_id
     return result
 
-
-@eel.expose
-def get_conversation_context(conversation_id: str = "") -> dict:
-    """What memory would contribute to the next message in this thread.
-
-    Diagnostics for the user, not for the model: counts, token spend and the
-    thread summary, so "porque e que o Nano se lembrou disto?" has an answer.
-    """
-    if not memory_stack.ready:
-        return {"ok": False, "error": "memory_unavailable"}
-    thread_id = conversation_id or memory_stack.active_conversation_id or ""
-    if not thread_id:
-        return {"ok": False, "error": "unknown_conversation"}
-    return {
-        "ok": True,
-        "summary": memory_stack.conversations.get_summary(thread_id),
-        "facts": memory_stack.conversations.facts(thread_id, limit=20),
-        "messageCount": memory_stack.conversations.message_count(thread_id),
-    }
-
-@eel.expose
-def start_background_worker() -> dict:
-    """Liga o worker real de tarefas em segundo plano do Nano."""
-    return background_worker.start()
-
-@eel.expose
-def stop_background_worker() -> dict:
-    """Desliga o worker em segundo plano."""
-    return background_worker.stop()
-
-@eel.expose
-def get_background_worker_status() -> dict:
-    """Retorna o estado do worker e da fila de tarefas."""
-    return {"worker": background_worker.status(), "agent": agent_orchestrator.get_status()}
-
-@eel.expose
-def create_agent_task(title: str, description: str = "", task_type: str = "instant", priority: int = 5, metadata: dict | None = None) -> dict:
-    """Cria uma tarefa no task queue persistente do Nano."""
-    task = task_engine.create_task(title=title, description=description, task_type=task_type, priority=priority, metadata=metadata or {})
-    event_bus.publish("task.created", {"task_id": task["id"], "title": task["title"], "status": task["status"]})
-    return {"ok": True, "task": task}
-
-@eel.expose
-def list_agent_tasks(status: str | None = None, limit: int = 25) -> list:
-    """Lista tarefas persistentes do queue do Nano."""
-    return task_engine.list_tasks(status=status, limit=max(1, int(limit)))
-
-@eel.expose
-def get_agent_status() -> dict:
-    """Retorna o estado do agent orchestrator e da fila de tarefas."""
-    return agent_orchestrator.get_status()
 
 def _summarize_task_row(task: dict) -> dict:
     """A task row without its unbounded metadata/result blobs.
@@ -1574,30 +1498,6 @@ def remove_groq_api_key() -> dict:
 
 
 @eel.expose
-def set_groq_model(model: str) -> dict:
-    chosen = (model or "").strip()
-    if not chosen:
-        return {"ok": False, "error": "empty_model"}
-    ticket = _begin_selection("groq_model")
-    try:
-        available, error = _off_hub(providers.list_groq_models,
-                                    timeout=_VALIDATION_TIMEOUT_SECONDS)
-    except TimeoutError:
-        return _validation_timeout(providers.ProviderId.GROQ.value)
-    if error:
-        return {"ok": False, "error": error, "detail": tr("Não foi possível validar o modelo com o Groq.")}
-    if chosen not in available:
-        return {"ok": False, "error": "model_unavailable",
-                "detail": tr("'{p0}' não existe nesta conta Groq.", p0=chosen)}
-    if not _selection_is_latest("groq_model", ticket):
-        return _superseded()
-    user_settings.set_value("groq_model", chosen)
-    CONFIG["groq_model"] = chosen
-    brain.groq_model = chosen
-    return {"ok": True, "model": chosen, "providers": _providers_after_change()}
-
-
-@eel.expose
 def set_preferred_cloud_provider(provider: str) -> dict:
     """Choose which cloud provider AUTO and CLOUD use first.
 
@@ -1830,11 +1730,6 @@ def remove_google_api_key() -> dict:
 
 
 @eel.expose
-def set_google_model(model: str, tier: str = "fast") -> dict:
-    return set_cloud_model(providers.ProviderId.GOOGLE.value, model, tier)
-
-
-@eel.expose
 def set_mistral_api_key(api_key: str) -> dict:
     """The Mistral-named flow, for symmetry with the other two providers."""
     return set_cloud_api_key(providers.ProviderId.MISTRAL.value, api_key)
@@ -1848,11 +1743,6 @@ def test_mistral_connection(api_key: str = "") -> dict:
 @eel.expose
 def remove_mistral_api_key() -> dict:
     return remove_cloud_api_key(providers.ProviderId.MISTRAL.value)
-
-
-@eel.expose
-def set_mistral_model(model: str, tier: str = "fast") -> dict:
-    return set_cloud_model(providers.ProviderId.MISTRAL.value, model, tier)
 
 
 #: How long choosing a local model may wait for Ollama's answer -- one probe
@@ -2199,11 +2089,6 @@ WAKE_PHRASE_CANDIDATES = ("ei nano", "olá nano", "acorda nano")
 
 
 @eel.expose
-def list_wake_phrase_candidates() -> list[str]:
-    return list(WAKE_PHRASE_CANDIDATES)
-
-
-@eel.expose
 def test_wake_phrase(phrase: str = "", seconds: int = 3) -> dict:
     """Record one utterance and report what the wake matcher would do with it.
 
@@ -2429,24 +2314,6 @@ def archive_finished_tasks() -> dict:
 
 
 @eel.expose
-def get_activity(kind: str = "all", limit: int = 80) -> list:
-    """Filtered event stream for the Activity page."""
-    groups = {
-        "tasks": ("task.",),
-        "tools": ("tool.",),
-        "permissions": ("Permission", "permission", "security."),
-        "voice": ("Voice", "WakeWord", "Transcription"),
-        "system": ("worker.", "tasks."),
-        "errors": ("tool.failed", "worker.error", "task.needs_attention", "VoiceError"),
-    }
-    prefixes = groups.get(str(kind or "all").lower())
-    events = event_bus.get_recent_events(max(1, min(300, int(limit))))
-    if not prefixes:
-        return events
-    return [e for e in events if any(str(e.get("event", "")).startswith(p) or p in str(e.get("event", "")) for p in prefixes)]
-
-
-@eel.expose
 def get_memory_overview() -> dict:
     """Everything the Memoria page renders: stats, counts and the real state.
 
@@ -2635,21 +2502,6 @@ def delete_knowledge_node(node_id: str) -> dict:
 
 
 @eel.expose
-def link_knowledge_nodes(source_id: str, target_id: str,
-                         relation: str = "related_to") -> dict:
-    if not memory_stack.ready:
-        return {"ok": False, "error": "memory_unavailable"}
-    return memory_stack.knowledge.link(source_id, target_id, relation=relation)
-
-
-@eel.expose
-def unlink_knowledge_nodes(source_id: str, target_id: str, relation: str = "") -> dict:
-    if not memory_stack.ready:
-        return {"ok": False, "error": "memory_unavailable"}
-    return memory_stack.knowledge.unlink(source_id, target_id, relation or None)
-
-
-@eel.expose
 def get_knowledge_graph(node_type: str = "", focus_id: str = "",
                         limit: int = 160) -> dict:
     """A bounded slice of the graph, ready to draw.
@@ -2665,28 +2517,6 @@ def get_knowledge_graph(node_type: str = "", focus_id: str = "",
     graph["ok"] = True
     graph["types"] = list(NODE_TYPES)
     return graph
-
-
-@eel.expose
-def forget_memory_fact(key: str) -> dict:
-    """Delete one legacy key/value fact. Confirmed in the UI before it gets here.
-
-    Kept for the facts written by `remember_fact` and by older builds. The
-    mirrored long-term memory is removed with it, so "esquecer" does not leave
-    the same sentence alive in the other store where the user cannot see the
-    connection.
-    """
-    if not key:
-        return {"ok": False, "error": "missing_key"}
-    try:
-        removed = memory.forget_fact(key)
-    except Exception as exc:
-        return {"ok": False, "error": "delete_failed", "detail": str(exc)}
-    if memory_stack.ready:
-        for row in memory_stack.memories.list(limit=300, status=None):
-            if str(row.get("legacyKey") or "").strip().lower() == str(key).strip().lower():
-                memory_stack.forget(row["id"])
-    return {"ok": bool(removed), "key": key, "memory": get_memory_overview()}
 
 
 @eel.expose
@@ -3056,32 +2886,6 @@ def resolve_permission(request_id: str, decision: str) -> dict:
     return permission_manager.resolve_permission(request_id, decision)
 
 @eel.expose
-def orchestrate_request(user_text: str, metadata: dict | None = None) -> dict:
-    """Cria um plano estruturado a partir do request do utilizador."""
-    if not user_text or not user_text.strip():
-        return {"ok": False, "error": "empty_request"}
-    return agent_orchestrator.handle_request(user_text, metadata=metadata or {})
-
-@eel.expose
-def clear_conversation() -> dict:
-    """Start a fresh thread. The previous one is kept and stays in the rail.
-
-    "Nova conversa" used to mean "forget the in-memory window", because there
-    was nothing else it could mean: the log was flat and the old messages stayed
-    in it, indistinguishable from the new ones. It now opens a real new thread,
-    so the previous conversation remains openable, renameable and searchable
-    instead of being silently merged into whatever comes next.
-    """
-    brain.reset_conversation()
-    if not memory_stack.ready:
-        return {"ok": True, "conversation": None}
-    thread = memory_stack.new_conversation()
-    if thread is None:
-        return {"ok": True, "conversation": None}
-    brain.switch_conversation(thread["id"])
-    return {"ok": True, "conversation": thread}
-
-@eel.expose
 def get_loaded_plugins() -> dict:
     """Retorna o dicionário de plugins e respetivas ferramentas ativas."""
     return list_plugins()
@@ -3091,21 +2895,6 @@ def get_plugin_code(plugin_name: str) -> dict:
     """Retorna o código-fonte e metadados de um plugin específico."""
     from core.plugin_loader import get_plugin_source
     return get_plugin_source(plugin_name)
-
-@eel.expose
-def get_wake_word_status() -> dict:
-    """Retorna o estado do motor de wake-word."""
-    return wake_word.status() if wake_word else {"enabled": False, "running": False}
-
-@eel.expose
-def get_wake_phrase_status() -> dict:
-    """Retorna o estado do detector local de wake-phrase ('Hey Nano')."""
-    return voice.wake_phrase_provider.status()
-
-@eel.expose
-def get_memory_facts() -> dict:
-    """Retorna factos persistentes aprendidos sobre o utilizador."""
-    return memory.get_facts()
 
 @eel.expose
 def get_system_stats() -> dict:
@@ -3389,12 +3178,6 @@ def start_voice_turn_from_ui() -> dict:
     return start_voice_turn("ui")
 
 
-@eel.expose
-def get_voice_turn_status() -> dict:
-    """Whether a voice turn is currently running, and which trigger began it."""
-    return voice_runtime.turn_status()
-
-
 # ==========================================================================
 #  DESKTOP CONTROL CHANNEL  (Electron parent -> this backend)
 # ==========================================================================
@@ -3668,20 +3451,6 @@ def get_audio_devices():
     except Exception as exc:
         logger.error("Falha ao listar dispositivos de áudio: %s", exc)
         return {"inputs": [], "outputs": [], "error": str(exc)}
-
-@eel.expose
-def set_input_device(device_id: int):
-    # Store chosen input device in config for later use by VoiceEngine
-    CONFIG.setdefault("audio", {})["input_device"] = device_id
-    logger.info(f"Input audio device set to {device_id}")
-    return True
-
-@eel.expose
-def set_output_device(device_id: int):
-    CONFIG.setdefault("audio", {})["output_device"] = device_id
-    logger.info(f"Output audio device set to {device_id}")
-    return True
-
 
 def _should_speak(source: str) -> bool:
     """Whether a reply from this source should be spoken aloud.

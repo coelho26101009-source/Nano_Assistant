@@ -7,10 +7,8 @@ import logging
 import os
 import re
 import shutil
-import subprocess
 from pathlib import Path
 from datetime import datetime
-from typing import Any
 
 import psutil
 

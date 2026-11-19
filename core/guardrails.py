@@ -46,12 +46,6 @@ ALWAYS_CONFIRM = {
 # that no longer exists. Nothing in this module classifies a command line now.
 
 
-def _is_form_submit(args: dict) -> bool:
-    sel = str(args.get("selector") or "").lower()
-    text = str(args.get("text") or "").lower()
-    return any(d in sel or d in text for d in ("submit", "comprar", "pagar", "confirmar", "apagar", "eliminar", "deletar", "checkout"))
-
-
 class GuardrailsEngine:
     def __init__(self):
         self._confirm_callback: Callable[[str, dict], Awaitable[bool]] | None = None

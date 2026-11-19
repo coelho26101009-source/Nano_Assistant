@@ -297,16 +297,6 @@ class ConversationStore:
             return []
         return [self._row_to_thread(row) for row in rows]
 
-    def set_archived(self, conversation_id: str, archived: bool) -> dict:
-        if not self.exists(conversation_id):
-            return {"ok": False, "error": "unknown_conversation"}
-        with self._lock:
-            self.conn.execute(
-                "UPDATE conversations SET archived=?, updated_at=? WHERE id=?",
-                (1 if archived else 0, _now(), str(conversation_id)))
-            self.conn.commit()
-        return {"ok": True, "id": conversation_id, "archived": bool(archived)}
-
     def delete(self, conversation_id: str) -> dict:
         """Remove a thread and everything derived from it. See the module docstring."""
         thread = self.get(conversation_id)

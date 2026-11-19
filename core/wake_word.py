@@ -167,10 +167,6 @@ class WakeWordEngine:
         self._thread.start()
         return True
 
-    def _can_start(self) -> bool:
-        validation = validate_wake_word_model(self.model_path or self.keyword_path, phrase=self.phrase, provider=self.provider)
-        return bool(validation.get("ok"))
-
     def stop(self):
         self._stop.set()
 

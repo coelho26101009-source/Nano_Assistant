@@ -289,11 +289,3 @@ def resolve_target(
         exists=exists,
     )
 
-
-def is_within_workspace(value: str | os.PathLike | None) -> bool:
-    """Convenience predicate used by tests and by the project test runner."""
-    try:
-        target = resolve_target(value)
-    except PathValidationError:
-        return False
-    return target.scope == Scope.CURRENT_WORKSPACE and not target.protected
