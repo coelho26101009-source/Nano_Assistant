@@ -80,12 +80,12 @@ def _rpc(link: MobileLink, device_id: str, key: bytes, method: str, args=None,
     return open_sealed(key, reply, f"nano-rpc-reply-v1|{device_id}|{request_id}")
 
 
-# ── sealing ────────────────────────────────────────────────────────────────
+# â”€â”€ sealing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_seal_round_trip_and_tamper_detection():
     key = b"k" * 32
-    sealed = seal(key, {"hello": "olá"}, "ctx")
-    assert open_sealed(key, sealed, "ctx") == {"hello": "olá"}
+    sealed = seal(key, {"hello": "olÃ¡"}, "ctx")
+    assert open_sealed(key, sealed, "ctx") == {"hello": "olÃ¡"}
     with pytest.raises(LinkError) as wrong_context:
         open_sealed(key, sealed, "other")
     assert wrong_context.value.status == 401
@@ -110,7 +110,7 @@ def test_known_vector_matches_the_phone():
     assert open_sealed(key, {"n": b64e(nonce), "c": b64e(cipher)}, "nano-rpc-v1|dev_test") == {"hello": "NANO"}
 
 
-# ── addresses ──────────────────────────────────────────────────────────────
+# â”€â”€ addresses â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @pytest.mark.parametrize("address,kind", [
     ("192.168.1.5", "lan"), ("10.0.0.2", "lan"), ("172.20.1.1", "lan"),
@@ -121,7 +121,7 @@ def test_only_home_and_private_network_addresses_are_offered(address, kind):
     assert mobile_link.classify_address(address) == kind
 
 
-# ── pairing ────────────────────────────────────────────────────────────────
+# â”€â”€ pairing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_pairing_needs_the_qr_and_a_yes_on_the_pc(link):
     qr = _qr(link)
@@ -190,12 +190,12 @@ def test_device_names_are_cleaned(link):
     assert len(state["deviceName"]) <= mobile_link.MAX_DEVICE_NAME
 
 
-# ── calls from a paired phone ──────────────────────────────────────────────
+# â”€â”€ calls from a paired phone â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_paired_phone_can_call_registered_methods_only(link):
     device_id, key = _paired(link)
-    reply = _rpc(link, device_id, key, "echo", {"text": "olá"})
-    assert reply["ok"] and reply["r"] == {"echo": "olá"}
+    reply = _rpc(link, device_id, key, "echo", {"text": "olÃ¡"})
+    assert reply["ok"] and reply["r"] == {"echo": "olÃ¡"}
     assert _rpc(link, device_id, key, "set_emergency_stop")["error"] == "unknown_method"
     assert _rpc(link, device_id, key, "__class__")["error"] == "unknown_method"
     assert _rpc(link, device_id, key, "echo", {"nope": 1})["error"] == "bad_arguments"
@@ -259,16 +259,16 @@ def test_device_limit(link):
     assert full.value.code == "too_many_devices"
 
 
-# ── events ─────────────────────────────────────────────────────────────────
+# â”€â”€ events â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_events_are_only_kept_when_a_phone_is_paired(link):
-    link.publish("on_stream_chunk", "m1", "olá")
+    link.publish("on_stream_chunk", "m1", "olÃ¡")
     assert link.feed.last == 0
     _paired(link)
-    link.publish("on_stream_chunk", "m1", "olá")
+    link.publish("on_stream_chunk", "m1", "olÃ¡")
     link.publish("on_something_private", "x")
     feed = link.feed.read(0)
-    assert [(e["name"], e["data"]) for e in feed["events"]] == [("on_stream_chunk", ["m1", "olá"])]
+    assert [(e["name"], e["data"]) for e in feed["events"]] == [("on_stream_chunk", ["m1", "olÃ¡"])]
 
 
 def test_poll_returns_new_events_and_waits(link):
@@ -293,7 +293,7 @@ def test_feed_reports_a_gap():
     assert feed.read(100)["last"] in (0, 6)
 
 
-# ── over HTTP ──────────────────────────────────────────────────────────────
+# â”€â”€ over HTTP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _post(url: str, payload, headers=None):
     data = json.dumps(payload).encode() if not isinstance(payload, bytes) else payload
@@ -382,6 +382,38 @@ def test_oversized_body_is_refused(link):
             conn.close()
     finally:
         server.stop()
+
+
+def test_a_phone_that_hangs_up_mid_answer_is_not_an_error(link, monkeypatch, capsys):
+    """A locked screen or a backgrounded app drops the connection before the
+    answer goes out. That is normal on a phone and must not log a failure."""
+    import logging
+    from http.server import BaseHTTPRequestHandler
+
+    def hung_up(self):
+        raise ConnectionResetError(10054, "the phone went away")
+
+    errors: list[str] = []
+
+    class Collect(logging.Handler):
+        def emit(self, record):
+            errors.append(record.getMessage())
+
+    collector = Collect(level=logging.ERROR)
+    server_logger = logging.getLogger("nano.mobile.server")
+    server_logger.addHandler(collector)
+    monkeypatch.setattr(BaseHTTPRequestHandler, "end_headers", hung_up)
+    server = MobileServer(link, 0, host="127.0.0.1")
+    server.start()
+    try:
+        with pytest.raises(Exception):
+            _post(f"http://127.0.0.1:{server.port}/v1/rpc", b"{}")
+        time.sleep(0.2)
+        assert errors == []
+        assert "Traceback" not in capsys.readouterr().err
+    finally:
+        server.stop()
+        server_logger.removeHandler(collector)
 
 
 def test_poll_can_start_from_now(link):

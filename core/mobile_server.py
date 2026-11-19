@@ -62,8 +62,15 @@ def _handler_for(link: MobileLink):
             if _origin_allowed(origin):
                 self.send_header("Access-Control-Allow-Origin", origin)
                 self.send_header("Vary", "Origin")
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.end_headers()
+                self.wfile.write(body)
+            except ConnectionError:
+                # The phone went away before the answer (screen locked, app
+                # sent to the background, Wi-Fi changed). Normal on a phone,
+                # and nothing to answer anymore: seen on a real Android +
+                # Windows pairing, where it filled the log with tracebacks.
+                self.close_connection = True
 
         def do_OPTIONS(self) -> None:  # noqa: N802 - http.server naming
             origin = self.headers.get("Origin")
