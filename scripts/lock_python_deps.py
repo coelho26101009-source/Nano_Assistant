@@ -76,7 +76,7 @@ ROOT = Path(__file__).resolve().parent.parent
 #: or malicious release is likeliest to still be live: resolved at the moment
 #: this lock was introduced, the optional voice stack would have taken av
 #: 19.0.0, a major release published that same day.
-EXCLUDE_NEWER = "2026-09-22T00:00:00Z"
+EXCLUDE_NEWER = "2026-11-12T00:00:00Z"
 
 #: Per-package cutoffs that override the anchor for one package -- later, for a
 #: security fix that cannot wait for a refresh, e.g.
@@ -88,7 +88,7 @@ EXCLUDE_NEWER_PACKAGE: dict[str, str] = {}
 #: The compiler every lock is generated and checked with. It must equal the pin
 #: in requirements-tools.txt; tests/test_python_dependency_locks.py holds them
 #: together.
-UV_VERSION = "0.12.17"
+UV_VERSION = "0.13.4"
 
 PYTHON_VERSION = "3.12"
 INDEX_URL = "https://pypi.org/simple"

@@ -9,4 +9,4 @@
 # Pinned exactly, to a release older than the resolution anchor in
 # scripts/lock_python_deps.py. Another uv version may write the same resolution
 # differently, and the CI drift check would rightly report that as drift.
-uv==0.12.17
+uv==0.13.4
