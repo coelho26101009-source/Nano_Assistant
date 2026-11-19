@@ -526,6 +526,13 @@ def _tool_name(tool: Any) -> str:
     return str(getattr(tool, "name", "") or "")
 
 
+#: Words that chain several actions in one request (accents already stripped).
+_MULTI_STEP_MARKERS = (
+    "e depois", "depois disso", "a seguir", "e a seguir", "e no fim", "prepara", "prepara-me",
+    "and then", "after that", "then open", "get ready", "set up", "prepare",
+)
+
+
 def select_tools(text: str, all_tools: list[dict] | None, *, task: TaskClass | None = None) -> list[dict]:
     """Return the smallest plausible tool subset for this message.
 
@@ -554,6 +561,12 @@ def select_tools(text: str, all_tools: list[dict] | None, *, task: TaskClass | N
         # something the user pasted; give it the bounded general set so it can
         # still look something up, but nothing more.
         wanted.update(_AMBIGUOUS_FALLBACK)
+
+    # A request that spans several areas, or chains actions ("e depois",
+    # "and then"), is offered task_plan: the plan is shown once before the
+    # steps run (plugins/task_plan.py).
+    if wanted and (len(categories) >= 2 or _has_any(normalized, _MULTI_STEP_MARKERS)):
+        wanted.add("task_plan")
 
     selected = [tool for tool in tools if _tool_name(tool) in wanted]
     # Never silently return nothing for a real action request: fall back to the

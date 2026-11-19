@@ -173,6 +173,9 @@ class PolicyEngine:
         # A reminder is a notification on this PC, stored in nano.db; nothing
         # leaves the computer. Cancelling one still asks (external.send).
         "set_reminder": "nano.reminder.create",
+        # Showing a plan executes nothing; the person approves it through the
+        # guardrail question, and every step is its own gated tool call.
+        "task_plan": "nano.plan.show",
         "cancel_reminder": "external.send",
         "organize_downloads": "filesystem.write",
         "clean_windows_cache": "filesystem.delete",
@@ -374,6 +377,7 @@ class PolicyEngine:
             # narrow tools in the plan, each with its own rule.
             "pc.mode.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Reading a work mode's plan executes nothing."),
             "nano.data.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Reading NANO's own agenda, facts and history changes nothing."),
+            "nano.plan.show": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "A plan is shown to the person; it runs nothing by itself."),
             "nano.reminder.create": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "A reminder only shows a notification on this PC and is cancelled in one click."),
             "nano.documents.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Searching documents the user indexed changes nothing; the text is untrusted."),
             "pc.window.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Listing open windows is read-only."),

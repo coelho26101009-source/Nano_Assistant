@@ -399,6 +399,7 @@ class Brain:
         # (name, arguments). Provider failover happens inside a turn, so this
         # is what stops a consequential action running twice. See _run_tool.
         self._turn_tool_results: dict[str, dict] = {}
+        self._turn_plan_tools: set[str] = set()
         #: Calls that have STARTED but not finished, keyed the same way.
         #: See _run_tool: without it, two identical calls in one round
         #: both passed the ledger lookup before either wrote to it.
@@ -1449,6 +1450,8 @@ class Brain:
         # second provider re-running a Windows action the first already did.
         self._turn_tool_results = {}
         self._turn_tool_inflight = {}
+        # Tools the person approved as steps of this turn's plan.
+        self._turn_plan_tools = set()
         # The question an AMBIGUOUS PC target leaves for the user, if any.
         self.turn_clarification = None
         self.conversation.append({"role": "user", "content": user_message})
@@ -2050,9 +2053,20 @@ class Brain:
             logger.warning("Tool %s refused: %s is not a Nano capability", name, unsupported.id)
             return capabilities.refusal(unsupported, tool=name)
 
+        # A multi-step plan (plugins/task_plan.py) is checked BEFORE it is shown:
+        # an invalid plan, or one naming a tool NANO does not have, goes back
+        # to the model as an error to fix, never to the person as a question.
+        if name == "task_plan":
+            refusal = self._plan_refusal(args)
+            if refusal is not None:
+                return refusal
+
         # Guardrails stay as the human-readable layer in front of the policy
         # pipeline; the executor below re-checks everything independently.
-        if self.guardrails.requires_confirmation(name, args) and not await self.guardrails.ask_confirmation(name, args):
+        # A step the person already approved as part of this turn's plan is
+        # not asked again HERE; the executor's own approvals still apply.
+        if (self.guardrails.requires_confirmation(name, args) and name not in self._turn_plan_tools
+                and not await self.guardrails.ask_confirmation(name, args)):
             return {"ok": False, "cancelled": True, "message": tr("Operação cancelada pelo utilizador.")}
 
         # A reminder on this PC runs without a card (nano.reminder.create), but
@@ -2133,6 +2147,9 @@ class Brain:
         # error must be retryable -- the user may approve on a second ask.
         if result.get("success"):
             self._turn_tool_results[fingerprint] = result
+            if name == "task_plan":
+                self._turn_plan_tools = {str(step.get("tool")) for step in (args.get("steps") or [])
+                                         if isinstance(step, dict)}
             # The model resolved it itself later in the turn: nothing to ask.
             if getattr(self, "turn_clarification", None) and self.turn_clarification.get("tool") == name:
                 self.turn_clarification = None
@@ -2149,6 +2166,22 @@ class Brain:
                 "message": result.get("error") or "Operação bloqueada pela política de segurança.",
             }
         return result
+
+    def _plan_refusal(self, args: dict) -> dict | None:
+        """Why a task_plan cannot be shown, or None when it can."""
+        from plugins import task_plan as task_plan_plugin  # noqa: PLC0415
+
+        plan = task_plan_plugin.validate(args)
+        if not plan["ok"]:
+            return {"ok": False, "success": False, "status": plan["error"], "error": plan["message"]}
+        registry = getattr(self.tool_executor, "registry", None) or {}
+        unknown = [step["tool"] for step in plan["steps"] if registry and step["tool"] not in registry]
+        unsupported = [step["tool"] for step in plan["steps"] if capabilities.for_tool(step["tool"]) is not None]
+        if unknown or unsupported:
+            return {"ok": False, "success": False, "status": "unknown_tool",
+                    "error": tr("O plano usa ferramentas que o NANO não tem: {tools}.",
+                                tools=", ".join(unknown + unsupported))}
+        return None
 
     def _turn_saw_untrusted(self) -> bool:
         """Whether a tool result fenced as external content arrived this turn."""

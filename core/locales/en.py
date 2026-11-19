@@ -291,4 +291,11 @@ EN: dict[str, str] = {
     "apareceu “{word}” no ecrã.": "“{word}” appeared on screen.",
     "{goal}: o tempo acabou e não vi a mudança.": "{goal}: time ran out and I didn't see the change.",
     "“{word}” já não está no ecrã.": "“{word}” is no longer on screen.",
+    "O plano usa ferramentas que o NANO não tem: {tools}.": "The plan uses tools NANO doesn't have: {tools}.",
+    "Um plano precisa de um objetivo e de pelo menos um passo.": "A plan needs a goal and at least one step.",
+    "No máximo {count} passos por plano. Divide a tarefa.": "At most {count} steps per plan. Split the task.",
+    "Cada passo precisa de 'label' e 'tool'.": "Each step needs a 'label' and a 'tool'.",
+    "Cada passo precisa de 'label' e de uma ferramenta válida.": "Each step needs a 'label' and a valid tool.",
+    "Vou fazer isto para “{goal}”:": "Here's what I'll do for “{goal}”:",
+    "Avanço? O que mexer em coisas importantes ainda te pergunto à parte.": "Shall I go ahead? Anything that touches important things I'll still ask about separately.",
 }

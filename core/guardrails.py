@@ -35,6 +35,9 @@ SENSITIVE_TOOLS: dict[str, dict] = {
     # UNATTENDED_AFTER_TRUSTED_ONLY and Brain._run_tool), and its message
     # stays below for that case.
     "cancel_reminder": {"check": lambda _args: True, "message": "Vou cancelar um lembrete existente. Confirmas?"},
+    # The plan of a multi-step task, shown once (plugins/task_plan.py). The
+    # message is built from the plan itself.
+    "task_plan": {"check": lambda _args: True, "message": None},
     "rag_index_pdf": {"check": lambda _args: True, "message": "Vou ler e indexar um documento local na memória do Nano Assistant. Confirmas?"},
 }
 
@@ -86,6 +89,13 @@ class GuardrailsEngine:
     async def ask_confirmation(self, tool_name: str, args: dict) -> bool:
         rule = SENSITIVE_TOOLS.get(tool_name, {})
         message = rule.get("message") or UNATTENDED_AFTER_TRUSTED_ONLY.get(tool_name) or f"Vou executar '{tool_name}'. Confirmas?"
+        if tool_name == "task_plan":
+            from plugins import task_plan as task_plan_plugin  # noqa: PLC0415 - plugin, loaded lazily
+
+            plan = task_plan_plugin.validate(args)
+            if not plan["ok"]:
+                return False
+            message = task_plan_plugin.describe(plan)
         if self._confirm_callback is None:
             logger.error("Guardrail sem callback — operação bloqueada")
             return False
