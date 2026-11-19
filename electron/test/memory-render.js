@@ -27,6 +27,14 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 // The UI copy these checks assert is the Portuguese original, so the page
 // must load in Portuguese whatever language the CI machine speaks.
 app.commandLine.appendSwitch('lang', 'pt-PT');
+// On a real Windows desktop the harness window opens BEHIND whatever the
+// person is using. Chromium's native occlusion tracking then marks it hidden
+// and stops producing frames, so CSS transitions never start and dimOpacity
+// reads a frozen 1 (seen on a real Windows 11 PC, 2026-11-19). Keep the
+// window rendering even when covered.
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
