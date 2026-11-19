@@ -53,6 +53,7 @@ from core.logger import setup_logger
 from core.local_runtime import choose_model
 from core.voice import VoiceEngine, VoiceRuntime
 from core import wake_phrase as wake_phrase_mod
+from core import voice_language
 from core.wake_word import WakeWordEngine
 from core.events import EventBus
 from core import confirmation as confirmation_text
@@ -107,6 +108,9 @@ if not memory_stack.ready:
 elif memory_stack.migration.get("applied"):
     logger.info("Esquema de memória migrado: %s", memory_stack.migration["applied"])
 
+# Transcriber, voice and wake phrase follow the interface language, except
+# the ones the person changed (core/voice_language.py).
+voice_language.apply(CONFIG.setdefault("voice", {}), i18n.current())
 voice = VoiceEngine(CONFIG.get("voice", {}))
 # The key the user saved in Settings wins over anything in the environment.
 # secret_store.get_secret() already implements exactly this precedence (the
@@ -1982,6 +1986,8 @@ def get_settings() -> dict:
             # output is configured separately.
             "typedChatTts": bool(voice_cfg.get("typed_chat_tts", False)),
             "voiceReplyTts": bool(voice_cfg.get("voice_reply_tts", True)),
+            "conversationMode": bool(voice_cfg.get("voice_conversation_mode", True)),
+            "bargeIn": bool(voice_cfg.get("voice_barge_in", False)),
             "wakePhrase": wake_status.get("phrase"),
             "wakePhraseEnabled": bool(voice_cfg.get("wake_phrase_enabled")),
             "allowNanoOnly": bool(voice_cfg.get("wake_phrase_allow_nano_only")),
@@ -2098,7 +2104,21 @@ def set_language(value: str = "system") -> dict:
     result = user_settings.set_value("language", value)
     if isinstance(result, dict) and result.get("ok") is False:
         return {**result, **i18n.describe()}
+    _apply_voice_language()
     return {"ok": True, **i18n.describe()}
+
+
+def _apply_voice_language() -> dict:
+    """After a language change: transcriber, voice and wake phrase follow it, live."""
+    changed = voice_language.apply(CONFIG.setdefault("voice", {}), i18n.current())
+    if "wake_phrase" in changed:
+        try:
+            voice.wake_phrase_provider._engine.set_phrase(changed["wake_phrase"])
+        except Exception:
+            logger.debug("Não consegui mudar a frase de ativação", exc_info=True)
+    if changed:
+        logger.info("Voz passou a seguir o idioma %s: %s", i18n.current(), sorted(changed))
+    return changed
 
 
 @eel.expose
@@ -2134,7 +2154,8 @@ def update_setting(key: str, value) -> dict:
     elif key == "wake_command_timeout_seconds":
         voice_cfg["wake_command_timeout_seconds"] = int(value)
         voice_runtime.command_timeout_seconds = max(3, min(15, int(value)))
-    elif key in ("tts_enabled", "typed_chat_tts", "voice_reply_tts"):
+    elif key in ("tts_enabled", "typed_chat_tts", "voice_reply_tts",
+                 "voice_conversation_mode", "voice_barge_in"):
         voice_cfg[key] = bool(value)
     elif key == "voice_enabled":
         voice_cfg["enabled"] = bool(value)
@@ -2174,10 +2195,12 @@ def update_setting(key: str, value) -> dict:
     return {"ok": True, "key": key, "value": value, "settings": get_settings()}
 
 
-# Candidate phrases offered in the wake-phrase calibration tool. All are
-# Portuguese: faster-whisper-tiny is forced to Portuguese, which is exactly why
-# the English "Hey Nano" was transcribed as "Ei, não." / "E ai, no." / "NÃO!".
+# Candidate phrases offered in the wake-phrase calibration tool, per language.
+# The transcriber is forced to ONE language, which is exactly why the English
+# "Hey Nano" was transcribed as "Ei, não." / "E ai, no." / "NÃO!" while it was
+# forced to Portuguese; each list only holds phrases native to its language.
 WAKE_PHRASE_CANDIDATES = ("ei nano", "olá nano", "acorda nano")
+WAKE_PHRASE_CANDIDATES_EN = ("hey nano", "hi nano", "okay nano")
 
 
 @eel.expose

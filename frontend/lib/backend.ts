@@ -245,6 +245,8 @@ export type SettingsPayload = {
     cooldownSeconds: number; commandTimeoutSeconds: number; state: string;
     // Typing and talking are separate conversations.
     typedChatTts: boolean; voiceReplyTts: boolean;
+    // Continuous conversation: listen again after answering; barge-in.
+    conversationMode?: boolean; bargeIn?: boolean;
     // Honest microphone diagnostics: what Nano is really hearing.
     explain?: string;
     lastTranscript?: string | null;

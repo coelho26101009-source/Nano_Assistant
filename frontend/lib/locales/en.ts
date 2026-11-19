@@ -1108,4 +1108,8 @@ export const EN: Record<string, string> = {
   "Descarregar e usar": "Download and use",
   "Apenas modelos já instalados. Para descarregar um, usa a configuração guiada abaixo.": "Installed models only. To download one, use the guided setup below.",
   "Sem chave? Em Configurar IA → “IA no teu PC” o NANO vê o que o teu PC aguenta e instala um modelo leve e grátis com um clique. Também serve de reserva quando a nuvem chega ao limite.": "No key? In Set up AI → “AI on your PC”, NANO checks what your PC can handle and installs a free, light model in one click. It also steps in when the cloud hits its limit.",
+  "Conversa contínua": "Continuous conversation",
+  "Depois de responder, o NANO fica uns segundos à escuta para a pergunta seguinte, sem atalho nem frase de ativação. Diz “obrigado” ou “é tudo” para terminar.": "After answering, NANO keeps listening for a few seconds for your next question, with no shortcut or wake phrase. Say “thanks” or “that's all” to finish.",
+  "Interromper o NANO a falar": "Interrupt NANO while it talks",
+  "Se falares por cima, o NANO cala-se e ouve-te. Funciona melhor com auscultadores: com colunas o NANO pode ouvir-se a si próprio.": "If you talk over NANO, it stops and listens. Works best with headphones: with speakers NANO may hear itself.",
 };

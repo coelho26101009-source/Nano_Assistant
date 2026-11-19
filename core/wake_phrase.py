@@ -404,6 +404,12 @@ class WakePhraseEngine:
             return f"\"{self.phrase}\" — A ouvir"
         return "Pronto."
 
+    def set_phrase(self, phrase: str) -> None:
+        """Switch the wake phrase while running (the interface language changed)."""
+        self.phrase = normalize_transcript(phrase) or DEFAULT_WAKE_PHRASE
+        self.detector.phrase = self.phrase
+        self.detector._primary_pattern = _phrase_pattern(self.phrase)
+
     def status(self) -> dict:
         return {
             "enabled": self.enabled,

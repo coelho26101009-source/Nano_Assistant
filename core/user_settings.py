@@ -53,6 +53,8 @@ ALLOWED_KEYS: frozenset[str] = frozenset({
     "tts_enabled",             # master switch for any spoken output
     "typed_chat_tts",          # speak replies to messages the user TYPED
     "voice_reply_tts",         # speak replies to messages the user SPOKE
+    "voice_conversation_mode",  # listen again after a spoken answer
+    "voice_barge_in",          # stop talking when the person talks over NANO
     "input_device_index",
     "output_device_index",
     "theme",                   # system | dark | light
@@ -85,7 +87,7 @@ ALLOWED_KEYS: frozenset[str] = frozenset({
 _BOOLEAN_KEYS = frozenset({
     "onboarding_completed", "wake_phrase_enabled", "wake_phrase_allow_nano_only",
     "voice_enabled", "tts_enabled", "typed_chat_tts", "voice_reply_tts",
-    "reduce_motion", "memory_facts_enabled", "memory_rag_enabled",
+    "voice_conversation_mode", "voice_barge_in", "reduce_motion", "memory_facts_enabled", "memory_rag_enabled",
     "memory_long_term_enabled", "memory_auto_capture", "advanced_mode", "screen_text_enabled",
     "screen_vision_enabled", "proactive_briefing", "proactive_event_alerts",
 })
@@ -237,6 +239,8 @@ def apply_overlay(config: dict[str, Any]) -> dict[str, Any]:
         "tts_enabled",
         "typed_chat_tts",
         "voice_reply_tts",
+        "voice_conversation_mode",
+        "voice_barge_in",
     ):
         if key in stored:
             voice[key] = stored[key]

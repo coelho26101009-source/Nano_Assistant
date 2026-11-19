@@ -456,7 +456,11 @@ def _turn_runtime(engine, brain=None, config=None):
     return VoiceRuntime(engine, brain=brain or _AnsweringBrain(),
                         config=config or {"voice": {"tts_enabled": True,
                                                     "voice_reply_tts": True,
-                                                    "wake_command_timeout_seconds": 5}})
+                                                    "wake_command_timeout_seconds": 5,
+                                                    # One exchange per turn here;
+                                                    # conversation mode has its own
+                                                    # tests (test_voice_conversation.py).
+                                                    "voice_conversation_mode": False}})
 
 
 def _run(runtime, source="hotkey"):

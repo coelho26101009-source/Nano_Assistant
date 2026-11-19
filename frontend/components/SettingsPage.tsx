@@ -59,9 +59,12 @@ type WakeTest = {
   error?: string;
 };
 
-/** Candidate wake phrases, all Portuguese: the transcriber runs in Portuguese,
- *  which is precisely why the English "Hey Nano" was heard as "Ei, não.". */
-const WAKE_CANDIDATES = ["ei nano", "olá nano", "acorda nano"];
+/** Candidate wake phrases in the interface language: the transcriber is forced
+ *  to that language, which is precisely why the English "Hey Nano" was heard
+ *  as "Ei, não." while it was forced to Portuguese. Mirrors core/main.py. */
+const WAKE_CANDIDATES = locale() === "pt-PT"
+  ? ["ei nano", "olá nano", "acorda nano"]
+  : ["hey nano", "hi nano", "okay nano"];
 
 /**
  * Desktop mode and global activation.
@@ -871,6 +874,18 @@ export default function SettingsPage({
                 hint={t("Se falaste com o NANO, ouves a resposta.")}
                 checked={voice.voiceReplyTts}
                 onChange={(v) => onUpdate("voice_reply_tts", v)}
+              />
+              <Toggle
+                label={t("Conversa contínua")}
+                hint={t("Depois de responder, o NANO fica uns segundos à escuta para a pergunta seguinte, sem atalho nem frase de ativação. Diz “obrigado” ou “é tudo” para terminar.")}
+                checked={voice.conversationMode ?? true}
+                onChange={(v) => onUpdate("voice_conversation_mode", v)}
+              />
+              <Toggle
+                label={t("Interromper o NANO a falar")}
+                hint={t("Se falares por cima, o NANO cala-se e ouve-te. Funciona melhor com auscultadores: com colunas o NANO pode ouvir-se a si próprio.")}
+                checked={voice.bargeIn ?? false}
+                onChange={(v) => onUpdate("voice_barge_in", v)}
               />
               <Toggle
                 label={t("Voz ativada")}

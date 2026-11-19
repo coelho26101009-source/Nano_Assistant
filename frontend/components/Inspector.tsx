@@ -21,7 +21,7 @@ import {
   Button, EmptyState, Meter, MetricRow, Panel, Skeleton,
   StatusIndicator, ToolChip, elapsedSince, formatTime, usageTone,
 } from "./ui";
-import { t } from "../lib/i18n";
+import { locale, t } from "../lib/i18n";
 
 const EVENT_TONE: Record<string, string> = {
   "task.created": "accent", "task.planning": "info", "task.step": "info",
@@ -211,7 +211,7 @@ export default function ContextPanels({
           <div className="tl-meta" style={{ whiteSpace: "normal" }}>{readiness.voice.blockers.join(" · ")}</div>
         ) : null}
         <MetricRow
-          label={`"${readiness?.wakePhrase.phrase ?? "ei nano"}"`}
+          label={`"${readiness?.wakePhrase.phrase ?? (locale() === "pt-PT" ? "ei nano" : "hey nano")}"`}
           value={<StatusIndicator state={readiness?.wakePhrase.state} />}
         />
         {readiness?.wakePhrase.error ? (

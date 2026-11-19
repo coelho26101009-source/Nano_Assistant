@@ -17,7 +17,7 @@ import {
   Panel, RiskBadge, StatusIndicator, Tabs, ToolChip,
   elapsedSince, formatDateTime, formatTime, sanitizeArgs, usageTone,
 } from "./ui";
-import { t } from "../lib/i18n";
+import { locale, t } from "../lib/i18n";
 
 const TERMINAL = ["COMPLETED", "CANCELLED", "FAILED"];
 
@@ -675,7 +675,7 @@ export function StatusPage({
     { name: t("Groq (cloud)"), state: providers?.groq.state, note: providers?.groq.detail },
     { name: t("Ollama (local)"), state: providers?.ollama.state, note: providers?.ollama.detail },
     { name: t("Voz / STT"), state: readiness?.voice.state, note: readiness?.voice.blockers?.join(" · ") || t("Transcrição local") },
-    { name: t("Wake phrase"), state: readiness?.wakePhrase.state, note: `"${readiness?.wakePhrase.phrase ?? "ei nano"}"` },
+    { name: t("Wake phrase"), state: readiness?.wakePhrase.state, note: `"${readiness?.wakePhrase.phrase ?? (locale() === "pt-PT" ? "ei nano" : "hey nano")}"` },
     { name: t("Worker de tarefas"), state: readiness?.worker.state, note: t("Fila: {0}", { 0: readiness?.worker.queue_size ?? 0 }) },
     { name: t("Browser"), state: readiness?.browser.state, note: t("Requer Playwright") },
   ];

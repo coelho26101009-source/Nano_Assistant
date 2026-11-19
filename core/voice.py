@@ -247,7 +247,12 @@ class SpeechToTextProvider(BaseProvider):
 
     def __init__(self, config: dict | None = None):
         self.config = config or {}
-        self.language = str(self.config.get("language") or self.config.get("stt_language") or "pt-PT")
+
+    @property
+    def language(self) -> str:
+        # Read on every use: core.voice_language switches it with the
+        # interface language, in this same dict, while NANO runs.
+        return str(self.config.get("language") or self.config.get("stt_language") or "pt-PT")
 
     def transcribe(self, audio_bytes: bytes) -> VoiceResult:
         raise NotImplementedError
@@ -420,8 +425,12 @@ class TextToSpeechProvider(BaseProvider):
 
     def __init__(self, config: dict | None = None):
         self.config = config or {}
-        self.voice_name = str(self.config.get("voice") or self.config.get("voice_name") or "pt-PT-DuarteNeural")
         self.speed = str(self.config.get("speed") or "+0%")
+
+    @property
+    def voice_name(self) -> str:
+        # Live, like LocalSTTProvider.language: follows the interface language.
+        return str(self.config.get("voice") or self.config.get("voice_name") or "pt-PT-DuarteNeural")
 
     async def speak(self, text: str) -> bool:
         raise NotImplementedError
@@ -1372,7 +1381,8 @@ class VoiceRuntime:
         finally:
             self.session.cancel()
 
-    async def process_wake_word_turn(self, *, duration_seconds: int | None = None) -> dict:
+    async def process_wake_word_turn(self, *, duration_seconds: int | None = None,
+                                     follow_up: bool = False) -> dict:
         """One wake turn: listen for a command, or cancel cleanly if none comes.
 
         The critical rule here is that silence must never become a request.
@@ -1445,6 +1455,14 @@ class VoiceRuntime:
             logger.info("Wake turn cancelled: transcript %r is not a usable command.", transcript)
             return {"ok": False, "error": "no_usable_command", "cancelled": True,
                     "detail": "Não percebi nenhum comando; a voltar a escutar."}
+
+        if follow_up and is_closing_phrase(transcript):
+            # "Obrigado" / "that's all" ends a conversation quietly, without
+            # asking the Brain to answer a thank-you.
+            self.session.cancel()
+            logger.info("Conversa por voz terminada pela pessoa.")
+            return {"ok": False, "error": "conversation_closed", "cancelled": True,
+                    "transcript": transcript}
 
         self._publish("TranscriptionCompleted", {"session_id": self.session.session_id, "text_length": len(transcript)})
         self._phase("PROCESSING", "A pensar…")
@@ -1638,68 +1656,29 @@ class VoiceRuntime:
                     return {"ok": False, "error": "microphone_busy", "source": source,
                             "detail": "O microfone ainda está ocupado; tenta outra vez."}
 
-            self._mark("mark_command_listening")
-            self._phase("COMMAND_LISTENING", "A ouvir comando…")
-
-            # 3. Capture -> gate -> STT -> Brain, through the existing pipeline.
-            result = await self.process_wake_word_turn(duration_seconds=duration_seconds)
-            result["source"] = source
-
-            self._mark("mark_processing")
-
-            if result.get("requires_permission"):
-                logger.info("Voice permission request pending: %s", result.get("request_id"))
-
-            response = result.get("response")
-            if result.get("ok") and response:
-                # A spoken answer the user cannot see afterwards leaves no
-                # record of what was asked or answered.
-                turn_id = uuid.uuid4().hex
-                result["turn_id"] = turn_id
-                self._exchange(turn_id,
-                               str(result.get("transcript") or transcript or ""),
-                               str(response))
-
-                should_speak, reason = self.speaking_decision(source, str(response), speak=speak)
-                tts_enabled, voice_reply_tts = self._tts_settings()
-                # One line per turn recording the whole decision. No transcript
-                # and no answer text -- only lengths and flags. Without this a
-                # turn that does not speak is indistinguishable from a turn that
-                # spoke silently, which is exactly how the last two voice bugs
-                # stayed hidden until a human noticed.
-                logger.info(
-                    "voice_turn_post_brain: source=%s response_chars=%d tts_enabled=%s "
-                    "voice_reply_tts=%s cancelled=%s should_speak=%s reason=%s",
-                    source, len(str(response)), tts_enabled, voice_reply_tts,
-                    bool(result.get("cancelled")), should_speak, reason,
-                )
-                result["should_speak"] = should_speak
-                result["speak_skip_reason"] = None if should_speak else reason
-
-                if should_speak:
-                    self._phase("SPEAKING", "A falar…")
-                    logger.info("voice_tts: started (source=%s, %d chars)", source, len(str(response)))
-                    spoken = await self.speak_response(str(response))
-                    result["spoken"] = spoken
-                    if spoken:
-                        logger.info("voice_tts: completed (source=%s)", source)
-                    else:
-                        logger.warning(
-                            "voice_tts: FAILED (source=%s) - a reply was generated but "
-                            "nothing was heard: %r", source, str(response)[:80])
-                        self._signal_error()
+            first: dict | None = None
+            follow_ups = 0
+            while True:
+                result = await self._one_exchange(
+                    source, transcript=transcript if first is None else "",
+                    duration_seconds=duration_seconds if first is None else self.follow_up_seconds(),
+                    speak=speak, follow_up=first is not None)
+                if first is None:
+                    first = result
                 else:
-                    result["spoken"] = False
-                    logger.info("voice_tts: skipped (source=%s, reason=%s)", source, reason)
-            elif result.get("cancelled"):
-                # Silence after an activation is a normal, quiet outcome: no
-                # Brain request was made and nothing is spoken.
-                logger.info("Turno de voz cancelado: %s", result.get("error"))
-            elif not result.get("ok"):
-                logger.warning("Turno de voz falhou: %s", result.get("error"))
-                self._signal_error()
+                    first.setdefault("follow_ups", []).append(result)
+                # CONVERSATION MODE: after a spoken answer, listen again for a
+                # few seconds without a hotkey or a wake phrase, like talking
+                # to a person. Silence, "obrigado" / "that's all", an answer
+                # that was not spoken, or MAX_FOLLOW_UPS end it.
+                if not (self.conversation_mode() and result.get("ok") and result.get("spoken")
+                        and follow_ups < self.MAX_FOLLOW_UPS):
+                    break
+                follow_ups += 1
+                from core import audio_feedback
 
-            return result
+                audio_feedback.acknowledge_wake()
+            return first
         except Exception as exc:
             logger.exception("Erro no turno de voz (%s)", source)
             self._signal_error()
@@ -1713,6 +1692,149 @@ class VoiceRuntime:
             self._turn_started_at = None
             self._turn_lock.release()
 
+    #: The most follow-up questions one conversation takes before NANO goes
+    #: back to waiting for the wake phrase or the hotkey.
+    MAX_FOLLOW_UPS = 6
+    DEFAULT_FOLLOW_UP_SECONDS = 6
+
+    def _voice_cfg(self) -> dict:
+        config = self.config or {}
+        return (config.get("voice") or {}) if "voice" in config else config
+
+    def conversation_mode(self) -> bool:
+        """Listen again after a spoken answer (Settings > Voz). On by default."""
+        return bool(self._voice_cfg().get("voice_conversation_mode", True))
+
+    def barge_in(self) -> bool:
+        """Stop talking when the person speaks over NANO. Off by default: with
+        speakers instead of headphones NANO can hear itself."""
+        return bool(self._voice_cfg().get("voice_barge_in", False))
+
+    def follow_up_seconds(self) -> int:
+        return max(3, min(12, int(self._voice_cfg().get("voice_follow_up_seconds",
+                                                         self.DEFAULT_FOLLOW_UP_SECONDS))))
+
+    async def _one_exchange(self, source: str, *, transcript: str, duration_seconds: int | None,
+                            speak: bool, follow_up: bool) -> dict:
+        """Listen, answer, speak: one question and its answer inside a turn."""
+        self._mark("mark_command_listening")
+        self._phase("COMMAND_LISTENING", "A ouvir comando…")
+
+        # 3. Capture -> gate -> STT -> Brain, through the existing pipeline.
+        result = await self.process_wake_word_turn(duration_seconds=duration_seconds,
+                                                   follow_up=follow_up)
+        result["source"] = source
+        result["follow_up"] = follow_up
+
+        self._mark("mark_processing")
+
+        if result.get("requires_permission"):
+            logger.info("Voice permission request pending: %s", result.get("request_id"))
+
+        response = result.get("response")
+        if result.get("ok") and response:
+            # A spoken answer the user cannot see afterwards leaves no
+            # record of what was asked or answered.
+            turn_id = uuid.uuid4().hex
+            result["turn_id"] = turn_id
+            self._exchange(turn_id,
+                           str(result.get("transcript") or transcript or ""),
+                           str(response))
+
+            should_speak, reason = self.speaking_decision(source, str(response), speak=speak)
+            tts_enabled, voice_reply_tts = self._tts_settings()
+            # One line per turn recording the whole decision. No transcript
+            # and no answer text -- only lengths and flags. Without this a
+            # turn that does not speak is indistinguishable from a turn that
+            # spoke silently, which is exactly how the last two voice bugs
+            # stayed hidden until a human noticed.
+            logger.info(
+                "voice_turn_post_brain: source=%s response_chars=%d tts_enabled=%s "
+                "voice_reply_tts=%s cancelled=%s should_speak=%s reason=%s",
+                source, len(str(response)), tts_enabled, voice_reply_tts,
+                bool(result.get("cancelled")), should_speak, reason,
+            )
+            result["should_speak"] = should_speak
+            result["speak_skip_reason"] = None if should_speak else reason
+
+            if should_speak:
+                self._phase("SPEAKING", "A falar…")
+                logger.info("voice_tts: started (source=%s, %d chars)", source, len(str(response)))
+                spoken, interrupted = await self._speak_interruptible(str(response))
+                result["spoken"] = spoken
+                result["interrupted"] = interrupted
+                if spoken:
+                    logger.info("voice_tts: completed (source=%s)", source)
+                else:
+                    logger.warning(
+                        "voice_tts: FAILED (source=%s) - a reply was generated but "
+                        "nothing was heard: %r", source, str(response)[:80])
+                    self._signal_error()
+            else:
+                result["spoken"] = False
+                logger.info("voice_tts: skipped (source=%s, reason=%s)", source, reason)
+        elif result.get("cancelled"):
+            # Silence after an activation is a normal, quiet outcome: no
+            # Brain request was made and nothing is spoken.
+            logger.info("Turno de voz cancelado: %s", result.get("error"))
+        elif not result.get("ok"):
+            logger.warning("Turno de voz falhou: %s", result.get("error"))
+            self._signal_error()
+
+        return result
+
+    #: How much louder than the room the person must be, while NANO talks,
+    #: for barge-in to cut it off. High on purpose: NANO's own voice from the
+    #: speakers reaches the microphone too.
+    BARGE_IN_MULTIPLIER = 3.0
+    BARGE_IN_CHUNK_SECONDS = 0.4
+
+    async def _speak_interruptible(self, text: str) -> tuple[bool, bool]:
+        """Speak; with barge-in on, stop as soon as the person talks over NANO.
+
+        Returns (spoken, interrupted). An interrupted answer counts as spoken:
+        the conversation goes straight on to listening, which is the point.
+        """
+        if not self.barge_in():
+            return await self.speak_response(text), False
+        stop = threading.Event()
+        interrupted = threading.Event()
+        gate = self.voice.input_provider.gate
+
+        def watch() -> None:
+            loud_in_a_row = 0
+            while not stop.is_set():
+                try:
+                    chunk = self.voice.input_provider.capture(self.BARGE_IN_CHUNK_SECONDS)
+                except Exception:
+                    return
+                if stop.is_set() or not chunk:
+                    return
+                rms = speech_filter.rms_of_wav(chunk)
+                limit = max(float(gate.threshold) * self.BARGE_IN_MULTIPLIER, speech_filter.DEFAULT_SILENCE_RMS)
+                loud_in_a_row = loud_in_a_row + 1 if rms >= limit else 0
+                if loud_in_a_row >= 2:
+                    interrupted.set()
+                    logger.info("voice_barge_in: a pessoa falou por cima (rms=%.0f, limite=%.0f)", rms, limit)
+                    try:
+                        self.voice.tts_provider.stop()
+                    except Exception:
+                        logger.debug("could not stop TTS on barge-in", exc_info=True)
+                    return
+
+        watcher = asyncio.get_running_loop().run_in_executor(None, watch)
+        try:
+            spoken = await self.speak_response(text)
+        finally:
+            stop.set()
+            try:
+                await asyncio.wait_for(watcher, timeout=2.0)
+            except Exception:
+                pass
+        if interrupted.is_set():
+            return True, True
+        return spoken, False
+
     @staticmethod
     def _signal_error() -> None:
         try:
@@ -1721,6 +1843,24 @@ class VoiceRuntime:
             audio_feedback.signal_error()
         except Exception:
             logger.debug("could not play the error tone", exc_info=True)
+
+#: Said after an answer, these end a voice conversation instead of becoming a
+#: question. Matched on the whole normalised transcript, never inside a longer
+#: request ("obrigado, e agora abre o Spotify" is still a request).
+CLOSING_PHRASES = frozenset({
+    "obrigado", "obrigada", "muito obrigado", "muito obrigada", "obrigado nano",
+    "e tudo", "é tudo", "era so isso", "era só isso", "mais nada", "chega", "para",
+    "ok obrigado", "tchau", "adeus", "ate logo", "até logo",
+    "thanks", "thank you", "thanks nano", "thank you nano", "that's all", "thats all",
+    "that is all", "nothing else", "stop", "bye", "goodbye", "ok thanks", "okay thanks",
+})
+
+
+def is_closing_phrase(text: str) -> bool:
+    normalised = " ".join("".join(ch if ch.isalnum() or ch in " '" else " " for ch in
+                                  str(text or "").lower()).split())
+    return normalised in CLOSING_PHRASES or normalised.replace("'", "") in CLOSING_PHRASES
+
 
 def _clean_for_tts(text: str) -> str:
     clean = text.replace("```", " ")
