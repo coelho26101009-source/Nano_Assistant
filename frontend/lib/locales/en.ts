@@ -1084,4 +1084,13 @@ export const EN: Record<string, string> = {
   "Quando pedes (“o que estou a ver?”, “ajuda-me com este erro”), o NANO tira uma imagem da janela, monitor ou região e pede a um modelo de visão que a descreva. Pede sempre confirmação, nunca olha para gestores de palavras-passe e não guarda a imagem. No modo AUTO ou CLOUD a imagem vai ao fornecedor na nuvem; no modo LOCAL só usa um modelo de visão do Ollama e nada sai do PC.": "When you ask (“what am I looking at?”, “help me with this error”), NANO takes a picture of the window, monitor or region and asks a vision model to describe it. It always asks first, never looks at password managers and does not keep the picture. In AUTO or CLOUD mode the picture goes to the cloud provider; in LOCAL mode it only uses an Ollama vision model and nothing leaves the PC.",
   "imagem": "image",
   "{0}: só texto, PDF ou imagens (por exemplo .txt, .pdf, .png ou .jpg).": "{0}: only text, PDF or images (for example .txt, .pdf, .png or .jpg).",
+  "O NANO fala primeiro": "NANO speaks first",
+  "Resumo da manhã": "Morning briefing",
+  "Uma vez por dia, à hora escolhida (ou quando ligas o PC depois dela), o NANO diz bom dia e mostra a agenda e os lembretes de hoje. É feito no teu PC, sem IA na nuvem.": "Once a day, at the time you choose (or when you turn on the PC after it), NANO says good morning and shows today's agenda and reminders. It is built on your PC, with no cloud AI.",
+  "Hora do resumo": "Briefing time",
+  "Avisar antes dos eventos": "Warn before events",
+  "Uns minutos antes de um evento da agenda começar, o NANO avisa. Os lembretes já avisam à hora certa.": "A few minutes before an agenda event starts, NANO lets you know. Reminders already alert at their own time.",
+  "Avisar com antecedência de": "Warn this far ahead",
+  "{0} minutos": "{0} minutes",
+  "Mostrar o resumo agora": "Show the briefing now",
 };

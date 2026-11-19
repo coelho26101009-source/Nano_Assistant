@@ -289,6 +289,7 @@ export type SettingsPayload = {
   /** Privacidade -> Ler texto do ecrã (local OCR). Off by default. */
   screenText?: { enabled: boolean; available: boolean; reason: string; message: string };
   screenVision?: { enabled: boolean };
+  proactive?: { briefing: boolean; briefingTime: string; eventAlerts: boolean; leadMinutes: number };
 };
 
 /* ── Bridge ───────────────────────────────────────────────────────────── */

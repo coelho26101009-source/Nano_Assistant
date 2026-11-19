@@ -97,5 +97,9 @@
   function on_work_mode_done(result) { return dispatch("on_work_mode_done", [result]); }
   eel.expose(on_work_mode_done, "on_work_mode_done");
 
-  console.info("[nano-bridge] ready: 13 Python -> UI callbacks registered.");
+  // NANO speaks first: the morning briefing or a heads-up before an event.
+  function on_proactive_notice(notice) { return dispatch("on_proactive_notice", [notice]); }
+  eel.expose(on_proactive_notice, "on_proactive_notice");
+
+  console.info("[nano-bridge] ready: 14 Python -> UI callbacks registered.");
 })();

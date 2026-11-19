@@ -441,6 +441,54 @@ function LanguagePanel({ language }: { language?: SettingsPayload["language"] })
   );
 }
 
+/**
+ * NANO speaks first (core/proactive.py): a morning briefing and a heads-up
+ * before events. Built locally from the agenda; no model, nothing sent.
+ */
+function ProactivePanel({ proactive, onUpdate, onShowBriefing }: {
+  proactive?: SettingsPayload["proactive"];
+  onUpdate: (key: string, value: any) => void;
+  onShowBriefing: () => void;
+}) {
+  const briefing = proactive?.briefing ?? true;
+  const alerts = proactive?.eventAlerts ?? true;
+  return (
+    <Panel title={t("O NANO fala primeiro")}>
+      <Toggle
+        label={t("Resumo da manhã")}
+        hint={t("Uma vez por dia, à hora escolhida (ou quando ligas o PC depois dela), o NANO diz bom dia e mostra a agenda e os lembretes de hoje. É feito no teu PC, sem IA na nuvem.")}
+        checked={briefing}
+        onChange={(value) => onUpdate("proactive_briefing", value)}
+      />
+      {briefing && (
+        <Field label={t("Hora do resumo")}>
+          <input className="input" type="time" value={proactive?.briefingTime ?? "08:00"}
+                 onChange={(e) => { if (/^\d{2}:\d{2}$/.test(e.target.value)) onUpdate("proactive_briefing_time", e.target.value); }} />
+        </Field>
+      )}
+      <Toggle
+        label={t("Avisar antes dos eventos")}
+        hint={t("Uns minutos antes de um evento da agenda começar, o NANO avisa. Os lembretes já avisam à hora certa.")}
+        checked={alerts}
+        onChange={(value) => onUpdate("proactive_event_alerts", value)}
+      />
+      {alerts && (
+        <Field label={t("Avisar com antecedência de")}>
+          <select className="select" value={proactive?.leadMinutes ?? 15}
+                  onChange={(e) => onUpdate("proactive_event_lead_minutes", Number(e.target.value))}>
+            {[5, 10, 15, 30, 60].map((minutes) => (
+              <option key={minutes} value={minutes}>{t("{0} minutos", { 0: minutes })}</option>
+            ))}
+          </select>
+        </Field>
+      )}
+      <div style={{ marginTop: 8 }}>
+        <Button size="sm" onClick={onShowBriefing}>{t("Mostrar o resumo agora")}</Button>
+      </div>
+    </Panel>
+  );
+}
+
 export default function SettingsPage({
   settings, providers, diagnostics, loading, busy, onSetMode, onSetPreferredCloud,
   onSaveCloudKey, onRemoveCloudKey, onTestCloud, onSetCloudModel,
@@ -809,6 +857,8 @@ export default function SettingsPage({
               />
             </Panel>
             <LanguagePanel language={settings.language} />
+            <ProactivePanel proactive={settings.proactive} onUpdate={onUpdate}
+                            onShowBriefing={() => { void call("get_briefing_now"); }} />
             <DesktopPanel />
             {advancedMode && (
               <Panel title={t("Arranque")}>

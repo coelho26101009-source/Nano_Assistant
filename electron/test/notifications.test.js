@@ -15,6 +15,15 @@ test('a due reminder becomes a notification with its text', () => {
   assert.strictEqual(view.reminderId, 7);
 });
 
+test('a proactive notice becomes a notification with its own title', () => {
+  const view = notifications.fromBackendEvent('nano_notice', { title: 'Resumo da manhã', text: 'Bom dia!\n• 09:00 Reunião' });
+  assert.strictEqual(view.title, 'Resumo da manhã');
+  assert.strictEqual(view.body, 'Bom dia! • 09:00 Reunião');
+  assert.strictEqual(view.reminderId, null);
+  assert.strictEqual(notifications.fromBackendEvent('nano_notice', { title: 'x' }), null);
+  assert.strictEqual(notifications.fromBackendEvent('nano_notice', { text: 'olá' }).title, 'NANO');
+});
+
 test('other backend events never produce a notification', () => {
   assert.strictEqual(notifications.fromBackendEvent('voice_phase', { text: 'x' }), null);
   assert.strictEqual(notifications.fromBackendEvent('something_new', { text: 'x' }), null);

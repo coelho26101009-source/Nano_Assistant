@@ -607,6 +607,21 @@ export default function Home() {
       notify(when ? `⏰ ${when} · ${text}` : `⏰ ${text}`, "default");
     }, "on_reminder_due");
 
+    // NANO speaks first (core/proactive.py): the morning briefing or a heads-up
+    // before an event. It lands in the conversation as NANO's own message, so
+    // it reads like JARVIS talking, and is not stored: it is about today.
+    expose((notice: { kind?: string; title?: string; text?: string }) => {
+      const text = String(notice?.text ?? "").trim();
+      if (!text) return;
+      const title = String(notice?.title ?? "").trim();
+      setMessages((prev) => [
+        ...prev,
+        { id: `notice-${crypto.randomUUID()}`, role: "assistant",
+          content: title ? `**${title}**\n\n${text}` : text, timestamp: new Date() },
+      ]);
+      if (!isDesktopRef.current) notify(title || text.split("\n")[0], "default");
+    }, "on_proactive_notice");
+
     // A work mode finished. Each step went through the permission pipeline;
     // the result says what really happened to each one.
     expose((result: WorkModeResult) => {

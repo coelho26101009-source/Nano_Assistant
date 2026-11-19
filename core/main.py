@@ -38,6 +38,7 @@ from core import version as nano_version
 from core import attachments as chat_attachments
 from core import i18n
 from core import vision
+from core import proactive
 from core.i18n import tr
 from core.brain import Brain
 from core.config import CONFIG_PATH, load_config
@@ -1963,6 +1964,12 @@ def get_settings() -> dict:
         "screenText": _screen_text_settings(),
         # No provider probe here: get_settings runs on the bridge thread.
         "screenVision": {"enabled": user_settings.get("screen_vision_enabled", False) is True},
+        "proactive": {
+            "briefing": user_settings.get("proactive_briefing", True) is not False,
+            "briefingTime": user_settings.get("proactive_briefing_time", proactive.DEFAULT_BRIEFING_TIME),
+            "eventAlerts": user_settings.get("proactive_event_alerts", True) is not False,
+            "leadMinutes": user_settings.get("proactive_event_lead_minutes", proactive.DEFAULT_LEAD_MINUTES),
+        },
         "stored": user_settings.all_settings(),
         "runtime": get_runtime_info(),
         "language": i18n.describe(),
@@ -2687,6 +2694,9 @@ def erase_all_data(confirmation: str = "") -> dict:
         result["ok"] = False
         result["error"] = "tasks_not_cleared"
 
+    # What the briefing already said, and which events it announced.
+    proactive_scheduler.forget()
+
     # Point the Brain at a fresh, empty thread, as deleting the active
     # conversation does, so the next message has somewhere real to go.
     brain.switch_conversation(memory_stack.ensure_active())
@@ -3349,6 +3359,44 @@ def _on_reminder_due(reminder: dict) -> None:
     _notify_ui("on_reminder_due", payload)
 
 
+def _on_proactive_notice(notice: dict) -> None:
+    """NANO speaks first: a briefing or a heads-up, shown on this PC.
+
+    The same two channels as a due reminder: a native notification (from the
+    desktop shell, or from here in browser mode) and the open window.
+    """
+    payload = {"kind": str(notice.get("kind") or "")[:16],
+               "title": str(notice.get("title") or "")[:64],
+               "text": str(notice.get("text") or "")[:1500]}
+    if _DESKTOP_BRIDGE is not None:
+        _desktop_emit("nano_notice", payload)
+    else:
+        from core import windows_toast
+
+        threading.Thread(target=windows_toast.show, args=(payload["title"], payload["text"]),
+                         name="nano-proactive-toast", daemon=True).start()
+    _notify_ui("on_proactive_notice", payload)
+
+
+proactive_scheduler = proactive.ProactiveScheduler(
+    overview=lambda: agenda.overview(days=2), emit=_on_proactive_notice,
+    state_path=DATA_DIR / "proactive_state.json")
+
+
+@eel.expose
+def get_briefing_now() -> dict:
+    """Definições → "Mostrar o resumo agora": the briefing, on demand."""
+    try:
+        notice = proactive_scheduler.briefing_now()
+        # Shown in the window like the daily one, but no Windows notification:
+        # the person is looking at NANO already.
+        _notify_ui("on_proactive_notice", notice)
+        return {"ok": True, **notice}
+    except Exception:
+        logger.exception("Não consegui montar o resumo")
+        return {"ok": False, "error": "briefing_failed"}
+
+
 def _register_reminder_notifier() -> bool:
     """Attach the local reminder channel, if the reminders plugin is loaded."""
     from core.plugin_loader import get_plugin
@@ -3689,6 +3737,7 @@ def shutdown() -> None:
         # First, so that a startup still checking or launching Ollama cannot
         # spawn a server after this point, and stops waiting for its port.
         control.cancel()
+    proactive_scheduler.stop()
     try:
         background_worker.stop()
     except Exception:
@@ -3806,6 +3855,7 @@ def main():
 
     _register_reminder_notifier()
     started_services = start_plugin_services()
+    proactive_scheduler.start()
     _report("Plugins", "OK", f"{len(list_plugins())} loaded")
     if started_services:
         logger.info("Serviços de plugin activos: %s", ", ".join(started_services))

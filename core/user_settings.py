@@ -77,6 +77,9 @@ ALLOWED_KEYS: frozenset[str] = frozenset({
     "screen_text_enabled",
     # Screen vision (a picture of the screen to a vision model). Off by default.
     "screen_vision_enabled",
+    # Proactivity: NANO speaks first (core/proactive.py). On by default.
+    "proactive_briefing", "proactive_briefing_time",
+    "proactive_event_alerts", "proactive_event_lead_minutes",
 })
 
 _BOOLEAN_KEYS = frozenset({
@@ -84,7 +87,7 @@ _BOOLEAN_KEYS = frozenset({
     "voice_enabled", "tts_enabled", "typed_chat_tts", "voice_reply_tts",
     "reduce_motion", "memory_facts_enabled", "memory_rag_enabled",
     "memory_long_term_enabled", "memory_auto_capture", "advanced_mode", "screen_text_enabled",
-    "screen_vision_enabled",
+    "screen_vision_enabled", "proactive_briefing", "proactive_event_alerts",
 })
 
 
@@ -111,6 +114,11 @@ def _valid_value(key: str, value: Any) -> bool:
                 and not any(ord(ch) < 32 for ch in value))
     if key == "language":
         return isinstance(value, str) and value in {"system", "en", "pt-PT"}
+    if key == "proactive_briefing_time":
+        return isinstance(value, str) and len(value) == 5 and value[2] == ":" and \
+            value[:2].isdigit() and value[3:].isdigit() and int(value[:2]) < 24 and int(value[3:]) < 60
+    if key == "proactive_event_lead_minutes":
+        return type(value) is int and value in {5, 10, 15, 30, 60}
     # Model IDs are bounded plain strings, never arbitrary JSON containers.
     return isinstance(value, str) and len(value) <= 200 and not any(ord(ch) < 32 for ch in value)
 

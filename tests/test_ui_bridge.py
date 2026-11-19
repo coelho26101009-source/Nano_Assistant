@@ -42,6 +42,7 @@ REQUIRED_CALLBACKS = {
     "on_voice_exchange",
     "on_reminder_due",
     "on_work_mode_done",
+    "on_proactive_notice",
 }
 
 

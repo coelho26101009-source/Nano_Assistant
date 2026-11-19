@@ -31,6 +31,18 @@ function cleanText(value, max) {
  * ignored, so a future backend event cannot make a toast appear by accident.
  */
 function fromBackendEvent(event, payload) {
+  if (event === 'nano_notice') {
+    // NANO speaking first (core/proactive.py): a morning briefing or a
+    // heads-up before an event. Title and text come from the backend.
+    const text = cleanText(payload && payload.text, MAX_BODY);
+    if (!text) return null;
+    return {
+      title: cleanText(payload && payload.title, MAX_TITLE) || 'NANO',
+      body: text,
+      silent: false,
+      reminderId: null,
+    };
+  }
   if (event !== 'reminder_due') return null;
   const body = cleanText(payload && payload.text, MAX_BODY);
   if (!body) return null;
