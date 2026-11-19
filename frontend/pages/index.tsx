@@ -425,6 +425,11 @@ export default function Home() {
       setConfirmReq({ requestId: reqId, message: msg, meta });
     }, "on_confirm_request");
 
+    // Answered elsewhere (the paired phone) or timed out: take the card down.
+    expose((reqId: string) => {
+      setConfirmReq((current: any) => (current && current.requestId === reqId ? null : current));
+    }, "on_confirm_resolved");
+
     expose(() => {
       setThinking(true);
       setListening(true);

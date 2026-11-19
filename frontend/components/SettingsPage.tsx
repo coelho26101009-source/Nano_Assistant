@@ -24,6 +24,7 @@ import {
 import { LOCALES, locale, normaliseLocale, reloadInLocale, t } from "../lib/i18n";
 import type { Locale } from "../lib/i18n";
 import { tj } from "../lib/tj";
+import PhonePanel from "./PhonePanel";
 
 /**
  * The seven Settings categories.
@@ -976,6 +977,7 @@ export default function SettingsPage({
               />
             </Panel>
             <LanguagePanel language={settings.language} />
+            <PhonePanel />
             <ProactivePanel proactive={settings.proactive} onUpdate={onUpdate}
                             onShowBriefing={() => { void call("get_briefing_now"); }} />
             <DesktopPanel />

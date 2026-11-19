@@ -83,9 +83,9 @@ jobs:
             export NANO_UPLOAD_KEYSTORE="$RUNNER_TEMP/upload.jks"
           fi
           chmod +x gradlew
-          ./gradlew --no-daemon assembleTester bundleRelease
+          ./gradlew --no-daemon assemblePreview bundleRelease
           mkdir -p ../out
-          cp app/build/outputs/apk/tester/app-tester.apk ../out/NANO-android-test.apk
+          cp app/build/outputs/apk/preview/app-preview.apk ../out/NANO-android-test.apk
           cp app/build/outputs/bundle/release/app-release.aab ../out/NANO-android-release.aab
           rm -f "$RUNNER_TEMP/upload.jks"
 

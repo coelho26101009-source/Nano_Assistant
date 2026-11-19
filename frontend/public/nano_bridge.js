@@ -101,5 +101,9 @@
   function on_proactive_notice(notice) { return dispatch("on_proactive_notice", [notice]); }
   eel.expose(on_proactive_notice, "on_proactive_notice");
 
+  // An approval was answered (here or on the paired phone) or timed out.
+  function on_confirm_resolved(requestId) { return dispatch("on_confirm_resolved", [requestId]); }
+  eel.expose(on_confirm_resolved, "on_confirm_resolved");
+
   console.info("[nano-bridge] ready: 14 Python -> UI callbacks registered.");
 })();

@@ -54,7 +54,7 @@ android {
             signingConfig signingConfigs.test
         }
         // The test APK people install by hand: release code, test key.
-        tester {
+        preview {
             initWith release
             signingConfig signingConfigs.test
             matchingFallbacks = ['release']
