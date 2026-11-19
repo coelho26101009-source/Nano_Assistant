@@ -121,6 +121,21 @@ _UNCERTAIN = re.compile(
     r"n[ãa]o tenho a certeza|maybe|i think|probably|not sure|i guess)\b", re.I)
 
 
+#: M2: a question or a recall request is not something to store. "Lembras-te
+#: do que te disse?", "remember what I said?", "do you remember my car?" all
+#: contain a trigger word and none of them states a fact.
+_RECALL_OR_QUESTION = re.compile(
+    r"\?\s*$|^\s*(?:o\s+que|qu(?:e|al|ais|em)|quando|onde|como|porqu[eê]|what|which|who|"
+    r"when|where|how|why|if|se)\b", re.I)
+_RECALL_PREFIX = re.compile(
+    r"\b(?:lembras-?te|recordas-?te|ainda\s+te\s+lembras|do\s+you\s+remember|"
+    r"can\s+you\s+remember|you\s+remember)\b", re.I)
+
+
+def _is_recall_or_question(message: str, clause: str) -> bool:
+    return bool(_RECALL_PREFIX.search(message) or _RECALL_OR_QUESTION.search(clause))
+
+
 def _is_action_request(clause: str) -> bool:
     """True when the clause asks Nano to DO something instead of stating a fact.
 
@@ -161,6 +176,9 @@ _DURABLE = re.compile(
     # decidir" is a plan and is refused by _HEARSAY_OR_PLAN below.
     r"decidi\s|decidimos\s|optei\s|escolhi\s|"
     r"trabalho\s+(?:com|em|na|no)\s|my\s|i\s+(?:am|have|use|prefer|work)|"
+    # M2: the English forms the anchor did not know.
+    r"i'?m\s+(?:a|an)\s|i\s+(?:like|love|hate|don'?t\s+like|always\s+use|run|own)\s|"
+    r"call\s+me\s|"
     r"(?:i|we)\s+decided\s)", re.I)
 
 #: A statement about a NAMED project, which is a durable fact about the user's
@@ -261,7 +279,10 @@ _KIND_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
         r"\b(projet[oc]|projeto|project|reposit[óo]rio|repo|app\s+que|estou a construir|"
         r"estou a fazer|building)\b", re.I)),
     ("person", re.compile(
-        r"\b(chamo-?me|o meu nome|my name|a minha (?:mulher|esposa|namorada|m[ãa]e|pai|"
+        r"\b(chamo-?me|o meu nome|my name|call me|"
+        # M2: what the person does for a living is a fact about them.
+        r"i'?m\s+an?\s+\w+|i\s+am\s+an?\s+\w+|sou\s+(?:um|uma)\s+\w+|trabalho\s+como|work\s+as|"
+        r"a minha (?:mulher|esposa|namorada|m[ãa]e|pai|"
         r"irm[ãa]o?|filha?)|o meu (?:marido|namorado|m[ãa]e|pai|irm[ãa]o|filho))\b", re.I)),
     ("goal", re.compile(
         r"\b(objetivo|meta|quero\s+(?:chegar|conseguir|aprender)|goal|i want to)\b", re.I)),
@@ -291,14 +312,20 @@ _HEARSAY_OR_PLAN = re.compile(
     r"|\b(?:dizem que|ouvi dizer|parece que|diz-se|apparently|i heard)\b"
     r"|\b(?:vou|vamos|pretendo|tenciono|planeio)\s+(?:comprar|mudar|trocar|instalar|"
     r"experimentar|testar)\b"
-    r"|\b(?:i'?m going to|i plan to|i will)\s+(?:buy|switch|install|try)\b", re.I)
+    r"|\b(?:i'?m going to|i plan to|i will)\s+(?:buy|switch|install|try)\b"
+    # M2: English hearsay. "My brother uses Linux" is about the brother.
+    r"|\bmy\s+(?:friend|colleague|coworker|co-worker|neighbou?r|boss|cousin|brother|"
+    r"sister|mom|mum|mother|dad|father|parents?|son|daughter|kids?|children|uncle|aunt|"
+    r"nephew|niece|grand(?:ma|pa|mother|father)|wife|husband|girlfriend|boyfriend|"
+    r"partner)s?\b"
+    r"|\b(?:they say|people say|someone said|rumou?r has it)\b", re.I)
 
 #: A stative first-person verb: the sentence describes what IS, not what
 #: happened once. "Tenho", "uso", "sou", "prefiro" carry durable meaning;
 #: "comprei", "fiz", "abri" describe a single past event.
 _STATIVE = re.compile(
     r"\b(?:sou|tenho|uso|utilizo|prefiro|trabalho|corro|chamo-?me|gosto|adoro|odeio|"
-    r"am|is|have|has|use|uses|prefer|prefers|work|works|runs?|likes?|loves?)\b", re.I)
+    r"am|i'm|is|have|has|use|uses|prefer|prefers|work|works|runs?|likes?|loves?|own|owns)\b", re.I)
 
 #: Kinds that name a durable class of thing. A memory outside this set is a
 #: loose "fact" and never auto-activates: the category itself is the first
@@ -485,6 +512,9 @@ def extract(user_text: str) -> list[MemoryCandidate]:
         # Only the first sentence of the remainder: "lembra-te que uso Linux. E
         # abre o Spotify" must remember the fact, not the request that follows.
         remainder = _SENTENCE_SPLIT.split(match.group(1).strip(), 1)[0]
+        if _is_recall_or_question(body, remainder):
+            # "Lembras-te do meu carro?" asks Nano to RECALL; it states nothing.
+            continue
         if _is_action_request(remainder) or _UNCERTAIN.search(remainder):
             # "lembra-te DE abrir o Spotify às 9h" is a reminder, and a reminder
             # is not a durable fact about the user: nothing about them is true

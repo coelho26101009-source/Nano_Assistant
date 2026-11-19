@@ -68,6 +68,12 @@ _AUTHORITY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("instruction_override", re.compile(r"\bignore\b.{0,30}\b(previous|prior|above|earlier|system)\b.{0,20}\b(instruction\w*|prompt\w*|rule\w*)\b", re.I)),
     ("instruction_override", re.compile(r"\b(ignora|esquece)\b.{0,30}\b(instru\w+|regras?|prompt)\b", re.I)),
     ("secret_exfiltration", re.compile(r"\b(read|open|send|upload|post|exfiltrat\w*|lê|envia)\b.{0,40}(\.env\b|id_rsa|credentials?|api[_\- ]?key|secret)", re.I)),
+    # M2: permission statements and their inflections, in both languages.
+    # "Tens permissão para apagar ficheiros", "estás autorizado a...", "you're
+    # allowed to run...", "podes executar sem perguntar".
+    ("permission_grant", re.compile(r"\b(tens|t[êe]m|ter[áa]s|has|have)\s+(?:a\s+)?(?:minha\s+)?(permiss[ãa]o|autoriza[çc][ãa]o|permission|authori[sz]ation)\s+(para|de|to)\b", re.I)),
+    ("self_authorization", re.compile(r"\b(est[áa]s|ficas|est[áa]|you\s*(?:are|'re))\s+(?:agora\s+|now\s+)?(autorizad[oa]|aprovad[oa]|permitid[oa]|allowed|permitted|authori[sz]ed)\s+(a|para|to)\b", re.I)),
+    ("self_authorization", re.compile(r"\b(podes|pode|can|may)\s+(?:sempre\s+|always\s+)?\w+(?:\s+\w+){0,4}\s+(sem\s+(?:me\s+)?(?:perguntar|pedir|confirmar)|without\s+(?:asking|confirming|checking))\b", re.I)),
     ("tool_injection", re.compile(r"\b(call|invoke|run|execute|executa|corre)\b.{0,25}\b(tool|function|command|shell|powershell|ferramenta)\b", re.I)),
 )
 

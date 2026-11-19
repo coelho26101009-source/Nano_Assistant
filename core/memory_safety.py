@@ -53,6 +53,11 @@ _SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("api_key", re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}", re.I)),  # Slack
     ("api_key", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}")),          # GitHub
     ("api_key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),                  # AWS
+    ("api_key", re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}")),             # Google
+    ("api_key", re.compile(r"\bhf_[A-Za-z0-9]{20,}")),                 # Hugging Face
+    ("api_key", re.compile(r"\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}")),  # Stripe
+    ("api_key", re.compile(r"\bglpat-[A-Za-z0-9_\-]{20,}")),           # GitLab
+    ("api_key", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}")),        # GitHub fine-grained
     ("private_key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.")),
     # Labelled credentials: "password: hunter2", "api key = abc123",
@@ -63,6 +68,23 @@ _SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         r"secret|segredo|token|credential|credencial|client[\s\-_]?secret)\b"
         r"\s*(?:[:=]|\b(?:e|é|eh|is)\b)\s*[\"']?([^\s\"']{8,})",
         re.I)),
+    # NATURAL PHRASING (M2). "A minha password do Gmail é gato123" carries the
+    # value after a few words, and a short value is still a password. The
+    # value must not be a judgement ("é fraca", "is weak"), which is what
+    # keeps a complaint about a password storable.
+    ("labelled_secret", re.compile(
+        r"\b(?:password|palavra[\s\-]?passe|passwd|senha|passcode)\b[^.\n]{0,30}?"
+        r"\b(?:[ée]|eh|is|era|was)\b\s*[\"']?"
+        r"(?!(?:muito|bastante|demasiado|very|too|so|a|an|the|uma?|o|a)\b)"
+        r"(?!(?:fraca|forte|segura|insegura|longa|curta|antiga|nova|f[áa]cil|dif[íi]cil|"
+        r"weak|strong|secure|insecure|long|short|old|new|easy|hard|simple|simples)\b)"
+        r"([^\s\"']{4,})", re.I)),
+    # PINs and access codes: digits after "PIN", "CVV" or "código do alarme".
+    # "O código do projeto é aberto" is not one -- no digits, no access noun.
+    ("pin", re.compile(
+        r"\b(?:pin|cvv|cvc|puk|c[óo]digo\s+(?:do|da|de)\s+(?:alarme|cart[ãa]o|acesso|"
+        r"port[ãa]o|cofre|desbloqueio|seguran[çc]a|multibanco|telem[óo]vel|porta)|"
+        r"(?:alarm|access|door|unlock|security|card)\s+code)\b[^.\n]{0,25}?\d{3,8}\b", re.I)),
     # An environment assignment pasted whole.
     ("env_assignment", re.compile(
         r"\b[A-Z][A-Z0-9_]{3,}(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD)\s*=\s*\S{6,}")),
@@ -86,12 +108,35 @@ class MemoryVerdict:
         return {"allowed": self.allowed, "reason": self.reason, "detail": self.detail}
 
 
+#: Financial identifiers. Refused as memories, but kept out of
+#: ``_SECRET_PATTERNS`` because screen OCR masks them with its own markers.
+_IBAN = re.compile(r"\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){3,7}(?:\s?[A-Z0-9]{1,4})?\b")
+_CARD = re.compile(r"\b(?:\d[ -]?){13,19}\b")
+
+
+def _luhn_ok(digits: str) -> bool:
+    total, double = 0, False
+    for char in reversed(digits):
+        value = int(char)
+        if double:
+            value = value * 2 - 9 if value > 4 else value * 2
+        total += value
+        double = not double
+    return total % 10 == 0
+
+
 def secret_reason(text: str) -> str | None:
     """The category of credential found, or None. Never returns the match."""
     value = str(text or "")
     for category, pattern in _SECRET_PATTERNS:
         if pattern.search(value):
             return category
+    if _IBAN.search(value):
+        return "bank_account"
+    for match in _CARD.finditer(value):
+        digits = re.sub(r"\D", "", match.group(0))
+        if 13 <= len(digits) <= 19 and _luhn_ok(digits):
+            return "card_number"
     return None
 
 
