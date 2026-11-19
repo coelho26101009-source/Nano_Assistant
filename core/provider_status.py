@@ -87,6 +87,7 @@ import time
 from typing import Any, Callable, NamedTuple
 
 from core import model_defaults, providers, secret_store
+from core.i18n import tr
 
 logger = logging.getLogger("nano.provider_status")
 
@@ -479,7 +480,8 @@ def describe_all(
             fast, strong = _tiers_for(cloud_tiers, provider_id)
             clouds[provider_id] = _disabled(
                 provider_id, fast,
-                f"Modo Local: o {providers.provider_name(provider_id)} não é contactado.",
+                tr("Modo Local: o {name} não é contactado.",
+                   name=providers.provider_name(provider_id)),
                 role=("primary" if provider_id == providers.ProviderId.GROQ.value else "cloud"),
                 complex_model=strong)
         ollama = providers.describe_ollama(ollama_model, ollama_base_url,
@@ -548,7 +550,7 @@ def describe_all(
 
     if mode == providers.ProviderMode.CLOUD:
         ollama = _disabled("ollama", ollama_model,
-                           "Modo Cloud: o Ollama não é contactado.",
+                           tr("Modo Cloud: o Ollama não é contactado."),
                            kind="local", role="fallback", url=ollama_base_url)
         return clouds, ollama
 
@@ -625,7 +627,7 @@ def describe_unmeasured(
 
     if mode == providers.ProviderMode.CLOUD:
         ollama = _disabled("ollama", ollama_model,
-                           "Modo Cloud: o Ollama não é contactado.",
+                           tr("Modo Cloud: o Ollama não é contactado."),
                            kind="local", role="fallback", url=ollama_base_url)
     else:
         ollama = providers.describe_ollama(ollama_model, ollama_base_url,

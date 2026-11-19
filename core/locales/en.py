@@ -118,6 +118,8 @@ EN: dict[str, str] = {
     "Cloud indisponível — a usar o Ollama local. {details}": "Cloud unavailable — using local Ollama. {details}",
     "Modo Local: apenas o Ollama é usado.": "Local mode: only Ollama is used.",
     "Modo Cloud: apenas o {name} é usado.": "Cloud mode: only {name} is used.",
+    "Modo Local: o {name} não é contactado.": "Local mode: {name} is not contacted.",
+    "Modo Cloud: o Ollama não é contactado.": "Cloud mode: Ollama is not contacted.",
     "FECHAR JANELA": "CLOSE WINDOW",
     "FECHAR TODAS AS JANELAS": "CLOSE ALL WINDOWS",
     "CAPTURAR O ECRÃ": "CAPTURE THE SCREEN",
