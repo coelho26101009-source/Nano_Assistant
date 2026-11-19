@@ -365,8 +365,21 @@ def test_oversized_body_is_refused(link):
     server = MobileServer(link, 0, host="127.0.0.1")
     server.start()
     try:
-        status, reply, _ = _post(f"http://127.0.0.1:{server.port}/v1/rpc", b"x" * (300 * 1024))
-        assert status == 413
+        # Announce an oversized body but send only a little of it. The server
+        # must refuse on the Content-Length alone, before reading anything.
+        # (Sending all 300 KB raced on Windows CI: the server answers and closes
+        # while the client is still writing, and the client then sees
+        # WinError 10053 instead of the 413.)
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
+        try:
+            conn.putrequest("POST", "/v1/rpc")
+            conn.putheader("Content-Type", "application/json")
+            conn.putheader("Content-Length", str(300 * 1024))
+            conn.endheaders(b"x" * 16)
+            assert conn.getresponse().status == 413
+        finally:
+            conn.close()
     finally:
         server.stop()
 
