@@ -41,7 +41,12 @@ export async function loadPairing(): Promise<Pairing | null> {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!isPairing(parsed)) return null;
-    return { extraHosts: [], pcName: "NANO PC", pairedAt: 0, ...parsed };
+    return {
+      ...parsed,
+      extraHosts: Array.isArray(parsed.extraHosts) ? parsed.extraHosts : [],
+      pcName: parsed.pcName || "NANO PC",
+      pairedAt: parsed.pairedAt || 0,
+    };
   } catch {
     return null;
   }

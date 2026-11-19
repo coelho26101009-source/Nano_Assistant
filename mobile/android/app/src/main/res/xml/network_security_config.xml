@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  WHY PLAIN HTTP IS ALLOWED, AND WHY THAT IS SAFE HERE.
+  The app talks to exactly one server: the NANO on the person's own PC, at a
+  local or Tailscale address that has no public name, so no certificate
+  authority can issue it a TLS certificate. Instead, every request and answer
+  is sealed end to end with AES-256-GCM and a 256-bit key exchanged by QR code
+  and approved on the PC (mobile/src/lib/crypto.ts, core/mobile_link.py), with
+  replay protection. Anyone on the network sees only ciphertext and cannot
+  forge a request. User-installed CAs are never trusted.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

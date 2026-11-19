@@ -1,0 +1,125 @@
+name: Android
+
+# NANO for Android (mobile/). Every push that touches the app builds and tests
+# it and produces a test APK. On main, that APK is also published as the
+# rolling "android-test" pre-release, so it can be downloaded straight to a
+# phone from the Releases page without a GitHub login.
+#
+# Signing: the test APK uses the throwaway key committed in
+# mobile/android/app/nano-test.keystore (so each test build installs over the
+# last). The Play Store bundle (.aab) is signed only when the owner has added
+# the NANO_UPLOAD_* secrets; otherwise it is built unsigned, as a check.
+on:
+  push:
+    branches: [main, 'claude/**']
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/android.yml'
+  pull_request:
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck, unit tests and web build
+        run: |
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Copy the app into the Android project
+        run: npx cap sync android
+
+      - name: Android SDK packages
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" --install "platforms;android-36" "build-tools;36.0.0" > /dev/null
+
+      - name: Build the test APK and the store bundle
+        working-directory: mobile/android
+        env:
+          NANO_VERSION_CODE: ${{ github.run_number }}
+          NANO_UPLOAD_KEYSTORE_B64: ${{ secrets.NANO_UPLOAD_KEYSTORE_B64 }}
+          NANO_UPLOAD_STORE_PASSWORD: ${{ secrets.NANO_UPLOAD_STORE_PASSWORD }}
+          NANO_UPLOAD_KEY_ALIAS: ${{ secrets.NANO_UPLOAD_KEY_ALIAS }}
+          NANO_UPLOAD_KEY_PASSWORD: ${{ secrets.NANO_UPLOAD_KEY_PASSWORD }}
+        run: |
+          if [ -n "$NANO_UPLOAD_KEYSTORE_B64" ]; then
+            echo "$NANO_UPLOAD_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+            export NANO_UPLOAD_KEYSTORE="$RUNNER_TEMP/upload.jks"
+          fi
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleTester bundleRelease
+          mkdir -p ../out
+          cp app/build/outputs/apk/tester/app-tester.apk ../out/NANO-android-test.apk
+          cp app/build/outputs/bundle/release/app-release.aab ../out/NANO-android-release.aab
+          rm -f "$RUNNER_TEMP/upload.jks"
+
+      - name: Checksums
+        run: cd out && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: nano-android
+          path: mobile/out/
+          retention-days: 30
+
+  publish:
+    name: Publish the test APK
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: nano-android
+          path: out
+
+      - name: Replace the android-test pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release delete android-test --cleanup-tag --yes || true
+          gh release create android-test \
+            --target "${{ github.sha }}" \
+            --prerelease \
+            --title "NANO for Android (test build ${{ github.run_number }})" \
+            --notes "Test build of NANO for Android from commit ${{ github.sha }}. Install NANO-android-test.apk on your phone (allow installs from your browser when Android asks). Not the Play Store version. Checksums in SHA256SUMS.txt." \
+            out/NANO-android-test.apk out/SHA256SUMS.txt
