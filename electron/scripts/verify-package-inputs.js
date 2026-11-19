@@ -58,7 +58,7 @@ for (const [rel, why] of REQUIRED_FILES) {
  * scripts/prepare_windows_runtime.ps1 instead, where it belongs.
  */
 const PACKAGED_TREES = ['core', 'plugins', 'config', 'frontend/out',
-  'electron/lib', 'electron/overlay', 'electron/assets'];
+  'electron/lib', 'electron/overlay', 'electron/startup', 'electron/assets'];
 
 /** Names that must never appear inside a packaged tree, whatever the reason. */
 const FORBIDDEN = [

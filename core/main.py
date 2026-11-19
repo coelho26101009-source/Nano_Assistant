@@ -3623,6 +3623,11 @@ def _parse_args():
                         help="read control requests from the parent process (Electron)")
     return parser.parse_known_args()[0]
 
+def _electron_page_closed(page, sockets) -> None:
+    """Keep running when the desktop window's page goes away; see eel.start."""
+    logger.debug("Desktop page closed (%s); %d page(s) still open.", page, len(sockets))
+
+
 def should_open_browser(mode: str) -> bool:
     """Whether THIS process is responsible for putting a UI on screen.
 
@@ -3892,7 +3897,16 @@ def main():
     local_control_plane.install_origin_guard(port)
 
     try:
-        eel.start("index.html", mode=None, size=size, port=port, block=True)
+        start_options = {}
+        if not should_open_browser(args.mode):
+            # Eel exits the whole process a second after its last page closes.
+            # In a browser tab that is "the user closed Nano"; in the desktop
+            # window it is only Electron reloading the page or showing its own
+            # startup/error screen, and exiting there left a dead engine behind
+            # the "Try again" button. The Electron shell owns the lifecycle and
+            # stops the backend explicitly (desktop control "shutdown").
+            start_options["close_callback"] = _electron_page_closed
+        eel.start("index.html", mode=None, size=size, port=port, block=True, **start_options)
     except (SystemExit, KeyboardInterrupt):
         logger.info("Nano encerrado pelo utilizador.")
     except Exception as exc:

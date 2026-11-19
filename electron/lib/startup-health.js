@@ -3,7 +3,8 @@
 const http = require('http');
 
 const ERROR_CODES = new Set([
-  'backend_start_failed', 'backend_exited', 'frontend_load_failed', 'renderer_gone',
+  'backend_start_failed', 'backend_exited', 'frontend_load_failed', 'frontend_not_rendered',
+  'renderer_gone',
 ]);
 
 /** A shareable report built from explicit fields, never logs or settings. */

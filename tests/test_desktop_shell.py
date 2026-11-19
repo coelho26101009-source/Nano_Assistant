@@ -858,3 +858,14 @@ def test_the_same_bundle_still_works_with_no_desktop_shell(render_report):
     # is expected. Anything else is a real failure of the fallback.
     unexpected = [e for e in browser["errors"] if "eel.js did not load" not in e]
     assert not unexpected, f"the browser fallback logged errors: {unexpected}"
+
+
+def test_the_desktop_backend_survives_its_page_closing():
+    """Eel's default exits the process when the last page closes. Electron
+    navigates away from the UI to show its startup/error screen (and reloads
+    it on retry), so in electron mode the backend must not exit then."""
+    import core.main as nano_main
+
+    source = (REPO_ROOT / "core" / "main.py").read_text(encoding="utf-8")
+    assert 'start_options["close_callback"] = _electron_page_closed' in source
+    assert nano_main._electron_page_closed("index.html", []) is None

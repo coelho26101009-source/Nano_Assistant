@@ -20,6 +20,18 @@ versioning policy.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Desktop window no longer stays black.** The window now opens at once on a
+  local startup screen ("Starting NANO…") and, if the interface fails to load
+  or loads without drawing anything, shows an error screen with a reason code
+  instead of an empty dark window. The launcher rebuilds a frontend build that
+  carries an inline script (an old Turbopack build the desktop CSP blocks) even
+  when its file dates look current. In desktop mode the backend no longer exits
+  when its page closes, so "Try again" reaches a live engine.
+  `NANO_DISABLE_GPU=1` forces software rendering for graphics drivers that
+  paint Chromium windows black.
+
 ### Changed
 
 - **Frontend on Next.js 16** (16.4.5, from 15.5.29). The build now uses

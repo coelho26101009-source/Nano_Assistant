@@ -137,7 +137,8 @@ function stubElectron(overrides = {}) {
         if (handler) handler();
       }
 
-      loadURL() {} loadFile() {}
+      loadURL(url) { (this.loads = this.loads || []).push({ url }); }
+      loadFile(file, options) { (this.loads = this.loads || []).push({ file, options }); }
       on(event, handler) { this._handlers[event] = handler; return this; }
       once(event, handler) { this._handlers['once:' + event] = handler; return this; }
       emit(event, ...args) {

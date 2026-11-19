@@ -21,6 +21,7 @@ Used from the launcher as::
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -100,12 +101,43 @@ def write_stamp(stamp: Path | None = None, frontend: Path | None = None) -> floa
     return newest
 
 
+_SCRIPT_TAG = re.compile(r"<script([^>]*)>(.*?)</script>", re.S | re.I)
+_SRC_ATTR = re.compile(r"\bsrc\s*=", re.I)
+_TYPE_ATTR = re.compile(r"\btype\s*=\s*[\"']?([^\"'\s>]+)", re.I)
+
+
+def has_inline_script(index: Path | None = None) -> bool:
+    """True when the built page carries an executable inline ``<script>``.
+
+    The desktop window enforces ``script-src 'self'``, so such a script is
+    blocked and the window stays black. Only an old Turbopack build (before
+    the build was pinned to webpack) produced one. A build like that must be
+    redone even when the timestamps say it is current: copied or unzipped
+    files keep old modification times, so the mtime check alone kept serving
+    the broken bundle.
+    """
+    try:
+        html = (index or INDEX).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    for attrs, body in _SCRIPT_TAG.findall(html):
+        if _SRC_ATTR.search(attrs) or not body.strip():
+            continue
+        kind = _TYPE_ATTR.search(attrs)
+        if kind and kind.group(1).lower() not in ("text/javascript", "module"):
+            continue  # application/json and friends are data, never executed
+        return True
+    return False
+
+
 def is_stale(frontend: Path | None = None, *, index: Path | None = None,
              stamp: Path | None = None) -> bool:
     """True when the frontend must be rebuilt before it is served."""
     index_path = index or INDEX
     if not index_path.is_file():
         return True                      # never built
+    if has_inline_script(index_path):
+        return True                      # a build the desktop CSP would block
     recorded = read_stamp(stamp)
     if recorded <= 0.0:
         # Built by an older launcher that left no stamp. Compare against the

@@ -53,3 +53,25 @@ def test_the_built_page_has_no_inline_script():
         pytest.skip("frontend/out is not built on this host")
     inline = _executable_inline_scripts(index.read_text(encoding="utf-8"))
     assert inline == [], f"inline scripts the desktop CSP will block: {inline}"
+
+
+def test_a_build_the_csp_would_block_is_always_rebuilt(tmp_path):
+    """Copied or unzipped files keep old mtimes, so a stale Turbopack build
+    looked "current" to the timestamp check and kept the window black."""
+    from core import frontend_build
+
+    frontend = tmp_path / "frontend"
+    out = frontend / "out"
+    out.mkdir(parents=True)
+    (frontend / "package.json").write_text("{}", encoding="utf-8")
+    index = out / "index.html"
+    stamp = out / ".nano-build-stamp.json"
+
+    index.write_text('<script src="/a.js"></script>'
+                     '<script id="__NEXT_DATA__" type="application/json">{}</script>',
+                     encoding="utf-8")
+    frontend_build.write_stamp(stamp, frontend)
+    assert not frontend_build.is_stale(frontend, index=index, stamp=stamp)
+
+    index.write_text('<script>(globalThis["TURBOPACK"] || []).push({})</script>', encoding="utf-8")
+    assert frontend_build.is_stale(frontend, index=index, stamp=stamp)

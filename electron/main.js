@@ -20,13 +20,16 @@
  * pointed at something else later. See preload.js.
  *
  * STARTUP ORDER (deliberate; do not race it)
- *   single-instance lock -> conflicting-backend check -> pick a free port
- *   -> spawn Python -> wait for a control-channel ping -> wait for real HTTP
- *   -> create the window -> tray -> register the shortcut -> create the overlay
+ *   single-instance lock -> conflicting-backend check -> show the window with
+ *   the local startup screen -> pick a free port -> spawn Python -> wait for a
+ *   control-channel ping -> wait for real HTTP -> load the real UI into the
+ *   window -> tray -> register the shortcut -> create the overlay
  *
- * The window is never created before the backend answers, so it can never open
- * blank; the shortcut is never registered before that either, so a keypress
- * cannot reach a backend that is not listening yet.
+ * The window shows startup/startup.html (a local file) until the backend
+ * answers, and goes back to it with an error message if the real UI fails to
+ * load or never renders, so it can never sit there blank. The shortcut is never
+ * registered before the backend answers, so a keypress cannot reach a backend
+ * that is not listening yet.
  */
 'use strict';
 
@@ -65,6 +68,25 @@ const ASSETS = path.join(__dirname, 'assets');
 const ICON_PATH = path.join(ASSETS, 'icon.ico');
 const TRAY_ICON_PATH = path.join(ASSETS, 'tray.png');
 const MAIN_PY = path.join(APP_ROOT, 'core', 'main.py');
+const STARTUP_PAGE = path.join(__dirname, 'startup', 'startup.html');
+
+/**
+ * How long a loaded page may take to put the React app on screen. The built
+ * index.html has an empty <div id="__next">: everything visible is drawn by
+ * JavaScript, so a script that is blocked (CSP) or throws leaves only the
+ * window background -- the "black screen". Measured: the app mounts in well
+ * under a second on a normal PC; 15 s means it is not going to.
+ */
+const RENDER_DEADLINE_MS = 15000;
+
+/*
+ * Escape hatch for graphics drivers that paint Chromium windows black.
+ * Chromium normally falls back to software on its own; this forces it.
+ */
+if ((process.env.NANO_DISABLE_GPU === '1' || process.argv.includes('--disable-gpu'))
+    && typeof app.disableHardwareAcceleration === 'function') {
+  app.disableHardwareAcceleration();
+}
 
 // Room for the real status labels and a capped detail line. The panel is inset
 // 10 px horizontally and 8 px vertically for its shadow: 528 x 68 at full size.
@@ -260,6 +282,7 @@ async function startBackend() {
     unregisterShortcut();
     hideOverlay(true);
     if (mainWindow && !mainWindow.isDestroyed()) {
+      showStartupScreen(mainWindow, 'error', 'backend_exited');
       mainWindow.show();
       dialog.showMessageBox(mainWindow, {
         type: 'error',
@@ -348,6 +371,17 @@ function appIcon() {
   return fs.existsSync(ICON_PATH) ? ICON_PATH : undefined;
 }
 
+/** Show the local startup screen: loading, or an error with a fixed reason code. */
+function showStartupScreen(window, state = 'loading', reason = '') {
+  if (!window || window.isDestroyed()) return;
+  const query = state === 'error' ? { state: 'error', reason: String(reason) } : { state: 'loading' };
+  Promise.resolve(window.loadFile(STARTUP_PAGE, { query })).catch(() => {});
+}
+
+/**
+ * Create the main window. Without a port it only shows the startup screen
+ * (used at boot, before the backend answers); with one it also loads the UI.
+ */
 function createMainWindow(port) {
   const workAreas = screen.getAllDisplays().map((d) => d.workArea);
   const bounds = windowState.sanitizeBounds(shellState.bounds, workAreas);
@@ -360,8 +394,8 @@ function createMainWindow(port) {
     minWidth: windowState.MIN_WIDTH,
     minHeight: windowState.MIN_HEIGHT,
     frame: false,
-    // Matches --bg-base, so the first paint is Nano-coloured rather than white.
-    backgroundColor: '#05070A',
+    // Matches the dark --bg, so the first paint is Nano-coloured rather than white.
+    backgroundColor: '#181818',
     icon: appIcon(),
     show: false,
     title: 'Nano',
@@ -378,40 +412,6 @@ function createMainWindow(port) {
       spellcheck: true,
     },
   });
-
-  const origin = `http://127.0.0.1:${port}`;
-  const window = mainWindow;
-  const loadPage = () => {
-    if (window.isDestroyed() || isQuitting) return;
-    // did-fail-load owns recovery; consume loadURL's rejection as well.
-    Promise.resolve(window.loadURL(`${origin}/index.html`)).catch(() => {});
-  };
-  const reportLoadFailure = async (code) => {
-    frontendReady = false;
-    recordFailure(code);
-    const answer = await dialog.showMessageBox(window, {
-      type: 'error', title: 'Nano — interface indisponível',
-      message: 'Não foi possível abrir a interface do Nano.',
-      detail: `Código: ${code}. Podes tentar novamente ou sair e reabrir o Nano. ` +
-        'Se continuar, reinstala a mesma versão. Os teus dados são preservados. ' +
-        'O relatório local logs/startup-diagnostics.json contém apenas dados técnicos.',
-      buttons: ['Tentar novamente', 'Sair'], defaultId: 0, cancelId: 1,
-    }).catch(() => ({ response: 1 }));
-    if (isQuitting || window.isDestroyed()) return;
-    if (answer.response === 0) { recovery.ready(); loadPage(); }
-    else quitNano();
-  };
-  const recovery = loadRecovery({ reload: loadPage,
-    report: () => { reportLoadFailure('frontend_load_failed'); },
-    closed: () => isQuitting || window.isDestroyed() });
-  // Before the first load, so the very first response is already covered.
-  applyContentSecurityPolicy(mainWindow.webContents.session, port);
-  hardenWebContents(mainWindow.webContents, origin);
-  window.webContents.on('did-finish-load', () => {
-    recovery.ready(); frontendReady = true; lastErrorCode = null;
-  });
-  window.webContents.on('render-process-gone', () => { reportLoadFailure('renderer_gone'); });
-  window.on('closed', () => recovery.dispose());
 
   mainWindow.once('ready-to-show', () => {
     if (bounds.maximized) mainWindow.maximize();
@@ -445,8 +445,109 @@ function createMainWindow(port) {
     notifyHiddenToTrayOnce();
   });
 
-  mainWindow.webContents.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
+  if (port === undefined || port === null) {
+    showStartupScreen(mainWindow, 'loading');
+  } else {
+    attachMainWindow(port);
+  }
+  return mainWindow;
+}
+
+/** Point the existing main window at the backend on `port` and load the UI. */
+function attachMainWindow(port) {
+  const window = mainWindow;
+  if (!window || window.isDestroyed()) return;
+  const origin = `http://127.0.0.1:${port}`;
+  const isAppUrl = (url) => typeof url === 'string' && (url === origin || url.startsWith(`${origin}/`));
+  let renderTimer = null;
+  let consoleErrors = [];
+  const clearRenderTimer = () => { if (renderTimer) clearTimeout(renderTimer); renderTimer = null; };
+
+  const loadPage = () => {
+    if (window.isDestroyed() || isQuitting) return;
+    clearRenderTimer();
+    consoleErrors = [];
+    // did-fail-load owns recovery; consume loadURL's rejection as well.
+    Promise.resolve(window.loadURL(`${origin}/index.html`)).catch(() => {});
+  };
+  const reportLoadFailure = async (code) => {
+    clearRenderTimer();
+    frontendReady = false;
+    recordFailure(code);
+    // Never leave the user looking at an empty window: say what happened.
+    showStartupScreen(window, 'error', code);
+    if (!startedHidden && !window.isDestroyed()) window.show();
+    const answer = await dialog.showMessageBox(window, {
+      type: 'error', title: 'Nano — interface indisponível',
+      message: 'Não foi possível abrir a interface do Nano.',
+      detail: `Código: ${code}. Podes tentar novamente ou sair e reabrir o Nano. ` +
+        'Se continuar, reinstala a mesma versão. Os teus dados são preservados. ' +
+        'O relatório local logs/startup-diagnostics.json contém apenas dados técnicos.',
+      buttons: ['Tentar novamente', 'Sair'], defaultId: 0, cancelId: 1,
+    }).catch(() => ({ response: 1 }));
+    if (isQuitting || window.isDestroyed()) return;
+    if (answer.response === 0) { recovery.ready(); loadPage(); }
+    else quitNano();
+  };
+  const recovery = loadRecovery({ reload: loadPage,
+    report: () => { reportLoadFailure('frontend_load_failed'); },
+    closed: () => isQuitting || window.isDestroyed() });
+
+  /*
+   * A page that loads is not yet a page that works. Confirm React actually
+   * mounted something into #__next; if not, show why instead of the bare
+   * window background, and print the renderer's errors (a CSP block names the
+   * script) to the console window so the cause is visible.
+   */
+  const confirmRendered = () => {
+    clearRenderTimer();
+    const started = Date.now();
+    const probe = () => {
+      renderTimer = null;
+      if (window.isDestroyed() || isQuitting) return;
+      Promise.resolve(window.webContents.executeJavaScript(
+        "(function(){var r=document.getElementById('__next');return r?r.childElementCount:-1;})()", true))
+        .catch(() => 0)
+        .then((children) => {
+          if (window.isDestroyed() || isQuitting) return;
+          if (children !== 0) {
+            recovery.ready(); frontendReady = true; lastErrorCode = null;
+            return;
+          }
+          if (Date.now() - started < RENDER_DEADLINE_MS) {
+            renderTimer = setTimeout(probe, 500);
+            return;
+          }
+          log('A interface carregou mas não arrancou (ecrã vazio).');
+          for (const line of consoleErrors.slice(0, 5)) log('  renderer:', line);
+          reportLoadFailure('frontend_not_rendered');
+        });
+    };
+    renderTimer = setTimeout(probe, 300);
+  };
+
+  // Before the first load, so the very first response is already covered.
+  applyContentSecurityPolicy(mainWindow.webContents.session, port);
+  hardenWebContents(window.webContents, origin);
+  window.webContents.on('console-message', (...args) => {
+    // Electron 35+ passes one event object; older versions passed positional args.
+    const [first, level, message] = args;
+    const lvl = first && typeof first === 'object' && 'level' in first ? first.level : level;
+    const text = first && typeof first === 'object' && 'message' in first ? first.message : message;
+    if (lvl === 'error' || lvl === 3) {
+      if (consoleErrors.length < 20) consoleErrors.push(String(text).slice(0, 300));
+    }
+  });
+  window.webContents.on('did-finish-load', () => {
+    if (!isAppUrl(window.webContents.getURL())) return; // the startup screen
+    confirmRendered();
+  });
+  window.webContents.on('render-process-gone', () => { reportLoadFailure('renderer_gone'); });
+  window.on('closed', () => { clearRenderTimer(); recovery.dispose(); });
+
+  window.webContents.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
     if (!isMainFrame || isQuitting || code === -3) return;
+    if (url && !isAppUrl(url)) return;
     frontendReady = false;
     recovery.failed();
   });
@@ -1135,15 +1236,19 @@ if (!gotLock) {
         return;
       }
 
+      // The window appears straight away with the startup screen, so a slow
+      // backend reads as "starting" rather than as nothing happening at all.
+      createMainWindow();
       const port = await startBackend();
-      createMainWindow(port);
+      attachMainWindow(port);
       createTray();
       createOverlayWindow();
       registerShortcut();
       log(`Nano Desktop pronto em http://127.0.0.1:${port}`);
     } catch (err) {
       recordFailure('backend_start_failed');
-      log('Erro fatal no arranque: backend_start_failed');
+      log('Erro fatal no arranque: backend_start_failed', err && err.message ? `(${err.message})` : '');
+      showStartupScreen(mainWindow, 'error', 'backend_start_failed');
       dialog.showErrorBox(
         'Nano — não foi possível arrancar',
         'Código: backend_start_failed. O motor ou a interface não ficaram prontos.\n\n' +
@@ -1159,6 +1264,15 @@ if (!gotLock) {
 }
 
 app.on('activate', () => { if (mainWindow) showMainWindow(); });
+
+// A crashing GPU process is the usual cause of a window that stays black even
+// though the page loaded. Chromium retries and then falls back to software;
+// say so in the console so NANO_DISABLE_GPU=1 can be suggested.
+app.on('child-process-gone', (_event, details) => {
+  if (details && details.type === 'GPU') {
+    log(`O processo gráfico (GPU) parou (${details.reason}). Se a janela ficar preta, arranca com NANO_DISABLE_GPU=1.`);
+  }
+});
 
 // Hiding the window must not quit the app: the tray and the global shortcut
 // are the point of keeping it alive.
@@ -1192,6 +1306,8 @@ module.exports = {
     hideOverlay,
     createOverlayWindow,
     createMainWindow,
+    attachMainWindow,
+    showStartupScreen,
     replaceMainWindow,
     onBackendEvent,
     quitNano,

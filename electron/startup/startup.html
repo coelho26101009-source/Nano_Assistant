@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<!--
+  NANO STARTUP SCREEN
+
+  What the desktop window shows while the Python backend starts, and what it
+  shows if the real interface cannot be loaded. Without it the window was
+  either absent for up to a minute or a plain near-black rectangle, and a
+  failed load looked exactly like a slow one ("black screen").
+
+  It is a local file with its own strict CSP and no access to anything: the
+  state comes from the URL query (?state=loading|error&reason=<code>) and the
+  text for each reason is a fixed table in startup.js, so nothing the main
+  process passes is ever rendered as markup.
+-->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src 'self' data:;" />
+<title>NANO</title>
+<style>
+  :root {
+    --bg: #181818; --surface-raised: #242424; --border: #333333;
+    --text-primary: #ECECEC; --text-secondary: #B4B4B4; --text-muted: #9A9A9A;
+    --information: #3FB8AF; --danger: #F07167;
+  }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text-primary);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }
+  body { display: grid; place-items: center; -webkit-app-region: drag; user-select: none; }
+  main { width: min(460px, calc(100vw - 48px)); text-align: center; }
+  img { width: 56px; height: 56px; }
+  h1 { font-size: 20px; font-weight: 600; margin: 18px 0 8px; }
+  p { font-size: 14px; line-height: 1.5; color: var(--text-secondary); margin: 0 0 8px; }
+  .status { display: inline-flex; align-items: center; gap: 8px; margin-top: 14px;
+    font-size: 13px; color: var(--text-muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--information);
+    animation: pulse 1.4s ease-in-out infinite; }
+  body[data-state="error"] .dot { background: var(--danger); animation: none; }
+  .hint { margin-top: 18px; padding: 12px 14px; border: 1px solid var(--border);
+    border-radius: 10px; background: var(--surface-raised); text-align: left; }
+  .hint[hidden] { display: none; }
+  code { font-family: Consolas, ui-monospace, monospace; font-size: 12px; color: var(--text-muted); }
+  @keyframes pulse { 50% { opacity: .35; } }
+  @media (prefers-reduced-motion: reduce) { .dot { animation: none; } }
+</style>
+</head>
+<body data-state="loading">
+  <main role="status" aria-live="polite">
+    <img src="nano-mark.png" alt="" />
+    <h1 id="title">Starting NANO…</h1>
+    <p id="detail">This can take up to a minute the first time.</p>
+    <div class="status"><span class="dot" aria-hidden="true"></span><span id="status">Loading</span></div>
+    <div class="hint" id="hint" hidden>
+      <p id="hint-text"></p>
+      <code id="code"></code>
+    </div>
+  </main>
+  <script src="startup.js"></script>
+</body>
+</html>
