@@ -185,7 +185,13 @@ async def run(mode_id: Any, executor: Any, modes_dir: Path | None = None) -> dic
         mode = load(mode_id, modes_dir)
     except ModeError as exc:
         return {"ok": False, "error": "unknown_mode", "message": str(exc), "steps": []}
-    running = await _running_processes(executor)
+    return await run_plan(mode, executor)
+
+
+async def run_plan(mode: dict, executor: Any) -> dict:
+    """Run an already compiled plan (a mode, or a protocol: core/protocols.py)."""
+    running = await _running_processes(executor) if any(
+        step["tool"] == "pc_window_batch_close" for step in mode["steps"]) else None
     outcomes = []
     for step in mode["steps"]:
         if step["tool"] == "pc_window_batch_close" and running is not None \

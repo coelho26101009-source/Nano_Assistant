@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import type { ProviderPayload, ReadinessPayload } from "../lib/backend";
-import { useFetch } from "../lib/backend";
+import { call, useFetch } from "../lib/backend";
+import VoiceSetupCard from "./VoiceSetupCard";
 import { VERSION } from "../lib/version";
 import type { Section } from "./SettingsPage";
 import { Badge, Button, MetricRow, StatusIndicator } from "./ui";
@@ -99,6 +100,11 @@ export default function FirstRunGuide({
             <input id="first-run-name" className="input" maxLength={40} value={name}
                    placeholder={t("O teu nome")} onChange={(event) => setName(event.target.value)}
                    onKeyDown={(event) => { if (event.key === "Enter") finish(); }} />
+            {/* Voice ready from the start (core/voice_setup.py): one click,
+                and the wake phrase only if the person says yes. */}
+            <h3 style={{ marginTop: 18 }}>{t("Falar com o NANO")}</h3>
+            <VoiceSetupCard compact
+              onWakePhrase={(enabled) => { void call("update_setting", "wake_phrase_enabled", enabled); }} />
           </div>
         )}
 

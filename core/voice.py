@@ -1167,6 +1167,9 @@ class VoiceRuntime:
         self._on_phase: Callable[[str, str], None] | None = None
         self._on_exchange: Callable[[str, str, str], None] | None = None
         self._on_activation: Callable[[str], None] | None = None
+        # The reply being spoken WHILE the Brain still writes it (see
+        # SentenceSpeaker). Set only for the length of one exchange.
+        self._live_speaker: "SentenceSpeaker | None" = None
 
     # ------------------------------------------------------------- observers
 
@@ -1305,6 +1308,9 @@ class VoiceRuntime:
             if token.startswith("_") and ":" in token.split("\n", 1)[0][:24]:
                 continue
             chunks.append(token)
+            speaker = getattr(self, "_live_speaker", None)
+            if speaker is not None:
+                speaker.feed(token)
         return "".join(chunks).strip() or "Não consegui responder a esse pedido no momento."
 
     async def process_request(self, transcript: str, *, session_context: dict | None = None) -> dict:
@@ -1687,8 +1693,29 @@ class VoiceRuntime:
         self._phase("COMMAND_LISTENING", "A ouvir comando…")
 
         # 3. Capture -> gate -> STT -> Brain, through the existing pipeline.
-        result = await self.process_wake_word_turn(duration_seconds=duration_seconds,
-                                                   follow_up=follow_up)
+        #
+        # THE ANSWER STARTS BEING SPOKEN AT ITS FIRST SENTENCE. The whole reply
+        # used to be written, then synthesised, then played: two or three
+        # seconds of silence after every question. Now each sentence goes to
+        # the speech engine as soon as the Brain finishes writing it.
+        speaker = None
+        if self.early_speech_allowed(speak):
+            speaker = SentenceSpeaker(
+                self._speak_chunk,
+                on_start=lambda: self._phase("SPEAKING", "A falar…"))
+            self._live_speaker = speaker
+        try:
+            result = await self.process_wake_word_turn(duration_seconds=duration_seconds,
+                                                       follow_up=follow_up)
+        except BaseException:
+            if speaker is not None:
+                speaker.cancel()
+            raise
+        finally:
+            self._live_speaker = None
+        if speaker is not None and not (result.get("ok") and result.get("response")):
+            speaker.cancel()
+            speaker = None
         result["source"] = source
         result["follow_up"] = follow_up
 
@@ -1723,7 +1750,19 @@ class VoiceRuntime:
             result["should_speak"] = should_speak
             result["speak_skip_reason"] = None if should_speak else reason
 
-            if should_speak:
+            if should_speak and speaker is not None and speaker.has_text():
+                logger.info("voice_tts: streaming (source=%s, %d chars)", source, len(str(response)))
+                speaker.finish()
+                spoken, interrupted = await self._speak_interruptible(str(response), speaker=speaker)
+                result["spoken"] = spoken
+                result["interrupted"] = interrupted
+                result["streamed"] = True
+                if not spoken:
+                    logger.warning("voice_tts: FAILED (source=%s, streamed)", source)
+                    self._signal_error()
+            elif should_speak:
+                if speaker is not None:
+                    speaker.cancel()
                 self._phase("SPEAKING", "A falar…")
                 logger.info("voice_tts: started (source=%s, %d chars)", source, len(str(response)))
                 spoken, interrupted = await self._speak_interruptible(str(response))
@@ -1737,6 +1776,8 @@ class VoiceRuntime:
                         "nothing was heard: %r", source, str(response)[:80])
                     self._signal_error()
             else:
+                if speaker is not None:
+                    speaker.cancel()
                 result["spoken"] = False
                 logger.info("voice_tts: skipped (source=%s, reason=%s)", source, reason)
         elif result.get("cancelled"):
@@ -1755,14 +1796,44 @@ class VoiceRuntime:
     BARGE_IN_MULTIPLIER = 3.0
     BARGE_IN_CHUNK_SECONDS = 0.4
 
-    async def _speak_interruptible(self, text: str) -> tuple[bool, bool]:
+    def early_speech_allowed(self, speak: bool = True) -> bool:
+        """Whether this exchange may start speaking before the answer is complete.
+
+        The same switches as ``speaking_decision``, checked before the answer
+        exists; the final decision is still taken on the whole answer.
+        """
+        if not speak or not self.voice.enabled:
+            return False
+        if not bool(self._voice_cfg().get("voice_stream_speech", True)):
+            return False
+        tts_enabled, voice_reply_tts = self._tts_settings()
+        provider = getattr(self.voice, "tts_provider", None)
+        return bool(tts_enabled and voice_reply_tts and getattr(provider, "online", False))
+
+    async def _speak_chunk(self, text: str, limit: int) -> bool:
+        """One piece of a streamed answer, through the normal speech path."""
+        try:
+            return await self.voice.speak(text, limit=limit)
+        except Exception as exc:
+            logger.warning("streamed TTS chunk failed: %s", exc)
+            return False
+
+    async def _speak_interruptible(self, text: str, *, speaker: "SentenceSpeaker | None" = None
+                                   ) -> tuple[bool, bool]:
         """Speak; with barge-in on, stop as soon as the person talks over NANO.
 
         Returns (spoken, interrupted). An interrupted answer counts as spoken:
         the conversation goes straight on to listening, which is the point.
+        With ``speaker`` the answer is already being spoken sentence by
+        sentence; this waits for it to end instead of starting it.
         """
+        async def say() -> bool:
+            if speaker is not None:
+                return await speaker.wait()
+            return await self.speak_response(text)
+
         if not self.barge_in():
-            return await self.speak_response(text), False
+            return await say(), False
         stop = threading.Event()
         interrupted = threading.Event()
         gate = self.voice.input_provider.gate
@@ -1782,6 +1853,8 @@ class VoiceRuntime:
                 if loud_in_a_row >= 2:
                     interrupted.set()
                     logger.info("voice_barge_in: a pessoa falou por cima (rms=%.0f, limite=%.0f)", rms, limit)
+                    if speaker is not None:
+                        speaker.cancel()
                     try:
                         self.voice.tts_provider.stop()
                     except Exception:
@@ -1790,7 +1863,7 @@ class VoiceRuntime:
 
         watcher = asyncio.get_running_loop().run_in_executor(None, watch)
         try:
-            spoken = await self.speak_response(text)
+            spoken = await say()
         finally:
             stop.set()
             try:
@@ -1809,6 +1882,142 @@ class VoiceRuntime:
             audio_feedback.signal_error()
         except Exception:
             logger.debug("could not play the error tone", exc_info=True)
+
+#: Where a sentence ends while the answer is still being written: . ! ? or …
+#: followed by a space, or a line break. "3.5" and "v1.2" never match.
+_SENTENCE_END = re.compile(r"(?<=[.!?…])[\"'”»)]*\s+|\n+")
+#: The first sentence is spoken alone, as early as possible; a piece shorter
+#: than this waits for the next one ("Ok." on its own sounds clipped).
+MIN_FIRST_CHUNK = 12
+
+
+class SentenceSpeaker:
+    """Speak an answer sentence by sentence while it is still being written.
+
+    ``feed`` receives the Brain's tokens as they arrive. Each complete sentence
+    is queued; one consumer task speaks the queue in order. While a sentence
+    plays, the next ones gather, and are spoken together as one piece: the
+    first sentence starts as early as possible and the rest has no gaps.
+
+    The total stays under ``limit`` characters, like a whole spoken answer
+    (SPEECH_LIMIT). An open code block is held back until it closes; the
+    speech cleaner drops it anyway.
+    """
+
+    def __init__(self, speak: Callable[[str, int], Any], *, limit: int | None = None,
+                 on_start: Callable[[], None] | None = None) -> None:
+        self._speak = speak
+        self._limit = limit or SPEECH_LIMIT
+        self._on_start = on_start
+        self._buffer = ""
+        self._pending: list[str] = []
+        self._used = 0
+        self._spoke_any = False
+        self._failed = False
+        self._finished = False
+        self._cancelled = False
+        self._wake = asyncio.Event()
+        self._task: asyncio.Task | None = None
+        self._fed = False
+
+    # ── input ────────────────────────────────────────────────────────────
+    def has_text(self) -> bool:
+        return self._fed
+
+    def feed(self, token: str) -> None:
+        if self._cancelled or self._finished or not token:
+            return
+        self._buffer += token
+        if self._buffer.strip():
+            self._fed = True
+        self._cut()
+
+    def _cut(self, final: bool = False) -> None:
+        while True:
+            if self._buffer.count("```") % 2 == 1 and not final:
+                return
+            match = _SENTENCE_END.search(self._buffer)
+            if match is None:
+                break
+            piece = self._buffer[:match.end()]
+            if not self._spoke_any and not self._pending and len(piece.strip()) < MIN_FIRST_CHUNK:
+                nxt = _SENTENCE_END.search(self._buffer, match.end())
+                if nxt is None:
+                    break
+                piece = self._buffer[:nxt.end()]
+            self._buffer = self._buffer[len(piece):]
+            self._queue(piece)
+        if final and self._buffer.strip():
+            self._queue(self._buffer)
+            self._buffer = ""
+
+    def _queue(self, piece: str) -> None:
+        if not piece.strip():
+            return
+        self._pending.append(piece.strip())
+        self._ensure_task()
+        self._wake.set()
+
+    def _ensure_task(self) -> None:
+        if self._task is None:
+            self._task = asyncio.get_running_loop().create_task(self._consume())
+
+    def finish(self) -> None:
+        """The answer is complete: speak what is left, then stop."""
+        if self._finished:
+            return
+        self._cut(final=True)
+        self._finished = True
+        if self._task is None and not self._pending:
+            return
+        self._ensure_task()
+        self._wake.set()
+
+    def cancel(self) -> None:
+        """Stop: nothing more is spoken (what is playing is stopped by the caller)."""
+        self._cancelled = True
+        self._pending.clear()
+        self._wake.set()
+
+    # ── output ───────────────────────────────────────────────────────────
+    async def _consume(self) -> None:
+        while not self._cancelled:
+            if not self._pending:
+                if self._finished:
+                    return
+                self._wake.clear()
+                await self._wake.wait()
+                continue
+            piece = " ".join(self._pending)
+            self._pending.clear()
+            remaining = self._limit - self._used
+            if remaining <= 20:
+                return
+            if not self._spoke_any and self._on_start is not None:
+                try:
+                    self._on_start()
+                except Exception:
+                    logger.debug("speech start notification failed", exc_info=True)
+            self._used += len(piece)
+            ok = await self._speak(piece, remaining)
+            if ok:
+                self._spoke_any = True
+            else:
+                self._failed = True
+                return
+
+    async def wait(self) -> bool:
+        """Wait for the last piece to be spoken. True if anything was heard."""
+        if self._task is not None:
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("streamed speech failed")
+                return self._spoke_any
+        return self._spoke_any
+
 
 #: Said after an answer, these end a voice conversation instead of becoming a
 #: question. Matched on the whole normalised transcript, never inside a longer
@@ -1885,6 +2094,7 @@ __all__ = [
     "TextToSpeechProvider",
     "VoiceEngine",
     "VoiceRuntime",
+    "SentenceSpeaker",
     "VoiceResult",
     "VoiceSession",
     "VoiceSessionState",

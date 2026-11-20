@@ -125,6 +125,13 @@ e o que aconteceu.
 - [ ] 29. **Definições → Voz**: o teste do microfone ouve-te e transcreve.
 - [ ] 30. O overlay de voz aparece em baixo, ao centro, e responde falado.
 
+### Novidades JARVIS (P1)
+- [ ] 31. **Definições → Voz → Preparar a voz**: instala e descarrega com barra de progresso (uns minutos). No fim pergunta se queres ligar "Ei NANO"; responde "Sim, ligar".
+- [ ] 32. Pergunta algo por voz (Ctrl + Shift + Space) que tenha resposta comprida: o NANO começa a falar logo depois da primeira frase, sem esperar pelo resto.
+- [ ] 33. **Definições → Geral → Personalidade**: escolhe "Formal", escreve em "Como o NANO te trata" `chefe` e pergunta "olá". A resposta muda de tom e trata-te por chefe.
+- [ ] 34. **PC → Modos → Os teus protocolos**: carrega no modelo "Modo jogo", guarda, e escreve no chat `modo jogo`. O NANO abre o Steam e o Discord (pede autorização se for preciso) e diz a frase do fim.
+- [ ] 35. **Avisos do PC**: descarrega um ficheiro qualquer no navegador; quando acabar, o NANO avisa "Download terminado". Desliga o Wi-Fi uns 2 minutos: avisa "Sem rede" e, quando voltas a ligar, "A ligação à rede voltou".
+
 ---
 
 ## O que já sabemos que ainda não está perfeito

@@ -20,6 +20,23 @@ versioning policy.
 
 ## [Unreleased]
 
+### Added — JARVIS P1 (2026-11-20)
+
+- **Voice ready in one click.** Definições → Voz → "Preparar a voz" (also in the
+  first-run guide) installs local speech recognition, hash-checked from the
+  optional lock, and downloads its model with a progress bar. Then NANO asks
+  whether to turn on the wake phrase.
+- **Spoken answers start at the first sentence**, while the rest is still being
+  written, instead of after the whole answer.
+- **Personality.** Definições → Geral → Personalidade: tone (calm and brief with
+  a little humour, JARVIS style, by default; friendly; formal; neutral), how NANO
+  addresses you, answer length, personal instructions, and the speaking voice.
+- **Protocols.** PC → Modos → "Os teus protocolos": your own routines started by
+  a phrase ("modo estudo", "boa noite", "modo jogo"), typed, spoken or from the
+  phone. Each step goes through the normal permissions. Three templates.
+- **PC alerts.** Low battery, disk almost full, network down and back, download
+  finished. Local only; each one is a switch in Definições → Geral → Avisos do PC.
+
 A full review of the code: 50 bugs fixed, and a design pass against premium
 chat apps.
 

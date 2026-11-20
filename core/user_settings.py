@@ -84,6 +84,12 @@ ALLOWED_KEYS: frozenset[str] = frozenset({
     "proactive_event_alerts", "proactive_event_lead_minutes", "proactive_prep",
     # NANO on the phone (core/mobile_link.py). Off until the person turns it on.
     "mobile_access_enabled",
+    # Personality (core/personality.py): tone, form of address, answer length,
+    # personal instructions and the speaking voice.
+    "personality_tone", "personality_length", "personality_address",
+    "personality_instructions", "tts_voice",
+    # Warnings about this PC itself (core/pc_alerts.py). On by default.
+    "pc_alerts_battery", "pc_alerts_disk", "pc_alerts_network", "pc_alerts_downloads",
 })
 
 _BOOLEAN_KEYS = frozenset({
@@ -92,7 +98,8 @@ _BOOLEAN_KEYS = frozenset({
     "voice_conversation_mode", "voice_barge_in", "reduce_motion", "memory_facts_enabled", "memory_rag_enabled",
     "memory_long_term_enabled", "memory_auto_capture", "advanced_mode", "screen_text_enabled",
     "screen_vision_enabled", "proactive_briefing", "proactive_event_alerts", "proactive_prep",
-    "mobile_access_enabled",
+    "mobile_access_enabled", "pc_alerts_battery", "pc_alerts_disk", "pc_alerts_network",
+    "pc_alerts_downloads",
 })
 
 
@@ -122,6 +129,11 @@ def _valid_value(key: str, value: Any) -> bool:
     if key == "proactive_briefing_time":
         return isinstance(value, str) and len(value) == 5 and value[2] == ":" and \
             value[:2].isdigit() and value[3:].isdigit() and int(value[:2]) < 24 and int(value[3:]) < 60
+    from core import personality
+
+    verdict = personality.valid_setting(key, value)
+    if verdict is not None:
+        return verdict
     if key == "proactive_event_lead_minutes":
         return type(value) is int and value in {5, 10, 15, 30, 60}
     # Model IDs are bounded plain strings, never arbitrary JSON containers.
