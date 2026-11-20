@@ -52,12 +52,12 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # 3.12, not 3.12.10: ubuntu-latest moved to Ubuntu 26.04, which has no
       # 3.12.10 build, and the release run for 0.3.0-beta.1 stopped here.
       # ci.yml already uses '3.12' on Linux. The Windows build below keeps the
       # exact 3.12.10 that the embedded runtime is made from.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       # The same hashed locks as ci.yml and the embedded runtime below; see
@@ -76,10 +76,10 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Python (build host)
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12.10'
 
@@ -87,7 +87,7 @@ jobs:
       # (@electron/get, @electron-internal/extract-zip) declare
       # `engines: node >= 22.12.0`, matching the electron job in ci.yml.
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
@@ -205,7 +205,7 @@ jobs:
           Pop-Location
 
       - name: Upload installers
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Nano-Windows
           path: |
@@ -225,7 +225,7 @@ jobs:
       contents: write
     steps:
       - name: Download installers
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: Nano-Windows
           path: installers
@@ -239,7 +239,7 @@ jobs:
         # from the same trust boundary as the runner itself. Dependabot's
         # github-actions updates keep this pin current and name the version it
         # is moving to in the pull request.
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           prerelease: true
           fail_on_unmatched_files: true
@@ -262,7 +262,7 @@ jobs:
       # Without the secret, the release is published without a feed and
       # nobody is offered it automatically -- never a failed release.
       - name: Checkout the feed signer
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: src
           sparse-checkout: |
@@ -271,7 +271,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
 
