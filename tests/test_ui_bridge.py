@@ -128,3 +128,31 @@ def test_every_eel_callback_used_by_main_has_a_bridge_stub():
         f"core/main.py calls {sorted(missing)} but nano_bridge.js does not register "
         "them; those calls would raise AttributeError at runtime."
     )
+
+
+def test_every_notify_ui_callback_has_a_bridge_stub():
+    """_notify_ui("on_xxx") is how the backend reaches the window, and a name
+    the bridge does not register is dropped without a word. That is how
+    "on_conversation_changed" (the phone switching conversation) and
+    "on_mobile_pair_request" never reached the screen."""
+    used: set[str] = set()
+    for source in (REPO_ROOT / "core").glob("*.py"):
+        used |= set(re.findall(r"_notify_ui\(\s*[\"'](on_\w+)[\"']", source.read_text(encoding="utf-8")))
+    assert used, "no _notify_ui callbacks found; the pattern no longer matches main.py"
+    bridge_source = BRIDGE_SOURCE.read_text(encoding="utf-8")
+    registered = set(re.findall(r"eel\.expose\(\s*\w+\s*,\s*[\"'](\w+)[\"']", bridge_source))
+    missing = used - registered
+    assert not missing, f"the backend sends {sorted(missing)} but nano_bridge.js does not register them"
+
+
+def test_every_bridge_callback_has_a_handler_in_the_app():
+    """A stub with no React handler only fills the pending buffer."""
+    bridge_source = BRIDGE_SOURCE.read_text(encoding="utf-8")
+    registered = set(re.findall(r"eel\.expose\(\s*\w+\s*,\s*[\"'](\w+)[\"']", bridge_source))
+    handled: set[str] = set()
+    for folder in ("pages", "components", "lib"):
+        for source in (FRONTEND / folder).rglob("*.ts*"):
+            handled |= set(re.findall(r"[\"'](on_\w+)[\"']\s*\)", source.read_text(encoding="utf-8")))
+    unhandled = registered - handled
+    assert not unhandled, f"nano_bridge.js registers {sorted(unhandled)} but no expose(...) handles them"
+

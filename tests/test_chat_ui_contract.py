@@ -72,7 +72,7 @@ def _passed(report: dict, needle: str) -> None:
 #: to 78 was observed while the harness reported itself green. Every one of
 #: those preconditions is now its own named step, so a miss is a failure; this
 #: floor is the second lock, catching a whole section going missing at once.
-MINIMUM_CHAT_STEPS = 92
+MINIMUM_CHAT_STEPS = 97
 
 
 def test_the_real_chat_view_passes_every_driven_step(chat_report):

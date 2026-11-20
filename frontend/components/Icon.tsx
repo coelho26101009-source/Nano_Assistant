@@ -38,6 +38,7 @@ const PATHS = {
   newChat: "M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z",
   arrowDown: "M12 5v14M19 12l-7 7-7-7",
   waves: "M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4",
+  speaker: "M11 5 6 9H3v6h3l5 4V5ZM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13",
 } as const;
 
 export type IconName = keyof typeof PATHS;

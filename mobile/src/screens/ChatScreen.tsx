@@ -9,7 +9,7 @@ import Markdown from "../components/Markdown";
 import { NanoMark } from "../components/Brand";
 import type { Approval, Chat, Message } from "../lib/chat";
 import { t } from "../lib/i18n";
-import { listen, speechAvailable, stopSpeaking, tap, type Listening } from "../lib/native";
+import { listen, speak, speechAvailable, stopSpeaking, tap, type Listening } from "../lib/native";
 
 function greeting(name: string): string {
   const hour = new Date().getHours();
@@ -40,7 +40,13 @@ function ApprovalCard({ approval, onAnswer }: { approval: Approval; onAnswer: (i
   );
 }
 
-function Row({ message, last, onRetry, initials }: { message: Message; last: boolean; onRetry: () => void; initials: string }) {
+function Row({ message, last, onRetry, initials, reading, onRead }: {
+  message: Message; last: boolean; onRetry: () => void; initials: string;
+  /** This answer is being read aloud right now. */
+  reading: boolean;
+  /** Read this answer aloud, or stop if it is being read. */
+  onRead: () => void;
+}) {
   const [copied, setCopied] = useState(false);
   const isUser = message.role === "user";
   const copy = async () => {
@@ -62,6 +68,10 @@ function Row({ message, last, onRetry, initials }: { message: Message; last: boo
           <div className="msg__actions">
             <button className="icon-btn" onClick={() => void copy()} aria-label={copied ? t("Copiado") : t("Copiar")}>
               <Icon name={copied ? "check" : "copy"} size={18} />
+            </button>
+            <button className={`icon-btn${reading ? " icon-btn--on" : ""}`} onClick={onRead}
+              aria-label={reading ? t("Parar a leitura") : t("Ler em voz alta")} aria-pressed={reading}>
+              <Icon name={reading ? "stop" : "speaker"} size={18} />
             </button>
             {last && !message.notice && (
               <button className="icon-btn" onClick={onRetry} aria-label={t("Tentar de novo")}><Icon name="refresh" size={18} /></button>
@@ -87,6 +97,9 @@ export default function ChatScreen({
   const [heard, setHeard] = useState("");
   const [canSpeak, setCanSpeak] = useState(false);
   const [micError, setMicError] = useState("");
+  /** The answer being read aloud with the phone's own voice, if any. */
+  const [readingId, setReadingId] = useState<string | null>(null);
+  const reading = useRef<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLTextAreaElement>(null);
   const stick = useRef(true);
@@ -116,8 +129,24 @@ export default function ChatScreen({
     if (!ok) setText(value);
   };
 
+  /* "Ler em voz alta" uses the phone's own voice, so it works with the PC
+     asleep too. One answer at a time; pressing it again stops it. */
+  const readAloud = async (message: Message) => {
+    const again = reading.current === message.id;
+    reading.current = null;
+    setReadingId(null);
+    await stopSpeaking();
+    if (again) return;
+    reading.current = message.id;
+    setReadingId(message.id);
+    await speak(message.content);
+    if (reading.current === message.id) { reading.current = null; setReadingId(null); }
+  };
+
   const toggleMic = async () => {
     setMicError("");
+    reading.current = null;
+    setReadingId(null);
     if (listening) {
       const said = await listening.stop();
       setListening(null);
@@ -164,7 +193,8 @@ export default function ChatScreen({
           </div>
         ) : (
           chat.messages.map((m) => (
-            <Row key={m.id} message={m} last={m === lastAssistant} onRetry={() => void chat.retry()} initials={initials} />
+            <Row key={m.id} message={m} last={m === lastAssistant} onRetry={() => void chat.retry()} initials={initials}
+              reading={readingId === m.id} onRead={() => void readAloud(m)} />
           ))
         )}
         {chat.approvals.map((a) => (

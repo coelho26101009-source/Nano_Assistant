@@ -323,4 +323,9 @@ EN: dict[str, str] = {
     "Credenciais OAuth do Google Calendar em falta.": "Google Calendar OAuth credentials are missing.",
     "O Google Calendar ainda não está autorizado: abri a página de autorização no browser. Depois de aceitares, volta a abrir a agenda.": "Google Calendar isn't authorised yet: I opened the authorisation page in your browser. Once you accept, open the agenda again.",
     "Google Calendar falhou. Verifica a configuração do calendário.": "Google Calendar failed. Check the calendar setup.",
+    "As respostas faladas estão desligadas. Liga-as em Definições → Voz.": "Spoken replies are off. Turn them on in Settings → Voice.",
+    "A voz do NANO não está disponível neste PC.": "NANO's voice isn't available on this PC.",
+    "O NANO está a meio de uma conversa por voz.": "NANO is in the middle of a voice conversation.",
+    "Esta resposta não tem texto para ler.": "This answer has no text to read.",
+    "Não foi possível ler a resposta.": "Couldn't read the answer aloud.",
 }

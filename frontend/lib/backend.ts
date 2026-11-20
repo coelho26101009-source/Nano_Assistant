@@ -113,7 +113,7 @@ export type ProviderPayload = {
 
 export type ReadinessPayload = {
   agent: { state: string; pending_permissions: number };
-  voice: { state: string; blockers: string[]; enabled: boolean };
+  voice: { state: string; blockers: string[]; enabled: boolean; canSpeak?: boolean };
   wakeWord: { state: string; phrase?: string; modelStatus: string; error?: string };
   wakePhrase: {
     state: string; turnState?: string; phrase?: string;

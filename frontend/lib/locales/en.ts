@@ -1161,4 +1161,8 @@ export const EN: Record<string, string> = {
   "O telemóvel tem de mostrar este código:": "The phone must show this code:",
   "Código de ligação": "Connection code",
   "Permitido. A terminar a ligação no telemóvel…": "Allowed. Finishing the connection on the phone…",
+  "não foi possível iniciar": "couldn't start",
+  "Parar a leitura": "Stop reading",
+  "Ler em voz alta": "Read aloud",
+  "Não foi possível ler a resposta.": "Couldn't read the answer aloud.",
 };

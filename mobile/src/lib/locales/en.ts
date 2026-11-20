@@ -217,4 +217,6 @@ export const EN: Record<string, string> = {
   "O NANO do PC é de uma versão antiga. Atualiza o NANO no PC e gera um código novo.": "The NANO on your PC is an older version. Update NANO on the PC and create a new code.",
   "Código de ligação": "Connection code",
   "O NANO não conseguiu esquecer isto.": "NANO couldn't forget this.",
+  "Ler em voz alta": "Read aloud",
+  "Parar a leitura": "Stop reading",
 };

@@ -7,7 +7,7 @@
  * phones are listed and can be removed at any time. See core/mobile_link.py.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { call } from "../lib/backend";
+import { call, expose } from "../lib/backend";
 import { t } from "../lib/i18n";
 import { tj } from "../lib/tj";
 import { Button, MetricRow, Modal, Panel, StatusIndicator, Toggle } from "./ui";
@@ -62,6 +62,19 @@ function PairDialog({ onClose }: { onClose: (changed: boolean) => void }) {
   }, []);
 
   useEffect(() => { void start(); }, [start]);
+
+  // The phone's request also arrives as a push, so "Permitir" shows the moment
+  // the phone asks instead of on the next poll.
+  useEffect(() => {
+    if (!pairing) return;
+    expose((info?: { sessionId?: string; deviceName?: string; code?: string }) => {
+      if (!info || info.sessionId !== pairing.sessionId) return;
+      setState((prev) => (PAIR_ORDER[prev.state] <= PAIR_ORDER.pending
+        ? { state: "pending", deviceName: info.deviceName || prev.deviceName, code: info.code || prev.code }
+        : prev));
+    }, "on_mobile_pair_request");
+    return () => expose(() => undefined, "on_mobile_pair_request");
+  }, [pairing]);
 
   const done = PAIR_DONE.has(state.state);
   useEffect(() => {

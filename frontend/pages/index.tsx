@@ -451,6 +451,11 @@ export default function Home() {
       reloadThreads();
     }, "on_conversation_changed");
 
+    // An answer read aloud is over (finished, stopped, or replaced by a voice turn).
+    expose((messageId: string) => {
+      setReadingId((current) => (current === messageId ? null : current));
+    }, "on_read_aloud_end");
+
     expose(() => {
       setThinking(true);
       setListening(true);
@@ -800,7 +805,28 @@ export default function Home() {
     });
   }, [thinking, ready, messages, notify, sendMessage]);
 
+  /* "Ler em voz alta" under an answer. The backend reads it with NANO's voice
+     and says when it is over (on_read_aloud_end), so the button never claims
+     to be reading after the sound stopped. */
+  const [readingId, setReadingId] = useState<string | null>(null);
+  const readAnswer = useCallback((messageId: string, text: string) => {
+    setReadingId(messageId);
+    call<{ ok: boolean; detail?: string }>("read_aloud", messageId, text).then((result) => {
+      if (result?.ok) return;
+      setReadingId((current) => (current === messageId ? null : current));
+      notify(result?.detail || t("Não foi possível ler a resposta."), "error");
+    });
+  }, [notify]);
+  const stopReading = useCallback(() => {
+    setReadingId(null);
+    call("stop_voice");
+  }, []);
+  const readAloud = useMemo(() => (readiness?.voice.canSpeak
+    ? { readingId, read: readAnswer, stop: stopReading } : null),
+  [readiness?.voice.canSpeak, readingId, readAnswer, stopReading]);
+
   const stopWork = useCallback(() => {
+    setReadingId(null);
     call("stop_voice");
     const current = commandCenter?.current_task;
     if (current && !["COMPLETED", "FAILED", "CANCELLED"].includes(current.status)) {
@@ -827,7 +853,7 @@ export default function Home() {
       setThinking(false);
       setStatus("");
       if (result?.busy) notify(t("O NANO já está a ouvir"));
-      else notify(t("Voz: {0}", { 0: result?.error ?? "não foi possível iniciar" }), "error");
+      else notify(t("Voz: {0}", { 0: t("não foi possível iniciar") }), "error");
     });
     setListening(true);
     setThinking(true);
@@ -860,9 +886,10 @@ export default function Home() {
       setView("chat");
       if (result?.conversation) setActiveThreadId(result.conversation.id);
       reloadThreads();
-      notify(t("Nova conversa"));
+      // No "Nova conversa" toast: the empty home with its greeting already
+      // says it, and the toast covered the voice view when it opened next.
     });
-  }, [notify, reloadThreads]);
+  }, [reloadThreads]);
 
   /** Open a thread and rebuild the model context from it.
    *
@@ -1532,6 +1559,7 @@ export default function Home() {
                       onEdit={(text) => rerunLastTurn(text)}
                       onChoose={(reply) => sendMessage(reply)}
                       onOpenPanel={setPanelDoc}
+                      readAloud={readAloud}
                     />
                   )}
                   {/* The provider's own wait, counted down, until it is over. It

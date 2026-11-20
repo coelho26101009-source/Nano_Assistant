@@ -307,6 +307,16 @@ const PANEL_MIN_TEXT_CHARS = 1500;
  *  where there is no panel, such as the voice overlay. */
 const PanelContext = React.createContext<((doc: PanelDoc) => void) | null>(null);
 
+/** "Ler em voz alta": which answer is being read, and how to start or stop.
+ *  Null where NANO's voice can't speak (spoken replies off or not installed),
+ *  so the button is not offered at all rather than failing when pressed. */
+export type ReadAloud = {
+  readingId: string | null;
+  read: (messageId: string, text: string) => void;
+  stop: () => void;
+};
+const ReadAloudContext = React.createContext<ReadAloud | null>(null);
+
 /** A short title for an answer: its first heading, else its first words. */
 function titleOf(text: string): string {
   const heading = /^#{1,3}\s+(.+)$/m.exec(text)?.[1];
@@ -690,6 +700,7 @@ function MessageBubble({
   const showActions = Boolean(text) && !message.streaming && !editing;
   const openPanel = React.useContext(PanelContext);
   const panelable = Boolean(openPanel) && !isUser && text.length >= PANEL_MIN_TEXT_CHARS;
+  const readAloud = React.useContext(ReadAloudContext);
   // The latest answer keeps its actions visible, as in every chat app; older
   // turns reveal theirs on hover and on keyboard focus.
   const pinned = Boolean(onRetry);
@@ -762,6 +773,19 @@ function MessageBubble({
           >
             <Icon name={copied ? "check" : "copy"} size={15} />
           </button>
+          {readAloud && !isUser && (
+            readAloud.readingId === message.id ? (
+              <button type="button" className="msg__action msg__action--on" onClick={readAloud.stop}
+                      aria-label={t("Parar a leitura")} title={t("Parar a leitura")}>
+                <Icon name="stop" size={13} fill />
+              </button>
+            ) : (
+              <button type="button" className="msg__action" onClick={() => readAloud.read(message.id, text)}
+                      aria-label={t("Ler em voz alta")} title={t("Ler em voz alta")}>
+                <Icon name="speaker" size={15} />
+              </button>
+            )
+          )}
           {panelable && openPanel && (
             <button type="button" className="msg__action"
                     onClick={() => openPanel({ kind: "text", title: titleOf(text), body: text })}
@@ -843,9 +867,11 @@ export function greeting(name?: string | null, now: Date = new Date()): string {
 
 export function Conversation({
   messages, status, thinking, userName, connecting = false, onRetry, onEdit, onChoose, advanced = false,
-  onOpenPanel,
+  onOpenPanel, readAloud = null,
 }: {
   messages: Message[];
+  /** Read an answer aloud; null when NANO's voice can't speak. */
+  readAloud?: ReadAloud | null;
   /** Open a long answer or code block in the side panel. */
   onOpenPanel?: (doc: PanelDoc) => void;
   /** Modo avançado: show each answer's technical details. */
@@ -938,6 +964,7 @@ export function Conversation({
 
   return (
     <PanelContext.Provider value={onOpenPanel ?? null}>
+    <ReadAloudContext.Provider value={readAloud}>
     <div className="conversation" role="log" aria-live="polite" aria-label={t("Conversa")}
          ref={scrollRef} onScroll={onScroll}>
       <div className="conversation__inner">
@@ -974,6 +1001,7 @@ export function Conversation({
         </button>
       )}
     </div>
+    </ReadAloudContext.Provider>
     </PanelContext.Provider>
   );
 }

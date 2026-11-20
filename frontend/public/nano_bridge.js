@@ -82,9 +82,6 @@
   function on_voice_exchange(turnId, userText, assistantText) { return dispatch("on_voice_exchange", [turnId, userText, assistantText]); }
   eel.expose(on_voice_exchange, "on_voice_exchange");
 
-  function on_voice_state(state, detail) { return dispatch("on_voice_state", [state, detail]); }
-  eel.expose(on_voice_state, "on_voice_state");
-
   // Which phase of a voice turn Nano is in, so the UI can narrate it.
   function on_voice_phase(phase, detail) { return dispatch("on_voice_phase", [phase, detail]); }
   eel.expose(on_voice_phase, "on_voice_phase");
@@ -105,5 +102,17 @@
   function on_confirm_resolved(requestId) { return dispatch("on_confirm_resolved", [requestId]); }
   eel.expose(on_confirm_resolved, "on_confirm_resolved");
 
-  console.info("[nano-bridge] ready: 14 Python -> UI callbacks registered.");
+  // The conversation NANO holds was changed on the paired phone.
+  function on_conversation_changed(activeId, source) { return dispatch("on_conversation_changed", [activeId, source]); }
+  eel.expose(on_conversation_changed, "on_conversation_changed");
+
+  // A phone that read the QR code asks to pair: the dialog asks at once.
+  function on_mobile_pair_request(info) { return dispatch("on_mobile_pair_request", [info]); }
+  eel.expose(on_mobile_pair_request, "on_mobile_pair_request");
+
+  // An answer read aloud finished, was stopped or was replaced.
+  function on_read_aloud_end(messageId) { return dispatch("on_read_aloud_end", [messageId]); }
+  eel.expose(on_read_aloud_end, "on_read_aloud_end");
+
+  console.info("[nano-bridge] ready: 17 Python -> UI callbacks registered.");
 })();

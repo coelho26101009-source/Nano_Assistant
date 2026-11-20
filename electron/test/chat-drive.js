@@ -287,7 +287,7 @@ app.whenReady().then(async () => {
       migration: { ok: true }, longTermEnabled: true, captureEnabled: true,
       documentsSupported: false, documentsNote: '' }),
     get_system_readiness: () => ({ agent: { state: 'READY', pending_permissions: 0 },
-      voice: { state: 'READY', blockers: [], enabled: true },
+      voice: { state: 'READY', blockers: [], enabled: true, canSpeak: true },
       wakeWord: { state: 'DISABLED', modelStatus: '' }, wakePhrase: { state: 'DISABLED' },
       model: { state: 'READY', local: { model: 'qwen3:8b', online: true, modelReady: true, enabled: true },
                cloud: { model: 'openai/gpt-oss-20b', configured: true }, provider: 'google' },
@@ -298,6 +298,8 @@ app.whenReady().then(async () => {
     /* send_message returns immediately; the ANSWER arrives through the exposed
        callbacks, exactly as the real backend delivers it. */
     send_message: () => ({ ok: true }),
+    read_aloud: (id) => ({ ok: true, id }),
+    stop_voice: () => ({ ok: true }),
   };
 
   const handler = (name) => (...args) => {
@@ -391,6 +393,29 @@ app.whenReady().then(async () => {
     await sleep(500);
     ok('a finished turn shows no thinking indicator', countThinking() === 0,
        'indicators=' + countThinking());
+
+    /* "LER EM VOZ ALTA" under an answer (never under the user's own message).
+       The button turns into "Parar a leitura" while NANO reads, and goes back
+       only when the backend says the reading is over. */
+    const lastAnswer = () => qa('.msg--assistant').slice(-1)[0];
+    const readButton = () => lastAnswer()?.querySelector('button[aria-label="Ler em voz alta"]');
+    const stopButton = () => lastAnswer()?.querySelector('button[aria-label="Parar a leitura"]');
+    ok('a finished answer offers "Ler em voz alta"', !!readButton(),
+       [...(lastAnswer()?.querySelectorAll('.msg__action') || [])].map((b) => b.getAttribute('aria-label')).join(', '));
+    ok("the user's own message has no read-aloud button",
+       !qa('.msg--user').some((el) => el.querySelector('button[aria-label="Ler em voz alta"]')));
+    readButton()?.click();
+    await sleep(250);
+    const readCall = report.calls.filter((c) => c.name === 'read_aloud').slice(-1)[0];
+    ok('pressing it asks the backend to read that answer',
+       !!readCall && /Em que posso ajudar/.test(String(readCall.args[1] || '')),
+       JSON.stringify(readCall?.args || null));
+    ok('while reading, the button is "Parar a leitura"',
+       !!stopButton() && stopButton().classList.contains('msg__action--on') && !readButton());
+    exposed['on_read_aloud_end']?.(readCall?.args?.[0]);
+    await sleep(250);
+    ok('when the backend says the reading is over, it is "Ler em voz alta" again',
+       !!readButton() && !stopButton());
 
     /* ---- a turn that is still pending when the user leaves the thread ----
        The stream events carry a turn id and nothing about WHICH conversation

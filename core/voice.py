@@ -1103,10 +1103,11 @@ class VoiceEngine:
             self.session.error(str(exc))
             return None
 
-    async def speak(self, text: str) -> bool:
+    async def speak(self, text: str, limit: int | None = None) -> bool:
+        """Speak ``text``. ``limit`` overrides the spoken-reply cut (SPEECH_LIMIT)."""
         if not self.enabled or not text or not text.strip():
             return False
-        spoken = speech_text(text)
+        spoken = speech_text(text, limit=SPEECH_LIMIT if limit is None else limit)
         if not spoken:
             return False
         self.session.speaking()

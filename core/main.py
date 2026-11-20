@@ -53,7 +53,7 @@ from core.knowledge_graph import NODE_TYPES, RELATIONS
 from core.long_term_memory import KINDS as MEMORY_KINDS
 from core.logger import setup_logger
 from core.local_runtime import choose_model
-from core.voice import VoiceEngine, VoiceRuntime
+from core.voice import VoiceEngine, VoiceRuntime, VoiceSessionState, speech_text
 from core import wake_phrase as wake_phrase_mod
 from core import voice_language
 from core import screen_watch
@@ -570,6 +570,90 @@ def stop_voice():
         logger.error("Falha ao parar a voz: %s", exc)
         return {"ok": False, "error": "stop_failed"}
     return {"ok": True, "voiceStillAvailable": True}
+
+
+# ==========================================================================
+#  READ ALOUD  (the "Ler em voz alta" button under an answer)
+# ==========================================================================
+# Typed answers are never spoken on their own (typed_chat_tts is off by
+# default, on purpose). This is the explicit request for ONE answer, the way
+# every premium chat app offers it. It uses the same voice, the same privacy
+# rule (only while spoken replies are on: the text goes to the speech service
+# PRIVACY.md names) and the same Stop as a spoken reply.
+
+#: Longest stretch read in one go, about four minutes of speech. A spoken
+#: reply is cut at 700 characters because it should be short; an answer the
+#: user asked to hear is read much further, still ending on a full sentence.
+READ_ALOUD_LIMIT = 4000
+_READ_ALOUD_LOCK = threading.Lock()
+#: The answer being read now, or None. Only the reading that is still current
+#: may announce its end, so a reading replaced by another stays silent.
+_reading_id: str | None = None
+
+
+@eel.expose
+def read_aloud(message_id: str, text: str) -> dict:
+    """Read one answer aloud. Returns at once; the end arrives as on_read_aloud_end."""
+    global _reading_id
+    voice_cfg = CONFIG.get("voice", {})
+    if not voice.enabled or not voice_cfg.get("tts_enabled", True):
+        return {"ok": False, "error": "voice_off",
+                "detail": tr("As respostas faladas estão desligadas. Liga-as em Definições → Voz.")}
+    if not getattr(voice.tts_provider, "online", False):
+        return {"ok": False, "error": "tts_unavailable",
+                "detail": tr("A voz do NANO não está disponível neste PC.")}
+    if voice_runtime.turn_status().get("active"):
+        # NANO would talk over a voice conversation, and hear itself.
+        return {"ok": False, "error": "voice_busy",
+                "detail": tr("O NANO está a meio de uma conversa por voz.")}
+    spoken = speech_text(str(text or ""), limit=READ_ALOUD_LIMIT)
+    if not spoken:
+        return {"ok": False, "error": "nothing_to_read",
+                "detail": tr("Esta resposta não tem texto para ler.")}
+    reading = str(message_id or "") or f"read-{time.time_ns()}"
+    with _READ_ALOUD_LOCK:
+        previous, _reading_id = _reading_id, reading
+    if previous is not None:
+        # One answer at a time: the new request replaces the one being read.
+        voice.stop_playback()
+    try:
+        future = asyncio.run_coroutine_threadsafe(
+            voice.speak(spoken, limit=READ_ALOUD_LIMIT), _get_or_create_loop())
+    except Exception:
+        logger.exception("Falha ao começar a ler a resposta")
+        with _READ_ALOUD_LOCK:
+            if _reading_id == reading:
+                _reading_id = None
+        return {"ok": False, "error": "read_failed", "detail": tr("Não foi possível ler a resposta.")}
+    future.add_done_callback(lambda _done: _read_aloud_finished(reading))
+    return {"ok": True, "id": reading}
+
+
+def _read_aloud_finished(reading: str) -> None:
+    global _reading_id
+    with _READ_ALOUD_LOCK:
+        if _reading_id != reading:
+            return  # replaced by a newer reading, or stopped for a voice turn
+        _reading_id = None
+    # VoiceEngine.speak leaves the session on SPEAKING; a voice turn resets it
+    # itself, this reading has to.
+    if voice.session.state == VoiceSessionState.SPEAKING:
+        voice.session.cancel()
+    _notify_ui("on_read_aloud_end", reading)
+
+
+def _stop_read_aloud() -> None:
+    """Silence an answer being read, before something else needs the voice."""
+    global _reading_id
+    with _READ_ALOUD_LOCK:
+        reading, _reading_id = _reading_id, None
+    if reading is None:
+        return
+    try:
+        voice.stop_playback()
+    except Exception:
+        logger.debug("stopping the reading failed", exc_info=True)
+    _notify_ui("on_read_aloud_end", reading)
 
 @eel.expose
 def confirm_action(request_id: str, confirmed: bool) -> dict:
@@ -2919,6 +3003,9 @@ def get_system_readiness() -> dict:
             "state": voice_status.get("readiness", "UNKNOWN"),
             "blockers": voice_status.get("blockers", []),
             "enabled": voice_status.get("enabled", False),
+            # "Ler em voz alta" needs only the voice, not the microphone.
+            "canSpeak": bool(voice.enabled and CONFIG.get("voice", {}).get("tts_enabled", True)
+                             and getattr(voice.tts_provider, "online", False)),
         },
         "wakeWord": {
             "state": wake_state,
@@ -3604,6 +3691,9 @@ def start_voice_turn(source: str = "ui") -> dict:
     answer without waiting for the dispatch to land.
     """
     status = voice_runtime.turn_status()
+    if not status.get("active"):
+        # An answer being read aloud would be heard by the microphone.
+        _stop_read_aloud()
     if status.get("active"):
         logger.info("Turno de voz de %r recusado: %r já está activo.", source, status.get("source"))
         return {"ok": False, "accepted": False, "busy": True,

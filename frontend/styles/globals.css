@@ -1117,6 +1117,10 @@ kbd {
   transition: background var(--transition), color var(--transition);
 }
 .msg__action:hover { background: var(--surface-active); color: var(--text); }
+/* An answer being read aloud: NANO's voice is a working state (teal), and the
+   row stays visible while it lasts, on older turns too. */
+.msg__action--on, .msg__action--on:hover { color: var(--information); background: var(--information-soft); }
+.msg__actions:has(.msg__action--on) { opacity: 1; }
 
 .msg__tools { margin-bottom: var(--sp-2); min-width: 0; }
 

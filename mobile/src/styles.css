@@ -347,6 +347,8 @@ button.row:active { background: var(--surface-hover); }
 .msg__body blockquote { border-left: 3px solid var(--border-strong); padding-left: 12px; color: var(--text-secondary); }
 .msg__actions { display: flex; gap: 2px; margin-top: 4px; margin-left: -10px; }
 .msg__actions .icon-btn { width: 40px; height: 40px; color: var(--text-dim); }
+/* An answer being read aloud: NANO's voice is a working state (teal). */
+.msg__actions .icon-btn--on { color: var(--information); background: var(--information-soft); }
 .thinking {
   color: var(--text-muted); font-size: 15px;
   background: linear-gradient(90deg, var(--text-dim) 0%, var(--text-primary) 50%, var(--text-dim) 100%);
