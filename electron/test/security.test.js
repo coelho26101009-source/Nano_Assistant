@@ -34,7 +34,7 @@ const ALLOWED_PRELOAD_KEYS = [
   'minimize', 'toggleMaximize', 'hide', 'quit',
   'getWindowState', 'onWindowState',
   'getDesktopStatus', 'retryShortcut',
-  'setOverlayEnabled', 'setAutoLaunch',
+  'setOverlayEnabled', 'setIslandAlwaysVisible', 'setAutoLaunch',
   'getUpdateStatus', 'onUpdateState', 'checkForUpdates', 'restartToUpdate',
   'setAutoUpdate', 'openUpdatePage',
 ];
@@ -117,11 +117,32 @@ test('a non-function subscriber is ignored rather than crashing the page', () =>
 
 suite('overlay preload surface');
 
-test('the overlay can only receive a state', () => {
+test('the island receives a state and can only say "pointer", "open" and a music button', () => {
   const { record } = loadUnderStub(path.join('overlay', 'preload.js'));
   assert.deepStrictEqual(Object.keys(record.exposed), ['nanoOverlay']);
-  assert.deepStrictEqual(Object.keys(record.exposed.nanoOverlay), ['onState'],
-    'the overlay is a status light: it must have no way to send anything back');
+  assert.deepStrictEqual(Object.keys(record.exposed.nanoOverlay).sort(), ['media', 'onState', 'open', 'setPointer'],
+    'the island is a status light with one door to NANO and three music buttons: nothing else may go back');
+  assert.ok(Object.isFrozen(record.exposed.nanoOverlay));
+});
+
+test('the island\'s two signals use fixed channels and carry no chosen data', () => {
+  const stub = stubElectron();
+  try {
+    loadFresh(path.join(__dirname, '..', 'overlay', 'preload.js'));
+    const api = stub.record.exposed.nanoOverlay;
+    api.setPointer('nano:quit');
+    api.setPointer(true);
+    api.open('nano:quit', { approve: true });
+    api.media('next');
+    for (const hostile of ['shutdown', 'nano:quit', { action: 'next' }, 'play_pause ', undefined]) api.media(hostile);
+    assert.deepStrictEqual(stub.record.rendererSend.map((c) => c.channel),
+      ['nano:island-pointer', 'nano:island-pointer', 'nano:island-open', 'nano:island-media']);
+    assert.deepStrictEqual(stub.record.rendererSend.map((c) => c.args),
+      [[false], [true], [], ['next']], 'a boolean, nothing for open, and one of three fixed words');
+    assert.strictEqual(stub.record.rendererInvoke.length, 0);
+  } finally {
+    stub.restore();
+  }
 });
 
 /* ── main.js ────────────────────────────────────────────────────────────── */
@@ -132,6 +153,7 @@ suite('main process IPC surface');
 const ALLOWED_IPC = [
   'nano:minimize', 'nano:toggle-maximize', 'nano:hide',
   'nano:window-state', 'nano:desktop-status', 'nano:set-overlay-enabled',
+  'nano:set-island-always-visible', 'nano:island-pointer', 'nano:island-open', 'nano:island-media',
   'nano:set-auto-launch', 'nano:retry-shortcut', 'nano:quit',
   'nano:update-status', 'nano:update-check', 'nano:update-install',
   'nano:set-auto-update', 'nano:open-update-page',

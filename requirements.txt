@@ -14,3 +14,10 @@ PyAudio>=0.2.14,<1
 # between the phone and the PC, and the pairing QR code. segno is pure Python.
 cryptography>=46,<51
 segno>=1.6,<2
+# The NANO island's music (core/now_playing.py): the song playing on this PC,
+# read from Windows' own media controls (the media flyout's source) through the
+# WinRT projection. Windows only, local only; nothing is uploaded.
+winrt-runtime>=3,<4; sys_platform == "win32"
+winrt-Windows.Foundation>=3,<4; sys_platform == "win32"
+winrt-Windows.Media.Control>=3,<4; sys_platform == "win32"
+winrt-Windows.Storage.Streams>=3,<4; sys_platform == "win32"

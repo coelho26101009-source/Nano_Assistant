@@ -122,9 +122,9 @@ test('the overlay stays out of the taskbar and off the focus path', () => {
   assert.strictEqual(overlay.options.show, false, 'it must start hidden');
 });
 
-test('the voice capsule is wider and lower without changing window behavior', () => {
+test('the island window fits its largest shape without changing window behavior', () => {
   const { shell, overlay } = bootedShell();
-  assert.deepStrictEqual(shell.OVERLAY_SIZE, { width: 548, height: 84 });
+  assert.deepStrictEqual(shell.OVERLAY_SIZE, { width: 540, height: 210 });
   assert.strictEqual(overlay.options.width, shell.OVERLAY_SIZE.width);
   assert.strictEqual(overlay.options.height, shell.OVERLAY_SIZE.height);
   assert.strictEqual(overlay.options.resizable, false);

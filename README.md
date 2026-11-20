@@ -133,14 +133,15 @@ mostra dados reais nem chaves.
   <img src="docs/assets/screenshots/nano-phone-agenda.png" alt="App Android do NANO: agenda com lembretes e eventos" width="260" />
 </p>
 
-### Overlay de voz
+### A ilha do NANO
 
 <p align="center">
-  <img src="docs/assets/screenshots/nano-overlay.png" alt="Cápsula de voz NANO no estado de escuta, simulada em Electron sobre fundo claro" width="760" />
+  <img src="docs/assets/screenshots/nano-island.png" alt="A ilha do NANO: a ouvir, a pesquisar na web, à espera de uma aprovação, e o leitor de música" width="760" />
 </p>
 
-O estado de escuta no modo de voz e na cápsula foi simulado para mostrar a
-apresentação; não representa um teste humano do microfone. As capturas do
+Os estados da ilha (e a música, com uma capa e um título de demonstração) foram
+simulados em Electron para mostrar a apresentação; não representam um teste
+humano do microfone nem do Spotify. As capturas do
 telemóvel vêm da app a correr com dados de demonstração, sem ligação a um PC
 real.
 
@@ -377,13 +378,18 @@ convertido em áudio. "Local" refere-se ao modelo de linguagem, não a silêncio
 total de rede. Desliga as respostas faladas em Definições → Voz se quiseres que
 nada saia. Ver [PRIVACY.md](PRIVACY.md).
 
-### Overlay de voz
+### A ilha do NANO (Modo ambiente)
 
-O overlay de voz é uma cápsula Electron própria, sempre no topo e independente
-da janela principal. Mostra fases reais de escuta, transcrição, processamento,
-fala, ocupação e erro; continua a funcionar quando a janela principal está
-minimizada ou escondida no tray. A janela recebe estados do backend, sem
-inventar uma transcrição ou progresso que ele não tenha enviado.
+A antiga cápsula de voz passou a ser a **ilha**: uma pílula preta no topo do
+ecrã, sempre por cima das outras aplicações e independente da janela principal,
+que muda de forma com o que o NANO está a fazer: a ouvir (com o tempo a
+contar), a pensar, a falar, a usar uma ferramenta, à espera de uma aprovação,
+um lembrete, um aviso do PC, um download, a música que está a tocar (capa,
+título, progresso e botões anterior / pausa / seguinte, lidos dos controlos de
+multimédia do Windows) e o volume quando muda. Em repouso fica pequena e pronta
+("Modo ambiente", desligável). Clicar abre o NANO; aprovações decidem-se sempre
+no NANO, nunca na ilha. Cada estado vem de um evento real do backend. Ver
+[DESKTOP.md](docs/architecture/DESKTOP.md#the-nano-island-modo-ambiente).
 
 Documentação: [Voice](docs/VOICE.md) · [Speech Accuracy](docs/architecture/SPEECH_ACCURACY.md)
 
@@ -606,7 +612,7 @@ Isto não é cobertura de todo o comportamento possível da UI. O que o job de
 Chromium cobre são quatro harnesses conduzidos a partir do pytest —
 `render-check` (layout de 1920 até 940×620), `chat-drive`, `settings-drive` e
 `memory-render` — mais os contratos de UI que os acompanham. O que **não** corre
-no CI: `csp-check`, `overlay-live`, `overlay-visual` e
+no CI: `csp-check`, `overlay-live`, `island-visual` e
 `focus-trap-render`, que pertencem ao gate manual de release, o caminho de
 renderização em Windows, e a verificação da
 aplicação real. Ver [`docs/RELEASING.md`](docs/RELEASING.md).

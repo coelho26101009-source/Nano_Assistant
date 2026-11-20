@@ -12,7 +12,7 @@ import type {
 } from "../lib/backend";
 import { call } from "../lib/backend";
 import {
-  retryShortcut, setAutoLaunch, setOverlayEnabled, useDesktopStatus,
+  retryShortcut, setAutoLaunch, setIslandAlwaysVisible, setOverlayEnabled, useDesktopStatus,
 } from "../lib/desktop";
 import {
   AboutSection, EraseAllDataPanel, MemorySection, PcControlSection,
@@ -89,7 +89,7 @@ function DesktopPanel() {
   if (!status) {
     return (
       <Panel title={t("Modo desktop")}>
-        <p className="muted" style={{ fontSize: 13 }}>{tj("Esta janela está a correr no {0}, não na aplicação de ambiente de trabalho. O atalho global, o tabuleiro do sistema e o painel de voz só existem no NANO Desktop.", { 0: <strong>{t("navegador")}</strong> })}</p>
+        <p className="muted" style={{ fontSize: 13 }}>{tj("Esta janela está a correr no {0}, não na aplicação de ambiente de trabalho. O atalho global, o tabuleiro do sistema e a ilha do NANO só existem no NANO Desktop.", { 0: <strong>{t("navegador")}</strong> })}</p>
         <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>{tj("Abre o NANO com {0} para os ativar.", { 0: <code>NANO_DESKTOP.bat</code> })}</p>
       </Panel>
     );
@@ -131,11 +131,20 @@ function DesktopPanel() {
       <div style={{ height: 12 }} />
 
       <Toggle
-        label={t("Mostrar o painel de voz")}
-        hint={t("Uma pequena janela sobre as outras aplicações a dizer o que o NANO está a fazer durante um turno de voz.")}
+        label={t("Mostrar a ilha do NANO")}
+        hint={t("Uma pílula preta no topo do ecrã, por cima das outras aplicações, que muda de forma para mostrar o que o NANO está a fazer: a ouvir, a pensar, a falar, a usar uma ferramenta, à espera da tua aprovação, um lembrete ou um aviso do PC. Clicar nela abre o NANO.")}
         checked={status.overlayEnabled}
         onChange={(value) => run(() => setOverlayEnabled(value))}
       />
+      {status.islandAlwaysVisible !== undefined && (
+        <Toggle
+          label={t("Modo ambiente: ilha sempre no ecrã")}
+          hint={t("Quando o NANO não está a fazer nada, a ilha fica pequena no topo do ecrã, pronta. Desligado, só aparece quando há alguma coisa para mostrar.")}
+          checked={status.islandAlwaysVisible}
+          disabled={!status.overlayEnabled || busy}
+          onChange={(value) => run(() => setIslandAlwaysVisible(value))}
+        />
+      )}
       <Toggle
         label={t("Iniciar com o Windows")}
         hint={
@@ -1087,7 +1096,7 @@ export default function SettingsPage({
               <Panel title={t("Arranque")}>
                 <p className="muted" style={{ fontSize: 13 }}>{tj("O NANO Desktop arranca com o {0}: o Electron valida o Python, arranca o motor, espera que fique realmente pronto e só então abre a janela. Nenhum separador do navegador é aberto.", { 0: <code>NANO_DESKTOP.bat</code> })}</p>
                 <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>
-                  {tj("O {0} continua a existir para desenvolvimento e como alternativa: abre a mesma interface no navegador, sem atalho global, tabuleiro nem painel de voz.", { 0: <code>NANO.bat</code> })}</p>
+                  {tj("O {0} continua a existir para desenvolvimento e como alternativa: abre a mesma interface no navegador, sem atalho global, tabuleiro nem a ilha do NANO.", { 0: <code>NANO.bat</code> })}</p>
               </Panel>
             )}
           </div>

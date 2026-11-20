@@ -40,6 +40,7 @@ from core import attachments as chat_attachments
 from core import i18n
 from core import vision
 from core import proactive
+from core import now_playing
 from core import local_setup
 from core import mobile_link, mobile_server
 from core.i18n import tr
@@ -2221,6 +2222,8 @@ def set_language(value: str = "system") -> dict:
     if isinstance(result, dict) and result.get("ok") is False:
         return {**result, **i18n.describe()}
     _apply_voice_language()
+    # The desktop island and tray follow the window's language, live.
+    _desktop_emit("ui_language", {"lang": i18n.current()})
     return {"ok": True, **i18n.describe()}
 
 
@@ -3331,6 +3334,32 @@ def _mobile_confirm_listener(phase: str, request_id: str, message, meta) -> bool
 guardrails.add_confirm_listener(_mobile_confirm_listener)
 
 
+def _island_confirm_listener(phase: str, request_id: str, message, meta) -> bool:
+    """Tell the desktop island that NANO is waiting for an approval.
+
+    The island only SAYS so (the action and its target, bounded) and offers to
+    open NANO; it has no way to answer. That is why this returns False: the
+    request has not been "shown" anywhere it can be decided, so a missing
+    window still fails safe in guardrails.request_from_ui.
+    """
+    if _DESKTOP_BRIDGE is None:
+        return False
+    if phase == "resolved":
+        _desktop_emit("approval", {"phase": "resolved", "id": str(request_id)})
+        return False
+    meta = meta if isinstance(meta, dict) else {}
+    _desktop_emit("approval", {
+        "phase": "request",
+        "id": str(request_id),
+        "action": str(meta.get("action") or "")[:60],
+        "target": str(meta.get("target") or "")[:60],
+    })
+    return False
+
+
+guardrails.add_confirm_listener(_island_confirm_listener)
+
+
 def _text(value, limit: int) -> str:
     return str(value if value is not None else "")[:limit]
 
@@ -3647,19 +3676,41 @@ def _from_phone(function, *args):
 
 def _emit_stream_start(msg_id: str, user_text: str | None = None):
     _notify_ui("on_stream_start", msg_id, user_text)
+    _desktop_emit("chat_activity", {"phase": "thinking"})
 
 def _emit_stream_status(msg_id: str, status: str):
     _notify_ui("on_stream_status", msg_id, status)
+    tools = _island_tools(status)
+    if tools:
+        _desktop_emit("chat_activity", {"phase": "working", "tools": tools})
 
 def _emit_stream_chunk(msg_id: str, chunk: str):
     _notify_ui("on_stream_chunk", msg_id, chunk)
 
 def _emit_stream_end(msg_id: str, result: dict):
     _notify_ui("on_stream_end", msg_id, result)
+    _desktop_emit("chat_activity", {"phase": "done"})
 
 def _emit_stream_error(msg_id: str, code: str, detail: str = ""):
     """A model/provider failure, as distinct from the bridge being down."""
     _notify_ui("on_stream_error", msg_id, {"code": code, "detail": detail})
+    _desktop_emit("chat_activity", {"phase": "error"})
+
+
+_ISLAND_TOOL_STATUS = re.compile(r"^\s*⚙️\s*(.+?)\.{3}\s*$")
+_ISLAND_TOOL_NAME = re.compile(r"^[A-Za-z0-9_.\-]{1,48}$")
+
+
+def _island_tools(status: str) -> list[str]:
+    """The tool names in a "⚙️ web_search, set_reminder..." status, for the
+    desktop island (electron/lib/island.js). Names only, and only names that
+    look like tool identifiers: a status that is a sentence (a provider
+    fallback, the local model notice) is not a tool step and shows nothing."""
+    match = _ISLAND_TOOL_STATUS.match(str(status or ""))
+    if not match:
+        return []
+    names = [name.strip() for name in match.group(1).split(",")]
+    return [name for name in names if _ISLAND_TOOL_NAME.match(name)][:4]
 
 def _emit_rate_limited(msg_id: str, info: dict):
     """Tell the UI it is rate-limited and for how long, never just 'Error'."""
@@ -4095,6 +4146,21 @@ def _register_reminder_notifier() -> bool:
     return True
 
 
+# The song playing on this PC and the system volume, for the desktop island
+# (core/now_playing.py). Started only when the desktop shell is attached.
+now_playing_watcher = now_playing.NowPlaying(emit=lambda event, payload: _desktop_emit(event, payload))
+
+
+def _ctl_media_control(args: dict) -> dict:
+    """The island's music buttons: previous, play/pause or next. Nothing else.
+
+    The same three transport commands a keyboard's media keys send; the policy
+    engine already treats pc.media.control as autonomous and reversible. The
+    action is checked against now_playing.MEDIA_ACTIONS whatever was sent.
+    """
+    return now_playing_watcher.control(str((args or {}).get("action") or ""))
+
+
 #: THE COMPLETE SET. Anything not named here is refused by the dispatcher.
 DESKTOP_OPERATIONS = {
     "ping": _ctl_ping,
@@ -4103,6 +4169,7 @@ DESKTOP_OPERATIONS = {
     "cancel_voice_turn": _ctl_cancel_voice_turn,
     "data_location": _ctl_data_location,
     "report_shortcut": _ctl_report_shortcut,
+    "media_control": _ctl_media_control,
     "shutdown": _ctl_shutdown,
 }
 
@@ -4115,6 +4182,7 @@ def _start_desktop_bridge() -> bool:
         return False
     _DESKTOP_BRIDGE = bridge
     DESKTOP_STATE["present"] = True
+    now_playing_watcher.start()
     return True
 
 
@@ -4427,6 +4495,7 @@ def shutdown() -> None:
         control.cancel()
     proactive_scheduler.stop()
     pc_alert_watcher.stop()
+    now_playing_watcher.stop()
     screen_watch.WATCHER.shutdown()
     if _MOBILE_SERVER is not None:
         try:
@@ -4658,7 +4727,8 @@ def main():
     # channel rather than by scraping stdout. The shell still verifies the
     # server itself before showing a window: this is an announcement, not a
     # readiness claim.
-    _desktop_emit("backend_started", {"port": port, "mode": str(args.mode).lower()})
+    _desktop_emit("backend_started", {"port": port, "mode": str(args.mode).lower(),
+                                      "lang": i18n.current()})
 
     # The control plane carries the whole approval surface -- confirm_action,
     # resolve_permission, set_emergency_stop -- over a WebSocket that eel does

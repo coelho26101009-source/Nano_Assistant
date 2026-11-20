@@ -44,6 +44,7 @@ const { execFile } = require('child_process');
 
 const { NanoBackend } = require('./lib/backend');
 const overlayState = require('./lib/overlay-state');
+const island = require('./lib/island');
 const notifications = require('./lib/notifications');
 const windowState = require('./lib/window-state');
 const { canonicalDataDir, shellStateFile } = require('./lib/paths');
@@ -90,9 +91,10 @@ if ((process.env.NANO_DISABLE_GPU === '1' || process.argv.includes('--disable-gp
   app.disableHardwareAcceleration();
 }
 
-// Room for the real status labels and a capped detail line. The panel is inset
-// 10 px horizontally and 8 px vertically for its shadow: 528 x 68 at full size.
-const OVERLAY_SIZE = { width: 548, height: 84 };
+// The island's window: room for its largest shape (the 440 x 176 music
+// player), a slight grow on hover and its shadow. Transparent and
+// click-through outside the pill, so the empty corners never get in the way.
+const OVERLAY_SIZE = { width: 540, height: 210 };
 
 /* ── Process state ──────────────────────────────────────────────────────── */
 
@@ -109,6 +111,15 @@ let saveBoundsTimer = null;
 let overlayReady = false;
 /** The last view that arrived before the renderer was ready. */
 let pendingOverlayView = null;
+/** What the island is showing, by layer (lib/island.js). */
+let islandStack = new island.IslandStack();
+let islandExpiryTimer = null;
+/** The last view sent to the island, so an unchanged view is not re-sent. */
+let islandLastSent = '';
+/** The resting pill only shows once NANO is really up. */
+let islandReady = false;
+/** 'en' or 'pt': the interface language the backend resolved. */
+let islandLanguage = null;
 let frontendReady = false;
 let lastErrorCode = null;
 /** Automatic updates (lib/updater.js). Created once the app is ready. */
@@ -141,7 +152,7 @@ function recordFailure(code) {
 const shortcutState = { accelerator: ACTIVATION_ACCELERATOR, registered: false, error: null };
 
 /** Persisted desktop-shell preferences. Not user data — that lives in DATA_DIR. */
-let shellState = { bounds: null, overlayEnabled: true, autoUpdate: true };
+let shellState = { bounds: null, overlayEnabled: true, islandAlwaysVisible: true, autoUpdate: true };
 
 function log(...parts) {
   console.log('[NANO]', ...parts);
@@ -161,6 +172,8 @@ function loadShellState() {
       shellState = {
         bounds: parsed.bounds && typeof parsed.bounds === 'object' ? parsed.bounds : null,
         overlayEnabled: parsed.overlayEnabled !== false,
+        // Modo ambiente: the resting pill stays on screen unless switched off.
+        islandAlwaysVisible: parsed.islandAlwaysVisible !== false,
         // On unless the person switched it off in Settings.
         autoUpdate: parsed.autoUpdate !== false,
       };
@@ -288,6 +301,7 @@ async function startBackend() {
     recordFailure('backend_exited');
     log(`O motor terminou inesperadamente (${code}).`);
     unregisterShortcut();
+    islandReady = false;
     hideOverlay(true);
     if (mainWindow && !mainWindow.isDestroyed()) {
       showStartupScreen(mainWindow, 'error', 'backend_exited');
@@ -340,6 +354,49 @@ function onBackendEvent(event, payload) {
   if (event === 'voice_turn_ended') {
     applyOverlayView(overlayState.fromTurnEnd(payload));
     return;
+  }
+  if (event === 'backend_started' || event === 'ui_language') {
+    if (payload && typeof payload.lang === 'string') {
+      islandLanguage = island.languageOf(payload.lang);
+      islandLastSent = '';
+      renderIsland();
+      refreshTrayMenu();
+    }
+    return;
+  }
+  if (event === 'chat_activity') {
+    const next = island.fromChatActivity(payload);
+    if (next) { islandStack.set('chat', next.view, next.ttl); renderIsland(); }
+    return;
+  }
+  if (event === 'approval') {
+    const data = payload || {};
+    if (data.phase === 'request') islandStack.approvalRequested(String(data.id || ''), data);
+    else if (data.phase === 'resolved') islandStack.approvalResolved(String(data.id || ''));
+    renderIsland();
+    return;
+  }
+  if (event === 'media') {
+    // What is playing on this PC (core/now_playing.py).
+    const next = island.fromMedia(payload);
+    if (next) islandStack.set('media', next.view, next.ttl);
+    else islandStack.clear('media');
+    // A new song opens the player for a moment -- unless a reminder or an
+    // alert is on screen, which matter more than a track change.
+    const card = payload && payload.changed === 'track' ? island.trackCard(payload) : null;
+    if (card && !islandStack.has('notice')) islandStack.set('notice', card.view, card.ttl);
+    else if (!next && islandStack.peek('notice') && islandStack.peek('notice').state === 'media') islandStack.clear('notice');
+    renderIsland();
+    return;
+  }
+  if (event === 'volume') {
+    const next = island.fromVolume(payload);
+    if (next) { islandStack.set('hud', next.view, next.ttl); renderIsland(); }
+    return;
+  }
+  if (event === 'reminder_due' || event === 'nano_notice') {
+    const next = event === 'reminder_due' ? island.fromReminder(payload) : island.fromNotice(payload);
+    if (next) { islandStack.set('notice', next.view, next.ttl); renderIsland(); }
   }
   const toast = notifications.fromBackendEvent(event, payload);
   if (toast) showNativeNotification(toast);
@@ -442,8 +499,9 @@ function createMainWindow(port) {
   mainWindow.on('unmaximize', reportWindowState);
   mainWindow.on('enter-full-screen', reportWindowState);
   mainWindow.on('leave-full-screen', reportWindowState);
-  mainWindow.on('focus', reportWindowState);
-  mainWindow.on('blur', reportWindowState);
+  mainWindow.on('focus', () => { reportWindowState(); renderIsland(); });
+  mainWindow.on('blur', () => { reportWindowState(); renderIsland(); });
+  mainWindow.on('hide', () => renderIsland());
 
   mainWindow.on('resize', rememberBoundsSoon);
   mainWindow.on('move', rememberBoundsSoon);
@@ -751,7 +809,7 @@ function currentWindowState() {
   };
 }
 
-/* ── Voice overlay ──────────────────────────────────────────────────────── */
+/* ── The NANO island (the floating pill; it replaced the voice capsule) ─── */
 
 function createOverlayWindow() {
   overlayWindow = new BrowserWindow({
@@ -768,9 +826,10 @@ function createOverlayWindow() {
     skipTaskbar: true,
     alwaysOnTop: true,
     // Never takes focus. Pressing the shortcut inside a game or an editor must
-    // not pull the user out of what they are doing.
+    // not pull the user out of what they are doing. A click on the pill still
+    // arrives (it opens NANO) without the island ever becoming focused.
     focusable: false,
-    acceptFirstMouse: false,
+    acceptFirstMouse: true,
     hasShadow: false,
     backgroundColor: '#00000000',
     webPreferences: {
@@ -785,13 +844,15 @@ function createOverlayWindow() {
 
   // A state sent before the page has loaded is dropped on the floor, and the
   // window then shows with its default markup -- which renders nothing,
-  // because the panel starts at data-visible="false". That is a real race on
+  // because the island starts at data-visible="false". That is a real race on
   // the FIRST voice turn after launch. Remember the last view and replay it
   // the moment the renderer is ready.
   overlayReady = false;
+  islandLastSent = '';
   overlayWindow.webContents.once('did-finish-load', () => {
     overlayReady = true;
-    if (pendingOverlayView) applyOverlayView(pendingOverlayView);
+    // Whatever arrived meanwhile is in the stack already: draw it now.
+    renderIsland();
   });
 
   overlayWindow.loadFile(path.join(__dirname, 'overlay', 'overlay.html'));
@@ -799,6 +860,8 @@ function createOverlayWindow() {
   // in the foreground -- is the one moment it is invisible.
   overlayWindow.setAlwaysOnTop(true, 'screen-saver');
   overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  // Click-through, but mouse moves are still forwarded (Windows, macOS) so
+  // the page can tell when the pointer is over the pill itself.
   overlayWindow.setIgnoreMouseEvents(true, { forward: true });
 
   overlayWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -812,45 +875,81 @@ function positionOverlay() {
   const cursor = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(cursor);
   // Electron uses display work-area DIPs here, including on scaled monitors.
-  // Keep the capsule reachable on unusually narrow secondary displays.
+  // Keep the island reachable on unusually narrow secondary displays.
   const size = {
     width: Math.min(OVERLAY_SIZE.width, Math.max(1, display.workArea.width - 24)),
     height: OVERLAY_SIZE.height,
   };
-  const { x, y } = windowState.overlayPosition(display.workArea, size);
+  const { x, y } = windowState.islandPosition(display.workArea, size);
   overlayWindow.setBounds({ ...size, x, y });
 }
 
 /**
- * Show the overlay for one view.
+ * A voice view (lib/overlay-state.js) goes on the island's voice layer.
  *
- * INDEPENDENCE IS THE WHOLE POINT. Nothing in here reads mainWindow, and
- * nothing in here restores or focuses it: the overlay is a separate top-level
- * BrowserWindow with no `parent:` option, so Windows never minimises or hides
- * it alongside the main window. Measured in all three states -- main visible,
- * minimised, and hidden to the tray -- the overlay shows identically.
- *
- * The main window's state IS logged next to every show, though. Not because
- * the code consults it, but because a future correlation between the two is
- * exactly the bug this function must never grow, and a log line is the only
- * thing that turns that from an opinion into evidence.
+ * Kept under its old name: the voice turn, the hotkey's busy answer and the
+ * "not ready" answer all arrive here, exactly as they did for the capsule.
  */
 function applyOverlayView(view) {
   if (!view) return;
-  clearTimeout(overlayHideTimer);
+  const next = island.fromVoiceView(view);
+  if (next) islandStack.set('voice', next.view, next.ttl);
+  else islandStack.clear('voice');
+  renderIsland();
+}
 
-  if (!view.visible) { hideOverlay(); return; }
+/** What the island should show right now, translated, or null. */
+function currentIslandView() {
+  const mainFocused = Boolean(mainWindow && !mainWindow.isDestroyed()
+    && mainWindow.isVisible() && mainWindow.isFocused());
+  const view = islandStack.current({
+    mainFocused,
+    alwaysVisible: shellState.islandAlwaysVisible && islandReady && !isQuitting,
+  });
+  return view ? island.translate(view, islandLanguage || systemLanguage()) : null;
+}
+
+function systemLanguage() {
+  try { return island.languageOf(app.getLocale()); } catch (_) { return 'en'; }
+}
+
+/**
+ * Show the island for the current state of the stack.
+ *
+ * INDEPENDENCE IS THE WHOLE POINT. Nothing in here restores or focuses the
+ * main window: the island is a separate top-level BrowserWindow with no
+ * `parent:` option, so Windows never minimises or hides it alongside the main
+ * window. The main window is only READ, to step aside while NANO itself is in
+ * front (see IslandStack.current).
+ */
+function renderIsland() {
+  clearTimeout(overlayHideTimer);
+  clearTimeout(islandExpiryTimer);
+  islandExpiryTimer = null;
+
+  const view = currentIslandView();
+  // Wake up when the next moment expires (a reminder's 9 s, "Pronto"...).
+  const expiry = islandStack.nextExpiry();
+  if (expiry) {
+    islandExpiryTimer = setTimeout(renderIsland, Math.max(0, expiry - Date.now()) + 5);
+    // The island never keeps NANO (or a test run) alive on its own.
+    if (islandExpiryTimer && typeof islandExpiryTimer.unref === 'function') islandExpiryTimer.unref();
+  }
+
+  if (!view) { hideOverlay(); return; }
   if (!shellState.overlayEnabled) {
     // NEVER SILENT. This flag is persisted in desktop-state.json and is
     // switchable from two places (the tray menu and Settings), so a stale
-    // "off" is easy to acquire and was previously invisible: the overlay
+    // "off" is easy to acquire and was previously invisible: the island
     // simply never appeared and nothing anywhere said why.
-    log('overlay: SUPPRESSED - "Mostrar o painel de voz" is off '
-      + '(tray menu, or Settings > Geral > Modo desktop)');
+    if (view.layer !== 'idle') {
+      log('island: SUPPRESSED - "Mostrar a ilha do NANO" is off '
+        + '(tray menu, or Settings > Geral > Modo desktop)');
+    }
     hideOverlay();
     return;
   }
-  // A new real phase can arrive during the short exit. Keep that window alive.
+  // A new real state can arrive during the short exit. Keep that window alive.
   clearTimeout(overlayExitTimer);
   overlayExitTimer = null;
   if (!overlayWindow || overlayWindow.isDestroyed()) createOverlayWindow();
@@ -858,23 +957,28 @@ function applyOverlayView(view) {
   if (!overlayReady) {
     // The renderer is still loading; replay this once it is up.
     pendingOverlayView = view;
-    log(`overlay: deferred until the renderer loads (state=${view.state})`);
+    log(`island: deferred until the renderer loads (state=${view.state})`);
     return;
   }
   pendingOverlayView = null;
 
-  positionOverlay();
-  overlayWindow.webContents.send('nano:overlay-state', view);
+  const wasVisible = overlayWindow.isVisible();
+  // Only placed when it appears: a pill that hopped between monitors while
+  // it changed shape would be impossible to follow.
+  if (!wasVisible) positionOverlay();
+  const serialised = JSON.stringify(view);
+  if (serialised !== islandLastSent || !wasVisible) {
+    islandLastSent = serialised;
+    overlayWindow.webContents.send('nano:overlay-state', view);
+  }
   // showInactive: appear without stealing focus from whatever the user is in,
   // and WITHOUT restoring the main window.
-  if (!overlayWindow.isVisible()) overlayWindow.showInactive();
+  if (!wasVisible) overlayWindow.showInactive();
 
-  log(`overlay: state=${view.state} shown=${overlayWindow.isVisible()} `
-    + `mainVisible=${mainWindow ? mainWindow.isVisible() : 'none'} `
-    + `mainMinimized=${mainWindow ? mainWindow.isMinimized() : 'none'}`);
-
-  if (view.hideAfterMs > 0) {
-    overlayHideTimer = setTimeout(() => hideOverlay(), view.hideAfterMs);
+  if (view.layer !== 'idle') {
+    log(`island: state=${view.state} shown=${overlayWindow.isVisible()} `
+      + `mainVisible=${mainWindow ? mainWindow.isVisible() : 'none'} `
+      + `mainMinimized=${mainWindow ? mainWindow.isMinimized() : 'none'}`);
   }
 }
 
@@ -884,18 +988,57 @@ function hideOverlay(destroy = false) {
   overlayExitTimer = null;
   pendingOverlayView = null;
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
-  // Fade out in the renderer before hiding the transparent native window.
-  // The renderer also stops its state animations as soon as visible is false.
-  overlayWindow.webContents.send('nano:overlay-state', overlayState.HIDDEN);
   if (destroy) {
+    clearTimeout(islandExpiryTimer);
+    islandExpiryTimer = null;
     overlayWindow.destroy(); overlayWindow = null; overlayReady = false;
     return;
   }
+  if (!overlayWindow.isVisible()) return;
+  // Shrink and fade in the renderer before hiding the transparent window.
+  // The renderer also stops its animations as soon as visible is false.
+  overlayWindow.webContents.send('nano:overlay-state', overlayState.HIDDEN);
+  islandLastSent = '';
+  overlayWindow.setIgnoreMouseEvents(true, { forward: true });
   const exitingWindow = overlayWindow;
   overlayExitTimer = setTimeout(() => {
     if (!exitingWindow.isDestroyed()) exitingWindow.hide();
     overlayExitTimer = null;
   }, 190);
+}
+
+/** The pointer entered or left the pill: catch clicks only over the pill. */
+function onIslandPointer(event, inside) {
+  if (!overlayWindow || overlayWindow.isDestroyed() || event.sender !== overlayWindow.webContents) return;
+  overlayWindow.setIgnoreMouseEvents(inside !== true, { forward: true });
+}
+
+/**
+ * A music player button. Only the three transport commands, which Windows
+ * already lets any keyboard's media keys send; the backend checks the action
+ * again (core/now_playing.py) and talks to the app that is playing.
+ */
+function onIslandMedia(event, action) {
+  if (!overlayWindow || overlayWindow.isDestroyed() || event.sender !== overlayWindow.webContents) return;
+  if (!island.MEDIA_ACTIONS.includes(action)) return;
+  if (!backend || !backend.running) return;
+  backend.request('media_control', { action }).catch((err) => log('media_control failed:', err.message));
+}
+
+/** The pill was clicked: bring NANO forward. Nothing else, ever. */
+function onIslandOpen(event) {
+  if (!overlayWindow || overlayWindow.isDestroyed() || event.sender !== overlayWindow.webContents) return;
+  overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+  showMainWindow();
+}
+
+/** "Modo ambiente": keep the resting pill on screen. */
+function setIslandAlwaysVisible(enabled) {
+  shellState.islandAlwaysVisible = Boolean(enabled);
+  saveShellState();
+  renderIsland();
+  refreshTrayMenu();
+  return shellState.islandAlwaysVisible;
 }
 
 /* ── Global activation shortcut ─────────────────────────────────────────── */
@@ -1137,12 +1280,47 @@ function createTray() {
   }
 }
 
+/** The tray menu follows the interface language, like the island. */
+const TRAY_TEXT = {
+  en: {
+    talk: (keys) => `Talk to NANO   (${keys})`,
+    talkUnavailable: 'Talk to NANO   (shortcut unavailable)',
+    open: 'Open NANO',
+    hide: 'Hide NANO',
+    island: 'NANO island',
+    islandOff: 'NANO island  (off)',
+    ambient: 'Keep the island on screen (ambient mode)',
+    autoLaunch: 'Start with Windows',
+    restart: 'Restart NANO',
+    quit: 'Quit NANO',
+    tip: (keys) => `NANO — ${keys} to talk`,
+    tipUnavailable: 'NANO — global shortcut unavailable',
+    tipIslandOff: '\n(island off)',
+  },
+  pt: {
+    talk: (keys) => `Falar com o NANO   (${keys})`,
+    talkUnavailable: 'Falar com o NANO   (atalho indisponível)',
+    open: 'Abrir o NANO',
+    hide: 'Ocultar o NANO',
+    island: 'Ilha do NANO',
+    islandOff: 'Ilha do NANO  (desligada)',
+    ambient: 'Ilha sempre no ecrã (modo ambiente)',
+    autoLaunch: 'Iniciar com o Windows',
+    restart: 'Reiniciar o NANO',
+    quit: 'Sair do NANO',
+    tip: (keys) => `NANO — ${keys} para falar`,
+    tipUnavailable: 'NANO — atalho global indisponível',
+    tipIslandOff: '\n(ilha desligada)',
+  },
+};
+
 function refreshTrayMenu() {
   if (!tray || tray.isDestroyed()) return;
+  const text = TRAY_TEXT[islandLanguage || systemLanguage()] || TRAY_TEXT.en;
   const auto = autoLaunchInfo();
   const shortcutLabel = shortcutState.registered
-    ? `Falar com o Nano   (${humanAccelerator()})`
-    : `Falar com o Nano   (atalho indisponível)`;
+    ? text.talk(humanAccelerator())
+    : text.talkUnavailable;
 
   const updateItems = updater && updater.isReady()
     ? [{ label: updateText().trayItem(updater.publicState().available.version), click: restartToUpdate }, { type: 'separator' }]
@@ -1150,9 +1328,9 @@ function refreshTrayMenu() {
 
   tray.setContextMenu(Menu.buildFromTemplate([
     ...updateItems,
-    { label: 'Abrir o Nano', click: showMainWindow },
+    { label: text.open, click: showMainWindow },
     {
-      label: 'Ocultar o Nano',
+      label: text.hide,
       enabled: Boolean(mainWindow && mainWindow.isVisible()),
       click: () => { rememberBounds(); mainWindow && mainWindow.hide(); },
     },
@@ -1161,21 +1339,27 @@ function refreshTrayMenu() {
     {
       // Named as a state, not just a verb, so an unticked box reads as "this
       // is currently off" rather than "click to show it once".
-      label: shellState.overlayEnabled
-        ? 'Painel de voz durante a fala'
-        : 'Painel de voz durante a fala  (desligado)',
+      label: shellState.overlayEnabled ? text.island : text.islandOff,
       type: 'checkbox',
       checked: shellState.overlayEnabled,
       click: (item) => {
         shellState.overlayEnabled = item.checked;
         saveShellState();
-        if (!item.checked) hideOverlay();
+        renderIsland();
+        refreshTrayMenu();
         reportShortcutToBackend();
       },
     },
+    {
+      label: text.ambient,
+      type: 'checkbox',
+      checked: shellState.islandAlwaysVisible,
+      enabled: shellState.overlayEnabled,
+      click: (item) => { setIslandAlwaysVisible(item.checked); },
+    },
     { type: 'separator' },
     {
-      label: 'Iniciar com o Windows',
+      label: text.autoLaunch,
       type: 'checkbox',
       checked: auto.enabled,
       enabled: auto.supported,
@@ -1184,16 +1368,16 @@ function refreshTrayMenu() {
       click: (item) => { setAutoLaunch(item.checked); refreshTrayMenu(); reportShortcutToBackend(); },
     },
     { type: 'separator' },
-    { label: 'Reiniciar o Nano', click: () => { restartNano().catch((err) => log(err.message)); } },
-    { label: 'Sair do Nano', click: () => { quitNano(); } },
+    { label: text.restart, click: () => { restartNano().catch((err) => log(err.message)); } },
+    { label: text.quit, click: () => { quitNano(); } },
   ]));
 
-  // The voice panel being off is easy to acquire and was previously invisible:
-  // the overlay simply never appeared. Say so where it was switched off.
-  const panelNote = shellState.overlayEnabled ? '' : '\n(painel de voz desligado)';
+  // The island being off is easy to acquire and was previously invisible:
+  // it simply never appeared. Say so where it was switched off.
+  const panelNote = shellState.overlayEnabled ? '' : text.tipIslandOff;
   tray.setToolTip((shortcutState.registered
-    ? `Nano — ${humanAccelerator()} para falar`
-    : 'Nano — atalho global indisponível') + panelNote);
+    ? text.tip(humanAccelerator())
+    : text.tipUnavailable) + panelNote);
 }
 
 /* ── Restart and quit ───────────────────────────────────────────────────── */
@@ -1299,6 +1483,7 @@ function registerRendererIpc() {
     shortcutRegistered: shortcutState.registered,
     shortcutError: shortcutState.error,
     overlayEnabled: shellState.overlayEnabled,
+    islandAlwaysVisible: shellState.islandAlwaysVisible,
     autoLaunch: autoLaunchInfo(),
     dataDir: canonicalDataDir(process.env),
     packaged: !IS_DEV,
@@ -1307,11 +1492,20 @@ function registerRendererIpc() {
   ipcMain.handle('nano:set-overlay-enabled', (_event, enabled) => {
     shellState.overlayEnabled = Boolean(enabled);
     saveShellState();
-    if (!shellState.overlayEnabled) hideOverlay();
+    renderIsland();
     refreshTrayMenu();
     reportShortcutToBackend();
     return shellState.overlayEnabled;
   });
+
+  ipcMain.handle('nano:set-island-always-visible', (_event, enabled) => setIslandAlwaysVisible(enabled));
+
+  // The island's own two signals (overlay/preload.js). Both check that they
+  // really come from the island window, and neither carries data that could
+  // choose what happens: one toggles click-through, the other opens NANO.
+  ipcMain.on('nano:island-pointer', onIslandPointer);
+  ipcMain.on('nano:island-open', onIslandOpen);
+  ipcMain.on('nano:island-media', onIslandMedia);
 
   ipcMain.handle('nano:set-auto-launch', (_event, enabled) => {
     const state = setAutoLaunch(Boolean(enabled));
@@ -1401,6 +1595,9 @@ if (!gotLock) {
       createTray();
       createOverlayWindow();
       registerShortcut();
+      // Modo ambiente: the resting pill appears once NANO is really up.
+      islandReady = true;
+      renderIsland();
       startUpdater();
       log(`Nano Desktop pronto em http://127.0.0.1:${port}`);
     } catch (err) {
@@ -1461,7 +1658,14 @@ module.exports = {
   // this file rather than a claim in a comment. Not part of any runtime API.
   __test: {
     applyOverlayView,
+    renderIsland,
     hideOverlay,
+    onIslandPointer,
+    onIslandOpen,
+    onIslandMedia,
+    setIslandAlwaysVisible,
+    setBackend: (value) => { backend = value; },
+    setIslandReady: (value) => { islandReady = Boolean(value); },
     createOverlayWindow,
     createMainWindow,
     attachMainWindow,
@@ -1470,15 +1674,16 @@ module.exports = {
     onBackendEvent,
     quitNano,
     desktopDiagnostics,
-    state: () => ({ overlayWindow, mainWindow, overlayReady, shellState }),
+    state: () => ({ overlayWindow, mainWindow, overlayReady, shellState, islandStack, islandLanguage }),
     setOverlayEnabled: (value) => { shellState.overlayEnabled = value; },
     reset: () => {
-      clearTimeout(overlayHideTimer); clearTimeout(overlayExitTimer);
-      overlayHideTimer = null; overlayExitTimer = null;
+      clearTimeout(overlayHideTimer); clearTimeout(overlayExitTimer); clearTimeout(islandExpiryTimer);
+      overlayHideTimer = null; overlayExitTimer = null; islandExpiryTimer = null;
+      islandStack = new island.IslandStack(); islandLastSent = ''; islandReady = false; islandLanguage = null;
       overlayWindow = null; mainWindow = null; overlayReady = false;
       pendingOverlayView = null; isQuitting = false;
       frontendReady = false; lastErrorCode = null;
-      shellState = { bounds: null, overlayEnabled: true, autoUpdate: true };
+      shellState = { bounds: null, overlayEnabled: true, islandAlwaysVisible: true, autoUpdate: true };
       updater = null; sessionEnding = false; restartForUpdate = false; updateNotifiedFor = null;
     },
   },

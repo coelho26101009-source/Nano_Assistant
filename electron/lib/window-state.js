@@ -100,7 +100,19 @@ function overlayPosition(workArea, size, marginBottom = 72) {
   };
 }
 
+/**
+ * Where the NANO island sits: top centre of the work area, flush with its top
+ * edge (the pill itself is drawn 8 px down inside the transparent window).
+ */
+function islandPosition(workArea, size) {
+  const area = workArea || { x: 0, y: 0, width: size.width, height: size.height };
+  return {
+    x: Math.round(area.x + (area.width - size.width) / 2),
+    y: Math.round(area.y),
+  };
+}
+
 module.exports = {
   DEFAULT_BOUNDS, MIN_HEIGHT, MIN_VISIBLE_HEIGHT, MIN_VISIBLE_WIDTH, MIN_WIDTH,
-  captureBounds, overlayPosition, sanitizeBounds,
+  captureBounds, islandPosition, overlayPosition, sanitizeBounds,
 };
