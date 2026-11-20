@@ -46,7 +46,7 @@ if errorlevel 1 (
     echo  Instala com as versoes fixadas nos locks:
     echo      "%NANO_PY%" -m pip install --require-hashes -r requirements\build.lock
     echo      "%NANO_PY%" -m pip install --require-hashes --no-build-isolation -r requirements\runtime.lock
-    echo      "%NANO_PY%" -m pip install --require-hashes --no-build-isolation -c requirements\optional.lock faster-whisper
+    echo      "%NANO_PY%" -m pip install --require-hashes --no-build-isolation -r requirements\optional.lock
     echo.
     pause
     exit /b 1

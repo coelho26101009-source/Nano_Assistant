@@ -2,14 +2,18 @@
 #
 # Nano is a desktop assistant that holds an API key and can act on the user's
 # machine, so a stale transitive dependency is a real exposure rather than a
-# tidiness problem. This file covers the FOUR dependency roots the repository
-# actually has -- confirmed against the dependency graph, which resolves 315 npm
-# packages, 20 PyPI packages and 10 actions:
+# tidiness problem. This file covers the dependency roots the repository
+# actually has, plus the phone app added in November 2026:
 #
 #   /            requirements*.txt (the manifests; hashed locks in requirements/)
 #   /frontend    the Next.js renderer
 #   /electron    the desktop shell and its build tooling
+#   /mobile      the Android app (Capacitor + React + Vite)
 #   /            .github/workflows/*.yml
+#
+# The Android Gradle files are generated and pinned by Capacitor
+# (mobile/android/variables.gradle); they move with a Capacitor update, so
+# there is no gradle entry.
 #
 # There is no pyproject.toml and no root package.json; adding entries for them
 # would produce "manifest not found" noise rather than updates.
@@ -102,6 +106,33 @@ updates:
       electron-tooling-minor-and-patch:
         exclude-patterns:
           - electron
+        update-types:
+          - minor
+          - patch
+
+  # -------------------------------------------------------------------- mobile
+  - package-ecosystem: npm
+    directory: /mobile
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # Capacitor's core, CLI, Android runtime and plugins are one platform and
+      # must move together, or `cap sync` mixes versions in the Android build.
+      capacitor:
+        patterns:
+          - "@capacitor/*"
+          - "@capacitor-community/*"
+          - "@capacitor-mlkit/*"
+          - "@aparajita/capacitor-*"
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+      mobile-minor-and-patch:
         update-types:
           - minor
           - patch

@@ -39,8 +39,11 @@
 > de releases oficial deste repositório e confirma o `SHA256SUMS.txt` antes de
 > instalar. Não desligues o SmartScreen nem o Defender para instalar o Nano.
 >
-> **Não existe atualização automática.** As atualizações da Beta são manuais:
-> descarrega a versão nova a partir da página de releases.
+> **Atualização automática a partir da próxima Beta.** A 0.3.0-beta.1 ainda
+> se atualiza à mão (descarrega a versão nova na página de releases). As
+> versões seguintes atualizam-se sozinhas: o NANO descarrega a versão nova,
+> confirma a assinatura e instala-a quando o fechas. Ver
+> [docs/UPDATES.md](docs/UPDATES.md).
 
 ## Descarregar
 

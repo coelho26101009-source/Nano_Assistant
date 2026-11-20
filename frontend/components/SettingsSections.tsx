@@ -20,6 +20,7 @@ import { useFetch } from "../lib/backend";
 import type { CapabilityCatalogue } from "./CapabilitiesPage";
 import { VERSION } from "../lib/version";
 import DiagnosticsPanel from "./DiagnosticsPanel";
+import UpdatesPanel from "./UpdatesPanel";
 import NanoLogo, { NanoWordmark } from "./NanoLogo";
 import { BRAND_NAME } from "../lib/brand";
 import {
@@ -313,10 +314,11 @@ export function AboutSection({ settings, onOpenFirstRun }: {
         <MetricRow label={t("Produto")} value={VERSION.product} />
         <MetricRow label={t("Canal")} value={VERSION.channel} />
         <MetricRow label={t("Motor (Python)")} value={runtime.version ?? "—"} />
-        <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>{t("Versão Beta. Ainda não existe atualização automática.")}</p>
         <Button size="sm" onClick={onOpenFirstRun}>{t("Abrir guia inicial")}</Button>
         <p className="dim" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>{tj("A interface e o motor leem a mesma versão do ficheiro {0}, para que nunca possam discordar sobre que versão está a correr.", { 0: <code>version.json</code> })}</p>
       </Panel>
+
+      <UpdatesPanel />
 
       <Panel title={t("Ambiente")}>
         <MetricRow label={t("Python")} value={runtime.python ?? "—"} />

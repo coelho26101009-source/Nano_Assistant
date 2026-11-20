@@ -5,6 +5,11 @@ name: Android
 # rolling "android-test" pre-release, so it can be downloaded straight to a
 # phone from the Releases page without a GitHub login.
 #
+# Updates: the publish job also signs a small update feed (nano-update.json)
+# with the NANO_UPDATE_SIGNING_KEY secret, so test builds already installed on a
+# phone can find and install the new one (mobile/src/lib/updates.ts). Without
+# the secret the APK is still published, just without the feed. docs/UPDATES.md.
+#
 # Signing: the test APK uses the throwaway key committed in
 # mobile/android/app/nano-test.keystore (so each test build installs over the
 # last). The Play Store bundle (.aab) is signed only when the owner has added
@@ -15,10 +20,15 @@ on:
     paths:
       - 'mobile/**'
       - '.github/workflows/android.yml'
+      # The update feed format and keys are shared with the PC app.
+      - 'electron/lib/update-*'
+      - 'scripts/update_feed.mjs'
   pull_request:
     paths:
       - 'mobile/**'
       - '.github/workflows/android.yml'
+      - 'electron/lib/update-*'
+      - 'scripts/update_feed.mjs'
   workflow_dispatch:
 
 permissions:
@@ -111,6 +121,39 @@ jobs:
           name: nano-android
           path: out
 
+      # Only the signing script and the feed rules it checks against, not the
+      # whole repository: this job holds a write token and the signing key.
+      - uses: actions/checkout@v7
+        with:
+          path: src
+          sparse-checkout: |
+            scripts/update_feed.mjs
+            electron/lib
+            mobile/package.json
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Sign the update feed
+        env:
+          NANO_UPDATE_SIGNING_KEY: ${{ secrets.NANO_UPDATE_SIGNING_KEY }}
+        run: |
+          version=$(node -p "require('./src/mobile/package.json').version")
+          set +e
+          node src/scripts/update_feed.mjs sign --product nano-android --channel test \
+            --version "$version" --version-code "${{ github.run_number }}" --commit "${{ github.sha }}" \
+            --url "https://github.com/${{ github.repository }}/releases/download/android-test/NANO-android-test.apk" \
+            --file out/NANO-android-test.apk --out out/nano-update.json
+          code=$?
+          set -e
+          if [ "$code" = "3" ]; then
+            echo "::warning::NANO_UPDATE_SIGNING_KEY is not set, so phones will not be offered this build automatically. See docs/UPDATES.md."
+          elif [ "$code" != "0" ]; then
+            exit "$code"
+          fi
+
       - name: Replace the android-test pre-release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -123,3 +166,6 @@ jobs:
             --title "NANO for Android (test build ${{ github.run_number }})" \
             --notes "Test build of NANO for Android from commit ${{ github.sha }}. Install NANO-android-test.apk on your phone (allow installs from your browser when Android asks). Not the Play Store version. Checksums in SHA256SUMS.txt." \
             out/NANO-android-test.apk out/SHA256SUMS.txt
+          if [ -f out/nano-update.json ]; then
+            gh release upload android-test out/nano-update.json
+          fi

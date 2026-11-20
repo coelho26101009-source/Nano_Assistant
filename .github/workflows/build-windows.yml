@@ -7,8 +7,11 @@ name: Build Nano Windows (manual)
 # `v*` tag. Neither is appropriate yet:
 #
 #   * Nano's public releases are Beta pre-releases (0.1.0-beta.1 was the first).
-#     Installers are unsigned, there is no updater, and a clean Windows
-#     validation remains an open release requirement.
+#     Installers are unsigned (Authenticode), and a clean Windows validation
+#     remains an open release requirement. Installed apps update themselves
+#     from the signed feed the publish job writes (docs/UPDATES.md), so a
+#     publish now reaches everyone who installed NANO: one more reason it
+#     never happens by accident.
 #   * Building an installer on every push spends Windows runner minutes -- the
 #     most expensive kind -- to produce something nobody may download.
 #   * A release published from a tag is irreversible in practice. Until the
@@ -250,3 +253,60 @@ jobs:
           files: |
             installers/*.exe
             installers/SHA256SUMS.txt
+
+      # AUTOMATIC UPDATES. Installed copies of NANO read one small signed file,
+      # nano-update.json, from the rolling `desktop-update` pre-release, and
+      # install the version it names (electron/lib/updater.js). It is signed
+      # with NANO_UPDATE_SIGNING_KEY and only after the installer above is
+      # public, so the feed never points at a file that is not there yet.
+      # Without the secret, the release is published without a feed and
+      # nobody is offered it automatically -- never a failed release.
+      - name: Checkout the feed signer
+        uses: actions/checkout@v4
+        with:
+          path: src
+          sparse-checkout: |
+            scripts/update_feed.mjs
+            electron/lib
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Sign the update feed
+        id: feed
+        env:
+          NANO_UPDATE_SIGNING_KEY: ${{ secrets.NANO_UPDATE_SIGNING_KEY }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          set +e
+          node src/scripts/update_feed.mjs sign --product nano-desktop --channel beta \
+            --version "$version" \
+            --url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/Nano-Setup-${version}-x64.exe" \
+            --notes "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}" \
+            --file "installers/Nano-Setup-${version}-x64.exe" --out nano-update.json
+          code=$?
+          set -e
+          if [ "$code" = "3" ]; then
+            echo "::warning::NANO_UPDATE_SIGNING_KEY is not set: this release is not offered as an automatic update. See docs/UPDATES.md."
+            echo "made=false" >> "$GITHUB_OUTPUT"
+          elif [ "$code" = "0" ]; then
+            echo "made=true" >> "$GITHUB_OUTPUT"
+          else
+            exit "$code"
+          fi
+
+      - name: Publish the update feed
+        if: steps.feed.outputs.made == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ! gh release view desktop-update > /dev/null 2>&1; then
+            gh release create desktop-update --prerelease --target "${GITHUB_SHA}" \
+              --title "NANO desktop update feed" \
+              --notes "Not a download. Installed copies of NANO read nano-update.json here to find the newest Beta. The installers are on each version's own release."
+          fi
+          gh release upload desktop-update nano-update.json --clobber

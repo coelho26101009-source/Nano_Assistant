@@ -9,7 +9,7 @@ describes `main`, not a released version — there is no released version.
 
 ## The short version
 
-Four kinds of thing leave your computer, and nothing else does:
+Five kinds of thing leave your computer, and nothing else does:
 
 1. **Your message and the context Nano builds around it**, sent to whichever
    **cloud provider** answers the turn — **Groq**, **Mistral** or
@@ -21,6 +21,12 @@ Four kinds of thing leave your computer, and nothing else does:
    including LOCAL**, whenever spoken replies are on.
 4. **A web page you asked Nano to open, search or read**, fetched from that
    site.
+5. **An update check**: the desktop app downloads one small signed file from
+   **GitHub** (github.com) shortly after it starts and then every 6 hours, and
+   the new installer when there is one. GitHub sees your IP address, as with
+   any download; nothing about you, your settings or your conversations is
+   sent. Turn it off in **Settings → About → Updates**; see
+   [docs/UPDATES.md](docs/UPDATES.md).
 
 Everything else — your conversation history, your remembered facts, the Second
 Brain, your voice recordings, the transcription of what you said, screenshots,

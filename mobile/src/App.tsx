@@ -16,6 +16,7 @@ import ChatScreen from "./screens/ChatScreen";
 import MemoryScreen from "./screens/MemoryScreen";
 import Onboarding from "./screens/Onboarding";
 import SettingsScreen, { type SpeakMode, type ThemeChoice } from "./screens/SettingsScreen";
+import { UpdateBanner, useAutomaticUpdateCheck } from "./components/Updates";
 
 type Tab = "chat" | "agenda" | "memory" | "settings";
 type Conversation = { id: string; title: string; pinned: boolean };
@@ -56,6 +57,10 @@ export default function App({ initial }: { initial: { theme: ThemeChoice; langua
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToastText(""), 2600);
   }, []);
+
+  // A new test build on GitHub, found by the automatic check (Updates.tsx).
+  const updateOffer = useAutomaticUpdateCheck();
+  const [updateDismissed, setUpdateDismissed] = useState(false);
 
   const refreshAgenda = useCallback(async () => {
     try {
@@ -213,6 +218,9 @@ export default function App({ initial }: { initial: { theme: ThemeChoice; langua
             <Icon name="alert" size={20} />
             <span>{t("Este telemóvel foi removido no PC. Vai a Definições para o ligar de novo.")}</span>
           </div>
+        )}
+        {updateOffer && !updateDismissed && tab !== "settings" && (
+          <UpdateBanner offer={updateOffer} toast={toast} onDismiss={() => setUpdateDismissed(true)} />
         )}
         {tab === "chat" && (
           <ChatScreen chat={chat} online={online} displayName={displayName} onVoiceTurn={() => { voiceTurn.current = true; }} />

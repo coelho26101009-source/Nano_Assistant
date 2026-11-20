@@ -20,6 +20,9 @@ def uploadStore = keystoreProps['storeFile'] ?: System.getenv('NANO_UPLOAD_KEYST
 android {
     namespace = "app.nano.assistant"
     compileSdk = rootProject.ext.compileSdkVersion
+    buildFeatures {
+        buildConfig = true
+    }
     defaultConfig {
         applicationId "app.nano.assistant"
         minSdkVersion rootProject.ext.minSdkVersion
@@ -27,6 +30,9 @@ android {
         versionCode nanoVersionCode
         versionName packageJson.version
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        // Updating itself from GitHub (NanoUpdaterPlugin): only the test APK
+        // and debug builds. The Play Store build is updated by Google Play.
+        buildConfigField "boolean", "SELF_UPDATE", "false"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
@@ -52,12 +58,14 @@ android {
     buildTypes {
         debug {
             signingConfig signingConfigs.test
+            buildConfigField "boolean", "SELF_UPDATE", "true"
         }
         // The test APK people install by hand: release code, test key.
         preview {
             initWith release
             signingConfig signingConfigs.test
             matchingFallbacks = ['release']
+            buildConfigField "boolean", "SELF_UPDATE", "true"
         }
         release {
             minifyEnabled false

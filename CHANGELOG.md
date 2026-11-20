@@ -42,12 +42,35 @@ chat apps.
 
 ### Added
 
+- **Automatic updates on the PC.** The installed app checks GitHub shortly after
+  it starts and every 6 hours, downloads a newer version in the background and
+  installs it when you close NANO (or now, with **Restart and update** in
+  Settings → About or the tray). It only accepts a version described by an
+  update feed signed with the project's key, checks the installer's size and
+  SHA-256 before running it, never downgrades, never installs while Windows is
+  shutting down, and tells you on the next start whether the update worked.
+  Run from the project folder, NANO only says that a new version exists.
+  Settings → About → Updates has the switch. See `docs/UPDATES.md`.
+- **Updates for the phone's test app.** The test APK checks for a newer test
+  build at most twice a day and offers it in a banner; **Update** downloads it,
+  checks the signed feed, the size, the SHA-256 and that it is signed with the
+  same key, and opens Android's installer, which always asks you. The Play
+  Store build has no updater (Google Play updates it).
 - **Read aloud** under every answer, on the PC (NANO's voice, only while spoken
   replies are on) and on the phone (the phone's own voice).
 - **Pairing a phone shows a 6-digit code on both screens.** The link key is now
   agreed with the phone's own key (ECDH P-256), so a photo of the QR code is
   not enough to connect another phone. A phone with the old app is asked to
   update; phones already paired keep working.
+
+### Security
+
+- Dependencies refreshed with no breaking changes: Electron 44.11.5,
+  electron-builder 26.18.1 (its `minimatch` moved to 11.0.9 for
+  GHSA-g3hv-75wg-m249, the moderate alert GitHub reported), Next.js 16.4.6,
+  Capacitor 8.6.2, Vite 8.3.8, Vitest 5.1.1. `npm audit` reports 0 issues in
+  frontend, electron and mobile, and `pip-audit` none in the Python locks.
+- Dependabot now also watches the phone app (`mobile/`).
 
 ### Fixed
 

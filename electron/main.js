@@ -49,6 +49,7 @@ const windowState = require('./lib/window-state');
 const { canonicalDataDir, shellStateFile } = require('./lib/paths');
 const { diagnostics, waitForHttp, loadRecovery } = require('./lib/startup-health');
 const { parseEnvText } = require('./lib/env-file');
+const { Updater, RELEASES_URL } = require('./lib/updater');
 
 /* ── Constants ──────────────────────────────────────────────────────────── */
 
@@ -110,6 +111,14 @@ let overlayReady = false;
 let pendingOverlayView = null;
 let frontendReady = false;
 let lastErrorCode = null;
+/** Automatic updates (lib/updater.js). Created once the app is ready. */
+let updater = null;
+/** Windows is logging off or shutting down: never start an installer then. */
+let sessionEnding = false;
+/** The person pressed "Restart and update": reopen NANO after installing. */
+let restartForUpdate = false;
+/** The version a "ready to install" notification was already shown for. */
+let updateNotifiedFor = null;
 
 function desktopDiagnostics() {
   return diagnostics({ version: app.getVersion(), packaged: !IS_DEV, backend,
@@ -132,7 +141,7 @@ function recordFailure(code) {
 const shortcutState = { accelerator: ACTIVATION_ACCELERATOR, registered: false, error: null };
 
 /** Persisted desktop-shell preferences. Not user data — that lives in DATA_DIR. */
-let shellState = { bounds: null, overlayEnabled: true };
+let shellState = { bounds: null, overlayEnabled: true, autoUpdate: true };
 
 function log(...parts) {
   console.log('[NANO]', ...parts);
@@ -152,6 +161,8 @@ function loadShellState() {
       shellState = {
         bounds: parsed.bounds && typeof parsed.bounds === 'object' ? parsed.bounds : null,
         overlayEnabled: parsed.overlayEnabled !== false,
+        // On unless the person switched it off in Settings.
+        autoUpdate: parsed.autoUpdate !== false,
       };
     }
   } catch (_) {
@@ -436,6 +447,11 @@ function createMainWindow(port) {
 
   mainWindow.on('resize', rememberBoundsSoon);
   mainWindow.on('move', rememberBoundsSoon);
+
+  // Windows only: the session is ending (log off, restart, shut down). An
+  // installer started now could be killed half-way, so a ready update waits
+  // for the next normal exit instead.
+  mainWindow.on('session-end', () => { sessionEnding = true; });
 
   /**
    * Closing hides. THIS IS THE POINT OF THE TRAY: the global shortcut has to
@@ -960,6 +976,106 @@ function reportShortcutToBackend() {
   }).catch(() => { /* the UI falls back to "unknown", which is honest */ });
 }
 
+/* ── Automatic updates ──────────────────────────────────────────────────── */
+/*
+ * The flow and its safety rules live in lib/updater.js. This part only wires it
+ * to the app: when to start, what to tell the person, and installing on exit.
+ * Updates install only in the packaged Windows app; from the project folder
+ * NANO only says that a new version exists.
+ */
+
+const UPDATE_TEXT = {
+  en: {
+    readyTitle: 'NANO update ready',
+    readyBody: (v) => `NANO ${v} installs when you close NANO. To install now, use "Restart and update" in Settings or in the tray menu.`,
+    doneTitle: 'NANO is up to date',
+    doneBody: (v) => `NANO was updated to ${v}.`,
+    failedTitle: 'NANO could not update',
+    failedBody: (v) => `The update to ${v} did not install. NANO will try again; your data is safe. Settings → About shows what to do.`,
+    trayItem: (v) => `Restart and update to ${v}`,
+  },
+  pt: {
+    readyTitle: 'Atualização do NANO pronta',
+    readyBody: (v) => `O NANO ${v} fica instalado quando fechares o NANO. Para instalar já, usa "Reiniciar e atualizar" nas Definições ou no menu do tabuleiro.`,
+    doneTitle: 'O NANO está atualizado',
+    doneBody: (v) => `O NANO foi atualizado para a versão ${v}.`,
+    failedTitle: 'O NANO não conseguiu atualizar',
+    failedBody: (v) => `A atualização para ${v} não ficou instalada. O NANO volta a tentar; os teus dados estão seguros. Em Definições → Sobre vês o que fazer.`,
+    trayItem: (v) => `Reiniciar e atualizar para ${v}`,
+  },
+};
+
+function updateText() {
+  let language = 'en';
+  try { language = String(app.getLocale() || '').toLowerCase().startsWith('pt') ? 'pt' : 'en'; } catch (_) { /* en */ }
+  return UPDATE_TEXT[language];
+}
+
+function onUpdateState(state) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try { mainWindow.webContents.send('nano:update-state', state); } catch (_) { /* window going away */ }
+  }
+  refreshTrayMenu();
+  const text = updateText();
+  if (state.status === 'ready' && state.available && updateNotifiedFor !== state.available.version) {
+    updateNotifiedFor = state.available.version;
+    showNativeNotification({ title: text.readyTitle, body: text.readyBody(state.available.version), silent: true });
+  }
+}
+
+function fetchForUpdates() {
+  // Chromium's network stack: the system proxy and the Windows certificate
+  // store, like the browser. Node's fetch is the fallback (and the tests').
+  const electron = require('electron');
+  if (electron.net && typeof electron.net.fetch === 'function') return (...args) => electron.net.fetch(...args);
+  return (...args) => fetch(...args);
+}
+
+function startUpdater() {
+  if (updater) return;
+  updater = new Updater({
+    currentVersion: app.getVersion(),
+    canInstall: !IS_DEV && process.platform === 'win32',
+    dataDir: canonicalDataDir(process.env),
+    fetch: fetchForUpdates(),
+    spawn: require('child_process').spawn,
+    fs,
+    log,
+    onChange: onUpdateState,
+  });
+  updater.start({ enabled: shellState.autoUpdate });
+  const result = updater.publicState().lastResult;
+  if (result) {
+    const text = updateText();
+    showNativeNotification(result.ok
+      ? { title: text.doneTitle, body: text.doneBody(result.version), silent: true }
+      : { title: text.failedTitle, body: text.failedBody(result.version), silent: false });
+  }
+}
+
+/** "Restart and update": quit, install, and open NANO again. */
+function restartToUpdate() {
+  if (!updater || !updater.isReady()) return false;
+  restartForUpdate = true;
+  quitNano();
+  return true;
+}
+
+/**
+ * Called while quitting, after the backend has stopped (the embedded Python
+ * holds files the installer must replace). Starts the installer only for a
+ * verified, ready update and never while Windows is shutting down.
+ */
+async function installUpdateOnExit() {
+  if (!updater || sessionEnding || !updater.isReady()) return false;
+  try {
+    return await updater.install({ relaunch: restartForUpdate });
+  } catch (err) {
+    log('Não foi possível instalar a atualização:', err.message);
+    return false;
+  }
+}
+
 /* ── Start with Windows ─────────────────────────────────────────────────── */
 
 function isAutoLaunchEnabled() {
@@ -1028,7 +1144,12 @@ function refreshTrayMenu() {
     ? `Falar com o Nano   (${humanAccelerator()})`
     : `Falar com o Nano   (atalho indisponível)`;
 
+  const updateItems = updater && updater.isReady()
+    ? [{ label: updateText().trayItem(updater.publicState().available.version), click: restartToUpdate }, { type: 'separator' }]
+    : [];
+
   tray.setContextMenu(Menu.buildFromTemplate([
+    ...updateItems,
     { label: 'Abrir o Nano', click: showMainWindow },
     {
       label: 'Ocultar o Nano',
@@ -1126,8 +1247,13 @@ function quitNano() {
   rememberBounds();
   hideOverlay(true);
 
+  if (updater) updater.stop();
+
   stopBackend()
     .catch((err) => log('Falha ao encerrar o motor:', err.message))
+    // A ready update installs now, with the backend already stopped.
+    .then(() => installUpdateOnExit())
+    .catch(() => false)
     .finally(() => {
       if (tray && !tray.isDestroyed()) { tray.destroy(); tray = null; }
       // Ollama is NOT stopped: Nano did not start it exclusively and other
@@ -1202,6 +1328,22 @@ function registerRendererIpc() {
   });
 
   ipcMain.handle('nano:quit', () => { quitNano(); return true; });
+
+  // Automatic updates. Fixed verbs only: the page can ask for the state, a
+  // check, the switch, and "restart and update" -- never a URL, a file or an
+  // installer of its choosing. What gets installed is decided by the signed
+  // feed alone (lib/updater.js).
+  ipcMain.handle('nano:update-status', () => (updater ? updater.publicState() : null));
+  ipcMain.handle('nano:update-check', () => (updater ? updater.check({ manual: true }) : null));
+  ipcMain.handle('nano:update-install', () => restartToUpdate());
+  ipcMain.handle('nano:set-auto-update', (_event, enabled) => {
+    shellState.autoUpdate = Boolean(enabled);
+    saveShellState();
+    if (updater) updater.setEnabled(shellState.autoUpdate);
+    return shellState.autoUpdate;
+  });
+  // A fixed address, so the page can never choose what is opened.
+  ipcMain.handle('nano:open-update-page', () => { shell.openExternal(RELEASES_URL).catch(() => {}); return true; });
 }
 
 /* ── Boot ───────────────────────────────────────────────────────────────── */
@@ -1259,6 +1401,7 @@ if (!gotLock) {
       createTray();
       createOverlayWindow();
       registerShortcut();
+      startUpdater();
       log(`Nano Desktop pronto em http://127.0.0.1:${port}`);
     } catch (err) {
       recordFailure('backend_start_failed');
@@ -1335,7 +1478,8 @@ module.exports = {
       overlayWindow = null; mainWindow = null; overlayReady = false;
       pendingOverlayView = null; isQuitting = false;
       frontendReady = false; lastErrorCode = null;
-      shellState = { bounds: null, overlayEnabled: true };
+      shellState = { bounds: null, overlayEnabled: true, autoUpdate: true };
+      updater = null; sessionEnding = false; restartForUpdate = false; updateNotifiedFor = null;
     },
   },
 };
