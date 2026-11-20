@@ -56,15 +56,23 @@ telemóvel Android 7 ou mais recente, e os dois no **mesmo Wi-Fi**.
    Aparece um código QR (dura 5 minutos e só serve uma vez).
 2. No telemóvel, abre o **NANO**, passa os ecrãs de boas-vindas e toca em
    **Ligar ao meu PC** (*Connect to my PC*). Aponta para o QR.
-3. No **PC** aparece: *"<o teu telemóvel>" quer ligar-se a este NANO*.
-   Carrega em **Permitir**. Nada é dado ao telemóvel antes disto.
+3. No **PC** aparece: *"<o teu telemóvel>" quer ligar-se a este NANO*, com um
+   **código de 6 dígitos**. O telemóvel mostra o mesmo código. Só carrega em
+   **Permitir** se os dois códigos forem iguais. Nada é dado ao telemóvel antes
+   disto, e uma fotografia do QR não chega para ligar outro telemóvel.
 4. Pronto. O ponto ao lado de "NANO" no topo da app fica verde.
+
+> Se o telemóvel disser que **a app tem de ser atualizada**, instala a versão
+> de teste mais recente: um NANO atualizado no PC já não liga telemóveis com a
+> app antiga (os que já estavam ligados continuam a funcionar).
 
 ## O que experimentar
 
 - **Chat:** escreve "olá" e vê a resposta a aparecer aos poucos.
 - **Voz:** carrega no microfone, fala, e a resposta é lida em voz alta
   (podes mudar isto em Definições → Ler as respostas em voz alta).
+- **Ler em voz alta:** toca no altifalante debaixo de uma resposta; toca outra
+  vez para parar.
 - **Autorizações:** pede algo que precise de autorização no PC (por exemplo
   "abre o bloco de notas"). O pedido aparece no telemóvel **e** no PC; quem
   responder primeiro decide.

@@ -20,7 +20,38 @@ versioning policy.
 
 ## [Unreleased]
 
-Nothing yet.
+A full review of the code: 50 bugs fixed, and a design pass against premium
+chat apps.
+
+### Added
+
+- **Read aloud** under every answer, on the PC (NANO's voice, only while spoken
+  replies are on) and on the phone (the phone's own voice).
+- **Pairing a phone shows a 6-digit code on both screens.** The link key is now
+  agreed with the phone's own key (ECDH P-256), so a photo of the QR code is
+  not enough to connect another phone. A phone with the old app is asked to
+  update; phones already paired keep working.
+
+### Fixed
+
+- Security: deleting a folder no longer follows links out of it; opening
+  scripts and shortcuts (.py, .url, .lnk and others) asks first; web searches
+  encode the query; turning phone access off also closes open phone
+  connections.
+- Chat turns can no longer interleave; several pending approvals are queued
+  instead of the second one being hidden.
+- Memory no longer stores lines like "I like this answer" as facts, and
+  "remember that ..." requests are no longer mistaken for questions.
+- Vision in CLOUD mode only sends the picture to the chosen provider.
+- Screen watch does not fire at once for text or a window already on screen.
+- All-day events are kept and shown as "All day"; a failed agenda read says
+  so; monthly reminders keep their day.
+- The phone survives a PC restart, never sends a message twice, and follows
+  the conversation opened on the PC (and the PC follows the phone).
+- Retry or edit after a message that never reached NANO resends it instead of
+  deleting the previous exchange.
+- NANO.bat and NANO_DESKTOP.bat stop when the interface build fails.
+- More messages translated into English.
 
 ---
 
