@@ -18,7 +18,7 @@
 # There is no pyproject.toml and no root package.json; adding entries for them
 # would produce "manifest not found" noise rather than updates.
 #
-# Everything here is deliberately WEEKLY and GROUPED. This is a single-maintainer
+# Everything here is deliberately MONTHLY and GROUPED, and majors are ignored. This is a single-maintainer
 # repository: an ungrouped daily schedule across four ecosystems would open more
 # pull requests than one person can review, and unreviewed dependency PRs are
 # worse than none. Security updates are NOT configured here -- they are enabled
@@ -38,9 +38,8 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 2
     groups:
       actions:
         patterns:
@@ -57,24 +56,37 @@ updates:
   - package-ecosystem: pip
     directory: /
     schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 2
+    # The manifests hold ranges (eel>=0.18,<1) and the hashed locks pick the
+    # exact version, so only touch a range when a new release falls outside it.
+    # Raising a floor inside the range is noise, and fails the lock drift check.
+    versioning-strategy: increase-if-necessary
     groups:
       python-minor-and-patch:
         update-types:
           - minor
           - patch
-    # Majors are left ungrouped on purpose: a major bump to httpx, groq or eel
-    # deserves to be read on its own rather than buried in a batch.
+    # Major versions are upgrades, not maintenance: they are done on purpose,
+    # in a normal piece of work with the full test run, never by a bot PR.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+      # uv is pinned on purpose to a release older than the lock anchor in
+      # scripts/lock_python_deps.py; it moves together with that anchor.
+      - dependency-name: "uv"
 
   # ------------------------------------------------------------------ frontend
   - package-ecosystem: npm
     directory: /frontend
     schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 2
+    # Major versions are upgrades, not maintenance: they are done on purpose,
+    # in a normal piece of work with the full test run, never by a bot PR.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       # React and ReactDOM are one runtime and must move together, majors
       # included. Ungrouped, the React 19 major arrived as two pull requests --
@@ -99,9 +111,13 @@ updates:
   - package-ecosystem: npm
     directory: /electron
     schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 2
+    # Major versions are upgrades, not maintenance: they are done on purpose,
+    # in a normal piece of work with the full test run, never by a bot PR.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       electron-tooling-minor-and-patch:
         exclude-patterns:
@@ -114,9 +130,13 @@ updates:
   - package-ecosystem: npm
     directory: /mobile
     schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 2
+    # Major versions are upgrades, not maintenance: they are done on purpose,
+    # in a normal piece of work with the full test run, never by a bot PR.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       # Capacitor's core, CLI, Android runtime and plugins are one platform and
       # must move together, or `cap sync` mixes versions in the Android build.

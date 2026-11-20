@@ -50,7 +50,7 @@ export default function App({ initial }: { initial: { theme: ThemeChoice; langua
   const [theme, setThemeState] = useState<ThemeChoice>(initial.theme);
   const voiceTurn = useRef(false);
   const visible = useRef(true);
-  const toastTimer = useRef<ReturnType<typeof setTimeout>>();
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const toast = useCallback((text: string) => {
     setToastText(text);
