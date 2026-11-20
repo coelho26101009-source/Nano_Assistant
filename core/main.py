@@ -6,6 +6,7 @@ streaming, tool execution, guardrails and voice mode.
 from __future__ import annotations
 import argparse
 import asyncio
+import contextvars
 import logging
 import os
 import re
@@ -617,7 +618,12 @@ def set_permission_policy(capability: str, decision: str, scope: str = "workspac
     """Atualiza uma policy de permissão por capability."""
     if not capability:
         return {"ok": False, "error": "missing_capability"}
-    normalized_decision = str(decision).lower()
+    normalized_decision = str(decision or "").strip().lower()
+    if normalized_decision not in {"ask", "approval_required", "deny", "blocked", "autonomous",
+                                   "allow", "allow_persistent"}:
+        # allow_once and allow_for_task are answers to ONE request, never a
+        # standing policy: stored as a policy they used to become AUTONOMOUS.
+        return {"ok": False, "error": "invalid_decision"}
     canonical = permission_manager._canonical_capability(capability)
     if normalized_decision in {"allow", "allow_persistent", "autonomous"}:
         if permission_manager.is_critical_capability(canonical):
@@ -626,7 +632,7 @@ def set_permission_policy(capability: str, decision: str, scope: str = "workspac
             return {"ok": False, "error": "approval_gated_capability_cannot_be_autonomous"}
     if normalized_decision in {"allow_persistent", "allow"}:
         return {"ok": False, "error": "persistent_allow_disabled"}
-    return {"ok": True, "policy": permission_manager.register_policy(capability, decision=decision, scope=scope, reason=reason or "User configured policy.")}
+    return {"ok": True, "policy": permission_manager.register_policy(capability, decision=normalized_decision, scope=scope, reason=reason or "User configured policy.")}
 
 #: How many recent PC actions the page shows. Small on purpose: this is a
 #: reassurance ("that really happened"), not an audit console. The full trail
@@ -903,6 +909,7 @@ def create_conversation(title: str = "") -> dict:
         return {"ok": False, "error": "create_failed"}
     brain.switch_conversation(thread["id"])
     logger.info("Conversa activa: %s (nova)", thread["id"])
+    _emit_conversation_changed(thread["id"])
     return {"ok": True, "conversation": thread, "messages": []}
 
 
@@ -922,6 +929,7 @@ def open_conversation(conversation_id: str) -> dict:
         return {"ok": False, "error": "unknown_conversation"}
     loaded = brain.switch_conversation(thread["id"])
     logger.info("Conversa activa: %s (%d mensagens no contexto)", thread["id"], loaded)
+    _emit_conversation_changed(thread["id"])
     return {"ok": True, "conversation": thread,
             "messages": memory_stack.conversations.messages(thread["id"], limit=200),
             "summary": memory_stack.conversations.get_summary(thread["id"]),
@@ -965,6 +973,7 @@ def delete_conversation(conversation_id: str) -> dict:
     result = memory_stack.delete_conversation(conversation_id)
     if result.get("ok") and was_active:
         brain.switch_conversation(memory_stack.ensure_active())
+        _emit_conversation_changed(memory_stack.active_conversation_id)
     return result
 
 
@@ -993,6 +1002,7 @@ def delete_conversations(conversation_ids: list) -> dict:
         # The Brain was holding one of these. Move it somewhere real before the
         # next message is answered against a thread that no longer exists.
         brain.switch_conversation(memory_stack.ensure_active())
+        _emit_conversation_changed(memory_stack.active_conversation_id)
     result["activeId"] = memory_stack.active_conversation_id
     return result
 
@@ -2133,6 +2143,14 @@ def get_onboarding_status() -> dict:
 @eel.expose
 def update_setting(key: str, value) -> dict:
     """Persist one allow-listed setting and apply it live where possible."""
+    if key == "mobile_access_enabled":
+        # ONE path for phone access, with its package check: this generic
+        # route used to start a server whose every request failed when an
+        # install copied over an old one lacked `cryptography`.
+        result = set_mobile_access(value is True)
+        if result.get("ok") is False:
+            return result
+        return {"ok": True, "key": key, "value": value is True, "settings": get_settings()}
     result = user_settings.set_value(key, value)
     if not result.get("ok"):
         return result
@@ -2194,8 +2212,6 @@ def update_setting(key: str, value) -> dict:
     elif key == "memory_auto_capture":
         CONFIG.setdefault("memory", {})["auto_capture"] = bool(value)
         memory_stack.capture_enabled = bool(value)
-    elif key == "mobile_access_enabled":
-        _apply_mobile_access(value is True)
 
     return {"ok": True, "key": key, "value": value, "settings": get_settings()}
 
@@ -2730,7 +2746,13 @@ def activate_work_mode(mode_id: str) -> dict:
 
 @eel.expose
 def get_agenda(days: int = 30) -> dict:
-    return agenda.overview(days)
+    # Off the hub: with Google Calendar on, the overview makes HTTPS calls,
+    # and on eel's single hub that froze every other bridge call meanwhile.
+    try:
+        return _off_hub(agenda.overview, days, timeout=20.0)
+    except TimeoutError:
+        return {"ok": False, "error": "agenda_timeout", "reminders": [], "events": [],
+                "detail": tr("A agenda demorou demasiado a responder.")}
 
 
 @eel.expose
@@ -2796,6 +2818,8 @@ def erase_all_data(confirmation: str = "") -> dict:
     # What the briefing already said, and which events it announced.
     proactive_scheduler.forget()
     screen_watch.WATCHER.stop()
+    # Chat chunks and notices buffered for a paired phone are personal content.
+    MOBILE.feed.clear()
 
     # Point the Brain at a fresh, empty thread, as deleting the active
     # conversation does, so the next message has somewhere real to go.
@@ -3152,19 +3176,19 @@ def _m_conversations_list(query: str = "") -> dict:
 
 
 def _m_conversations_open(id: str = "") -> dict:  # noqa: A002 - wire name
-    result = open_conversation(_text(id, 80))
+    result = _from_phone(open_conversation, _text(id, 80))
     if not result.get("ok"):
         return {"ok": False, "error": result.get("error")}
     return {"ok": True, **_m_chat_history()}
 
 
 def _m_conversations_create() -> dict:
-    result = create_conversation()
+    result = _from_phone(create_conversation)
     return {"ok": bool(result.get("ok")), "activeId": (result.get("conversation") or {}).get("id")}
 
 
 def _m_conversations_delete(id: str = "") -> dict:  # noqa: A002
-    result = delete_conversation(_text(id, 80))
+    result = _from_phone(delete_conversation, _text(id, 80))
     return {"ok": bool(result.get("ok")), "activeId": memory_stack.active_conversation_id
             if memory_stack.ready else None}
 
@@ -3244,11 +3268,15 @@ def _apply_mobile_access(enabled: bool) -> dict:
         if enabled:
             if _MOBILE_SERVER is None:
                 _MOBILE_SERVER = mobile_server.MobileServer(MOBILE, _mobile_port())
-            _MOBILE_SERVER.start()
+            MOBILE.active = bool(_MOBILE_SERVER.start())
         else:
+            MOBILE.active = False
             MOBILE.cancel_pairing()
             if _MOBILE_SERVER is not None:
                 _MOBILE_SERVER.stop()
+            # Nothing said while access is off is kept for the phone, and what
+            # was buffered before goes too.
+            MOBILE.feed.clear()
     return get_mobile_status()
 
 
@@ -3376,6 +3404,34 @@ def _notify_ui(name: str, *args) -> None:
         js_function(*args)(_NOOP_CALLBACK)
     except Exception:
         logger.debug("UI notification failed", exc_info=True)
+
+
+#: Which screen asked for the conversation change being made: "pc" (the window)
+#: or "phone" (a paired phone's RPC). Each screen follows only the changes made
+#: on the OTHER one -- the one that asked already shows the thread it opened.
+_CHANGE_SOURCE: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "nano_conversation_change_source", default="pc")
+
+
+def _emit_conversation_changed(active_id: str | None) -> None:
+    """The conversation NANO holds changed: every screen follows it.
+
+    There is ONE active conversation, shared by the PC window and the phone.
+    Opening a thread on the phone used to move it silently, so the next thing
+    typed on the PC was stored in, and answered from, a conversation the PC
+    was not showing. Both screens now hear the change and show that thread.
+    """
+    if active_id:
+        _notify_ui("on_conversation_changed", active_id, _CHANGE_SOURCE.get())
+
+
+def _from_phone(function, *args):
+    """Run a conversation operation on behalf of the paired phone."""
+    token = _CHANGE_SOURCE.set("phone")
+    try:
+        return function(*args)
+    finally:
+        _CHANGE_SOURCE.reset(token)
 
 
 def _emit_stream_start(msg_id: str, user_text: str | None = None):
@@ -4031,6 +4087,10 @@ async def _process_message(user_text: str, msg_id: str | None = None,
         }
         if rate_limit:
             result["rate_limit"] = rate_limit
+        if attachments:
+            # A PDF is only read inside the turn, so the ACK could not say it
+            # was cut (60 pages, 12 000 characters). The bubble learns it here.
+            result["attachments"] = chat_attachments.summary(attachments)
         question = getattr(brain, "turn_clarification", None)
         if question:
             # An ambiguous PC target: the UI offers the candidates as buttons.
@@ -4045,7 +4105,8 @@ async def _process_message(user_text: str, msg_id: str | None = None,
         return result
     except Exception:
         logger.exception("Erro no _process_message")
-        error_result = {"msg_id": msg_id, "text": "Ocorreu um erro ao processar o teu pedido.", "ok": False, "error": "processing_error"}
+        error_result = {"msg_id": msg_id, "text": tr("Ocorreu um erro ao processar o teu pedido."),
+                        "ok": False, "error": "processing_error"}
         _emit_stream_error(msg_id, "processing_error", error_result["text"])
         _emit_stream_end(msg_id, error_result)
         return error_result

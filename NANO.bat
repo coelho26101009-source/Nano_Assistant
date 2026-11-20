@@ -94,17 +94,15 @@ if "%NANO_BUILD%"=="1" (
         call npm ci
     )
     call npm run build
-    popd
-    if not exist "frontend\out\index.html" (
-        echo  [NANO] Frontend ...... FAILED
-        echo.
-        echo  Startup failed.
-        echo  Reason:    The frontend build did not produce frontend\out\index.html
-        echo  Component: Frontend
-        echo  Fix:       cd frontend  ^&^&  npm install  ^&^&  npm run build
-        echo.
-        goto :fail
+    REM A failed build can leave the PREVIOUS frontend\out behind. Checking
+    REM only that the file exists reported "OK (rebuilt)", stamped the old
+    REM build as current and never tried again. npm's exit code decides.
+    if errorlevel 1 (
+        popd
+        goto :frontend_failed
     )
+    popd
+    if not exist "frontend\out\index.html" goto :frontend_failed
     "%NANO_PY%" -m core.frontend_build stamp
     echo  [NANO] Frontend ...... OK ^(rebuilt^)
 ) else (
@@ -148,3 +146,14 @@ echo  Press any key to close this window.
 pause >nul
 endlocal
 exit /b 1
+
+REM Reached only by goto, never by falling through.
+:frontend_failed
+echo  [NANO] Frontend ...... FAILED
+echo.
+echo  Startup failed.
+echo  Reason:    The frontend build failed ^(npm run build^).
+echo  Component: Frontend
+echo  Fix:       cd frontend  ^&^&  npm install  ^&^&  npm run build
+echo.
+goto :fail

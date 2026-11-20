@@ -143,3 +143,19 @@ def test_the_composer_attaches_text_files_only():
     source = (ROOT / "frontend" / "components" / "Conversation.tsx").read_text(encoding="utf-8")
     assert 'type="file"' in source
     assert ".map(readAttachment)" in source
+
+
+def test_a_password_protected_pdf_says_so_instead_of_damaged():
+    # pypdf's decrypt() RETURNS "not decrypted" for a wrong password instead of
+    # raising, so the page read failed and the person was told the file was
+    # damaged.
+    import io
+
+    pypdf = pytest.importorskip("pypdf")
+    writer = pypdf.PdfWriter()
+    writer.add_blank_page(width=200, height=200)
+    writer.encrypt("segredo")
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    text, cut = attachments.pdf_text(buffer.getvalue())
+    assert text == attachments._PASSWORD_PROTECTED() and cut is False

@@ -404,3 +404,17 @@ def test_erasing_is_not_reachable_by_the_model():
              for path in frontend.glob(pattern)
              if "erase_all_data" in path.read_text(encoding="utf-8")]
     assert users == ["frontend/pages/index.tsx"], users
+
+
+def test_purge_erases_documents_indexed_without_fts5(stack):
+    """Where SQLite has no FTS5, documents are indexed in documents_fallback.
+    That copy of the user's text must go with everything else."""
+    stack.engine._fts_available = False
+    assert stack.engine.index_document("doc-fallback", "ERASE_FALLBACK_DOC_MARKER_1D90 texto")
+    assert stack._table_exists("documents_fallback")
+
+    result = stack.purge_everything()
+
+    assert result["ok"], result
+    assert result["documents"] >= 1
+    assert stack.conn.execute("SELECT COUNT(*) FROM documents_fallback").fetchone()[0] == 0

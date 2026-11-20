@@ -215,7 +215,15 @@ export default function Home() {
   const [graphType, setGraphType] = useState("");
 
   /* ── Dialogs ────────────────────────────────────────────────────────── */
-  const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
+  // A QUEUE, not one slot. Two approvals can be pending at once (a plan step
+  // and a phone request, two tools in one turn); with one slot the second
+  // replaced the first, which then waited, invisible, until it timed out.
+  const [confirmQueue, setConfirmQueue] = useState<ConfirmRequest[]>([]);
+  const confirmReq = confirmQueue[0] ?? null;
+  const answerConfirm = useCallback((requestId: string, approved: boolean) => {
+    call("confirm_action", requestId, approved);
+    setConfirmQueue((queue) => queue.filter((item) => item.requestId !== requestId));
+  }, []);
   const [taskDetail, setTaskDetail] = useState<any>(null);
   const [taskDetailEvents, setTaskDetailEvents] = useState<any[]>([]);
   const [taskDetailOpen, setTaskDetailOpen] = useState(false);
@@ -422,13 +430,26 @@ export default function Home() {
     if (!ready) return;
 
     expose((reqId: string, msg: string, meta: any) => {
-      setConfirmReq({ requestId: reqId, message: msg, meta });
+      setConfirmQueue((queue) => (queue.some((item) => item.requestId === reqId)
+        ? queue : [...queue, { requestId: reqId, message: msg, meta }]));
     }, "on_confirm_request");
 
     // Answered elsewhere (the paired phone) or timed out: take the card down.
     expose((reqId: string) => {
-      setConfirmReq((current: any) => (current && current.requestId === reqId ? null : current));
+      setConfirmQueue((queue) => queue.filter((item) => item.requestId !== reqId));
     }, "on_confirm_resolved");
+
+    // The conversation NANO holds changed on the phone. There is one active
+    // conversation for both screens, so the window follows it: otherwise the
+    // next message typed here would land in the thread the phone opened while
+    // this screen still showed the old one. Changes made here are ignored --
+    // the window already shows what it opened.
+    expose((activeId: string, source?: string) => {
+      if (!activeId || source === "pc") return;
+      setActiveThreadId(activeId);
+      call<ThreadMessage[]>("get_conversation_history").then(showThreadMessages);
+      reloadThreads();
+    }, "on_conversation_changed");
 
     expose(() => {
       setThinking(true);
@@ -518,7 +539,11 @@ export default function Home() {
       setListening(false);
       setStatus("");
       const text = final?.text ?? final?.error;
+      const userId = userMessageId(msgId);
       setMessages((prev) => prev.map((m) => {
+        // A PDF is read inside the turn, so only now is it known whether it
+        // was cut; the question's bubble shows it like a cut text file.
+        if (m.id === userId && Array.isArray(final?.attachments)) return { ...m, attachments: final.attachments };
         if (m.id !== msgId) return m;
         const tools = (m.tools ?? []).map((tool) => tool.state === "running" ? { ...tool, state: "ok" as const, summary: t("{0} concluída", { 0: tool.name }) } : tool);
         return {
@@ -713,12 +738,12 @@ export default function Home() {
       const transportDown = ack === null || ack === undefined;
       const answer = transportDown
         ? t("**Sem resposta do motor do NANO.** A ligação ao backend caiu ou expirou. Confirma que a janela do NANO continua aberta e recarrega a página.")
-        : t("**O pedido não foi aceite.** {0}.", { 0: ack?.error ?? "motivo desconhecido" });
-      notify(transportDown ? "Motor offline" : t("Pedido recusado"), "error");
+        : t("**O pedido não foi aceite.** {0}.", { 0: ack?.error ?? t("motivo desconhecido") });
+      notify(transportDown ? t("Motor offline") : t("Pedido recusado"), "error");
       setMessages((prev) => prev.map((m) => m.id === msgId
         ? { ...m, content: answer, streaming: false, error: true,
             tools: (m.tools ?? []).map((tool) => tool.state === "running" ? { ...tool, state: "ok" as const } : tool) }
-        : m));
+        : m.id === userMessageId(msgId) ? { ...m, unsent: true } : m));
     });
   }, [input, pendingFiles, thinking, ready, notify]);
 
@@ -734,6 +759,16 @@ export default function Home() {
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     const text = (newText ?? lastUser?.content ?? "").trim();
     if (!text) return;
+    if (lastUser?.unsent) {
+      // Never stored, so there is no turn to rewind: asking the backend to
+      // rewind would take back the exchange BEFORE it. Send it as new instead.
+      setMessages((prev) => {
+        const cut = prev.findIndex((m) => m.id === lastUser.id);
+        return cut >= 0 ? prev.slice(0, cut) : prev;
+      });
+      sendMessage(text);
+      return;
+    }
     const msgId = crypto.randomUUID();
     setMessages((prev) => {
       let cut = prev.length;
@@ -759,10 +794,11 @@ export default function Home() {
         ? { ...m, streaming: false, error: true,
             content: ack == null
               ? t("**Sem resposta do motor do NANO.** Recarrega a página e tenta outra vez.")
-              : t("**O pedido não foi aceite.** {0}.", { 0: ack?.error ?? "motivo desconhecido" }) }
-        : m));
+              : t("**O pedido não foi aceite.** {0}.", { 0: ack?.error ?? t("motivo desconhecido") }) }
+        // Whatever the backend took back, this question is not on disk now.
+        : m.id === userMessageId(msgId) ? { ...m, unsent: true } : m));
     });
-  }, [thinking, ready, messages, notify]);
+  }, [thinking, ready, messages, notify, sendMessage]);
 
   const stopWork = useCallback(() => {
     call("stop_voice");
@@ -1523,9 +1559,10 @@ export default function Home() {
                   {approvalInline && confirmReq && (
                     <div className="chat__approval">
                       <ConfirmCard
+                        key={confirmReq.requestId} queued={confirmQueue.length - 1}
                         message={confirmReq.message} meta={confirmReq.meta}
-                        onConfirm={() => { call("confirm_action", confirmReq.requestId, true); setConfirmReq(null); }}
-                        onCancel={() => { call("confirm_action", confirmReq.requestId, false); setConfirmReq(null); }}
+                        onConfirm={() => answerConfirm(confirmReq.requestId, true)}
+                        onCancel={() => answerConfirm(confirmReq.requestId, false)}
                       />
                     </div>
                   )}
@@ -1685,9 +1722,10 @@ export default function Home() {
 
       {confirmReq && !approvalInline && (
         <ConfirmModal
+          key={confirmReq.requestId} queued={confirmQueue.length - 1}
           message={confirmReq.message} meta={confirmReq.meta}
-          onConfirm={() => { call("confirm_action", confirmReq.requestId, true); setConfirmReq(null); }}
-          onCancel={() => { call("confirm_action", confirmReq.requestId, false); setConfirmReq(null); }}
+          onConfirm={() => answerConfirm(confirmReq.requestId, true)}
+          onCancel={() => answerConfirm(confirmReq.requestId, false)}
         />
       )}
 

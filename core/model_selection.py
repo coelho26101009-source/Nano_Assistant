@@ -371,8 +371,11 @@ _CATEGORY_KEYWORDS: dict[ToolCategory, tuple[str, ...]] = {
         # deliberately absent -- that one asks Nano to remember a fact.
         "lembra me", "lembrame", "lembra nos", "lembrar me", "avisa me", "avisame",
         "alerta me", "acorda me", "desperta me", "despertador", "temporizador",
-        "daqui a", "dentro de", "minuto", "minutos",
         "remind me", "alert me", "wake me", "timer",
+        # "daqui a", "dentro de" and "minutos" used to be keywords on their
+        # own, so "quantos minutos demora a cozer um ovo?" or "escreve um texto
+        # de 5 minutos" became an ACTION with the agenda tools. A relative time
+        # ("daqui a 10 minutos") is matched by _RELATIVE_TIME instead.
     ),
     ToolCategory.IOT: (
         "luz", "luzes", "lampada", "tomada", "iot", "smart", "domotica",
@@ -427,8 +430,17 @@ _ACTION_VERBS = (
 # Classification
 # ---------------------------------------------------------------------------
 
+#: "daqui a 10 minutos", "dentro de meia hora": a time FROM NOW, which only a
+#: reminder or a timer needs. Matched on the normalised text (no accents).
+_RELATIVE_TIME = re.compile(
+    r"(?<!\w)(?:daqui a|dentro de)\s+(?:\d+|um|uma|meia|dois|duas|tres|quatro|cinco|"
+    r"dez|quinze|vinte|trinta|quarenta)(?:\s+(?:minutos?|horas?|segundos?|dias?))?(?!\w)")
+
+
 def _categories_for(normalized: str) -> list[ToolCategory]:
-    return [cat for cat, words in _CATEGORY_KEYWORDS.items() if _has_any(normalized, words)]
+    relative_time = bool(_RELATIVE_TIME.search(normalized))
+    return [cat for cat, words in _CATEGORY_KEYWORDS.items()
+            if _has_any(normalized, words) or (cat is ToolCategory.SCHEDULE and relative_time)]
 
 
 def _is_imperative(normalized: str) -> bool:

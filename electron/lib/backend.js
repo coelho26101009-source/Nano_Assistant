@@ -65,6 +65,15 @@ class NanoBackend extends EventEmitter {
     });
     if (child.stdout) child.stdout.on('data', (chunk) => this._reader.push(chunk));
     if (child.stderr) child.stderr.on('data', (chunk) => this._reader.push(chunk));
+    // A write to a backend that has just died fails with EPIPE, emitted as an
+    // 'error' on stdin. With no listener Node throws it as an uncaught
+    // exception and the whole desktop shell goes down with the engine.
+    if (child.stdin && typeof child.stdin.on === 'function') {
+      child.stdin.on('error', (err) => {
+        this._log(`[backend] stdin: ${err && err.code ? err.code : err}`);
+        this._rejectAll(err);
+      });
+    }
 
     child.on('error', (err) => {
       this._exited = true;

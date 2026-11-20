@@ -6,7 +6,7 @@
  * backend (get_agenda); every change goes back through it and the page is then
  * re-read, so the list never shows something the backend did not confirm.
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { call } from "../lib/backend";
 import { Badge, Button, ConfirmDialog, EmptyState, Field, Panel, Skeleton, Tabs } from "./ui";
 import { intlLocale, t } from "../lib/i18n";
@@ -50,10 +50,22 @@ type PendingDelete = { kind: "reminder" | "event"; id: number; label: string } |
 
 function parseLocal(value?: string | null): Date | null {
   if (!value) return null;
+  // A time with its own offset ("…T09:00:00Z", "…+01:00", as Google sends it)
+  // is an instant: shown in this PC's time zone. Without one it is already
+  // local wall time, which is how NANO stores its own events and reminders.
+  if (/T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/i.test(value)) {
+    const instant = new Date(value);
+    if (!Number.isNaN(instant.getTime())) return instant;
+  }
   const match = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(value);
   if (!match) return null;
   const [, y, mo, d, h = "0", mi = "0"] = match;
   return new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi));
+}
+
+/** A calendar date with no time: an all-day event (Google's `start.date`). */
+function isAllDay(value?: string | null): boolean {
+  return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value.trim()));
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -88,6 +100,10 @@ export default function AgendaPage({ enabled, notify }: { enabled: boolean; noti
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete>(null);
+  // A failed read is not an empty agenda. It used to show "Sem lembretes
+  // pendentes" and "Nada marcado", which is a statement the page could not make.
+  const [failed, setFailed] = useState(false);
+  const requestSeq = useRef(0);
 
   const [reminderText, setReminderText] = useState("");
   const [reminderWhen, setReminderWhen] = useState("");
@@ -98,9 +114,18 @@ export default function AgendaPage({ enabled, notify }: { enabled: boolean; noti
   const [eventLocation, setEventLocation] = useState("");
 
   const refresh = useCallback(async () => {
+    const seq = ++requestSeq.current;
     setLoading(true);
     const value = await call<AgendaPayload>("get_agenda", Number(windowDays));
-    setData(value);
+    // Switching 7 → 30 → 90 days quickly sends three reads; an older, slower
+    // answer must not replace the one that was asked for last.
+    if (seq !== requestSeq.current) return;
+    if (value && value.ok !== false) {
+      setData(value);
+      setFailed(false);
+    } else {
+      setFailed(true);
+    }
     setLoading(false);
   }, [windowDays]);
 
@@ -156,6 +181,13 @@ export default function AgendaPage({ enabled, notify }: { enabled: boolean; noti
   const reminders = data?.reminders ?? [];
   const remindersOff = data && !data.available.reminders;
   const calendarOff = data && !data.available.calendar;
+  const unknown = failed && !data;
+  const readError = failed && (
+    <div className="inline" role="alert" style={{ gap: 8, marginBottom: 8 }}>
+      <span className="field__error">{t("Não foi possível ler a agenda.")}</span>
+      <Button size="sm" variant="ghost" disabled={loading} onClick={() => { void refresh(); }}>{t("Tentar de novo")}</Button>
+    </div>
+  );
 
   return (
     <div className="page__inner page__inner--wide agenda">
@@ -192,9 +224,10 @@ export default function AgendaPage({ enabled, notify }: { enabled: boolean; noti
                 </div>
               </form>
               {data?.remindersError && <p className="field__error">{data.remindersError}</p>}
+              {readError}
               {loading && !data ? (
                 <div className="stack stack--tight"><Skeleton height={44} /><Skeleton height={44} /></div>
-              ) : reminders.length === 0 ? (
+              ) : unknown ? null : reminders.length === 0 ? (
                 <EmptyState title={t("Sem lembretes pendentes")}
                             hint={t("Cria um aqui ou pede ao NANO: “lembra-me de beber água daqui a 1 hora”.")} />
               ) : (
@@ -267,9 +300,10 @@ export default function AgendaPage({ enabled, notify }: { enabled: boolean; noti
               {data?.googleError && (
                 <p className="field__hint">{t("O Google Calendar não respondeu: {0}", { 0: data.googleError })}</p>
               )}
+              {readError}
               {loading && !data ? (
                 <div className="stack stack--tight"><Skeleton height={44} /><Skeleton height={44} /></div>
-              ) : eventGroups.length === 0 ? (
+              ) : unknown ? null : eventGroups.length === 0 ? (
                 <EmptyState title={t("Nada marcado nos próximos {0} dias", { 0: windowDays })}
                             hint={t("Cria um evento aqui, importa um ficheiro .ics pelo chat ou liga o Google Calendar.")} />
               ) : (
@@ -288,7 +322,9 @@ export default function AgendaPage({ enabled, notify }: { enabled: boolean; noti
                               <div className="row-item__main">
                                 <div className="row-item__title" title={item.title}>{item.title}</div>
                                 <div className="row-item__meta">
-                                  {timeLabel(start)}{end ? `–${timeLabel(end)}` : ""}
+                                  {isAllDay(item.start)
+                                    ? t("Todo o dia")
+                                    : `${timeLabel(start)}${end ? `–${timeLabel(end)}` : ""}`}
                                   {item.location ? ` · ${item.location}` : ""}
                                 </div>
                               </div>

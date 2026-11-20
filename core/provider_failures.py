@@ -201,21 +201,23 @@ class ProviderFailure:
         return providers.provider_name(self.provider)
 
     def user_message(self) -> str:
-        """One clean Portuguese sentence. Never JSON, never a stack trace."""
-        name = self.provider_label
-        return {
-            FailureType.RATE_LIMIT: f"O limite temporário do {name} foi atingido.",
-            FailureType.TIMEOUT: f"O {name} demorou demasiado a responder.",
-            FailureType.CONNECTION_ERROR: f"Não foi possível contactar o {name}.",
-            FailureType.SERVER_ERROR: f"O {name} está com problemas de serviço.",
-            FailureType.AUTH_ERROR: (f"A chave de API do {name} foi recusada. "
+        """One clean sentence in the person's language. Never JSON, never a stack trace."""
+        from core.i18n import tr
+
+        template = {
+            FailureType.RATE_LIMIT: "O limite temporário do {name} foi atingido.",
+            FailureType.TIMEOUT: "O {name} demorou demasiado a responder.",
+            FailureType.CONNECTION_ERROR: "Não foi possível contactar o {name}.",
+            FailureType.SERVER_ERROR: "O {name} está com problemas de serviço.",
+            FailureType.AUTH_ERROR: ("A chave de API do {name} foi recusada. "
                                      "Verifica-a em Definições → Inteligência Artificial."),
-            FailureType.BAD_REQUEST: f"O pedido enviado ao {name} foi recusado.",
-            FailureType.MODEL_UNAVAILABLE: f"O modelo pedido não está disponível no {name}.",
-            FailureType.NOT_CONFIGURED: f"O {name} já não tem uma chave de API configurada.",
+            FailureType.BAD_REQUEST: "O pedido enviado ao {name} foi recusado.",
+            FailureType.MODEL_UNAVAILABLE: "O modelo pedido não está disponível no {name}.",
+            FailureType.NOT_CONFIGURED: "O {name} já não tem uma chave de API configurada.",
             FailureType.CANCELLED: "O pedido foi cancelado.",
-            FailureType.UNKNOWN_PROVIDER_ERROR: f"O {name} não respondeu.",
-        }.get(self.type, f"O {name} não respondeu.")
+            FailureType.UNKNOWN_PROVIDER_ERROR: "O {name} não respondeu.",
+        }.get(self.type, "O {name} não respondeu.")
+        return tr(template, name=self.provider_label)
 
     def as_dict(self) -> dict[str, Any]:
         """Structured diagnostics. This is where rate-limit numbers belong.

@@ -231,3 +231,16 @@ test('a wedged backend is killed rather than left orphaned', async () => {
 
   assert.deepStrictEqual(killed, [4242], 'the process tree must be killed if it will not stop');
 });
+
+test('a write to a backend that just died does not crash the shell', async () => {
+  const child = fakePython({});
+  const stdin = new EventEmitter();
+  stdin.destroyed = false;
+  stdin.write = () => true;                 // the request goes out and is never answered
+  child.stdin = stdin;
+  const backend = makeBackend(child);
+  const pending = backend.request('ping', {}, { timeoutMs: 5000 });
+  const error = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' });
+  assert.doesNotThrow(() => stdin.emit('error', error));
+  await assert.rejects(pending, /EPIPE/);
+});

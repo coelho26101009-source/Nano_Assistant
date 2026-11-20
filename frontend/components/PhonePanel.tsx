@@ -22,7 +22,23 @@ type Pairing = {
   ok: boolean; error?: string; sessionId: string; link: string; qrSvg: string;
   addresses: Address[]; expiresIn: number; remoteReady: boolean;
 };
-type PairState = { state: "waiting" | "pending" | "approved" | "denied" | "expired"; deviceName?: string };
+type PairState = {
+  state: "waiting" | "pending" | "approved" | "connected" | "denied" | "expired";
+  deviceName?: string;
+  /** Six digits both screens show, derived from the phone's own key. */
+  code?: string;
+};
+
+/** Later states win over a poll that was already in flight. */
+const PAIR_ORDER: Record<PairState["state"], number> = {
+  waiting: 0, pending: 1, approved: 2, connected: 3, denied: 4, expired: 4,
+};
+const PAIR_DONE = new Set<PairState["state"]>(["connected", "denied", "expired"]);
+
+/** "123456" -> "123 456", easier to compare at a glance. */
+function spacedCode(code?: string): string {
+  return code && code.length === 6 ? `${code.slice(0, 3)} ${code.slice(3)}` : code ?? "";
+}
 
 function when(seconds?: number): string {
   if (!seconds) return "—";
@@ -47,31 +63,39 @@ function PairDialog({ onClose }: { onClose: (changed: boolean) => void }) {
 
   useEffect(() => { void start(); }, [start]);
 
+  const done = PAIR_DONE.has(state.state);
   useEffect(() => {
-    if (!pairing) return;
+    // Polling stops once the outcome is known: it used to go on every 1.5 s
+    // after "Permitir" or "Recusar" until the dialog was closed.
+    if (!pairing || done) return;
     const timer = window.setInterval(async () => {
       setLeft((value) => Math.max(0, value - 1.5));
       const next = await call<PairState>("mobile_pairing_state", pairing.sessionId);
-      if (next) setState((prev) => (prev.state === "approved" ? prev : next));
+      if (!next) return;
+      setState((prev) => (PAIR_ORDER[next.state] >= PAIR_ORDER[prev.state]
+        ? { ...next, deviceName: next.deviceName || prev.deviceName, code: next.code || prev.code }
+        : prev));
+      if (next.state === "connected") changed.current = true;
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [pairing]);
+  }, [pairing, done]);
 
   const decide = async (approve: boolean) => {
     if (!pairing) return;
-    const result = await call<{ ok: boolean; state?: string }>("mobile_decide_pairing", pairing.sessionId, approve);
-    if (result?.ok && approve) { changed.current = true; setState({ state: "approved", deviceName: state.deviceName }); }
-    else if (result?.ok) setState({ state: "denied", deviceName: state.deviceName });
+    const result = await call<{ ok: boolean; state?: string; error?: string }>("mobile_decide_pairing", pairing.sessionId, approve);
+    if (result?.ok && approve) setState((prev) => ({ ...prev, state: "approved" }));
+    else if (result?.ok) setState((prev) => ({ ...prev, state: "denied" }));
+    else if (result?.error === "too_many_devices") setError(t("Já há telemóveis ligados demais. Remove um antes de ligar outro."));
   };
 
   const close = () => {
-    if (state.state !== "approved") void call("mobile_cancel_pairing");
+    if (state.state !== "connected") void call("mobile_cancel_pairing");
     onClose(changed.current);
   };
 
   return (
     <Modal open onClose={close} title={t("Ligar um telemóvel")} width="narrow"
-      footer={<Button onClick={close}>{state.state === "approved" ? t("Concluído") : t("Fechar")}</Button>}>
+      footer={<Button onClick={close}>{state.state === "connected" ? t("Concluído") : t("Fechar")}</Button>}>
       {error && <p className="field__error">{error}</p>}
       {pairing && state.state === "waiting" && (
         <div className="stack" style={{ alignItems: "center", textAlign: "center" }}>
@@ -98,7 +122,14 @@ function PairDialog({ onClose }: { onClose: (changed: boolean) => void }) {
       {state.state === "pending" && (
         <div className="stack">
           <p style={{ fontSize: 16, fontWeight: 600 }}>{t("\"{0}\" quer ligar-se a este NANO.", { 0: state.deviceName || t("Telemóvel") })}</p>
-          <p className="muted" style={{ fontSize: 14 }}>{t("Só permitas se for o teu telemóvel e o tiveres acabado de ligar. Um telemóvel ligado pode falar com o NANO, ver as tuas conversas, agenda e memória, e responder aos pedidos de autorização.")}</p>
+          {state.code && (
+            <div style={{ textAlign: "center" }}>
+              <p className="muted" style={{ fontSize: 13 }}>{t("O telemóvel tem de mostrar este código:")}</p>
+              <p className="mono" aria-label={t("Código de ligação")}
+                 style={{ fontSize: 30, fontWeight: 700, letterSpacing: "0.12em", margin: "6px 0" }}>{spacedCode(state.code)}</p>
+            </div>
+          )}
+          <p className="muted" style={{ fontSize: 14 }}>{t("Só permitas se for o teu telemóvel, o tiveres acabado de ligar e o código for igual nos dois ecrãs. Um telemóvel ligado pode falar com o NANO, ver as tuas conversas, agenda e memória, e responder aos pedidos de autorização.")}</p>
           <div className="inline">
             <Button onClick={() => void decide(false)}>{t("Recusar")}</Button>
             <Button variant="primary" onClick={() => void decide(true)}>{t("Permitir")}</Button>
@@ -106,6 +137,9 @@ function PairDialog({ onClose }: { onClose: (changed: boolean) => void }) {
         </div>
       )}
       {state.state === "approved" && (
+        <p className="muted" style={{ fontSize: 15 }} role="status">{t("Permitido. A terminar a ligação no telemóvel…")}</p>
+      )}
+      {state.state === "connected" && (
         <p style={{ fontSize: 15 }}>{t("Pronto. \"{0}\" está ligado ao NANO.", { 0: state.deviceName || t("Telemóvel") })}</p>
       )}
       {state.state === "denied" && <p className="muted">{t("Recusado. Nenhum acesso foi dado.")}</p>}

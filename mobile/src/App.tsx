@@ -106,22 +106,34 @@ export default function App({ initial }: { initial: { theme: ThemeChoice; langua
   }, [link]);
 
   // Back in the foreground: catch up with what happened on the PC meanwhile.
+  //
+  // `chat` is a new object on every render, so it is read through a ref: with
+  // it in the dependencies this effect re-ran on every render, and because the
+  // back-button handle arrives asynchronously, a cleanup that ran first left
+  // the old listener behind. One press then closed the drawer, switched tab
+  // and minimised the app at once.
+  const loadHistoryRef = useRef(chat.loadHistory);
+  loadHistoryRef.current = chat.loadHistory;
   useEffect(() => {
     const onVisible = () => {
       visible.current = document.visibilityState === "visible";
-      if (visible.current && link.paired) { link.start(); void chat.loadHistory(); void refreshAgenda(); }
+      if (visible.current && link.paired) { link.start(); void loadHistoryRef.current(); void refreshAgenda(); }
     };
     document.addEventListener("visibilitychange", onVisible);
+    let disposed = false;
     let remove: (() => void) | undefined;
     if (isNative()) {
       void CapApp.addListener("backButton", () => {
         if (drawerRef.current) setDrawer(false);
         else if (tabRef.current !== "chat") setTab("chat");
         else void CapApp.minimizeApp();
-      }).then((handle) => { remove = () => void handle.remove(); });
+      }).then((handle) => {
+        if (disposed) void handle.remove();
+        else remove = () => void handle.remove();
+      });
     }
-    return () => { document.removeEventListener("visibilitychange", onVisible); remove?.(); };
-  }, [link, chat, refreshAgenda]);
+    return () => { disposed = true; document.removeEventListener("visibilitychange", onVisible); remove?.(); };
+  }, [link, refreshAgenda]);
 
   const drawerRef = useRef(drawer);
   drawerRef.current = drawer;

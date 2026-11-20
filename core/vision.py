@@ -15,7 +15,9 @@ The same provider mode the person chose for chat decides, so a choice of
 
 * LOCAL  -- only a vision model installed in Ollama (llava, llama3.2-vision,
             gemma3, qwen2.5vl, minicpm-v, moondream...). Nothing leaves the PC.
-* CLOUD  -- the cloud providers with a key, the preferred one first.
+* CLOUD  -- only the preferred cloud provider, the one chat uses. CLOUD means
+            "this provider and no other" for chat (core/providers.py), so a
+            picture is not sent to a provider the person did not choose.
 * AUTO   -- the clouds first, then a local vision model.
 
 If no candidate exists the caller gets ``ok: False`` with a message in the
@@ -190,6 +192,8 @@ def candidates(settings: dict[str, Any] | None = None) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     if mode in {"AUTO", "CLOUD"}:
         order = [preferred] + [name for name in CLOUD_ORDER if name != preferred]
+        if mode == "CLOUD":
+            order = [preferred]
         for provider in order:
             if provider in CLOUD_VISION_MODELS and API_KEY(provider):
                 out.extend((provider, model) for model in CLOUD_VISION_MODELS[provider])

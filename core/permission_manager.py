@@ -628,6 +628,20 @@ class PermissionManager:
         if capability in _CRITICAL_CAPABILITIES and normalized == "allow_for_task":
             return {"ok": False, "error": "critical_requires_explicit_confirmation"}
 
+        # Every refusal is decided BEFORE the request changes. These two used
+        # to run after it was marked resolved, so a refused "Permitir nesta
+        # tarefa" left a request that could no longer be allowed or denied,
+        # still listed as pending, with nothing in the audit log.
+        task_grant = None
+        if normalized == "allow_for_task":
+            if not request_task_id:
+                return {"ok": False, "error": "task_id_required"}
+            task_grant = self._task_grant_key(capability, request_args, request.get("scope"))
+            if task_grant.target == "*":
+                # A grant with no concrete target would authorise every target
+                # for that capability. ALLOW_ONCE covers the targetless case.
+                return {"ok": False, "error": "task_grant_requires_explicit_target"}
+
         request["status"] = "resolved"
         request["decision"] = normalized
         request["allow_permanent"] = False
@@ -639,15 +653,8 @@ class PermissionManager:
             self._once_grants[self._grant_key(capability, request_args)] = (
                 self._monotonic() + ONCE_GRANT_TTL_SECONDS
             )
-        elif normalized == "allow_for_task":
-            if not request_task_id:
-                return {"ok": False, "error": "task_id_required"}
-            grant = self._task_grant_key(capability, request_args, request.get("scope"))
-            if grant.target == "*":
-                # A grant with no concrete target would authorise every target
-                # for that capability. ALLOW_ONCE covers the targetless case.
-                return {"ok": False, "error": "task_grant_requires_explicit_target"}
-            self._task_grants.setdefault(str(request_task_id), set()).add(grant)
+        elif task_grant is not None:
+            self._task_grants.setdefault(str(request_task_id), set()).add(task_grant)
 
         self.log_decision(
             capability,

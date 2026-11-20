@@ -140,3 +140,25 @@ def test_activation_makes_it_the_local_model(monkeypatch):
     main._activate_downloaded_model("qwen3-vl:4b")
     assert main.brain.ollama_model == "qwen3-vl:4b"
     assert saved == {"local_model": "qwen3-vl:4b"}
+
+
+@pytest.mark.parametrize("hardware,model", [
+    (_hw(15.7, vram=7.8), "qwen3-vl:8b"),     # what a 16 GB PC with an 8 GB card reports
+    (_hw(7.8), "qwen3-vl:4b"),                # what an 8 GB PC reports
+])
+def test_reported_ram_just_under_the_box_size_counts_as_the_box_size(hardware, model):
+    assert local_setup.recommend(hardware)["model"] == model
+
+
+def test_a_download_that_ends_without_success_installs_nothing(monkeypatch):
+    def cut_short(base, model):
+        yield {"status": "pulling manifest"}
+        yield {"status": "downloading", "digest": "sha256:a", "total": 100, "completed": 40}
+
+    monkeypatch.setattr(local_setup, "PULL", cut_short)
+    activated = []
+    downloader = local_setup.Downloader()
+    downloader.start("qwen3-vl:2b", "http://x", on_done=activated.append)
+    downloader.wait()
+    assert downloader.status()["state"] == "error"
+    assert activated == []

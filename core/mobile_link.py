@@ -16,10 +16,16 @@ THE SECURITY MODEL, PLAINLY
   "Phone access" in Settings.
 * PAIRING NEEDS TWO THINGS: the QR code on the PC screen AND a yes on the PC.
   The QR carries a one-time 256-bit secret that expires in five minutes. The
-  phone proves it has it, then waits. The PC shows "<phone> wants to connect"
-  and nothing is issued until the person approves it ON THE PC -- the approval
-  is an eel call, which only the local UI can make (see local_control_plane).
-  A photo of the QR is therefore not enough to get in.
+  phone proves it has it, sends a fresh public key of its own, then waits. The
+  PC shows "<phone> wants to connect" with a six-digit code, the phone shows
+  the same code, and nothing is issued until the person approves it ON THE PC
+  -- the approval is an eel call, which only the local UI can make (see
+  local_control_plane).
+  The phone's key is delivered ENCRYPTED TO THAT PUBLIC KEY (ECDH P-256 +
+  HKDF + AES-GCM), so only the phone that asked can read it. A photo of the
+  QR -- even with a copy of every packet on the Wi-Fi -- is therefore not
+  enough to get in: protocol 1 sealed the key with the QR secret alone, and
+  anyone holding the QR who polled at the right moment could take it.
 * EVERY MESSAGE IS SEALED. Once approved, the phone gets its own random
   256-bit key. Every request and every answer is AES-256-GCM encrypted and
   authenticated with it, bound to the device id, the request id and the
@@ -67,7 +73,9 @@ from core.atomic_storage import write_bytes
 
 logger = logging.getLogger("nano.mobile")
 
-PROTOCOL = 1
+#: 2 since 2026-11-20: the device key is sealed to the phone's own ECDH key
+#: and both screens show a pairing code. Version 1 phones cannot pair.
+PROTOCOL = 2
 DEFAULT_PORT = 47821
 
 #: How long a QR code can be used.
@@ -93,6 +101,7 @@ _DEVICES_PATH = DATA_DIR / "mobile_devices.json"
 
 _AAD_PAIR = "nano-pair-v1|"
 _AAD_PAIR_REPLY = "nano-pair-reply-v1|"
+_AAD_PAIR_KEY = "nano-pair-key-v2|"
 _AAD_RPC = "nano-rpc-v1|"
 _AAD_RPC_REPLY = "nano-rpc-reply-v1|"
 
@@ -152,6 +161,57 @@ def open_sealed(key: bytes, envelope: dict, aad: str) -> dict:
     if not isinstance(value, dict):
         raise LinkError("bad_request")
     return value
+
+
+def phone_public_key(text: Any) -> bytes:
+    """The phone's ECDH P-256 public key (65 raw bytes), checked to be a real point."""
+    raw = b64d(text) if isinstance(text, str) else b""
+    if len(raw) != 65 or raw[0] != 4:
+        raise LinkError("bad_request")
+    from cryptography.hazmat.primitives.asymmetric import ec
+    try:
+        ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), raw)
+    except ValueError as exc:
+        raise LinkError("bad_request") from exc
+    return raw
+
+
+def pairing_code(session_id: str, phone_key: bytes) -> str:
+    """Six digits both screens show, so the person can see it is THEIR phone.
+
+    Derived from the session and the phone's public key: a phone that slipped
+    in first with a photo of the QR would show a different code than the
+    person's own phone, and the PC shows the code of the phone it is asking
+    about.
+    """
+    import hashlib
+    digest = hashlib.sha256(b"nano-pair-code-v2|" + session_id.encode("ascii") + b"|" + phone_key).digest()
+    return f"{int.from_bytes(digest[:4], 'big') % 1_000_000:06d}"
+
+
+def seal_to_phone(phone_key: bytes, salt: bytes, context: str, payload: dict,
+                  _ephemeral=None, _nonce: bytes | None = None) -> dict:
+    """Encrypt ``payload`` so only the holder of the phone's private key can read it.
+
+    ECDH (P-256) between a fresh PC key and the phone's key, HKDF-SHA256 with
+    the QR secret as salt and ``context`` as info, then AES-256-GCM with
+    ``context`` as additional data. Returns ``{"epk", "n", "c"}``. The two
+    underscored arguments exist for the shared test vector only.
+    """
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+    peer = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), phone_key)
+    mine = _ephemeral or ec.generate_private_key(ec.SECP256R1())
+    shared = mine.exchange(ec.ECDH(), peer)
+    key = HKDF(algorithm=hashes.SHA256(), length=32, salt=salt,
+               info=context.encode("utf-8")).derive(shared)
+    nonce = _nonce or os.urandom(12)
+    data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    cipher = _aesgcm(key).encrypt(nonce, data, context.encode("utf-8"))
+    public = mine.public_key().public_bytes(serialization.Encoding.X962,
+                                            serialization.PublicFormat.UncompressedPoint)
+    return {"epk": b64e(public), "n": b64e(nonce), "c": b64e(cipher)}
 
 
 # ── network addresses the QR lists ─────────────────────────────────────────
@@ -344,13 +404,18 @@ class PairingSession:
     id: str
     secret: bytes
     created: float
-    state: str = "waiting"          # waiting | pending | approved | denied | expired
+    state: str = "waiting"          # waiting | pending | approved | denied | connected
     device_name: str = ""
     platform: str = ""
     requested_at: float = 0.0
+    phone_key: bytes = b""
+    code: str = ""
     device_id: str = ""
-    device_key: bytes = b""
     delivered: bool = False
+    #: The reply that carried the phone's key, kept while the session lives so
+    #: a phone whose first copy was lost on the network can ask again. It is
+    #: sealed to the phone's own public key: nobody else can open it.
+    delivery: dict = field(default_factory=dict)
 
     def expired(self, now: float) -> bool:
         if self.state == "waiting":
@@ -369,6 +434,16 @@ class EventFeed:
         self._events: deque[dict] = deque(maxlen=capacity)
         self._seq = 0
         self._cond = threading.Condition()
+        #: Changes whenever the numbering starts again (a new NANO process, or
+        #: the feed being cleared). A phone that knew another epoch resyncs.
+        self.epoch = secrets.token_hex(4)
+
+    def clear(self) -> None:
+        """Forget every buffered event. Phones resynchronise on their next read."""
+        with self._cond:
+            self._events.clear()
+            self.epoch = secrets.token_hex(4)
+            self._cond.notify_all()
 
     @property
     def last(self) -> int:
@@ -383,20 +458,25 @@ class EventFeed:
             self._cond.notify_all()
             return self._seq
 
-    def read(self, after: int, wait: float = 0.0, limit: int = 300) -> dict:
+    def read(self, after: int, wait: float = 0.0, limit: int = 300,
+             epoch: str | None = None) -> dict:
         """Events with ``seq > after``. Waits up to ``wait`` seconds for one.
 
         ``reset`` is true when the phone asked for events that already fell
-        off the end: it then reloads its state instead of trusting a gap.
+        off the end, or when its cursor belongs to another epoch (NANO was
+        restarted, or the feed was cleared): it then reloads its state instead
+        of trusting a gap. A restart used to be invisible -- the cursor was
+        quietly set back to 0 -- so a turn cut off by it left the phone
+        showing "a pensar" with its buttons disabled.
         """
         deadline = time.monotonic() + max(0.0, min(float(wait), MAX_POLL_WAIT_SECONDS))
         with self._cond:
+            if (epoch is not None and epoch != self.epoch) or after > self._seq:
+                return {"events": [], "last": self._seq, "reset": True, "epoch": self.epoch}
             while True:
                 cutoff = time.time() - EVENT_MAX_AGE_SECONDS
                 while self._events and self._events[0]["at"] < cutoff:
                     self._events.popleft()
-                if after > self._seq:          # the PC restarted: numbering began again
-                    after = 0
                 fresh = [e for e in self._events if e["seq"] > after]
                 if fresh or time.monotonic() >= deadline:
                     break
@@ -409,7 +489,7 @@ class EventFeed:
             else:
                 last = self._seq if reset else after
             return {"events": [{"seq": e["seq"], "name": e["name"], "data": e["data"]} for e in fresh],
-                    "last": last, "reset": reset}
+                    "last": last, "reset": reset, "epoch": self.epoch}
 
 
 # ── the link itself ────────────────────────────────────────────────────────
@@ -433,6 +513,9 @@ class MobileLink:
 
     def __post_init__(self) -> None:
         self._lock = threading.RLock()
+        #: True only while phone access is on. Events are buffered for phones
+        #: only then: with access off, nothing NANO says is kept for them.
+        self.active = False
         self._sessions: dict[str, PairingSession] = {}
         self._seen: dict[str, float] = {}
         self._methods: dict[str, Callable[..., Any]] = {}
@@ -488,7 +571,7 @@ class MobileLink:
             if session is None:
                 return {"ok": True, "state": "expired"}
             return {"ok": True, "state": session.state, "deviceName": session.device_name,
-                    "platform": session.platform}
+                    "platform": session.platform, "code": session.code}
 
     def decide_pairing(self, session_id: str, approve: bool) -> dict:
         """The person's answer, ON THE PC. The only way a phone gets a key."""
@@ -499,10 +582,13 @@ class MobileLink:
             if not approve:
                 session.state = "denied"
                 return {"ok": True, "state": "denied"}
-            device_id, key = self.devices.add(session.device_name, session.platform)
-            session.device_id, session.device_key, session.state = device_id, key, "approved"
-            logger.info("Phone paired: %s", device_id)
-            return {"ok": True, "state": "approved", "deviceId": device_id}
+            if len(self.devices.list()) >= MAX_DEVICES:
+                return {"ok": False, "error": "too_many_devices"}
+            # The device is created when the phone collects its key, not now:
+            # a phone that gave up meanwhile must not leave a paired device
+            # behind that nothing holds the key for.
+            session.state = "approved"
+            return {"ok": True, "state": "approved"}
 
     def _live_session(self, session_id: str) -> PairingSession | None:
         session = self._sessions.get(str(session_id or ""))
@@ -515,33 +601,50 @@ class MobileLink:
 
     # pairing, phone side (over the network)
     def handle_pair(self, body: dict) -> dict:
-        """The phone proves it read the QR and says who it is."""
+        """The phone proves it read the QR, says who it is, and asks for its key."""
         with self._lock:
             session = self._live_session(body.get("i") if isinstance(body, dict) else "")
             if session is None:
                 raise LinkError("pairing_expired", 410)
             request = open_sealed(session.secret, body, _AAD_PAIR + session.id)
             self._check_fresh(request)
-            if request.get("op") == "request":
-                if session.state == "waiting":
-                    session.state = "pending"
-                    session.device_name = _clean_name(request.get("name"))
-                    session.platform = str(request.get("platform") or "")[:20]
-                    session.requested_at = self.clock()
-                    notify = {"sessionId": session.id, "deviceName": session.device_name,
-                              "platform": session.platform}
-                else:
-                    notify = None
-            elif request.get("op") == "status":
-                notify = None
-            else:
+            op = request.get("op")
+            if op not in ("request", "status"):
                 raise LinkError("bad_request")
-            reply: dict[str, Any] = {"state": session.state, "id": request.get("id")}
+            if "pk" not in request:
+                # A protocol-1 phone: it would take a key sealed with the QR
+                # secret alone, which is exactly what version 2 stopped doing.
+                raise LinkError("upgrade_required", 426)
+            phone_key = phone_public_key(request.get("pk"))
+            notify = None
+            if op == "request" and session.state == "waiting":
+                session.state = "pending"
+                session.device_name = _clean_name(request.get("name"))
+                session.platform = str(request.get("platform") or "")[:20]
+                session.requested_at = self.clock()
+                session.phone_key = phone_key
+                session.code = pairing_code(session.id, phone_key)
+                notify = {"sessionId": session.id, "deviceName": session.device_name,
+                          "platform": session.platform, "code": session.code}
+            elif phone_key != session.phone_key:
+                # Not the phone this session is asking about. Answered with
+                # nothing, and the session is left alone for the real one.
+                raise LinkError("unauthorized", 401)
+            reply: dict[str, Any] = {"state": session.state, "id": request.get("id"),
+                                     "code": session.code}
             if session.state == "approved":
-                reply.update({"deviceId": session.device_id, "key": b64e(session.device_key),
-                              "pcName": pc_name(), "protocol": PROTOCOL})
-                session.delivered = True
-                self._sessions.pop(session.id, None)
+                device_id, key = self.devices.add(session.device_name, session.platform)
+                context = f"{_AAD_PAIR_KEY}{session.id}|{device_id}"
+                session.delivery = {
+                    "deviceId": device_id, "pcName": pc_name(), "protocol": PROTOCOL,
+                    "box": seal_to_phone(session.phone_key, session.secret, context,
+                                         {"key": b64e(key)})}
+                reply.update(session.delivery)
+                session.device_id, session.delivered, session.state = device_id, True, "connected"
+                logger.info("Phone paired: %s", device_id)
+            elif session.state == "connected" and session.delivery:
+                # The same phone asks again: the reply with its key was lost.
+                reply.update({"state": "approved", **session.delivery})
             elif session.state == "denied":
                 self._sessions.pop(session.id, None)
             sealed = seal(session.secret, reply, _AAD_PAIR_REPLY + session.id + "|" + str(request.get("id")))
@@ -604,13 +707,15 @@ class MobileLink:
         if method == "events.poll":
             after = args.get("after", 0)
             wait = args.get("wait", 0)
+            epoch = args.get("epoch")
             if after == -1:      # "start from now": the phone just opened
-                return {"events": [], "last": self.feed.last, "reset": False}
+                return {"events": [], "last": self.feed.last, "reset": False,
+                        "epoch": self.feed.epoch}
             if not isinstance(after, int) or isinstance(after, bool) or after < 0:
                 after = 0
             if not isinstance(wait, (int, float)) or isinstance(wait, bool):
                 wait = 0
-            return self.feed.read(after, wait)
+            return self.feed.read(after, wait, epoch=epoch if isinstance(epoch, str) else None)
         if method == "device.unpair":
             self.devices.remove(device_id)
             return {"ok": True}
@@ -622,7 +727,7 @@ class MobileLink:
 
     # events
     def publish(self, name: str, *args: Any) -> None:
-        if name not in FORWARDED_EVENTS:
+        if name not in FORWARDED_EVENTS or not self.active:
             return
         if not self.devices.has_devices():
             return
@@ -640,5 +745,6 @@ def new_request_id() -> str:
 __all__ = [
     "DEFAULT_PORT", "DeviceStore", "EventFeed", "FORWARDED_EVENTS", "LinkError",
     "MobileLink", "PROTOCOL", "b64d", "b64e", "classify_address", "local_addresses",
-    "new_request_id", "open_sealed", "pc_name", "seal",
+    "new_request_id", "open_sealed", "pairing_code", "pc_name", "phone_public_key",
+    "seal", "seal_to_phone",
 ]

@@ -82,3 +82,33 @@ def test_the_briefing_adds_one_remembered_line_under_a_matching_event():
                            {"id": 8, "title": "Almoço", "start": "2026-11-20T13:00"}], "reminders": []}
     text = proactive.build_briefing(overview, morning, facts=FACTS)["text"]
     assert text.count("↳") == 1 and "matemática" in text.split("↳", 1)[1]
+
+
+def test_all_day_events_are_in_the_morning_briefing_without_a_clock_time():
+    # An all-day event "starts" at 00:00, and the still-ahead filter used to
+    # drop it from every morning briefing.
+    morning = datetime(2026, 11, 20, 8, 5)
+    overview = {"events": [{"id": 9, "title": "Aniversário da Ana", "start": "2026-11-20",
+                            "end": "2026-11-21"},
+                           {"id": 8, "title": "Almoço", "start": "2026-11-20T13:00"}],
+                "reminders": []}
+    text = proactive.build_briefing(overview, morning)["text"]
+    assert "Aniversário da Ana" in text and "00:00" not in text
+    assert text.index("Aniversário da Ana") < text.index("Almoço")
+    assert "\x00" not in text
+
+
+def test_a_multi_day_all_day_event_counts_on_each_of_its_days():
+    morning = datetime(2026, 11, 21, 8, 5)
+    overview = {"events": [{"id": 9, "title": "Férias", "start": "2026-11-20",
+                            "end": "2026-11-23"}], "reminders": []}
+    assert "Férias" in proactive.build_briefing(overview, morning)["text"]
+    after = datetime(2026, 11, 23, 8, 5)          # Google's end date is exclusive
+    assert "Férias" not in proactive.build_briefing(overview, after)["text"]
+
+
+def test_an_all_day_exam_tomorrow_is_offered_without_00_00():
+    events = [{"id": 7, "title": "Exame de Física", "start": "2026-11-20", "end": "2026-11-21"}]
+    scheduler, _ = _scheduler(events, EVENING)
+    out = scheduler.tick()
+    assert out and "Exame de Física" in out[0]["text"] and "00:00" not in out[0]["text"]

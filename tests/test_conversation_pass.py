@@ -201,6 +201,28 @@ def test_a_reminder_request_is_offered_set_reminder(message):
     assert "set_reminder" in selected
 
 
+@pytest.mark.parametrize("message", [
+    "Quantos minutos demora a cozer um ovo?",
+    "Escreve um texto de 5 minutos sobre o mar",
+    "how many minutes does it take to boil an egg?",
+])
+def test_a_duration_in_a_question_does_not_bring_the_agenda_tools(message):
+    """'minutos' and 'daqui a' used to be keywords on their own, so a question
+    about how long something takes was handed the reminder tools."""
+    selected = {t["function"]["name"] for t in ms.select_tools(message, ALL_TOOLS)}
+    assert "set_reminder" not in selected
+    assert "calendar_add_event" not in selected
+
+
+@pytest.mark.parametrize("message", [
+    "daqui a 10 minutos diz-me para sair",
+    "dentro de meia hora avisa que a pizza está pronta",
+])
+def test_a_time_from_now_still_brings_the_reminder_tool(message):
+    selected = {t["function"]["name"] for t in ms.select_tools(message, ALL_TOOLS)}
+    assert "set_reminder" in selected
+
+
 def test_a_search_request_sends_only_browser_tools():
     selected = {t["function"]["name"] for t in ms.select_tools("Pesquisa notícias sobre IA", ALL_TOOLS)}
     assert "web_search" in selected

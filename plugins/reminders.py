@@ -86,6 +86,10 @@ def _conn():
     columns = {row[1] for row in conn.execute("PRAGMA table_info(reminders)")}
     if "recurrence" not in columns:
         conn.execute("ALTER TABLE reminders ADD COLUMN recurrence TEXT")
+    # The day of the month a monthly series belongs to (31 for "every 31st"),
+    # so one short month does not move the series for good. NULL = use due_at.
+    if "anchor_day" not in columns:
+        conn.execute("ALTER TABLE reminders ADD COLUMN anchor_day INTEGER")
     conn.commit()
     return conn
 
@@ -342,12 +346,16 @@ def parse_recurring(when: str) -> tuple[str, str | None]:
     return text, None
 
 
-def next_occurrence(due: datetime, recurrence: str, now: datetime | None = None) -> datetime:
+def next_occurrence(due: datetime, recurrence: str, now: datetime | None = None,
+                    anchor_day: int | None = None) -> datetime:
     """The first occurrence of the series strictly after ``now``.
 
     Missed occurrences (the PC was off) are skipped, not fired in a burst.
+    A monthly series keeps ``anchor_day`` (its original day): "every 31st"
+    fires on 28/02, then 31/03 and 30/04 -- not on the 28th forever after.
     """
     now = now or datetime.now()
+    anchor = anchor_day if anchor_day and 1 <= int(anchor_day) <= 31 else due.day
     candidate = due
     for _ in range(4000):
         if recurrence == "daily":
@@ -361,7 +369,7 @@ def next_occurrence(due: datetime, recurrence: str, now: datetime | None = None)
         elif recurrence == "monthly":
             month = candidate.month % 12 + 1
             year = candidate.year + (candidate.month // 12)
-            day = min(due.day, calendar.monthrange(year, month)[1])
+            day = min(int(anchor), calendar.monthrange(year, month)[1])
             candidate = candidate.replace(year=year, month=month, day=day)
         else:
             raise ValueError(f"recorrência desconhecida: {recurrence}")
@@ -411,8 +419,9 @@ def set_reminder(text: str, when: str, repeat: str | None = None) -> dict:
 
     conn = _conn()
     cur = conn.execute(
-        "INSERT INTO reminders (text, due_at, created, fired, recurrence) VALUES (?,?,?,0,?)",
-        (text.strip(), due.isoformat(timespec="seconds"), now.isoformat(timespec="seconds"), recurrence),
+        "INSERT INTO reminders (text, due_at, created, fired, recurrence, anchor_day) VALUES (?,?,?,0,?,?)",
+        (text.strip(), due.isoformat(timespec="seconds"), now.isoformat(timespec="seconds"), recurrence,
+         due.day if recurrence == "monthly" else None),
     )
     conn.commit()
     start_scheduler()
@@ -475,8 +484,12 @@ def _fire(reminder_id: int, text: str, due_at: str | None = None,
     conn = _conn()
     following = None
     if recurrence in RECURRENCES and due_at:
+        anchor = None
+        if recurrence == "monthly":
+            row = conn.execute("SELECT anchor_day FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
+            anchor = row[0] if row else None
         try:
-            following = next_occurrence(datetime.fromisoformat(due_at), recurrence)
+            following = next_occurrence(datetime.fromisoformat(due_at), recurrence, anchor_day=anchor)
         except ValueError:
             following = None
     if following is not None:

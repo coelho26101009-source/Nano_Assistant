@@ -155,3 +155,60 @@ def test_asking_to_be_told_when_something_happens_offers_the_watch_tool():
                     "fica de olho no ecrã e diz-me se aparecer um erro"):
         selected = {t["function"]["name"] for t in model_selection.select_tools(message, tools)}
         assert "pc_screen_watch" in selected, message
+
+
+def test_text_already_on_screen_does_not_count_as_appearing(setup):
+    # NANO's own chat shows the request, so the word is usually on screen when
+    # the watch starts. Only a NEW occurrence counts.
+    watcher, state, clock = setup
+    state["text"] = "Tu: avisa-me se aparecer erro"
+    watcher.start("Avisa-me se aparecer um erro", appears=["erro"])
+    assert watcher.tick() == []
+    clock.advance(11)
+    assert watcher.tick() == []
+    state["text"] = "Tu: avisa-me se aparecer erro | Erro: disco cheio"
+    clock.advance(11)
+    assert len(watcher.tick()) == 1
+
+
+def test_one_ocr_miss_does_not_make_the_same_text_appear_again(setup):
+    watcher, state, clock = setup
+    state["text"] = "erro"
+    watcher.start("x", appears=["erro"])
+    watcher.tick()
+    state["text"] = ""                  # one missed reading
+    clock.advance(11)
+    assert watcher.tick() == []
+    state["text"] = "erro"              # the same text, read again
+    clock.advance(11)
+    assert watcher.tick() == []
+
+
+def test_a_window_already_open_does_not_count_as_opening(setup):
+    watcher, state, clock = setup
+    state["titles"] = ["Microsoft Teams"]
+    watcher.start("Diz-me quando abrir outra janela do Teams", window_appears=["teams"])
+    clock.advance(5)
+    assert watcher.tick() == []
+    state["titles"] = ["Microsoft Teams", "Reunião | Microsoft Teams"]
+    clock.advance(5)
+    assert len(watcher.tick()) == 1
+
+
+def test_a_watch_added_after_the_thread_exits_gets_a_new_thread(monkeypatch):
+    # The loop clears its slot under the lock when it leaves, so the next
+    # start() can never find a "live" thread that is about to exit.
+    monkeypatch.setattr(screen_watch, "TICK_SECONDS", 0.01)
+    watcher = screen_watch.ScreenWatcher(read_text=lambda: "", list_titles=lambda: [])
+    watcher.start("x", window_appears=["a"])
+    first = watcher._thread
+    assert first is not None and first.is_alive()
+    watcher.stop()
+    first.join(2)
+    assert not first.is_alive() and watcher._thread is None
+    watcher.start("y", window_appears=["b"])
+    second = watcher._thread
+    assert second is not None and second is not first and second.is_alive()
+    watcher.shutdown()
+    second.join(2)
+    assert not second.is_alive()

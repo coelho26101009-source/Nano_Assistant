@@ -150,6 +150,10 @@ export interface Message {
   clarification?: Clarification;
   /** Files sent with a user turn: names, sizes and kinds only. */
   attachments?: AttachmentSummary[];
+  /** A question the backend never accepted, so nothing of it was stored.
+   * "Tentar de novo" sends it again as a new message: rewinding "the last
+   * turn" would have deleted the PREVIOUS exchange, the last one on disk. */
+  unsent?: boolean;
 }
 
 /** The files on a sent message, or waiting in the composer. */
@@ -466,7 +470,7 @@ function ToolCard({ event }: { event: ToolEvent }) {
         {event.detail && (
           <button type="button" className="tool-card__toggle" onClick={() => setOpen((v) => !v)}
                   aria-expanded={open} aria-label={t("Detalhes técnicos")}>
-            {open ? "ocultar" : "detalhes"}
+            {open ? t("ocultar") : t("detalhes")}
           </button>
         )}
       </div>
@@ -615,7 +619,7 @@ function TechnicalDetails({ meta, id }: { meta: ResponseMeta; id: string }) {
                 <span className="meta-chain__provider">{providerName(attempt.provider)}</span>
                 {attempt.model && <span className="meta-chain__model">{attempt.model}</span>}
                 <span className="meta-chain__outcome">
-                  {attempt.outcome === "ok" ? "respondeu" : reasonText(attempt.outcome) || t("sem resposta")}
+                  {attempt.outcome === "ok" ? t("respondeu") : reasonText(attempt.outcome) || t("sem resposta")}
                 </span>
               </li>
             ))}

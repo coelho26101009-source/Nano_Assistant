@@ -12,6 +12,7 @@ Google Calendar (opcional):
 
 import logging
 import sys
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -19,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.app_paths import DATA_DIR
 from core.config import get_setting
+from core.i18n import tr
 from core.memory import get_memory
 
 logger = logging.getLogger("nano.plugins.calendar")
@@ -202,16 +204,53 @@ def _parse_ics_dt(value: str) -> datetime | None:
     return None
 
 
+#: Longest the browser sign-in may stay open before NANO stops waiting for it.
+GOOGLE_SIGN_IN_SECONDS = 180
+_SIGN_IN_LOCK = threading.Lock()
+_sign_in_running = False
+
+
+def _start_google_sign_in() -> None:
+    """Open Google's sign-in in the browser, ONCE, on its own thread.
+
+    Reading the agenda must never wait for a person: this used to run inside
+    the read itself, so the first Agenda load (and the morning briefing, and
+    the phone's agenda refresh) sat on a browser tab with no time limit while
+    the whole window stopped responding. Now the read answers at once ("a
+    pedir autorização") and the next one finds the saved token.
+    """
+    global _sign_in_running
+    with _SIGN_IN_LOCK:
+        if _sign_in_running:
+            return
+        _sign_in_running = True
+
+    def _run() -> None:
+        global _sign_in_running
+        try:
+            from google_auth_oauthlib.flow import InstalledAppFlow
+            flow = InstalledAppFlow.from_client_secrets_file(str(GOOGLE_CREDS), GOOGLE_SCOPES)
+            creds = flow.run_local_server(port=0, timeout_seconds=GOOGLE_SIGN_IN_SECONDS)
+            if creds is not None:
+                GOOGLE_TOKEN.write_text(creds.to_json(), encoding="utf-8")
+        except Exception:
+            logger.warning("Google Calendar sign-in did not finish", exc_info=True)
+        finally:
+            with _SIGN_IN_LOCK:
+                _sign_in_running = False
+
+    threading.Thread(target=_run, name="nano-google-sign-in", daemon=True).start()
+
+
 def _google_events(start: datetime, end: datetime) -> tuple[list[dict], str | None]:
     try:
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
-        from google_auth_oauthlib.flow import InstalledAppFlow
         from googleapiclient.discovery import build
     except ImportError:
-        return [], "Google Calendar pedido mas as bibliotecas opcionais estão em falta."
+        return [], tr("Google Calendar pedido mas as bibliotecas opcionais estão em falta.")
     if not GOOGLE_CREDS.exists():
-        return [], "Credenciais OAuth do Google Calendar em falta."
+        return [], tr("Credenciais OAuth do Google Calendar em falta.")
     try:
         creds = None
         if GOOGLE_TOKEN.exists():
@@ -219,16 +258,17 @@ def _google_events(start: datetime, end: datetime) -> tuple[list[dict], str | No
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
+                GOOGLE_TOKEN.write_text(creds.to_json(), encoding="utf-8")
             else:
-                flow = InstalledAppFlow.from_client_secrets_file(str(GOOGLE_CREDS), GOOGLE_SCOPES)
-                creds = flow.run_local_server(port=0)
-            GOOGLE_TOKEN.write_text(creds.to_json(), encoding="utf-8")
+                _start_google_sign_in()
+                return [], tr("O Google Calendar ainda não está autorizado: abri a página de "
+                              "autorização no browser. Depois de aceitares, volta a abrir a agenda.")
         service = build("calendar", "v3", credentials=creds, cache_discovery=False)
         items = service.events().list(calendarId="primary", timeMin=start.astimezone().isoformat(), timeMax=end.astimezone().isoformat(), singleEvents=True, orderBy="startTime").execute().get("items", [])
         return [{"id": item.get("id"), "title": item.get("summary", "(sem título)"), "start": item["start"].get("dateTime", item["start"].get("date", "")), "end": item.get("end", {}).get("dateTime", item.get("end", {}).get("date", "")), "location": item.get("location", ""), "source": "google"} for item in items], None
     except Exception:
         logger.exception("Google Calendar falhou")
-        return [], "Google Calendar falhou. Verifica a configuração do calendário."
+        return [], tr("Google Calendar falhou. Verifica a configuração do calendário.")
 
 
 def get_tools() -> list[dict]:

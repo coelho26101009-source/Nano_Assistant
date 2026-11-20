@@ -115,6 +115,11 @@ PROBES: dict[str, Callable[[], Any]] = {
 }
 
 
+#: What a PC sold with 16 GB / 8 GB of RAM reports, at the least.
+RAM_16_GB = 14.5
+RAM_8_GB = 7.0
+
+
 def detect_hardware() -> dict[str, Any]:
     return {key: probe() for key, probe in PROBES.items()}
 
@@ -124,11 +129,14 @@ def recommend(hardware: dict[str, Any]) -> dict[str, Any]:
     ram = float(hardware.get("ram_gb") or 0)
     gpu = hardware.get("gpu") or None
     vram = float(gpu.get("vram_gb") or 0) if gpu else 0.0
-    if ram >= 16 and vram >= 8:
+    # Windows reports less than the RAM on the box: a "16 GB" PC shows 15.7,
+    # or under 15 when integrated graphics reserve some. Exact 16/8 sent every
+    # such PC one model down. The same holds for an "8 GB" graphics card.
+    if ram >= RAM_16_GB and vram >= 7.5:
         model = RECOMMENDED[2]
         why = tr("Tens {ram} GB de RAM e uma placa gráfica com {vram} GB: dá para o modelo maior.",
                  ram=ram, vram=vram)
-    elif ram >= 8 or (gpu and vram >= 4):
+    elif ram >= RAM_8_GB or (gpu and vram >= 3.5):
         model = RECOMMENDED[1]
         why = tr("Com {ram} GB de RAM, este é o melhor equilíbrio entre rapidez e inteligência.", ram=ram)
     else:
@@ -208,6 +216,7 @@ class Downloader:
 
     def _run(self, model: str, base_url: str, on_done: Callable[[str], None] | None) -> None:
         layers: dict[str, tuple[int, int]] = {}
+        succeeded = False
         try:
             for event in PULL(base_url, model):
                 if event.get("error"):
@@ -222,7 +231,13 @@ class Downloader:
                           completedGb=round(done / 1e9, 2), totalGb=round(whole / 1e9, 2),
                           message=tr("A descarregar {model}...", model=model))
                 if event.get("status") == "success":
+                    succeeded = True
                     break
+            if not succeeded:
+                # The stream ended without Ollama's "success": the connection
+                # dropped or Ollama closed mid-download. The model is NOT
+                # installed, and it must not become NANO's local model.
+                raise RuntimeError("pull ended without success")
             if on_done:
                 on_done(model)
             self._set(state="done", percent=100,

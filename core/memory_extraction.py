@@ -124,16 +124,50 @@ _UNCERTAIN = re.compile(
 #: M2: a question or a recall request is not something to store. "Lembras-te
 #: do que te disse?", "remember what I said?", "do you remember my car?" all
 #: contain a trigger word and none of them states a fact.
-_RECALL_OR_QUESTION = re.compile(
-    r"\?\s*$|^\s*(?:o\s+que|qu(?:e|al|ais|em)|quando|onde|como|porqu[eê]|what|which|who|"
-    r"when|where|how|why|if|se)\b", re.I)
+#:
+#: THE QUESTION IS JUDGED WHERE THE TRIGGER IS, NOT ANYWHERE IN THE MESSAGE.
+#: The recall phrase used to be searched for in the whole message and the
+#: question words at the start of any remembered clause, so "Lembra-te que o
+#: meu carro é um Golf. Lembras-te do que te disse ontem?" saved nothing, and
+#: neither did "remember that WHEN I'm gaming I want silence" -- a condition,
+#: stated as a fact, that happened to open with a question word.
 _RECALL_PREFIX = re.compile(
     r"\b(?:lembras-?te|recordas-?te|ainda\s+te\s+lembras|do\s+you\s+remember|"
     r"can\s+you\s+remember|you\s+remember)\b", re.I)
+#: "remember WHAT I said", "lembra-te DE QUANDO fomos": with no "that"/"que"
+#: the clause is an embedded question, the thing to recall rather than a fact.
+_WH_CLAUSE = re.compile(
+    r"^\s*(?:o\s+que|do\s+que|qu(?:e|al|ais|em)|quando|onde|como|porqu[eê]|what|which|who|"
+    r"when|where|how|why|if|se)\b", re.I)
+#: The trigger ended with a complementiser or a colon, so what follows is a
+#: statement even when it opens with "when"/"se": "remember THAT when ...".
+_STATEMENT_LEAD = re.compile(
+    r"(?:\b(?:que|that|isto|isso|this|seguinte|agora)|\bnow\s+on|[:,])\s*$", re.I)
+#: "Can you remember that I prefer short answers?" asks Nano to remember; the
+#: question mark is politeness, not a question about what Nano knows.
+_POLITE_LEAD = re.compile(
+    r"^\s*(?:please\s+)?(?:can|could|would|will)\s+you\s+(?:please\s+)?"
+    r"(?:remember|save|store|don'?t\s+forget)\b", re.I)
 
 
-def _is_recall_or_question(message: str, clause: str) -> bool:
-    return bool(_RECALL_PREFIX.search(message) or _RECALL_OR_QUESTION.search(clause))
+def _trigger_lead(message: str, match: re.Match[str]) -> str:
+    """The trigger and whatever precedes it IN ITS OWN SENTENCE.
+
+    "Do you remember that " for "Do you remember that I use Linux", and only
+    "Lembra-te que " for a message whose next sentence asks something else.
+    """
+    start = max(message.rfind(mark, 0, match.start()) for mark in ".!?;\n") + 1
+    return message[start:match.start(1)]
+
+
+def _is_recall_or_question(lead: str, clause: str) -> bool:
+    """True when the trigger word sits inside a question about memory."""
+    polite = bool(_POLITE_LEAD.match(lead))
+    if not polite and _RECALL_PREFIX.search(lead):
+        return True                         # "do you remember (that) ..."
+    if not polite and clause.rstrip().endswith("?"):
+        return True                         # "remember which model I use?"
+    return bool(not _STATEMENT_LEAD.search(lead) and _WH_CLAUSE.match(clause))
 
 
 def _is_action_request(clause: str) -> bool:
@@ -155,6 +189,22 @@ def _is_action_request(clause: str) -> bool:
     return bool(_PT_INFINITIVE.match(head))
 
 
+#: What follows "I like" / "gosto de" when the sentence reacts to the moment
+#: instead of stating a lasting taste: "I like THIS answer", "odeio QUANDO isso
+#: acontece", "I love YOU". A preference names a thing; a pronoun, a
+#: demonstrative or a clause names the conversation, and the store filled with
+#: "I like this answer" as an ACTIVE preference about the user.
+_REACTION_OBJECT = (
+    r"(?!(?:this|that|these|those|it|them|you|your|him|her|how|what|when|where|which|"
+    r"who|the\s+way|isto|isso|aquilo|est[ea]s?|ess[ea]s?|dest[ea]s?|dess[ea]s?|disto|"
+    r"disso|daquilo|ti|te|me|voc[êe]|tu|quando|como|que|o\s+que|a\s+tua|o\s+teu|tua|teu)\b)")
+
+#: "I'm a LITTLE lost", "sou um BOCADO lento": a degree word after the article
+#: describes a mood, not a role. "I'm a developer" is a fact about the person.
+_NOT_A_ROLE = (
+    r"(?!(?:little|bit|tad|lot|few|kind|sort|mess|wreck|tiny|wee|minute|moment|step|while|"
+    r"bocado|bocadinho|pouco|pouquinho|tanto|nada)\b)")
+
 #: First-person statements about a durable state of the world. The leading
 #: anchor matters: "o meu PC tem 16 GB" is a fact, "o PC dele tem 16 GB" is not
 #: something Nano should file under the user.
@@ -169,7 +219,8 @@ _DURABLE = re.compile(
     # Liking and disliking are durable preferences phrased with a verb this
     # anchor did not know. "Não gosto de X" is a preference stated in the
     # negative, not an absence of information.
-    r"gosto\s+(?:de|mais)\s|adoro\s|odeio\s|n[ãa]o\s+gosto\s+de\s|"
+    r"gosto\s+(?:de|mais)\s+" + _REACTION_OBJECT + r"|adoro\s+" + _REACTION_OBJECT +
+    r"|odeio\s+" + _REACTION_OBJECT + r"|n[ãa]o\s+gosto\s+de\s+" + _REACTION_OBJECT + r"|"
     # A decision the user has already taken is durable in exactly the way a
     # preference is, and it is one of the things this build is meant to
     # remember. The past tense is the point: "decidi" is settled, while "vou
@@ -177,8 +228,12 @@ _DURABLE = re.compile(
     r"decidi\s|decidimos\s|optei\s|escolhi\s|"
     r"trabalho\s+(?:com|em|na|no)\s|my\s|i\s+(?:am|have|use|prefer|work)|"
     # M2: the English forms the anchor did not know.
-    r"i'?m\s+(?:a|an)\s|i\s+(?:like|love|hate|don'?t\s+like|always\s+use|run|own)\s|"
-    r"call\s+me\s|"
+    r"i'?m\s+(?:a|an)\s+" + _NOT_A_ROLE +
+    r"|i\s+(?:like|love|hate|don'?t\s+like)\s+" + _REACTION_OBJECT +
+    r"|i\s+(?:always\s+use|run|own)\s|"
+    # "Call me Simão" is a name; "call me when it finishes" is a request. A
+    # name is capitalised, and that one letter is the whole difference.
+    r"call\s+me\s+(?-i:[A-ZÀ-Þ])|"
     r"(?:i|we)\s+decided\s)", re.I)
 
 #: A statement about a NAMED project, which is a durable fact about the user's
@@ -281,7 +336,8 @@ _KIND_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("person", re.compile(
         r"\b(chamo-?me|o meu nome|my name|call me|"
         # M2: what the person does for a living is a fact about them.
-        r"i'?m\s+an?\s+\w+|i\s+am\s+an?\s+\w+|sou\s+(?:um|uma)\s+\w+|trabalho\s+como|work\s+as|"
+        r"i'?m\s+an?\s+" + _NOT_A_ROLE + r"\w+|i\s+am\s+an?\s+" + _NOT_A_ROLE + r"\w+|"
+        r"sou\s+(?:um|uma)\s+" + _NOT_A_ROLE + r"\w+|trabalho\s+como|work\s+as|"
         r"a minha (?:mulher|esposa|namorada|m[ãa]e|pai|"
         r"irm[ãa]o?|filha?)|o meu (?:marido|namorado|m[ãa]e|pai|irm[ãa]o|filho))\b", re.I)),
     ("goal", re.compile(
@@ -512,9 +568,12 @@ def extract(user_text: str) -> list[MemoryCandidate]:
         # Only the first sentence of the remainder: "lembra-te que uso Linux. E
         # abre o Spotify" must remember the fact, not the request that follows.
         remainder = _SENTENCE_SPLIT.split(match.group(1).strip(), 1)[0]
-        if _is_recall_or_question(body, remainder):
+        lead = _trigger_lead(body, match)
+        if _is_recall_or_question(lead, remainder):
             # "Lembras-te do meu carro?" asks Nano to RECALL; it states nothing.
             continue
+        if _POLITE_LEAD.match(lead):
+            remainder = remainder.rstrip(" ?")
         if _is_action_request(remainder) or _UNCERTAIN.search(remainder):
             # "lembra-te DE abrir o Spotify às 9h" is a reminder, and a reminder
             # is not a durable fact about the user: nothing about them is true

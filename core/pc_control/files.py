@@ -27,13 +27,35 @@ from core.pc_control.results import MAX_FILE_RESULTS, PCControlError, clamp_text
 
 logger = logging.getLogger("nano.pc_control.files")
 
-#: Extensions Windows would EXECUTE rather than display. Refused by file.open.
+#: Extensions Windows would EXECUTE rather than display. Refused by file.open,
+#: and as the target of a copy, move or rename.
 #: `.js`, `.jse`, `.wsf` and friends are included because Windows Script Host
-#: runs them on a double-click exactly like a batch file.
+#: runs them on a double-click exactly like a batch file. The interpreter
+#: types (`.py`, `.pyw`, `.sh`, ...) are here because the installers that
+#: put those interpreters on a PC also register them to RUN on open: the py
+#: launcher for Python, Git Bash for `.sh`. Shortcuts and installer packages
+#: (`.url`, `.appref-ms`, `.msix`, ...) are here because opening one starts a
+#: program or an install, which is `app.launch`'s job, never `file.open`'s.
 EXECUTABLE_EXTENSIONS = frozenset({
-    ".exe", ".com", ".bat", ".cmd", ".ps1", ".psm1", ".vbs", ".vbe", ".js",
-    ".jse", ".wsf", ".wsh", ".msi", ".msp", ".scr", ".reg", ".hta", ".cpl",
-    ".jar", ".lnk", ".pif", ".gadget", ".application", ".msc", ".inf",
+    # Windows executables, installers and system items
+    ".exe", ".com", ".bat", ".cmd", ".msi", ".msp", ".mst", ".scr", ".reg",
+    ".hta", ".cpl", ".msc", ".inf", ".ins", ".isp", ".gadget", ".pif",
+    ".application", ".appref-ms", ".appx", ".appxbundle", ".msix",
+    ".msixbundle", ".diagcab", ".xbap", ".vsto", ".settingcontent-ms",
+    # shortcuts that point somewhere else
+    ".lnk", ".url", ".website", ".scf", ".library-ms", ".searchconnector-ms",
+    ".shb", ".shs",
+    # Windows Script Host and PowerShell
+    ".vbs", ".vbe", ".vb", ".js", ".jse", ".wsf", ".wsh", ".ws", ".wsc", ".sct",
+    ".ps1", ".psm1", ".psd1", ".ps1xml", ".ps2", ".ps2xml", ".psc1", ".psc2",
+    ".msh", ".msh1", ".msh2", ".mshxml", ".msh1xml", ".msh2xml",
+    # interpreters that installers register to run on open
+    ".py", ".pyw", ".pyz", ".pyzw", ".pyc", ".pyo", ".sh", ".bash",
+    ".rb", ".rbw", ".pl", ".tcl", ".jar", ".jnlp",
+    # help and add-in formats that can run code when opened
+    ".chm", ".hlp", ".xll", ".iqy", ".slk",
+    # Access databases that run code on open
+    ".ade", ".adp", ".mde", ".accde",
 })
 
 #: Known-folder names the user can say out loud, mapped to the environment

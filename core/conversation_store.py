@@ -482,6 +482,16 @@ class ConversationStore:
                 self.conn.execute(
                     "UPDATE conversations SET message_count=?, last_message_at=?, updated_at=?"
                     " WHERE id=?", (int(count or 0), last, _now(), conversation_id))
+                users_left = self.conn.execute(
+                    "SELECT COUNT(*) FROM messages WHERE conversation_id=? AND role='user'",
+                    (conversation_id,)).fetchone()[0]
+                if not users_left:
+                    # The first question was taken back. Its automatic title
+                    # goes with it, so the edited question names the thread
+                    # instead of the words it replaced. A manual title stays.
+                    self.conn.execute(
+                        "UPDATE conversations SET title=? WHERE id=? AND title_source='auto'",
+                        (DEFAULT_TITLE, conversation_id))
                 self.conn.commit()
         except sqlite3.Error as exc:
             logger.exception("Falha a desfazer a última vez na conversa %s", conversation_id)

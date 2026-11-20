@@ -145,10 +145,17 @@ def related_facts(title: str, facts: list[str], *, limit: int = MAX_RELATED_FACT
     return [text for _, _, text in sorted(scored)[:limit]]
 
 
-def build_prep_notice(title: str, start: datetime, facts: list[str]) -> dict:
+def build_prep_notice(title: str, start: datetime, facts: list[str], *,
+                      all_day: bool = False) -> dict:
     """The evening-before offer: "tens teste de matemática amanhã, queres rever?"."""
-    lines = [tr("Amanhã às {time} tens “{title}”. Queres preparar-te? Posso ajudar a rever, "
-                "fazer um resumo ou organizar o que precisas.", time=_hhmm(start), title=title)]
+    if all_day:
+        # An all-day event has no hour: "amanhã às 00:00" was simply wrong.
+        first = tr("Amanhã tens “{title}”. Queres preparar-te? Posso ajudar a rever, "
+                   "fazer um resumo ou organizar o que precisas.", title=title)
+    else:
+        first = tr("Amanhã às {time} tens “{title}”. Queres preparar-te? Posso ajudar a rever, "
+                   "fazer um resumo ou organizar o que precisas.", time=_hhmm(start), title=title)
+    lines = [first]
     related = related_facts(title, facts)
     if related:
         lines.append(tr("O que me lembro sobre isto:"))
@@ -170,12 +177,44 @@ def _greeting(now: datetime, name: str) -> str:
     return f"{base}, {name}!" if name else f"{base}!"
 
 
+#: Marks an all-day event inside ``_items_on``'s (time, title) pairs. A control
+#: character, so no real title can start with it.
+_ALL_DAY = "\x00"
+
+
+def is_all_day(event: dict) -> bool:
+    """A calendar event with a date and no time (Google's ``start.date``)."""
+    return len(str(event.get("start") or "").strip()) == 10
+
+
+def _on_day(event: dict, start: datetime, day: datetime) -> bool:
+    """Whether an event is on ``day``. An all-day event covers every day up to
+    its end date, which Google stores as the day AFTER the last one."""
+    if not is_all_day(event):
+        return start.date() == day.date()
+    end = parse_when(event.get("end"))
+    last = start.date()
+    if end is not None and len(str(event.get("end") or "").strip()) == 10 and end > start:
+        last = (end - timedelta(days=1)).date()
+    return start.date() <= day.date() <= last
+
+
 def _items_on(day: datetime, overview: dict) -> tuple[list[tuple[datetime, str]], list[tuple[datetime, str]]]:
+    """Today's (or tomorrow's) events and reminders, sorted.
+
+    An all-day event is dated at midnight of ``day``, so it sorts first, and
+    its title carries the ``_ALL_DAY`` mark: see ``build_briefing``.
+    """
     events, reminders = [], []
     for event in overview.get("events") or []:
         start = parse_when(event.get("start"))
-        if start and start.date() == day.date():
-            events.append((start, str(event.get("title") or "").strip()[:120]))
+        if start and _on_day(event, start, day):
+            title = str(event.get("title") or "").strip()[:120]
+            if is_all_day(event):
+                midnight = datetime.combine(day.date(), datetime.min.time())
+                events.append((midnight, _ALL_DAY + title))
+            else:
+                events.append((start, title))
     for reminder in overview.get("reminders") or []:
         if reminder.get("fired"):
             continue
@@ -189,7 +228,11 @@ def build_briefing(overview: dict, now: datetime, *, name: str = "",
                    facts: list[str] | None = None) -> dict:
     """The morning briefing as ``{"title", "text"}``. Pure; no I/O."""
     events, reminders = _items_on(now, overview)
-    later_events = [item for item in events if item[0] >= now - timedelta(minutes=30)]
+    # An all-day event (a birthday, a holiday, an exam day) started at 00:00,
+    # so the "still ahead" filter used to drop every one of them from the
+    # morning briefing. They are always listed, first, without a clock time.
+    later_events = [item for item in events
+                    if item[1].startswith(_ALL_DAY) or item[0] >= now - timedelta(minutes=30)]
     tomorrow_events, tomorrow_reminders = _items_on(now + timedelta(days=1), overview)
     lines = [_greeting(now, name)]
     if not later_events and not reminders:
@@ -197,7 +240,11 @@ def build_briefing(overview: dict, now: datetime, *, name: str = "",
     if later_events:
         lines.append(tr("Hoje na agenda:"))
         for start, title in later_events[:MAX_LISTED]:
-            lines.append(f"• {_hhmm(start)} {title}")
+            if title.startswith(_ALL_DAY):
+                title = title[len(_ALL_DAY):]
+                lines.append(f"• {tr('Todo o dia')}: {title}")
+            else:
+                lines.append(f"• {_hhmm(start)} {title}")
             # One thing NANO remembers about it, if anything matches.
             lines += [f"   ↳ {fact}" for fact in related_facts(title, facts or [], limit=1)]
         if len(later_events) > MAX_LISTED:
@@ -325,7 +372,7 @@ class ProactiveScheduler:
                     continue
                 if facts is None:
                     facts = self._read_facts()
-                out.append(build_prep_notice(title, start, facts))
+                out.append(build_prep_notice(title, start, facts, all_day=is_all_day(event)))
                 self._state["announced"] = (self._state["announced"] + [key])[-200:]
                 changed = True
 

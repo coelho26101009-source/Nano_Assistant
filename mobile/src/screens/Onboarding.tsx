@@ -19,6 +19,7 @@ export default function Onboarding({ onPaired, startAt = "welcome" }: { onPaired
   const [paste, setPaste] = useState("");
   const [showPaste, setShowPaste] = useState(!isNative());
   const [pcName, setPcName] = useState("");
+  const [pairCode, setPairCode] = useState("");
   const cancel = useRef({ cancelled: false });
 
   useEffect(() => () => { cancel.current.cancelled = true; }, []);
@@ -29,15 +30,19 @@ export default function Onboarding({ onPaired, startAt = "welcome" }: { onPaired
     try {
       parsed = parsePairLink(code);
     } catch (err) {
-      setError((err as Error).message === "unsupported_version"
+      const reason = (err as Error).message;
+      setError(reason === "unsupported_version"
         ? t("Este código é de uma versão mais recente do NANO. Atualiza a app.")
-        : t("Este não é um código do NANO. No PC, abre Definições → Geral → Telemóvel."));
+        : reason === "old_pc"
+          ? t("O NANO do PC é de uma versão antiga. Atualiza o NANO no PC e gera um código novo.")
+          : t("Este não é um código do NANO. No PC, abre Definições → Geral → Telemóvel."));
       return;
     }
     setPcName(parsed.pcName);
+    setPairCode("");
     setStep("waiting");
     cancel.current = { cancelled: false };
-    const result = await pair(parsed, deviceName(), "android", (s) => setState(s), cancel.current);
+    const result = await pair(parsed, deviceName(), "android", (s) => setState(s), cancel.current, setPairCode);
     if (result) {
       void tap();
       setStep("notifications");
@@ -120,7 +125,8 @@ export default function Onboarding({ onPaired, startAt = "welcome" }: { onPaired
             {state === "connecting" || state === "" ? <h1>{t("A ligar ao {0}…", { 0: pcName })}</h1> : null}
             {state === "pending" && <>
               <h1>{t("Confirma no PC")}</h1>
-              <p>{t("O PC está a perguntar se \"{0}\" se pode ligar. Carrega em Permitir no PC.", { 0: deviceName() })}</p>
+              {pairCode && <p className="pair-code" aria-label={t("Código de ligação")}>{`${pairCode.slice(0, 3)} ${pairCode.slice(3)}`}</p>}
+              <p>{t("O PC está a perguntar se \"{0}\" se pode ligar. Confirma que o PC mostra o mesmo código e carrega em Permitir no PC.", { 0: deviceName() })}</p>
             </>}
             {state === "denied" && <><h1>{t("O PC recusou")}</h1><p>{t("Se foste tu, gera um código novo no PC e tenta outra vez.")}</p></>}
             {state === "expired" && <><h1>{t("O código expirou")}</h1><p>{t("Os códigos duram 5 minutos. Gera um novo no PC.")}</p></>}

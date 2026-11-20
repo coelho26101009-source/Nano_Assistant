@@ -226,6 +226,19 @@ Regras de ferramentas:
 # a turn that actually asks for it, and costing nothing on the turns that do
 # not. See tests/test_capability_awareness.py, which pins both halves.
 
+# A spoken turn (wake phrase, hotkey, voice mode) is HEARD, not read. Without
+# this the model answered a spoken "que tempo vai fazer?" with markdown, lists
+# and a table that the speech engine then read out symbol by symbol, cut at
+# 500 characters. Added only on spoken turns, so typed turns and the measured
+# benchmarks are unchanged.
+VOICE_STYLE_RULES = """
+Esta resposta vai ser dita em voz alta, como numa conversa:
+- Responde em uma a três frases curtas e naturais, como um assistente pessoal.
+- Sem markdown, listas, tabelas, emojis, links ou código.
+- Se o resultado for longo (uma lista, um texto, código), diz o essencial e que
+  o resto ficou no ecrã.
+"""
+
 # Kept as the full composition: it is the documented shape of Nano's system
 # prompt and the hardening tests assert the trust boundary is present in it.
 SYSTEM_PROMPT = NANO_PERSONA + NANO_TOOL_RULES + TRUST_BOUNDARY_SYSTEM_RULES
@@ -799,6 +812,8 @@ class Brain:
         parts = base_system_sections(
             user_message,
             with_tools=with_tools or self._history_has_external_content())
+        if getattr(self, "_turn_spoken", False):
+            parts.append(VOICE_STYLE_RULES)
         parts.append(self._facts_block())
         # The recalled context: thread summary, relevant older turns of THIS
         # conversation, long-term memories and the knowledge they belong to.
@@ -1441,8 +1456,41 @@ class Brain:
         yield tr("Atingi o limite de operações encadeadas. Podes reformular o pedido?")
         outcome["done"] = True
 
-    async def chat(self, user_message: str, stream: bool = True) -> AsyncIterator[str]:
-        """Answer one message, streaming real provider tokens as they arrive."""
+    def _turn_lock(self) -> asyncio.Lock:
+        """One turn at a time per Brain, on whichever loop is running it.
+
+        Turns share this object's conversation and its per-turn ledgers. Two at
+        once (a phone message while a PC turn waits for an approval, a wake
+        phrase during a typed turn) interleaved their rows -- tool results
+        landing after the other turn's question, which providers reject -- and
+        the second turn wiped the ledger that stops a failover from running a
+        PC action twice. The lock is per loop because an asyncio.Lock belongs
+        to the loop it first waited on, and tests run turns on fresh loops.
+        """
+        loop = asyncio.get_running_loop()
+        held = getattr(self, "_turn_lock_by_loop", None)
+        if held is None or held[0] is not loop:
+            held = (loop, asyncio.Lock())
+            self._turn_lock_by_loop = held
+        return held[1]
+
+    async def chat(self, user_message: str, stream: bool = True, *,
+                   spoken: bool = False) -> AsyncIterator[str]:
+        """Answer one message, streaming real provider tokens as they arrive.
+
+        ``spoken`` marks a voice turn: the answer will be heard, so the model
+        is asked for a short, plain spoken reply (VOICE_STYLE_RULES).
+        """
+        async with self._turn_lock():
+            self._turn_spoken = bool(spoken)
+            try:
+                async for token in self._chat_turn(user_message, stream):
+                    yield token
+            finally:
+                self._turn_spoken = False
+
+    async def _chat_turn(self, user_message: str, stream: bool = True) -> AsyncIterator[str]:
+        """One turn, with the turn lock already held. See ``chat``."""
         started = time.monotonic()
         # One ledger per logical user turn. Provider failover happens INSIDE a
         # turn -- now between two CLOUD providers as well as cloud-to-local --

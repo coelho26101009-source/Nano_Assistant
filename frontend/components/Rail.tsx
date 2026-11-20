@@ -374,7 +374,7 @@ export default function Rail({
             {!unavailable && threads.length > 0 && selecting ? (
               <div className="rail__select-bar" role="group" aria-label={t("Seleção de conversas")}>
                 <span className="rail__select-count" aria-live="polite">
-                  {selected.size === 1 ? t("1 selecionada") : `${selected.size} selecionadas`}
+                  {selected.size === 1 ? t("1 selecionada") : t("{0} selecionadas", { 0: selected.size })}
                 </span>
                 <button
                   type="button" className="rail__select-action"

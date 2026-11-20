@@ -141,7 +141,7 @@ export const EN: Record<string, string> = {
   "O NANO para Android é um comando para o NANO que corre no teu próprio PC. Não tem servidores nossos, contas, publicidade nem estatísticas de utilização.": "NANO for Android is a remote for the NANO running on your own PC. There are no servers of ours, no accounts, no ads and no usage analytics.",
   "O NANO pede autorização": "NANO asks for approval",
   "O NANO precisa de acesso ao microfone para te ouvir. Podes dar acesso nas definições do Android.": "NANO needs microphone access to hear you. You can allow it in Android settings.",
-  "O PC está a perguntar se \"{0}\" se pode ligar. Carrega em Permitir no PC.": "Your PC is asking whether \"{0}\" may connect. Tap Allow on your PC.",
+  "O PC está a perguntar se \"{0}\" se pode ligar. Confirma que o PC mostra o mesmo código e carrega em Permitir no PC.": "Your PC is asking whether \"{0}\" can connect. Check that the PC shows the same code, then press Allow on the PC.",
   "O PC já não aceita este telemóvel. Esquece este PC e liga-o de novo.": "The PC no longer accepts this phone. Forget this PC and pair it again.",
   "O PC recusou": "The PC said no",
   "O código expirou": "The code expired",
@@ -214,4 +214,7 @@ export const EN: Record<string, string> = {
   "Voz e avisos": "Voice and alerts",
   "Âmbito": "Scope",
   "Última atualização: 19 de novembro de 2026.": "Last updated: 19 November 2026.",
+  "O NANO do PC é de uma versão antiga. Atualiza o NANO no PC e gera um código novo.": "The NANO on your PC is an older version. Update NANO on the PC and create a new code.",
+  "Código de ligação": "Connection code",
+  "O NANO não conseguiu esquecer isto.": "NANO couldn't forget this.",
 };

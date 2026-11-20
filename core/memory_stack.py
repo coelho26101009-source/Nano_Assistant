@@ -908,9 +908,13 @@ class MemoryStack:
                 # FTS tables exist only where SQLite was built with FTS5.
                 if self._table_exists("retrieval_fts"):
                     self.conn.execute("DELETE FROM retrieval_fts")
-                if self._table_exists("documents_fts"):
-                    counts["documents"] = self._count("SELECT COUNT(*) FROM documents_fts")
-                    self.conn.execute("DELETE FROM documents_fts")
+                # Indexed documents live in documents_fts, or -- where SQLite
+                # has no FTS5 -- in documents_fallback. Both hold the user's
+                # text; the fallback one used to survive "apagar tudo".
+                for table in ("documents_fts", "documents_fallback"):
+                    if self._table_exists(table):
+                        counts["documents"] += self._count(f"SELECT COUNT(*) FROM {table}")  # noqa: S608
+                        self.conn.execute(f"DELETE FROM {table}")  # noqa: S608 - fixed names
                 self.conn.execute("RELEASE SAVEPOINT nano_purge")
                 self.conn.commit()
             except sqlite3.Error as exc:

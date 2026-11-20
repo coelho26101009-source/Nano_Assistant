@@ -21,7 +21,7 @@ import {
   Badge, Button, ConfirmDialog, EmptyState, ErrorState, Field, MetricRow,
   Panel, SecretField, SegmentedControl, StatusIndicator, Toggle,
 } from "./ui";
-import { LOCALES, locale, normaliseLocale, reloadInLocale, t } from "../lib/i18n";
+import { LOCALES, intlLocale, locale, normaliseLocale, reloadInLocale, t } from "../lib/i18n";
 import type { Locale } from "../lib/i18n";
 import { tj } from "../lib/tj";
 import PhonePanel from "./PhonePanel";
@@ -263,7 +263,7 @@ function modelCapabilityNote(info: ProviderInfo | undefined, model: string) {
   const facts: string[] = [];
   if (record.tool_calling === false) facts.push(t("não suporta chamadas de ferramentas (sem PC Control)"));
   if (record.thinking) facts.push(t("suporta raciocínio configurável"));
-  if (record.input_tokens) facts.push(t("contexto até {0} tokens", { 0: record.input_tokens.toLocaleString("pt-PT") }));
+  if (record.input_tokens) facts.push(t("contexto até {0} tokens", { 0: record.input_tokens.toLocaleString(intlLocale()) }));
   if (!facts.length) return null;
   return (
     <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>
@@ -337,7 +337,7 @@ function CloudProviderPanel({
     <Panel
       title={title}
       action={<Badge tone={preferred === providerKey ? "accent" : "neutral"}>
-        {preferred === providerKey ? "preferido" : "cloud"}
+        {preferred === providerKey ? t("preferido") : t("nuvem")}
       </Badge>}
     >
       <MetricRow label={t("Estado")} value={<StatusIndicator state={info?.state} />} />
@@ -413,11 +413,18 @@ function NameField({ value, onSave }: { value: string; onSave: (value: string) =
 function LanguagePanel({ language }: { language?: SettingsPayload["language"] }) {
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
-  const choice = language?.setting ?? "system";
+  // The choice is kept here as well as in the settings it came from. Picking
+  // "English" while the system already resolved to English needs no reload,
+  // and the select used to bounce back to "Seguir o sistema" because the
+  // settings prop it read was never refreshed.
+  const [choice, setChoice] = useState<string>(language?.setting ?? "system");
+  React.useEffect(() => { setChoice(language?.setting ?? "system"); }, [language?.setting]);
   const systemLabel = LOCALES.find((entry) => entry.id === normaliseLocale(language?.system))?.label
     ?? LOCALES[0].label;
 
   const choose = async (value: string) => {
+    const previous = choice;
+    setChoice(value);
     setSaving(true);
     setFailed(false);
     const result = await call<{ ok: boolean; resolved: string }>("set_language", value);
@@ -425,6 +432,7 @@ function LanguagePanel({ language }: { language?: SettingsPayload["language"] })
     if (result?.ok && next) {
       if (next !== locale()) { reloadInLocale(next as Locale); return; }
     } else {
+      setChoice(previous);
       setFailed(true);
     }
     setSaving(false);
@@ -1019,7 +1027,7 @@ export default function SettingsPage({
           <div className="stack">
             <Panel title={t("Onde correm os teus dados")}>
               <p className="muted" style={{ fontSize: 13, lineHeight: 1.7 }}>{tj("A memória, o histórico de conversa, a transcrição de voz e a deteção da wake phrase acontecem {0}.", { 0: <strong>{t("sempre neste computador")}</strong> })}
-                <br /><br />{t("No modo Automático ou Cloud, o texto das tuas mensagens é enviado ao Groq para gerar a resposta. No modo Local, o texto das mensagens não sai do computador.")}</p>
+                <br /><br />{t("No modo Automático ou Cloud, o texto das tuas mensagens é enviado ao fornecedor na nuvem que escolheste (Groq, Google Gemini ou Mistral) para gerar a resposta. No modo Local, o texto das mensagens não sai do computador.")}</p>
             </Panel>
 
             {/* Stated separately and plainly because it is the one thing that

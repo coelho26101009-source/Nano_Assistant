@@ -15,10 +15,12 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import inspect
+import os
 import subprocess
 import time
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import quote_plus
 
 import httpx
 
@@ -903,12 +905,7 @@ class ToolExecutor:
     def _delete_path(self, args: dict) -> dict:
         p = self.resolve_tool_target(args.get("path"), must_exist=True).path
         if p.is_dir():
-            for child in sorted(p.iterdir(), reverse=True):
-                if child.is_dir():
-                    self._delete_path({"path": str(child)})
-                else:
-                    child.unlink()
-            p.rmdir()
+            _delete_tree(p)
         else:
             p.unlink()
         return {"path": str(p), "deleted": True}
@@ -959,7 +956,9 @@ class ToolExecutor:
         if not query:
             raise ToolExecutionError("query obrigatório")
         engine = str(args.get("engine") or "duckduckgo").lower()
-        encoded = query.replace(" ", "+")
+        # Properly encoded: "C# vs C++" or "AT&T" must reach the engine as
+        # typed, not cut at the "#" or split at the "&".
+        encoded = quote_plus(query)
         urls = {
             "duckduckgo": f"https://html.duckduckgo.com/html/?q={encoded}",
             "bing": f"https://www.bing.com/search?q={encoded}",
@@ -984,6 +983,45 @@ class ToolExecutor:
         response = httpx.get(url, timeout=20)
         response.raise_for_status()
         return {"url": url, "status_code": response.status_code, "text": response.text[:12000], "success": True}
+
+def _is_link(entry: os.DirEntry) -> bool:
+    """A symlink or an NTFS junction. Either one points somewhere else."""
+    try:
+        return entry.is_symlink() or bool(getattr(entry, "is_junction", lambda: False)())
+    except OSError:
+        return True
+
+
+def _remove_link(path: Path) -> None:
+    """Remove the LINK itself; its target is never touched."""
+    try:
+        os.unlink(path)
+    except OSError:
+        os.rmdir(path)  # a directory symlink or junction on Windows
+
+
+def _delete_tree(root: Path) -> None:
+    """Delete a folder and what is inside it, WITHOUT following links out of it.
+
+    The approved target is the folder. A symlink or junction inside it is a
+    pointer to somewhere else -- often somewhere the person never meant to
+    touch (a junction to Documents inside an old project folder). The old
+    recursion followed it, emptied the target and then failed on the link, so
+    deleting one approved folder could erase another one entirely. A link is
+    now removed as a link, and the walk never leaves the approved folder.
+    """
+    with os.scandir(root) as listing:
+        entries = list(listing)
+    for entry in entries:
+        child = Path(entry.path)
+        if _is_link(entry):
+            _remove_link(child)
+        elif entry.is_dir(follow_symlinks=False):
+            _delete_tree(child)
+        else:
+            child.unlink()
+    root.rmdir()
+
 
 def _python_executable() -> str:
     import sys

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -42,17 +43,39 @@ def _origin_allowed(origin: str | None) -> bool:
     return parts.scheme in {"http", "https", "capacitor"} and parts.hostname in _ALLOWED_ORIGIN_HOSTS
 
 
-def _handler_for(link: MobileLink):
+def _handler_for(link: MobileLink, owner: "MobileServer | None" = None):
     class Handler(BaseHTTPRequestHandler):
         server_version = "NANO"
         sys_version = ""
         protocol_version = "HTTP/1.1"
+        #: Seconds a connection may sit silent before it is closed. Longer than
+        #: the phone's longest wait (a 20 s long-poll plus the network), so a
+        #: live phone never notices; a phone that vanished without closing its
+        #: socket (Wi-Fi lost, no FIN) no longer holds a thread forever.
+        timeout = 60
+
+        def setup(self) -> None:
+            super().setup()
+            if owner is not None:
+                owner._track(self.connection, True)
+
+        def finish(self) -> None:
+            try:
+                super().finish()
+            finally:
+                if owner is not None:
+                    owner._track(self.connection, False)
 
         def log_message(self, fmt: str, *args: Any) -> None:  # quiet: never log bodies
             logger.debug("%s %s", self.client_address[0], fmt % args)
 
         def _send(self, status: int, payload: dict) -> None:
             body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+            if status != 200:
+                # An error can leave part of the request body unread; on a
+                # kept-alive connection those bytes would be parsed as the next
+                # request. A refused request ends its connection.
+                self.close_connection = True
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -93,9 +116,18 @@ def _handler_for(link: MobileLink):
             if path not in _ROUTES:
                 self._send(404, {"error": "not_found"})
                 return
+            if owner is not None and not owner.running:
+                # Phone access was switched off while this connection stayed
+                # open (the phone's long-poll keeps one alive). Off means off:
+                # nothing more is answered on it.
+                self._send(503, {"error": "access_off"})
+                return
             try:
                 link.check_client(client)
-                length = int(self.headers.get("Content-Length") or 0)
+                try:
+                    length = int(self.headers.get("Content-Length") or 0)
+                except ValueError as exc:
+                    raise LinkError("bad_request") from exc
                 if length <= 0 or length > MAX_BODY_BYTES:
                     raise LinkError("bad_request", 413 if length > MAX_BODY_BYTES else 400)
                 raw = self.rfile.read(length)
@@ -116,6 +148,20 @@ def _handler_for(link: MobileLink):
     return Handler
 
 
+class _QuietServer(ThreadingHTTPServer):
+    """socketserver prints a traceback to stderr for any error in a handler
+    thread. A connection that drops (a phone going to sleep) or that stop()
+    closes under a waiting handler is normal here, so it is logged quietly."""
+
+    def handle_error(self, request, client_address) -> None:  # noqa: D401 - stdlib hook
+        import sys
+        error = sys.exc_info()[1]
+        if isinstance(error, (ConnectionError, OSError, TimeoutError)):
+            logger.debug("Phone connection ended: %s", type(error).__name__)
+            return
+        logger.exception("Phone request failed")
+
+
 class MobileServer:
     """Start/stop wrapper. ``start`` is idempotent; ``stop`` waits for the socket."""
 
@@ -127,6 +173,15 @@ class MobileServer:
         self._thread: threading.Thread | None = None
         self.error: str = ""
         self._lock = threading.Lock()
+        self._connections: set = set()
+        self._connections_lock = threading.Lock()
+
+    def _track(self, connection, alive: bool) -> None:
+        with self._connections_lock:
+            if alive:
+                self._connections.add(connection)
+            else:
+                self._connections.discard(connection)
 
     @property
     def running(self) -> bool:
@@ -137,7 +192,7 @@ class MobileServer:
             if self._httpd is not None:
                 return True
             try:
-                httpd = ThreadingHTTPServer((self.host, self.port), _handler_for(self.link))
+                httpd = _QuietServer((self.host, self.port), _handler_for(self.link, self))
             except OSError as exc:
                 self.error = "port_in_use" if getattr(exc, "errno", None) in (98, 48, 10048) else "cannot_listen"
                 logger.warning("Phone access could not listen on port %s: %s", self.port, exc)
@@ -159,6 +214,20 @@ class MobileServer:
                 return
             httpd.shutdown()
             httpd.server_close()
+            # shutdown() only stops accepting. A phone's kept-alive connection
+            # has its own thread that would go on answering requests, so every
+            # open connection is closed here too.
+            with self._connections_lock:
+                open_connections, self._connections = list(self._connections), set()
+            for connection in open_connections:
+                try:
+                    connection.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                try:
+                    connection.close()
+                except OSError:
+                    pass
             logger.info("Phone access stopped")
 
 

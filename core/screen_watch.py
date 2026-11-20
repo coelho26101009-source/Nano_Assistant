@@ -53,6 +53,30 @@ def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", str(text or "").casefold()).strip()
 
 
+def _rose(base: dict[str, int], low: dict[str, int], word: str, count: int) -> bool:
+    """True when ``word`` is on screen MORE often than when the watch began.
+
+    "Appears" used to mean "is on screen", so a watch fired on its first check
+    whenever the word was already there -- and it usually was, because NANO's
+    own chat shows the request: "avisa-me se aparecer erro" contains "erro".
+    The first reading is now the baseline and only a rise counts. A lower
+    reading lowers the baseline only after CONFIRMATIONS checks in a row, so
+    one OCR miss cannot make the same text "appear" again on the next check.
+    """
+    if word not in base:
+        base[word] = count
+        return False
+    if count > base[word]:
+        return True
+    if count < base[word]:
+        low[word] = low.get(word, 0) + 1
+        if low[word] >= CONFIRMATIONS:
+            base[word], low[word] = count, 0
+    else:
+        low[word] = 0
+    return False
+
+
 def _words(value: Any) -> list[str]:
     if value is None:
         return []
@@ -81,6 +105,12 @@ class Watch:
     seen_window: bool = False
     gone_text: int = 0
     gone_window: int = 0
+    #: How often each "appears" word was on screen when the watch began, and
+    #: how many checks in a row it has been seen less often. See `_rose`.
+    text_base: dict[str, int] = field(default_factory=dict)
+    text_low: dict[str, int] = field(default_factory=dict)
+    window_base: dict[str, int] = field(default_factory=dict)
+    window_low: dict[str, int] = field(default_factory=dict)
 
     @property
     def needs_text(self) -> bool:
@@ -146,6 +176,15 @@ class ScreenWatcher:
         now = self._clock()
         watch.started_at = now
         watch.expires_at = now + span * 60
+        if watch.window_appears:
+            # Listing windows is cheap, so the baseline is taken now: a window
+            # that opens a second after the request still counts as opening.
+            # Screen text is OCR (slow), so its baseline is the first check.
+            found = self._safe(self._list_titles)
+            if isinstance(found, list):
+                titles = [_norm(t) for t in found]
+                for word in watch.window_appears:
+                    watch.window_base[word] = sum(word in title for title in titles)
         with self._lock:
             if len(self._watches) >= MAX_WATCHES:
                 return {"ok": False, "error": "too_many_watches",
@@ -208,7 +247,7 @@ class ScreenWatcher:
             watch.next_text_at = now + TEXT_INTERVAL_SECONDS
             screen = _norm(text)
             for word in watch.appears:
-                if word in screen:
+                if _rose(watch.text_base, watch.text_low, word, screen.count(word)):
                     return self._notice(watch, tr("apareceu “{word}” no ecrã.", word=word))
             if watch.disappears:
                 present = any(word in screen for word in watch.disappears)
@@ -222,7 +261,8 @@ class ScreenWatcher:
         if watch.needs_windows and now >= watch.next_window_at and titles is not None:
             watch.next_window_at = now + WINDOW_INTERVAL_SECONDS
             for word in watch.window_appears:
-                if any(word in title for title in titles):
+                count = sum(word in title for title in titles)
+                if _rose(watch.window_base, watch.window_low, word, count):
                     return self._notice(watch, tr("abriu uma janela com “{word}”.", word=word))
             if watch.window_closes:
                 present = any(word in title for title in titles for word in watch.window_closes)
@@ -254,20 +294,30 @@ class ScreenWatcher:
 
     # ── the thread ───────────────────────────────────────────────────────
     def _ensure_thread(self) -> None:
-        if self._thread and self._thread.is_alive():
-            return
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._loop, name="nano-screen-watch", daemon=True)
-        self._thread.start()
+        # Under the same lock the loop holds when it decides to exit. Without
+        # it a watch added just as the last one ended found the thread "alive",
+        # started nothing, and was never checked: the loop was already leaving.
+        # Each thread gets its own stop event, so a thread still winding down
+        # after shutdown() cannot be revived by the next start().
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive() and not self._stop.is_set():
+                return
+            self._stop = threading.Event()
+            self._thread = threading.Thread(target=self._loop, args=(self._stop,),
+                                            name="nano-screen-watch", daemon=True)
+            self._thread.start()
 
     def shutdown(self) -> None:
         self._stop.set()
         self.stop()
 
-    def _loop(self) -> None:
-        while not self._stop.wait(TICK_SECONDS):
+    def _loop(self, stop: threading.Event | None = None) -> None:
+        stop = stop or self._stop
+        while not stop.wait(TICK_SECONDS):
             with self._lock:
                 if not self._watches:
+                    if self._thread is threading.current_thread():
+                        self._thread = None
                     return
             try:
                 self.tick()

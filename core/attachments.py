@@ -139,6 +139,10 @@ def _decode(data: str) -> bytes:
         return b""
 
 
+def _PASSWORD_PROTECTED() -> str:  # noqa: N802 - reads as the sentence it returns
+    return tr("(este PDF está protegido por palavra-passe e não pode ser lido)")
+
+
 def pdf_text(raw: bytes) -> tuple[str, bool]:
     """The text layer of a PDF, read locally. Returns (text, truncated)."""
     try:
@@ -148,10 +152,17 @@ def pdf_text(raw: bytes) -> tuple[str, bool]:
     try:
         reader = pypdf.PdfReader(io.BytesIO(raw))
         if reader.is_encrypted:
+            # decrypt() does not raise for a wrong password: it RETURNS
+            # PasswordType.NOT_DECRYPTED (0), and the page read that followed
+            # failed with FileNotDecryptedError -- reported to the person as
+            # "o ficheiro parece estar danificado". An empty user password
+            # (owner-only protection) still opens, as before.
             try:
-                reader.decrypt("")
+                unlocked = reader.decrypt("")
             except Exception:
-                return tr("(este PDF está protegido por palavra-passe e não pode ser lido)"), False
+                unlocked = 0
+            if not unlocked:
+                return _PASSWORD_PROTECTED(), False
         pages = reader.pages
         parts, cut = [], len(pages) > MAX_PDF_PAGES
         for number, page in enumerate(pages[:MAX_PDF_PAGES], start=1):
@@ -163,6 +174,8 @@ def pdf_text(raw: bytes) -> tuple[str, bool]:
                 break
     except Exception as exc:
         logger.info("PDF ilegível: %s", type(exc).__name__)
+        if type(exc).__name__ == "FileNotDecryptedError":
+            return _PASSWORD_PROTECTED(), False
         return tr("(não foi possível ler este PDF: o ficheiro parece estar danificado)"), False
     if not parts:
         return tr("(este PDF não tem texto selecionável; pode ser uma digitalização)"), False

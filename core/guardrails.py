@@ -161,12 +161,24 @@ class GuardrailsEngine:
             self._tell_listeners("resolved", request_id)
 
     def resolve_confirmation(self, request_id: str, confirmed: bool) -> bool:
+        """The first answer wins; any later one is told it arrived too late.
+
+        The entry is taken out under the lock, so two answers sent at the same
+        moment (the PC card and the phone card) cannot both be accepted. Before,
+        both passed the `done()` check, both reported success, and the screen
+        whose answer was ignored said it had been applied.
+        """
         with self._lock:
-            pending = self._pending.get(request_id)
+            pending = self._pending.pop(request_id, None)
         if not pending:
             return False
         loop, future = pending
         if future.done():
             return False
-        loop.call_soon_threadsafe(future.set_result, bool(confirmed))
+
+        def _settle() -> None:
+            if not future.done():
+                future.set_result(bool(confirmed))
+
+        loop.call_soon_threadsafe(_settle)
         return True

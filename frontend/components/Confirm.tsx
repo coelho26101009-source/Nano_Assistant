@@ -35,6 +35,14 @@ interface ConfirmProps {
   meta: Record<string, any>;
   onConfirm: () => void;
   onCancel: () => void;
+  /** How many more approvals wait behind this one. */
+  queued?: number;
+}
+
+function eyebrow(queued?: number): string {
+  return queued && queued > 0
+    ? t("Autorização necessária · mais {0} à espera", { 0: queued })
+    : t("Autorização necessária");
 }
 
 /** The facts of one decision, shared by the inline card and the dialog. */
@@ -98,7 +106,7 @@ function ConfirmBody({ meta }: { meta: Record<string, any> }) {
  * Used while the chat is open; the dialog below covers every other page, so a
  * request is never left waiting where the person cannot see it.
  */
-export function ConfirmCard({ message, meta, onConfirm, onCancel }: ConfirmProps) {
+export function ConfirmCard({ message, meta, onConfirm, onCancel, queued }: ConfirmProps) {
   const ref = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
     ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -106,7 +114,7 @@ export function ConfirmCard({ message, meta, onConfirm, onCancel }: ConfirmProps
   }, []);
   return (
     <div ref={ref} className="confirm-card" role="alertdialog" aria-labelledby="confirm-card-title">
-      <div className="confirm-card__eyebrow">{t("Autorização necessária")}</div>
+      <div className="confirm-card__eyebrow">{eyebrow(queued)}</div>
       <h3 id="confirm-card-title" className="confirm-card__title">{meta?.action ?? message}</h3>
       <ConfirmBody meta={meta} />
       <div className="confirm-card__actions">
@@ -117,12 +125,12 @@ export function ConfirmCard({ message, meta, onConfirm, onCancel }: ConfirmProps
   );
 }
 
-export default function ConfirmModal({ message, meta, onConfirm, onCancel }: ConfirmProps) {
+export default function ConfirmModal({ message, meta, onConfirm, onCancel, queued }: ConfirmProps) {
   return (
     <Modal
       open
       onClose={onCancel}
-      eyebrow={t("Autorização necessária")}
+      eyebrow={eyebrow(queued)}
       title={meta?.action ?? message}
       width="narrow"
       footer={

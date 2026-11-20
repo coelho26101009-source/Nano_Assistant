@@ -48,6 +48,7 @@ const notifications = require('./lib/notifications');
 const windowState = require('./lib/window-state');
 const { canonicalDataDir, shellStateFile } = require('./lib/paths');
 const { diagnostics, waitForHttp, loadRecovery } = require('./lib/startup-health');
+const { parseEnvText } = require('./lib/env-file');
 
 /* ── Constants ──────────────────────────────────────────────────────────── */
 
@@ -196,13 +197,9 @@ function loadEnvFile() {
   const devEnv = path.join(APP_ROOT, '.env');
   const envFile = fs.existsSync(userEnv) ? userEnv : (IS_DEV && fs.existsSync(devEnv) ? devEnv : null);
   if (!envFile) return env;
-  for (const line of fs.readFileSync(envFile, 'utf8').split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) continue;
-    const index = trimmed.indexOf('=');
-    env[trimmed.slice(0, index).trim()] = trimmed.slice(index + 1).trim();
-  }
-  return env;
+  // Quotes, `export` and inline comments are read as python-dotenv reads
+  // them; see lib/env-file.js for what went wrong before.
+  return { ...env, ...parseEnvText(fs.readFileSync(envFile, 'utf8')) };
 }
 
 function backendEnv() {

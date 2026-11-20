@@ -162,3 +162,26 @@ def test_retry_rewinds_before_it_dispatches():
     rebuild = body.index("switch_conversation(")
     dispatch = body.index("_dispatch_turn(")
     assert rewind < rebuild < dispatch
+
+
+def test_editing_the_first_question_renames_an_automatically_named_thread(stack):
+    thread = stack.new_conversation()["id"]
+    _turn(stack, thread, "receita de bacalhau com natas", "Aqui vai a receita.")
+    assert "bacalhau" in stack.conversations.get(thread)["title"].lower()
+
+    assert stack.rewind_last_turn(thread)["ok"]
+    _turn(stack, thread, "plano de treino para correr 10 km", "Aqui vai o plano.")
+
+    title = stack.conversations.get(thread)["title"].lower()
+    assert "treino" in title and "bacalhau" not in title
+
+
+def test_a_manual_title_survives_editing_the_first_question(stack):
+    thread = stack.new_conversation()["id"]
+    _turn(stack, thread, "receita de bacalhau com natas", "Aqui vai a receita.")
+    stack.conversations.rename(thread, "Jantar de sábado")
+
+    assert stack.rewind_last_turn(thread)["ok"]
+    _turn(stack, thread, "plano de treino para correr 10 km", "Aqui vai o plano.")
+
+    assert stack.conversations.get(thread)["title"] == "Jantar de sábado"

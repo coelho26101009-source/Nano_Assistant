@@ -514,7 +514,7 @@ def describe_all(
 
     for provider_id in skipped:
         fast, strong = _tiers_for(cloud_tiers, provider_id)
-        clouds[provider_id] = _disabled(provider_id, fast, "Não avaliado nesta consulta.",
+        clouds[provider_id] = _disabled(provider_id, fast, tr("Não avaliado nesta consulta."),
                                         complex_model=strong)
 
     if wanted:
@@ -586,7 +586,8 @@ def _unmeasured(provider_id: str, fast: str, strong: str) -> dict:
         "tiers": {"fast": fast, "complex": strong or fast},
         "model_source": (model_defaults.SOURCE_CONFIGURED if str(fast or "").strip()
                          else model_defaults.SOURCE_NONE),
-        "detail": f"O estado do {name} ainda não foi verificado; a verificação está em curso.",
+        "detail": tr("O estado do {name} ainda não foi verificado; a verificação está em curso.",
+                     name=name),
     }
 
 
@@ -620,7 +621,7 @@ def describe_unmeasured(
     for provider_id in providers.CLOUD_PROVIDER_IDS:
         fast, strong = _tiers_for(cloud_tiers, provider_id)
         if only is not None and provider_id not in only:
-            clouds[provider_id] = _disabled(provider_id, fast, "Não avaliado nesta consulta.",
+            clouds[provider_id] = _disabled(provider_id, fast, tr("Não avaliado nesta consulta."),
                                             complex_model=strong)
         else:
             clouds[provider_id] = _unmeasured(provider_id, fast, strong)
@@ -676,7 +677,12 @@ def cache_key(mode: providers.ProviderMode, cloud_tiers: dict[str, tuple[str, st
     mapping's own keys, so two callers that pass the same models in a different
     insertion order share one snapshot instead of probing twice.
     """
-    parts = [mode.value, ollama_model, preferred_cloud]
+    # The language joins the key: every "detail" in a snapshot is a sentence
+    # already translated, so switching to English kept showing Portuguese
+    # status lines until the snapshot expired.
+    from core.i18n import current as current_language
+
+    parts = [mode.value, ollama_model, preferred_cloud, current_language()]
     for provider_id in providers.CLOUD_PROVIDER_IDS:
         fast, strong = _tiers_for(cloud_tiers, provider_id)
         parts.extend((provider_id, fast, strong))

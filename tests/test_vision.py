@@ -78,6 +78,11 @@ def test_cloud_mode_skips_ollama(net):
     assert all(provider != "ollama" for provider, _ in vision.candidates({"mode": "CLOUD"}))
 
 
+def test_cloud_mode_only_sends_the_picture_to_the_chosen_provider(net):
+    found = vision.candidates({"mode": "CLOUD", "preferred_cloud": "google"})
+    assert found and {provider for provider, _ in found} == {"google"}
+
+
 def test_a_failing_provider_falls_through_to_the_next(net):
     net.fail = {"groq.com"}
     result = vision.describe(PNG, "image/png")

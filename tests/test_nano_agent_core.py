@@ -528,18 +528,31 @@ def test_voice_runtime_routes_quick_commands_and_long_tasks_through_nano_core(tm
 
     quick = runtime._normalize_request("que horas são")
     assert quick["source"] == "voice"
-    assert runtime._is_quick_command("que horas são") is True
-    assert runtime._requires_permission("apaga esta pasta") is True
 
-    long_task = asyncio.run(runtime.process_request("analisa este projeto inteiro"))
-    assert long_task["ok"] is True
-    assert long_task["mode"] == "task"
-    assert long_task["task"]["ok"] is True
-    assert long_task["task"]["task_id"]
+    # Every spoken request goes to the Brain, like a typed one. "analisa",
+    # "cria", "pesquisa"... used to be diverted to the old keyword task planner
+    # ("Vou tratar disso", then nothing), and "apaga", "envia", "executa" to a
+    # permission request nothing ever resumed. The Brain applies the policy,
+    # permissions and guardrails to each tool call instead.
+    asked: list[str] = []
 
-    quick_reply = asyncio.run(runtime.process_request("como estás"))
-    assert quick_reply["ok"] is True
-    assert quick_reply["mode"] == "quick"
+    async def fake_chat(text, stream=True, spoken=False):
+        asked.append((text, spoken))
+        yield "Feito."
+
+    brain.chat = fake_chat
+    for request in ("analisa este projeto inteiro", "cria um lembrete para amanhã às 9",
+                    "apaga a luz da sala", "como estás"):
+        reply = asyncio.run(runtime.process_request(request))
+        assert reply["ok"] is True and reply["mode"] == "quick", request
+        assert reply["response"] == "Feito." and reply["task"] is None
+        assert reply["transcript"] == request
+    assert [text for text, _ in asked] == ["analisa este projeto inteiro",
+                                           "cria um lembrete para amanhã às 9",
+                                           "apaga a luz da sala", "como estás"]
+    assert all(spoken for _, spoken in asked)
+    assert permission_manager.get_pending_permissions() == []
+    assert task_engine.list_tasks() == []
 
 
 def test_voice_diagnostics_handles_missing_microphone_and_setup_gap():

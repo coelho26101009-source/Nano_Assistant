@@ -59,7 +59,14 @@ export default function MemoryScreen({ link, online, toast }: { link: NanoLink; 
 
   const remove = async (row: MemoryRow) => {
     try {
-      await link.call("memory.delete", { id: row.id });
+      // The PC answers {ok: false} when it could not forget it; the row stays
+      // and the person is told, instead of "Esquecido." over a memory that is
+      // still there.
+      const result = await link.call<{ ok?: boolean }>("memory.delete", { id: row.id });
+      if (result && result.ok === false) {
+        toast(t("O NANO não conseguiu esquecer isto."));
+        return;
+      }
       setRows((prev) => (prev ?? []).filter((r) => r.id !== row.id));
       toast(t("Esquecido."));
     } catch {

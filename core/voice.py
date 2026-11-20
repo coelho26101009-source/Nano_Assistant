@@ -5,6 +5,7 @@ import importlib.util
 import io
 import logging
 import os
+import re
 import tempfile
 import threading
 import time
@@ -1105,9 +1106,12 @@ class VoiceEngine:
     async def speak(self, text: str) -> bool:
         if not self.enabled or not text or not text.strip():
             return False
+        spoken = speech_text(text)
+        if not spoken:
+            return False
         self.session.speaking()
         try:
-            return await self.tts_provider.speak(text)
+            return await self.tts_provider.speak(spoken)
         except ProviderError as exc:
             logger.warning("voice TTS failed: %s", exc)
             self.session.error(str(exc))
@@ -1259,31 +1263,13 @@ class VoiceRuntime:
                 logger.debug("voice event publish failed: %s", event, exc_info=True)
 
     def _normalize_request(self, transcript: str, *, session_context: dict | None = None) -> dict:
-        text = (transcript or "").strip()
-        privacy = "strict_local" if "apagar" in text.lower() or "eliminar" in text.lower() or "reset" in text.lower() else "normal"
         return {
-            "text": text,
+            "text": (transcript or "").strip(),
             "source": "voice",
             "session_id": self.session.session_id,
-            "privacy_level": privacy,
             "task_type": "CHAT",
-            "requires_permission": self._requires_permission(text),
             "context": session_context or {},
         }
-
-    def _requires_permission(self, text: str) -> bool:
-        lowered = (text or "").lower()
-        return any(keyword in lowered for keyword in ("apaga", "apagar", "eliminar", "deletar", "reset", "instala", "enviar", "submeter", "executa"))
-
-    def _is_quick_command(self, text: str) -> bool:
-        lowered = (text or "").lower()
-        if not lowered:
-            return True
-        slow_keywords = ["analisa", "investiga", "corrige", "desenvolve", "cria", "melhora", "revisa", "configura", "planeia", "procura", "pesquisa"]
-        if any(keyword in lowered for keyword in slow_keywords):
-            return False
-        quick_keywords = ["que horas", "horas são", "data", "como estás", "estado", "olá", "bom dia", "boa tarde", "boa noite", "abri", "abre o", "fecha", "lista", "mostra"]
-        return True if any(keyword in lowered for keyword in quick_keywords) else True
 
     async def listen_once(self, *, duration_seconds: int | None = None) -> str | None:
         self._publish("VoiceSessionStarted", {"session_id": self.session.session_id})
@@ -1305,7 +1291,13 @@ class VoiceRuntime:
         if self.brain is None:
             return "O Nano não está disponível no momento."
         chunks: list[str] = []
-        async for token in self.brain.chat(text, stream=True):
+        try:
+            # A spoken turn: the Brain asks the model for a short spoken reply.
+            stream = self.brain.chat(text, stream=True, spoken=True)
+        except TypeError:
+            # A brain without the keyword (an older build or a test double).
+            stream = self.brain.chat(text, stream=True)
+        async for token in stream:
             # Every control token, not just "_thinking_:". This path feeds TTS,
             # and it used to READ THE RATE-LIMIT JSON ALOUD because it filtered
             # one sentinel by name instead of the whole class of them.
@@ -1314,57 +1306,30 @@ class VoiceRuntime:
             chunks.append(token)
         return "".join(chunks).strip() or "Não consegui responder a esse pedido no momento."
 
-    async def _create_task(self, text: str) -> dict:
-        if self.orchestrator is None:
-            return {"ok": False, "error": "orchestrator_unavailable"}
-        result = self.orchestrator.handle_request(text, metadata={"source": "voice", "session_id": self.session.session_id})
-        if result.get("ok"):
-            self._publish("VoiceTaskCreated", {"task_id": result.get("task_id"), "session_id": self.session.session_id})
-        return result
-
     async def process_request(self, transcript: str, *, session_context: dict | None = None) -> dict:
         normalized = self._normalize_request(transcript, session_context=session_context)
         if not normalized["text"]:
             return {"ok": False, "error": "empty_request"}
         self._publish("VoiceRequestCreated", {"session_id": self.session.session_id, "text": normalized["text"]})
-        if self.permission_manager and self._requires_permission(normalized["text"]):
-            action = "voice.command"
-            request_id = self.permission_manager.request_permission(
-                action,
-                {"text": normalized["text"]},
-                task_id=self.session.session_id,
-                reason="Voice command requires explicit user approval before execution.",
-                target="voice-command",
-                agent="voice",
-                tool="voice",
-            )
-            self._publish("VoicePermissionRequested", {"session_id": self.session.session_id, "request_id": request_id})
-            return {
-                "ok": True,
-                "requires_permission": True,
-                "request_id": request_id,
-                "response": "Preciso da tua autorização para executar esse comando.",
-                "task": None,
-            }
-
-        if self._is_quick_command(normalized["text"]):
-            self.session.thinking()
-            response = await self._direct_chat(normalized["text"])
-            self.session.cancel()
-            # The transcript travels with the result so the UI can show what
-            # was actually said rather than the wake phrase that preceded it.
-            return {"ok": True, "mode": "quick", "response": response,
-                    "transcript": normalized["text"], "task": None}
-
+        # EVERY spoken request goes to the Brain, exactly like a typed one.
+        #
+        # Two keyword gates used to sit here. One sent anything containing
+        # "apaga", "envia", "executa", "instala"... to a voice.command
+        # permission request that nothing ever resumed -- "apaga a luz" could
+        # never run by voice, approved or not. The other sent anything with
+        # "cria", "procura", "pesquisa", "planeia", "analisa"... to the old
+        # keyword task planner, which answered "Vou tratar disso" and then
+        # failed: "cria um lembrete para amanhã" by voice created nothing, while
+        # the same words typed worked. The Brain checks every tool call against
+        # the policy, the permissions and the guardrails, so a gate in front of
+        # it only ever took working requests away.
         self.session.thinking()
-        task_result = await self._create_task(normalized["text"])
-        if not task_result.get("ok"):
-            self.session.error("task creation failed")
-            return {"ok": False, "error": "task_creation_failed", "details": task_result}
-        brief = "Vou tratar disso. Aviso-te quando terminar."
+        response = await self._direct_chat(normalized["text"])
         self.session.cancel()
-        return {"ok": True, "mode": "task", "response": brief,
-                "transcript": normalized["text"], "task": task_result}
+        # The transcript travels with the result so the UI can show what
+        # was actually said rather than the wake phrase that preceded it.
+        return {"ok": True, "mode": "quick", "response": response,
+                "transcript": normalized["text"], "task": None}
 
     async def speak_response(self, text: str) -> bool:
         if not text or not text.strip():
@@ -1862,13 +1827,50 @@ def is_closing_phrase(text: str) -> bool:
     return normalised in CLOSING_PHRASES or normalised.replace("'", "") in CLOSING_PHRASES
 
 
-def _clean_for_tts(text: str) -> str:
-    clean = text.replace("```", " ")
-    clean = clean.replace("`", " ")
-    clean = clean.replace("**", " ")
-    clean = clean.replace("*", " ")
-    clean = " ".join(clean.split())
-    return clean[:500]
+_CODE_BLOCK = re.compile(r"```.*?(?:```|$)", re.S)
+_MD_LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
+_BARE_URL = re.compile(r"https?://\S+")
+_INLINE_CODE = re.compile(r"`([^`]*)`")
+_TABLE_RULE = re.compile(r"^\s*\|?\s*:?-{3,}[-|: ]*$", re.M)
+_LINE_MARK = re.compile(r"^\s{0,3}(?:#{1,6}|>|[-*+•]|\d{1,2}[.)])\s+", re.M)
+_EMPHASIS = re.compile(r"(\*{1,3}|_{2,3}|~~)")
+_EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]")
+#: Longest stretch spoken in one go. A spoken answer should be short anyway
+#: (VOICE_STYLE_RULES); this only stops a long one becoming minutes of audio.
+SPEECH_LIMIT = 700
+
+
+def speech_text(text: str, limit: int = SPEECH_LIMIT) -> str:
+    """A reply as it should SOUND: no markdown symbols, code, links or emoji.
+
+    The speech engine read whatever it was given, so "**Feito**", a "# Título"
+    or a pasted URL came out as symbols, and code blocks were read line by
+    line. A long answer is cut at the last full sentence that fits, never in
+    the middle of a word.
+    """
+    clean = _CODE_BLOCK.sub(" ", str(text or ""))
+    clean = _MD_LINK.sub(r"\1", clean)
+    clean = _BARE_URL.sub(" ", clean)
+    clean = _INLINE_CODE.sub(r"\1", clean)
+    clean = _TABLE_RULE.sub(" ", clean)
+    clean = _LINE_MARK.sub("", clean)
+    clean = clean.replace("|", ", ")
+    clean = _EMPHASIS.sub("", clean)
+    clean = _EMOJI.sub("", clean)
+    # Each line ends in a pause: list items and headings run together otherwise.
+    lines = [" ".join(line.split()).strip(" ,") for line in clean.splitlines()]
+    clean = " ".join(line if line[-1] in ".!?:;," else f"{line}." for line in lines if line)
+    if len(clean) <= limit:
+        return clean
+    cut = clean[:limit]
+    end = max(cut.rfind(mark) for mark in (". ", "! ", "? ", "; ", ": "))
+    if end >= limit // 3:
+        return cut[:end + 1].strip()
+    return cut.rsplit(" ", 1)[0].strip()
+
+
+#: The old name, kept for anything that imported it.
+_clean_for_tts = speech_text
 
 
 __all__ = [
