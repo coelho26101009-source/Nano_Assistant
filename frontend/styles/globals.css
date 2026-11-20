@@ -1817,93 +1817,128 @@ kbd {
 .link-chip__relation { font-size: 11px; color: var(--text-dim); }
 
 /* ============================================================================
-   GRAPH
-   Drawn as SVG with a deterministic layout computed in the component. There is
-   no graph library and no animation loop: the same nodes draw the same way
-   every time, which is what makes the picture learnable.
+   GRAPH — the Second Brain in 3D
+   Drawn as SVG from a deterministic 3D layout computed in the component; only
+   the camera moves. The space is ALWAYS black, in both themes, like a code
+   block: it is the one place in NANO that is a picture rather than a page.
+   Lit spheres, fog with depth and a faint floor carry the 3D; there is no
+   glow and no blur, which would cost a weak PC every frame.
    ========================================================================== */
 .graph-page { display: flex; flex-direction: column; min-height: 0; }
 .graph-canvas {
   position: relative; border-radius: var(--r-lg);
-  border: 1px solid #33445c;
-  background: radial-gradient(ellipse at 50% 42%, #19283f 0%, #111a29 55%, #0c121d 100%);
-  overflow: hidden; min-height: 380px; height: min(62vh, 640px);
+  border: 1px solid #1c2533;
+  background:
+    radial-gradient(ellipse 70% 60% at 50% 46%, rgba(40, 72, 130, .22) 0%, rgba(8, 12, 20, 0) 70%),
+    #040609;
+  overflow: hidden; min-height: 380px; height: min(64vh, 680px);
 }
+/* Star dust: static, a few hundred bytes of CSS, no images and no motion. */
 .graph-canvas::before {
-  content: ""; position: absolute; inset: 0; pointer-events: none;
-  opacity: .34;
-  background: linear-gradient(rgba(127, 165, 221, .08) 1px, transparent 1px),
-              linear-gradient(90deg, rgba(127, 165, 221, .08) 1px, transparent 1px);
-  background-size: 54px 54px; transform: perspective(600px) rotateX(14deg) scale(1.15);
+  content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .55;
+  background-image:
+    radial-gradient(1px 1px at 12% 18%, #9fb6d8 50%, transparent 51%),
+    radial-gradient(1px 1px at 78% 12%, #c9d6ea 50%, transparent 51%),
+    radial-gradient(1px 1px at 64% 72%, #8ea7cc 50%, transparent 51%),
+    radial-gradient(1px 1px at 28% 84%, #b5c5de 50%, transparent 51%),
+    radial-gradient(1px 1px at 90% 58%, #a3b8d6 50%, transparent 51%),
+    radial-gradient(1px 1px at 44% 32%, #7f95b8 50%, transparent 51%);
+  background-size: 260px 220px;
 }
-.graph-svg { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+.graph-svg { position: relative; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
 .graph-svg:active { cursor: grabbing; }
 
+.graph-floor polyline { stroke: rgba(120, 158, 214, .16); stroke-width: 1; }
+.graph-floor polyline + polyline { stroke: rgba(120, 158, 214, .09); }
+
 /* EDGES ARE THE POINT OF THE VIEW, so they are drawn strongly enough to be
-   read at rest, not only when something is selected. */
-.graph-edge { stroke: #526b8b; fill: none; transition: stroke var(--transition), opacity var(--transition); }
+   read at rest, not only when something is selected. Depth fades them through
+   stroke-opacity, set per frame; the classes below own `opacity`. */
+.graph-edge { stroke: #5b7699; fill: none; stroke-linecap: round; transition: stroke var(--transition), opacity var(--transition); }
 /* Unrelated elements FADE, they do not vanish: the shape of the rest of the
    graph is context for the part being read. */
 .graph-edge.is-dim { opacity: 0.14; }
-.graph-edge.is-lit { stroke: #91baff; opacity: 1; }
+.graph-edge.is-lit { stroke: #9cc2ff; opacity: 1; stroke-opacity: 1; }
+.graph-pulse { fill: #e8f1ff; pointer-events: none; }
 
 .graph-node { cursor: grab; transition: opacity var(--transition); }
 .graph-node:active { cursor: grabbing; }
 .graph-node.is-dim { opacity: 0.26; }
-.graph-node.is-focus .graph-node__dot { stroke: var(--accent); stroke-width: 2.5; }
-.graph-node.is-focus .graph-node__label { fill: #fff; font-weight: 600; }
 .graph-node__dot {
-  fill: url(#nano-graph-node); stroke: #b5d0ff; stroke-width: 1.5;
-  transition: fill var(--transition), stroke var(--transition);
+  fill: url(#nano-sphere-grey); stroke: none;
+  transition: fill var(--transition);
 }
-.graph-node__halo { fill: rgba(79, 147, 255, .16); stroke: rgba(142, 188, 255, .34); }
-.graph-node:hover .graph-node__dot { stroke: var(--accent); }
-.graph-node.is-selected .graph-node__dot { fill: url(#nano-graph-selected); stroke: #e6f1ff; stroke-width: 2.5; }
+/* A thin rim on the shaded side reads as the edge of a sphere, not a disc. */
+.graph-node__rim { fill: none; stroke: rgba(210, 226, 255, .28); stroke-width: 1; transition: stroke var(--transition), stroke-width var(--transition); }
+.graph-node__halo { fill: rgba(79, 147, 255, .14); stroke: rgba(142, 188, 255, .42); stroke-width: 1.2; }
+.graph-node:hover .graph-node__rim,
+.graph-node.is-focus .graph-node__rim { stroke: #9cc2ff; stroke-width: 2.2; }
+.graph-node.is-selected .graph-node__dot { fill: url(#nano-sphere-selected); }
+.graph-node.is-selected .graph-node__rim { stroke: #e6f1ff; stroke-width: 2.4; }
 .graph-node:focus-visible { outline: none; }
-.graph-node:focus-visible .graph-node__dot { stroke: var(--focus); stroke-width: 3; }
+.graph-node:focus-visible .graph-node__rim { stroke: var(--focus); stroke-width: 3; }
 .graph-node__label {
-  fill: #d5e1f2; font-size: 14px; text-anchor: middle;
-  paint-order: stroke; stroke: #111a29; stroke-width: 3px;
+  fill: #d8e4f5; font-size: 14px; text-anchor: middle;
+  paint-order: stroke; stroke: #040609; stroke-width: 3.5px;
   pointer-events: none; font-family: var(--font-ui);
 }
+/* Far labels fade with depth (fill-opacity, per frame); the focus and its
+   neighbours are always fully legible. */
+.graph-node.is-near .graph-node__label,
+.graph-node.is-focus .graph-node__label,
+.graph-node.is-selected .graph-node__label { fill-opacity: 1; }
+.graph-node.is-focus .graph-node__label,
 .graph-node.is-selected .graph-node__label { fill: #fff; font-weight: 600; }
 
-/* The dots follow the node-type colours. */
-.graph-node[data-type="device"]   .graph-node__dot { stroke: var(--information); }
-.graph-node[data-type="software"] .graph-node__dot { stroke: var(--warning); }
-.graph-node[data-type="project"]  .graph-node__dot { stroke: var(--accent); }
-.graph-node[data-type="person"]   .graph-node__dot { stroke: var(--information); }
-.graph-node[data-type="game"]     .graph-node__dot { stroke: var(--warning); }
-.graph-node[data-type="decision"] .graph-node__dot { stroke: var(--success); }
+/* The spheres follow the node-type colours. */
+.graph-node[data-type="project"]  .graph-node__dot { fill: url(#nano-sphere-blue); }
+.graph-node[data-type="device"]   .graph-node__dot,
+.graph-node[data-type="person"]   .graph-node__dot { fill: url(#nano-sphere-teal); }
+.graph-node[data-type="software"] .graph-node__dot,
+.graph-node[data-type="game"]     .graph-node__dot,
+.graph-node[data-type="goal"]     .graph-node__dot { fill: url(#nano-sphere-amber); }
+.graph-node[data-type="decision"] .graph-node__dot { fill: url(#nano-sphere-green); }
 
+/* Panels over the black space are dark in both themes, like the space. */
 .graph-legend {
   position: absolute; left: var(--sp-3); bottom: var(--sp-3);
   display: flex; flex-wrap: wrap; gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md);
-  background: var(--surface-raised); border: 1px solid var(--border);
-  box-shadow: var(--shadow-sm); pointer-events: none;
-  font-size: var(--fs-xs); color: var(--text-muted);
+  background: rgba(12, 16, 24, .86); border: 1px solid #222c3b;
+  pointer-events: none;
+  font-size: var(--fs-xs); color: #b4c2d6;
 }
 .graph-legend__item { display: inline-flex; align-items: center; gap: 5px; }
-.graph-legend__dot { width: 8px; height: 8px; border-radius: var(--r-full); background: var(--surface-raised); border: 1.5px solid currentColor; }
+.graph-legend__dot { width: 9px; height: 9px; border-radius: var(--r-full); background: #a9b6c8; border: 0; }
+.graph-legend__dot.node-type--project { background: #7fb0ff; }
+.graph-legend__dot.node-type--device,
+.graph-legend__dot.node-type--person { background: #5fd6c8; }
+.graph-legend__dot.node-type--software,
+.graph-legend__dot.node-type--game,
+.graph-legend__dot.node-type--goal { background: #f4be5c; }
+.graph-legend__dot.node-type--decision { background: #6fd69a; }
 
 .graph-selected {
   position: absolute; right: var(--sp-3); top: var(--sp-3);
   display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md);
-  background: var(--surface-raised); border: 1px solid var(--border-strong);
-  box-shadow: var(--shadow-md); font-size: var(--fs-sm); color: var(--text);
+  background: rgba(12, 16, 24, .92); border: 1px solid #2a3647;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .45); font-size: var(--fs-sm); color: #eef3fa;
   max-width: min(300px, 50%);
+  animation: graph-panel-in .22s ease-out;
 }
-.graph-selected strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.graph-selected__type { color: var(--accent-ink); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; }
-.graph-selected__summary { font-size: var(--fs-xs); line-height: 1.5; color: var(--text-muted); max-height: 4.5em; overflow: hidden; }
-.graph-selected__links { font-size: var(--fs-xs); color: var(--text-dim); }
-.graph-selected__link { font-size: var(--fs-xs); color: var(--text-secondary); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@keyframes graph-panel-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.graph-selected strong { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-selected__type { color: #8fb8ff; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; }
+.graph-selected__summary { font-size: var(--fs-xs); line-height: 1.5; color: #b4c2d6; max-height: 4.5em; overflow: hidden; }
+.graph-selected__links { font-size: var(--fs-xs); color: #93a3ba; }
+.graph-selected__link { font-size: var(--fs-xs); color: #c9d5e6; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-selected__actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 .graph-foot { padding-top: var(--sp-3); font-size: var(--fs-xs); line-height: 1.6; }
 
 @media (prefers-reduced-motion: reduce) {
-  .graph-edge, .graph-node, .graph-node__dot { transition: none; }
+  .graph-edge, .graph-node, .graph-node__dot, .graph-node__rim { transition: none; }
+  .graph-selected { animation: none; }
   .popover { animation: none; }
   .status-pill__caret { transition: none; }
   .rail, .rail[data-mode="drawer"] { transition: none; animation: none; }

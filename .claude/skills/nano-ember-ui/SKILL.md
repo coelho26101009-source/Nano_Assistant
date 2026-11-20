@@ -169,6 +169,15 @@ harnesses run in pt-PT.
 Short transitions on colour and background only; no looping decoration.
 Respect `prefers-reduced-motion`. Never fake audio amplitude or progress.
 
+The one exception is the Second Brain graph (Memória → Grafo), which the
+owner asked to be a real 3D view with animation: a slow turn while nobody
+touches it, a fly-in, a glide to a found node, and signals along the focused
+node's links. Its space is black in both themes. The rules there: the layout
+stays deterministic (only the camera moves), the loop runs only while
+something moves, it never runs with `prefers-reduced-motion`, it switches
+itself off on a PC that cannot keep up, and the turn has a visible pause
+button. Do not spread this motion to other screens.
+
 ## Accessibility
 
 - every text role clears 4.5:1 against every surface it can sit on, in both themes
