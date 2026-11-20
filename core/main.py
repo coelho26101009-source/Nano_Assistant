@@ -56,6 +56,7 @@ from core.local_runtime import choose_model
 from core.voice import VoiceEngine, VoiceRuntime, VoiceSessionState, speech_text
 from core import wake_phrase as wake_phrase_mod
 from core import voice_language
+from core import pc_alerts, personality, protocols, voice_setup
 from core import screen_watch
 from core.wake_word import WakeWordEngine
 from core.events import EventBus
@@ -114,6 +115,20 @@ elif memory_stack.migration.get("applied"):
 # Transcriber, voice and wake phrase follow the interface language, except
 # the ones the person changed (core/voice_language.py).
 voice_language.apply(CONFIG.setdefault("voice", {}), i18n.current())
+
+
+def _apply_tts_voice() -> str:
+    """The speaking voice the person chose (core/personality.py), when it
+    speaks the interface language; otherwise the language's own voice."""
+    tts = CONFIG.setdefault("voice", {}).setdefault("tts", {})
+    chosen = personality.voice_for(i18n.current(), str(user_settings.get("tts_voice", "") or ""))
+    target = chosen or voice_language.profile(i18n.current()).tts_voice
+    if tts.get("voice") in personality.ALL_VOICES or not tts.get("voice") or chosen:
+        tts["voice"] = target
+    return str(tts.get("voice") or "")
+
+
+_apply_tts_voice()
 voice = VoiceEngine(CONFIG.get("voice", {}))
 # The key the user saved in Settings wins over anything in the environment.
 # secret_store.get_secret() already implements exactly this precedence (the
@@ -2144,6 +2159,10 @@ def get_settings() -> dict:
             "leadMinutes": user_settings.get("proactive_event_lead_minutes", proactive.DEFAULT_LEAD_MINUTES),
             "prep": user_settings.get("proactive_prep", True) is not False,
         },
+        "personality": {**personality.settings(),
+                        "voices": personality.voice_options(i18n.current())},
+        "pcAlerts": {key: user_settings.get(f"pc_alerts_{key}", True) is not False
+                     for key in ("battery", "disk", "network", "downloads")},
         "stored": user_settings.all_settings(),
         "runtime": get_runtime_info(),
         "language": i18n.describe(),
@@ -2208,6 +2227,7 @@ def set_language(value: str = "system") -> dict:
 def _apply_voice_language() -> dict:
     """After a language change: transcriber, voice and wake phrase follow it, live."""
     changed = voice_language.apply(CONFIG.setdefault("voice", {}), i18n.current())
+    _apply_tts_voice()
     if "wake_phrase" in changed:
         try:
             voice.wake_phrase_provider._engine.set_phrase(changed["wake_phrase"])
@@ -2296,6 +2316,8 @@ def update_setting(key: str, value) -> dict:
     elif key == "memory_auto_capture":
         CONFIG.setdefault("memory", {})["auto_capture"] = bool(value)
         memory_stack.capture_enabled = bool(value)
+    elif key == "tts_voice":
+        _apply_tts_voice()
 
     return {"ok": True, "key": key, "value": value, "settings": get_settings()}
 
@@ -2824,6 +2846,106 @@ def activate_work_mode(mode_id: str) -> dict:
     return {"ok": True, "accepted": True}
 
 
+# ── Protocols: the person's own routines, started by a phrase ───────────────
+# See core/protocols.py. Saved in the data directory; every step still goes
+# through ToolExecutor when it runs.
+
+@eel.expose
+def get_protocols() -> dict:
+    try:
+        return {"ok": True, "protocols": protocols.STORE.describe(),
+                "templates": protocols.templates()}
+    except Exception:
+        logger.exception("Não consegui ler os protocolos")
+        return {"ok": False, "error": "protocols_unreadable", "protocols": [], "templates": []}
+
+
+@eel.expose
+def save_protocol(data: dict) -> dict:
+    try:
+        saved = protocols.STORE.save(data)
+    except protocols.ProtocolError as exc:
+        return {"ok": False, "error": "invalid_protocol", "detail": str(exc)}
+    except Exception:
+        logger.exception("Não consegui guardar o protocolo")
+        return {"ok": False, "error": "write_failed", "detail": tr("Não consegui guardar o protocolo.")}
+    return {"ok": True, "protocol": saved, "protocols": protocols.STORE.describe()}
+
+
+@eel.expose
+def delete_protocol(protocol_id: str) -> dict:
+    removed = protocols.STORE.delete(protocol_id)
+    return {"ok": removed, "protocols": protocols.STORE.describe()}
+
+
+async def _run_protocol(protocol: dict) -> None:
+    try:
+        result = await protocols.run(protocol, tool_executor)
+    except Exception:
+        logger.exception("Protocolo falhou")
+        result = {"ok": False, "id": protocol.get("id"), "name": protocol.get("name"),
+                  "message": tr("O protocolo “{name}” falhou.", name=protocol.get("name", "")),
+                  "steps": []}
+    _notify_ui("on_work_mode_done", result)
+
+
+@eel.expose
+def run_protocol(protocol_id: str) -> dict:
+    """Run a protocol from the Modos page. ACK now; the outcome arrives on
+    on_work_mode_done, like a work mode."""
+    protocol = protocols.STORE.get(protocol_id)
+    if protocol is None:
+        return {"ok": False, "accepted": False, "error": "unknown_protocol"}
+    try:
+        asyncio.run_coroutine_threadsafe(_run_protocol(protocol), _get_or_create_loop())
+    except Exception:
+        logger.exception("Não foi possível arrancar o protocolo")
+        return {"ok": False, "accepted": False, "error": "dispatch_failed"}
+    return {"ok": True, "accepted": True}
+
+
+# A protocol said in the chat or by voice also shows its result on Modos.
+brain.on_protocol_done = lambda result: _notify_ui("on_work_mode_done", result)
+
+
+# ── Speech pack: NANO ready to listen, in one click ────────────────────────
+# See core/voice_setup.py. Installs faster-whisper from the optional lock and
+# downloads the transcription model, only when the person presses the button.
+
+def _stt_model_name() -> str:
+    return str(((CONFIG.get("voice") or {}).get("stt") or {}).get("model") or "small")
+
+
+speech_pack = voice_setup.SpeechPack(model=_stt_model_name)
+
+
+def _speech_pack_ready() -> None:
+    """After the pack is in: the transcriber can be used from now on, live."""
+    voice.stt_provider.online = True
+    logger.info("Pacote de voz instalado; reconhecimento de voz disponível.")
+
+
+@eel.expose
+def get_voice_setup() -> dict:
+    try:
+        status = speech_pack.status()
+    except Exception:
+        logger.exception("Estado do pacote de voz indisponível")
+        return {"ok": False, "error": "status_failed"}
+    if status.get("ready") and not voice.stt_provider.online:
+        _speech_pack_ready()
+    voice_cfg = CONFIG.get("voice") or {}
+    return {"ok": True, **status,
+            "wakePhrase": str(voice_cfg.get("wake_phrase") or ""),
+            "wakePhraseEnabled": bool(voice_cfg.get("wake_phrase_enabled"))}
+
+
+@eel.expose
+def start_voice_setup() -> dict:
+    """The "Preparar a voz" button. Progress: get_voice_setup()["install"]."""
+    return speech_pack.start(on_ready=_speech_pack_ready)
+
+
 # ── Agenda page: reminders and calendar events ─────────────────────────────
 # The user's own edits to Nano's own data, like the Memória page. Not model
 # tools; see core/agenda.py.
@@ -2901,6 +3023,8 @@ def erase_all_data(confirmation: str = "") -> dict:
 
     # What the briefing already said, and which events it announced.
     proactive_scheduler.forget()
+    # The person's protocols are their own data too.
+    protocols.STORE.forget()
     screen_watch.WATCHER.stop()
     # Chat chunks and notices buffered for a paired phone are personal content.
     MOBILE.feed.clear()
@@ -3938,6 +4062,8 @@ proactive_scheduler = proactive.ProactiveScheduler(
     state_path=DATA_DIR / "proactive_state.json", facts=_remembered_facts)
 # Screen watches ("avisa-me quando o download acabar") speak the same way.
 screen_watch.WATCHER.configure(emit=_on_proactive_notice)
+# And so do the warnings about the PC itself (core/pc_alerts.py).
+pc_alert_watcher = pc_alerts.PcAlerts(emit=_on_proactive_notice)
 
 
 @eel.expose
@@ -4300,6 +4426,7 @@ def shutdown() -> None:
         # spawn a server after this point, and stops waiting for its port.
         control.cancel()
     proactive_scheduler.stop()
+    pc_alert_watcher.stop()
     screen_watch.WATCHER.shutdown()
     if _MOBILE_SERVER is not None:
         try:
@@ -4424,6 +4551,7 @@ def main():
     _register_reminder_notifier()
     started_services = start_plugin_services()
     proactive_scheduler.start()
+    pc_alert_watcher.start()
     _report("Plugins", "OK", f"{len(list_plugins())} loaded")
     if started_services:
         logger.info("Serviços de plugin activos: %s", ", ".join(started_services))

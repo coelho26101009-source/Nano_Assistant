@@ -814,6 +814,10 @@ class Brain:
             with_tools=with_tools or self._history_has_external_content())
         if getattr(self, "_turn_spoken", False):
             parts.append(VOICE_STYLE_RULES)
+        # The person's chosen personality (core/personality.py): tone, how to
+        # address them, answer length and their own style instructions. After
+        # the rules, and fenced, so it shapes the voice and never the safety.
+        parts.append(self._personality_block())
         parts.append(self._facts_block())
         # The recalled context: thread summary, relevant older turns of THIS
         # conversation, long-term memories and the knowledge they belong to.
@@ -825,6 +829,15 @@ class Brain:
         if task != model_selection.TaskClass.SMALL_TALK.value:
             parts.append(await self._rag_block(user_message))
         return "".join(part for part in parts if part)
+
+    def _personality_block(self) -> str:
+        try:
+            from core import personality
+
+            return personality.prompt_block()
+        except Exception:
+            logger.debug("Personality unavailable", exc_info=True)
+            return ""
 
     def _messages_for_request(self, system_prompt: str, tools: list[dict]) -> list[dict]:
         """Build the outgoing message list, consistent with the tools offered.
@@ -1509,6 +1522,14 @@ class Brain:
         # answered "Já registei um lembrete" to "lembra-me daqui a 1 minuto de
         # beber água" without calling set_reminder, so nothing was scheduled.
         # See core/reminder_intent.py.
+        # A PROTOCOL PHRASE ("modo estudo", "boa noite") runs the person's own
+        # routine directly, without a model. See core/protocols.py.
+        protocol = self._protocol_for(user_message)
+        if protocol is not None:
+            async for token in self._direct_protocol(protocol):
+                yield token
+            return
+
         reminder = reminder_intent.parse(user_message)
         if reminder is not None:
             async for token in self._direct_reminder(reminder):
@@ -1690,6 +1711,50 @@ class Brain:
                     return None
         logger.warning("The model claimed a reminder without calling set_reminder")
         return "\n\n" + reminder_intent.unbacked_claim_note(answer)
+
+    def _protocol_for(self, user_message: str) -> dict | None:
+        try:
+            from core import protocols
+
+            return protocols.STORE.match(user_message)
+        except Exception:
+            logger.debug("Protocols unavailable", exc_info=True)
+            return None
+
+    async def _direct_protocol(self, protocol: dict) -> AsyncIterator[str]:
+        """Run the person's protocol, step by step, through the executor.
+
+        Every step goes through ``ToolExecutor`` -- policy, permission,
+        confirmation, verification -- like a work mode started from the window.
+        The answer is the protocol's own sentence plus anything that failed.
+        """
+        from core import protocols
+
+        self.last_provider_used = None
+        self.last_metadata = {
+            "task": "protocol", "tier": None, "mode": getattr(self, "provider_mode", "AUTO"),
+            "provider": None, "model": None, "fallback_used": False,
+            "tools_offered": 0, "direct_action": "protocol", "provider_attempts": [],
+        }
+        yield f"_thinking_:⚙️ {protocol.get('name', '')}..."
+        if self.tool_executor is None:
+            answer = tr("Execução indisponível: falta a autoridade central.")
+        else:
+            try:
+                result = await protocols.run(protocol, self.tool_executor)
+            except Exception:
+                logger.exception("Protocol %s failed", protocol.get("id"))
+                result = {"ok": False, "message": tr("O protocolo “{name}” falhou.",
+                                                    name=protocol.get("name", "")), "steps": []}
+            answer = protocols.spoken_summary(result)
+            listener = getattr(self, "on_protocol_done", None)
+            if callable(listener):
+                try:
+                    listener(result)
+                except Exception:
+                    logger.debug("protocol listener failed", exc_info=True)
+        self.conversation.append({"role": "assistant", "content": answer})
+        yield answer
 
     async def _direct_reminder(self, request) -> AsyncIterator[str]:
         """Create the reminder the person clearly asked for, then say so.

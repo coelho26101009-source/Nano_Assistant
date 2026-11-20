@@ -292,6 +292,12 @@ export type SettingsPayload = {
   screenText?: { enabled: boolean; available: boolean; reason: string; message: string };
   screenVision?: { enabled: boolean };
   proactive?: { briefing: boolean; briefingTime: string; eventAlerts: boolean; leadMinutes: number; prep?: boolean };
+  personality?: {
+    tone: "jarvis" | "friendly" | "formal" | "neutral"; length: "short" | "balanced" | "detailed";
+    address: string; instructions: string; voice: string; name: string;
+    voices: { id: string; label: string }[];
+  };
+  pcAlerts?: { battery: boolean; disk: boolean; network: boolean; downloads: boolean };
 };
 
 /* ── Bridge ───────────────────────────────────────────────────────────── */

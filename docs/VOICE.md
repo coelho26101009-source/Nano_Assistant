@@ -305,11 +305,30 @@ The lock pins a prebuilt wheel for CPython 3.12 on Windows. On any other interpr
 
 ## STT setup
 
-For local recognition install faster-whisper, pinned and hash-checked by the optional lock:
+The easy way: **Definições → Voz → "Voz pronta a usar" → Preparar a voz** (also
+offered in the first-run guide). One click installs faster-whisper and only the
+packages it needs, with the versions and hashes from `requirements/optional.lock`,
+then downloads the transcription model (`small`, about 480 MB) into the normal
+Hugging Face cache. When it is done, NANO asks whether to switch on the wake
+phrase; nothing starts listening on its own. See `core/voice_setup.py`.
+
+By hand, install the whole optional lock (it includes faster-whisper):
 
 ```bash
-python -m pip install --require-hashes --no-build-isolation -c requirements/optional.lock faster-whisper
+python -m pip install --require-hashes --no-build-isolation -r requirements/optional.lock
 ```
+
+`-c requirements/optional.lock faster-whisper` does NOT work: pip does not read
+hashes from a constraints file, so `--require-hashes` refuses it.
+
+## Spoken answers start at the first sentence
+
+A spoken reply is no longer written in full, then synthesised, then played.
+`VoiceRuntime` feeds the Brain's tokens to a `SentenceSpeaker`: the first complete
+sentence goes to the speech engine at once, and while it plays the following
+sentences gather and are spoken together, without gaps. The total is still capped
+at `SPEECH_LIMIT`, barge-in still stops it, and `voice_stream_speech: false` in the
+voice config turns it off.
 
 If that dependency is not available, the system will report:
 

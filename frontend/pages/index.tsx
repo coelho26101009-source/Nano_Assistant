@@ -1686,6 +1686,16 @@ export default function Home() {
                           }
                         });
                       }}
+                      onRunProtocol={(protocolId) => {
+                        setModeRunning(`protocol:${protocolId}`);
+                        setModeResult(null);
+                        call<any>("run_protocol", protocolId).then((ack) => {
+                          if (!ack?.accepted) {
+                            setModeRunning(null);
+                            notify(t("Não foi possível executar o protocolo."), "error");
+                          }
+                        });
+                      }}
                     />
                   )}
                   {view === "integrations" && (

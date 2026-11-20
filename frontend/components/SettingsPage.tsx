@@ -25,6 +25,7 @@ import { LOCALES, intlLocale, locale, normaliseLocale, reloadInLocale, t } from 
 import type { Locale } from "../lib/i18n";
 import { tj } from "../lib/tj";
 import PhonePanel from "./PhonePanel";
+import VoiceSetupCard from "./VoiceSetupCard";
 
 /**
  * The seven Settings categories.
@@ -604,6 +605,94 @@ function ProactivePanel({ proactive, onUpdate, onShowBriefing }: {
   );
 }
 
+/**
+ * NANO's personality (core/personality.py): tone, how it addresses you, how
+ * long its answers are, your own instructions, and the voice that reads them.
+ * Shapes the style only; the safety rules always come first.
+ */
+function PersonalityPanel({ personality, onUpdate }: {
+  personality?: SettingsPayload["personality"];
+  onUpdate: (key: string, value: any) => void;
+}) {
+  const [address, setAddress] = useState(personality?.address ?? "");
+  const [notes, setNotes] = useState(personality?.instructions ?? "");
+  React.useEffect(() => { setAddress(personality?.address ?? ""); }, [personality?.address]);
+  React.useEffect(() => { setNotes(personality?.instructions ?? ""); }, [personality?.instructions]);
+  const tone = personality?.tone ?? "jarvis";
+  return (
+    <Panel title={t("Personalidade")}>
+      <Field label={t("Tom")} hint={t("Como o NANO fala contigo. Muda só o estilo, nunca as regras de segurança.")}>
+        <select className="select" value={tone} onChange={(e) => onUpdate("personality_tone", e.target.value)}>
+          <option value="jarvis">{t("Calmo, curto e com algum humor (estilo JARVIS)")}</option>
+          <option value="friendly">{t("Descontraído e próximo")}</option>
+          <option value="formal">{t("Formal e profissional")}</option>
+          <option value="neutral">{t("Neutro (o NANO original)")}</option>
+        </select>
+      </Field>
+      <Field label={t("Tamanho das respostas")}>
+        <SegmentedControl<"short" | "balanced" | "detailed">
+          label={t("Tamanho das respostas")} value={(personality?.length ?? "balanced") as "short" | "balanced" | "detailed"}
+          onChange={(value) => onUpdate("personality_length", value)}
+          options={[
+            { value: "short", label: t("Curtas") },
+            { value: "balanced", label: t("Equilibradas") },
+            { value: "detailed", label: t("Detalhadas") },
+          ]}
+        />
+      </Field>
+      <Field label={t("Como o NANO te trata")}
+             hint={t("Por exemplo “chefe” ou “senhor”. Vazio: usa o teu nome de vez em quando.")}>
+        <input className="input" value={address} maxLength={40} placeholder={t("Ex.: chefe")}
+               onChange={(e) => setAddress(e.target.value)}
+               onBlur={() => { if (address.trim() !== (personality?.address ?? "")) onUpdate("personality_address", address.trim()); }}
+               onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); (e.target as HTMLInputElement).blur(); } }} />
+      </Field>
+      <Field label={t("Instruções pessoais")}
+             hint={t("O que o NANO deve ter sempre em conta ao responder (até 600 letras). Fica só neste computador e vai com cada pedido para a IA escolhida.")}>
+        <textarea className="input" rows={3} maxLength={600} value={notes}
+                  placeholder={t("Ex.: explica com exemplos simples; trata-me por tu; responde em tópicos.")}
+                  onChange={(e) => setNotes(e.target.value)}
+                  onBlur={() => { if (notes !== (personality?.instructions ?? "")) onUpdate("personality_instructions", notes); }} />
+      </Field>
+      {personality?.voices && personality.voices.length > 0 && (
+        <Field label={t("Voz")} hint={t("A voz que lê as respostas, entre as vozes naturais da língua da interface.")}>
+          <select className="select" value={personality.voice ?? ""}
+                  onChange={(e) => onUpdate("tts_voice", e.target.value)}>
+            <option value="">{t("Automática (segue a língua)")}</option>
+            {personality.voices.map((voice) => <option key={voice.id} value={voice.id}>{voice.label}</option>)}
+          </select>
+        </Field>
+      )}
+    </Panel>
+  );
+}
+
+/**
+ * Warnings about this PC (core/pc_alerts.py): battery, disk, network and
+ * finished downloads. All read locally; nothing is sent anywhere.
+ */
+function PcAlertsPanel({ alerts, onUpdate }: {
+  alerts?: SettingsPayload["pcAlerts"];
+  onUpdate: (key: string, value: any) => void;
+}) {
+  return (
+    <Panel title={t("Avisos do PC")}>
+      <Toggle label={t("Bateria fraca")}
+              hint={t("Avisa aos 20% e aos 10% quando o portátil não está a carregar.")}
+              checked={alerts?.battery ?? true} onChange={(v) => onUpdate("pc_alerts_battery", v)} />
+      <Toggle label={t("Disco quase cheio")}
+              hint={t("Avisa quando o disco do sistema tem menos de 10% ou de 5 GB livres.")}
+              checked={alerts?.disk ?? true} onChange={(v) => onUpdate("pc_alerts_disk", v)} />
+      <Toggle label={t("Rede em baixo")}
+              hint={t("Avisa quando a ligação cai e quando volta. Usa o que o Windows já sabe, sem contactar nenhum servidor.")}
+              checked={alerts?.network ?? true} onChange={(v) => onUpdate("pc_alerts_network", v)} />
+      <Toggle label={t("Download terminado")}
+              hint={t("Avisa quando um ficheiro novo acaba de chegar à pasta Transferências. Só lê o nome do ficheiro.")}
+              checked={alerts?.downloads ?? true} onChange={(v) => onUpdate("pc_alerts_downloads", v)} />
+    </Panel>
+  );
+}
+
 export default function SettingsPage({
   settings, providers, diagnostics, loading, busy, onSetMode, onSetPreferredCloud,
   onSaveCloudKey, onRemoveCloudKey, onTestCloud, onSetCloudModel,
@@ -815,6 +904,9 @@ export default function SettingsPage({
         {/* ── VOICE ────────────────────────────────────────────────────── */}
         {section === "voice" && (
           <div className="stack">
+            <Panel title={t("Voz pronta a usar")}>
+              <VoiceSetupCard onWakePhrase={(v) => onUpdate("wake_phrase_enabled", v)} />
+            </Panel>
             <Panel title={t("Ativação por voz (experimental)")}
                    action={<Badge tone="neutral">{t("Experimental")}</Badge>}>
               <p className="muted" style={{ fontSize: 13, marginBottom: 10 }}>{tj("A forma normal de falar com o NANO é o atalho global {0}, que é instantâneo e não gasta nada enquanto não é usado.", { 0: <code>Ctrl + Shift + Space</code> })}</p>
@@ -984,10 +1076,12 @@ export default function SettingsPage({
                 onChange={onAdvancedMode}
               />
             </Panel>
+            <PersonalityPanel personality={settings.personality} onUpdate={onUpdate} />
             <LanguagePanel language={settings.language} />
             <PhonePanel />
             <ProactivePanel proactive={settings.proactive} onUpdate={onUpdate}
                             onShowBriefing={() => { void call("get_briefing_now"); }} />
+            <PcAlertsPanel alerts={settings.pcAlerts} onUpdate={onUpdate} />
             <DesktopPanel />
             {advancedMode && (
               <Panel title={t("Arranque")}>
