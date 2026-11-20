@@ -13,7 +13,7 @@ google-auth-oauthlib>=1.2,<2
 # through the WinRT projection. Local only; nothing is uploaded.
 winrt-runtime>=3,<4
 winrt-Windows.Foundation>=3,<4
-winrt-Windows.Foundation.Collections>=3,<4
+winrt-Windows.Foundation.Collections>=3,<11
 winrt-Windows.Globalization>=3,<4
 winrt-Windows.Graphics.Imaging>=3,<4
 winrt-Windows.Media.Ocr>=3,<4
