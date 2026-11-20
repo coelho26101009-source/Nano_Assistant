@@ -1,5 +1,5 @@
 # Optional capabilities. The MSI does not install these by default.
-faster-whisper>=1.0,<2
+faster-whisper>=1.2.1,<2
 SpeechRecognition>=3.10,<4
 beautifulsoup4>=4.12,<5
 Pillow>=13,<14
