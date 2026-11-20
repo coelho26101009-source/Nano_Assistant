@@ -36,7 +36,8 @@ THE SECURITY MODEL, PLAINLY
 * KEYS STAY IN THE OS STORE. Device keys live in ``core.secret_store`` (DPAPI
   on Windows). The list of phones (names, dates) is ordinary metadata.
 * A NARROW SURFACE. A phone can call only the methods registered in
-  ``METHODS`` -- chat, conversations, agenda, memory, approvals, status. It
+  ``METHODS`` -- chat, conversations, agenda, memory, approvals, status, and
+  the answer to a camera request (a photo or a no; core/phone_camera.py). It
   cannot change settings, keys, permissions or the emergency stop, and it gets
   no generic endpoint. Approvals it answers are the SAME approvals the PC
   shows: the policy, guardrails and audit trail are untouched, and a phone that
@@ -122,7 +123,7 @@ def b64e(data: bytes) -> str:
 
 
 def b64d(text: str) -> bytes:
-    if not isinstance(text, str) or len(text) > 2_000_000:
+    if not isinstance(text, str) or len(text) > 3_000_000:
         raise LinkError("bad_request")
     try:
         return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
@@ -500,6 +501,9 @@ FORWARDED_EVENTS = frozenset({
     "on_stream_error", "on_rate_limited", "on_confirm_request", "on_reminder_due",
     "on_proactive_notice", "on_work_mode_done", "on_voice_exchange",
     "on_confirm_resolved", "on_conversation_changed",
+    # NANO asking to see through the phone's camera, and that request ending
+    # (core/phone_camera.py). Only the phone can open the camera.
+    "on_camera_request", "on_camera_closed",
 })
 
 

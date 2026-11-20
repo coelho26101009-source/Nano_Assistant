@@ -18,6 +18,8 @@ export function PrivacyPolicy() {
       <p>{t("A cópia de segurança do Android está desligada para esta app, por isso nada disto sai do telemóvel.")}</p>
       <h2>{t("O que vai para o teu PC")}</h2>
       <p>{t("As mensagens que escreves ou dizes, as tuas respostas às autorizações e as alterações à agenda e à memória. Vão diretamente para o teu PC, cifradas com AES-256-GCM e uma chave que só o teu telemóvel e o teu PC conhecem. Quem o NANO do PC usa para responder (um modelo local ou um serviço de IA que escolheste) é decidido no PC, como sempre.")}</p>
+      <h2>{t("Câmara")}</h2>
+      <p>{t("A app só usa a câmara quando lhe pedes: quando tocas no botão da câmara no chat, ou quando o NANO do PC pede para ver algo e tocas em Abrir a câmara no pedido (podes sempre Recusar; o NANO nunca abre a câmara sozinho e não há \"permitir sempre\"). Enquanto a câmara está aberta vês o aviso vermelho Câmara ligada. Tira-se uma só foto quando carregas no botão: sem vídeo nem som. Não fica guardada no telemóvel nem na galeria. Vai cifrada para o teu PC, onde um modelo de visão a descreve (primeiro um local, se o PC tiver; senão o serviço de IA escolhido no PC, como diz o pedido) e depois é deitada fora. Só a descrição escrita fica na conversa.")}</p>
       <h2>{t("Voz")}</h2>
       <p>{t("Quando carregas no microfone, o reconhecimento de voz do Android transforma a fala em texto. Dependendo do teu telemóvel, isso pode ser feito no aparelho ou pelo serviço de voz da Google. A app não grava áudio. Ler as respostas em voz alta usa o motor de voz do Android.")}</p>
       <h2>{t("Atualizações (só na versão de teste)")}</h2>
@@ -26,10 +28,11 @@ export function PrivacyPolicy() {
       <ul>
         <li>{t("Rede: para falar com o teu PC.")}</li>
         <li>{t("Microfone: só quando carregas no microfone.")}</li>
+        <li>{t("Câmara: só enquanto o ecrã da câmara está aberto, depois de tocares para o abrir.")}</li>
         <li>{t("Notificações e alarmes exatos: para os lembretes tocarem na hora certa.")}</li>
         <li>{t("Instalar apps (só na versão de teste): para abrir o instalador do Android com uma versão nova. O Android pergunta-te sempre.")}</li>
       </ul>
-      <p>{t("O leitor de QR é o da Google: devolve só o código lido, por isso a app não pede acesso à câmara.")}</p>
+      <p>{t("O leitor de QR é o da Google: devolve só o código lido e não usa o acesso da app à câmara.")}</p>
       <h2>{t("Apagar os teus dados")}</h2>
       <p>{t("Em Definições → Esquecer este PC, o telemóvel apaga a chave e o PC deixa de o aceitar. Desinstalar a app apaga tudo o que ela guardou. As conversas e memórias vivem no PC e apagam-se lá.")}</p>
       <h2>{t("Contacto")}</h2>

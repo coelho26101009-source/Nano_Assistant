@@ -79,6 +79,19 @@ telemóvel Android 7 ou mais recente, e os dois no **mesmo Wi-Fi**.
 - **Lembretes:** "lembra-me daqui a 2 minutos de beber água". Bloqueia o
   telemóvel: a notificação deve tocar mesmo sem a app aberta. Na primeira vez
   o Android pede para permitir notificações: diz que sim.
+- **Câmara (tu pedes):** no Chat, toca no botão da câmara ao lado do
+  microfone. Na primeira vez o Android pede acesso à câmara: diz que sim.
+  Aponta para uma coisa (uma caneca, um rótulo), carrega no botão redondo e
+  depois em enviar (sem escrever nada, pergunta "O que é isto?"). Enquanto a
+  câmara está aberta tem de aparecer o aviso vermelho **Câmara ligada**.
+- **Câmara (o NANO pede):** no PC, diz ou escreve "olha para isto pelo
+  telemóvel" ou "o que é isto? usa a câmara". No telemóvel aparece o cartão
+  **O NANO quer ver pela câmara**: experimenta **Recusar** uma vez (o NANO tem
+  de dizer que não viu nada) e depois **Abrir a câmara**. Se não fizeres nada
+  durante 90 segundos, o cartão desaparece sozinho.
+  Para isto funcionar o PC precisa de um modelo que veja imagens: o mais leve é
+  `ollama pull moondream` (fica tudo no PC); sem ele usa a Groq/Gemini se
+  tiveres a chave, e o cartão diz onde a foto vai ser vista.
 - **Agenda e Memória:** cria e apaga um evento e uma memória, e confirma que
   aparecem também no PC.
 - **Conversas:** o botão ☰ no Chat mostra as conversas do PC.

@@ -5,6 +5,7 @@
  * never creates a bubble, and the final text replaces the streamed one.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Photo } from "./camera";
 import { randomId } from "./crypto";
 import { t } from "./i18n";
 import type { NanoEvent, NanoLink } from "./link";
@@ -29,6 +30,15 @@ export type Approval = {
   meta: { action?: string; target?: string; scope?: string; tool?: string; args?: Record<string, string> };
 };
 
+/** NANO asking to see through the camera (core/phone_camera.py on the PC). */
+export type CameraRequest = {
+  requestId: string;
+  question: string;
+  /** Where the photo would be looked at: on the PC, or by the AI service chosen there. */
+  seenBy: { local: boolean; provider: string };
+  expiresAt: number;
+};
+
 export type HistoryRow = { id: number | string; role: string; content: string; timestamp?: string };
 
 const userId = (turn: string) => `u:${turn}`;
@@ -37,6 +47,7 @@ function friendlyStatus(text: string): string {
   const match = /⚙️\s*(.+?)\.\.\./.exec(text || "");
   if (match) {
     const names = match[1].split(",").map((n) => n.trim()).filter(Boolean);
+    if (names.includes("phone_camera_look")) return t("À espera da tua resposta no telemóvel…");
     return names.length === 1 ? t("A usar {0}…", { 0: names[0] }) : t("A usar {0} ferramentas…", { 0: names.length });
   }
   return "";
@@ -53,6 +64,7 @@ export function useChat(link: NanoLink, hooks: ChatHooks) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [approvals, setApprovals] = useState<Approval[]>([]);
+  const [cameraRequests, setCameraRequests] = useState<CameraRequest[]>([]);
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const hooksRef = useRef(hooks);
@@ -144,6 +156,22 @@ export function useChat(link: NanoLink, hooks: ChatHooks) {
         hooksRef.current.onNotice?.(t("O NANO pede autorização"), approval.message);
         break;
       }
+      case "on_camera_request": {
+        const info = (b ?? {}) as { question?: string; expiresIn?: number; seenBy?: { local?: boolean; provider?: string } };
+        const request: CameraRequest = {
+          requestId: String(a),
+          question: String(info.question ?? "").slice(0, 300),
+          seenBy: { local: Boolean(info.seenBy?.local), provider: String(info.seenBy?.provider ?? "").slice(0, 20) },
+          expiresAt: Date.now() + Math.max(10, Math.min(300, Number(info.expiresIn) || 90)) * 1000,
+        };
+        // One request at a time: a newer one replaces the older card.
+        setCameraRequests([request]);
+        hooksRef.current.onNotice?.(t("O NANO quer ver pela câmara"), request.question || t("Toca para abrir a app."));
+        break;
+      }
+      case "on_camera_closed":
+        setCameraRequests((prev) => prev.filter((r) => r.requestId !== String(a)));
+        break;
       case "on_confirm_resolved":
         setApprovals((prev) => prev.filter((p) => p.requestId !== String(a)));
         break;
@@ -172,16 +200,19 @@ export function useChat(link: NanoLink, hooks: ChatHooks) {
     }
   }), [link, loadHistory]);
 
-  const send = useCallback(async (text: string) => {
+  /** Send a message, optionally with one photo from the camera (sealed like everything else). */
+  const send = useCallback(async (text: string, photo?: Photo | null) => {
     const clean = text.trim();
     if (!clean) return false;
     const msgId = randomId();
     setBusy(true);
     setMessages((prev) => [...prev,
-      { id: userId(msgId), role: "user", content: clean },
+      { id: userId(msgId), role: "user", content: photo ? `📷 ${clean}` : clean },
       { id: msgId, role: "assistant", content: "", streaming: true }]);
     try {
-      const ack = await link.call<{ ok: boolean; error?: string }>("chat.send", { text: clean, msgId });
+      const args: Record<string, unknown> = { text: clean, msgId };
+      if (photo) args.photo = { mime: photo.mime, data: photo.data };
+      const ack = await link.call<{ ok: boolean; error?: string }>("chat.send", args, photo ? 45000 : 15000);
       if (!ack.ok) throw new RpcError(ack.error || "rejected");
       return true;
     } catch (error) {
@@ -231,7 +262,31 @@ export function useChat(link: NanoLink, hooks: ChatHooks) {
     }
   }, [link]);
 
-  return { messages, activeId, approvals, busy, loaded, send, retry, answer, loadHistory, showHistory, setActiveId };
+  /** The answer to NANO's camera request: a photo, or null for "no". */
+  const answerCamera = useCallback(async (requestId: string, photo: Photo | null) => {
+    setCameraRequests((prev) => prev.filter((r) => r.requestId !== requestId));
+    try {
+      const args: Record<string, unknown> = { requestId, declined: !photo };
+      if (photo) { args.data = photo.data; args.mime = photo.mime; }
+      const result = await link.call<{ ok: boolean; error?: string }>("camera.respond", args, photo ? 45000 : 15000);
+      return result.ok;
+    } catch {
+      return false;
+    }
+  }, [link]);
+
+  // A request nobody answered ends on the PC after its time; the card goes too,
+  // even if the phone missed the event that says so.
+  useEffect(() => {
+    if (cameraRequests.length === 0) return;
+    const next = Math.min(...cameraRequests.map((r) => r.expiresAt));
+    const timer = setTimeout(() => setCameraRequests((prev) => prev.filter((r) => r.expiresAt > Date.now())),
+      Math.max(0, next - Date.now()) + 50);
+    return () => clearTimeout(timer);
+  }, [cameraRequests]);
+
+  return { messages, activeId, approvals, cameraRequests, busy, loaded, send, retry, answer, answerCamera,
+    loadHistory, showHistory, setActiveId };
 }
 
 export type Chat = ReturnType<typeof useChat>;

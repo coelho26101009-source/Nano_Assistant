@@ -423,3 +423,52 @@ button.row:active { background: var(--surface-hover); }
 .prose h2 { font-size: 18px; color: var(--text-primary); margin: 20px 0 6px; }
 .prose p + p, .prose ul { margin-top: 8px; }
 .prose ul { padding-left: 20px; }
+
+/* ── Camera (components/CameraSheet.tsx) ─────────────────────────────────────
+   Always black, whatever the theme: it is a viewfinder. The red sign is on
+   for as long as the camera is. */
+.camera {
+  position: fixed; inset: 0; z-index: 70; background: #000; color: #fff;
+  display: flex; flex-direction: column; justify-content: space-between;
+}
+.camera__video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
+.camera__top, .camera__bottom { position: relative; z-index: 1; }
+.camera__top {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: calc(var(--safe-top) + 10px) 12px 24px;
+  background: linear-gradient(rgba(0, 0, 0, .7), transparent);
+}
+.camera__btn { color: #fff; background: rgba(0, 0, 0, .45); }
+.camera__btn:disabled { opacity: .4; }
+.camera__live {
+  display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: var(--r-full);
+  background: #E5484D; color: #fff; font-size: 14px; font-weight: 600; letter-spacing: .01em;
+}
+.camera__dot { width: 8px; height: 8px; border-radius: 50%; background: #fff; animation: camera-pulse 1.2s ease-in-out infinite; }
+@keyframes camera-pulse { 50% { opacity: .35; } }
+.camera__bottom {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center;
+  padding: 40px 20px calc(var(--safe-bottom) + 24px);
+  background: linear-gradient(transparent, rgba(0, 0, 0, .8) 40%);
+}
+.camera__title { font-size: 17px; font-weight: 600; overflow-wrap: anywhere; }
+.camera__note { font-size: 13px; color: #D0D0D0; max-width: 420px; }
+.camera__error { font-size: 14px; color: #FF9B9B; }
+.camera__shutter {
+  margin-top: 12px; width: 76px; height: 76px; border-radius: 50%;
+  border: 4px solid #fff; display: grid; place-items: center; background: transparent;
+}
+.camera__shutter span { width: 58px; height: 58px; border-radius: 50%; background: #fff; transition: transform .12s; }
+.camera__shutter:active span { transform: scale(.9); }
+.camera__shutter:disabled { opacity: .4; }
+@media (prefers-reduced-motion: reduce) { .camera__dot { animation: none; } }
+
+.confirm--camera { border-color: var(--border-strong); background: var(--surface-raised); }
+.confirm--camera .confirm__head { color: var(--text-primary); }
+.confirm__note { font-size: 13px; color: var(--text-muted); margin: -4px 0 12px; }
+.photo-chip {
+  display: inline-flex; align-items: center; gap: 8px; margin: 0 4px 8px; padding: 4px 4px 4px 4px;
+  border-radius: var(--r-lg); border: 1px solid var(--border-strong); background: var(--surface-raised);
+  font-size: 14px; color: var(--text-secondary);
+}
+.photo-chip img { width: 44px; height: 44px; object-fit: cover; border-radius: var(--r-md); }

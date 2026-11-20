@@ -166,6 +166,9 @@ class PolicyEngine:
         "web_extract_prices": "browser.read",
         "web_screenshot": "browser.read",
         "phone_notify": "external.send",
+        # Only ASKS the paired phone; the person opens the camera there, each
+        # time (core/phone_camera.py). The yes on the phone is the consent.
+        "phone_camera_look": "phone.camera.look",
         "iot_command": "external.send",
         "calendar_add_event": "external.send",
         "calendar_delete_event": "external.send",
@@ -376,6 +379,11 @@ class PolicyEngine:
             # Work modes: reading a plan is read-only; applying it is the
             # narrow tools in the plan, each with its own rule.
             "pc.mode.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Reading a work mode's plan executes nothing."),
+            # The consent for the camera is given ON THE PHONE, every time, by
+            # a tap no model can make: the tool only puts a request card on the
+            # phone. A second approval on the PC would ask the same question
+            # twice, on a screen the person is not looking at.
+            "phone.camera.look": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.MEDIUM, "current_workspace", "Only asks the paired phone; the person opens the camera there, each time."),
             "nano.data.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Reading NANO's own agenda, facts and history changes nothing."),
             "nano.plan.show": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "A plan is shown to the person; it runs nothing by itself."),
             "nano.reminder.create": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "A reminder only shows a notification on this PC and is cancelled in one click."),

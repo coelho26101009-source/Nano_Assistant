@@ -13,7 +13,7 @@ import pytest
 from core import mobile_link, secret_store
 from core.mobile_link import (DeviceStore, EventFeed, LinkError, MobileLink, b64d, b64e,
                               open_sealed, seal)
-from core.mobile_server import MobileServer
+from core.mobile_server import MAX_BODY_BYTES, MobileServer
 
 
 @pytest.fixture()
@@ -504,7 +504,7 @@ def test_oversized_body_is_refused(link):
     try:
         # Announce an oversized body but send only a little of it. The server
         # must refuse on the Content-Length alone, before reading anything.
-        # (Sending all 300 KB raced on Windows CI: the server answers and closes
+        # (Sending it all raced on Windows CI: the server answers and closes
         # while the client is still writing, and the client then sees
         # WinError 10053 instead of the 413.)
         import http.client
@@ -512,7 +512,7 @@ def test_oversized_body_is_refused(link):
         try:
             conn.putrequest("POST", "/v1/rpc")
             conn.putheader("Content-Type", "application/json")
-            conn.putheader("Content-Length", str(300 * 1024))
+            conn.putheader("Content-Length", str(MAX_BODY_BYTES + 1))
             conn.endheaders(b"x" * 16)
             assert conn.getresponse().status == 413
         finally:

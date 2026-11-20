@@ -31,7 +31,9 @@ from core.mobile_link import LinkError, MobileLink
 
 logger = logging.getLogger("nano.mobile.server")
 
-MAX_BODY_BYTES = 256 * 1024
+#: One sealed request. A camera photo (at most ~1 MB as JPEG, base64-encoded
+#: inside the sealed JSON, then base64 again) is the largest thing a phone sends.
+MAX_BODY_BYTES = 2_800_000
 _ROUTES = {"/v1/pair", "/v1/rpc"}
 _ALLOWED_ORIGIN_HOSTS = {"localhost", "127.0.0.1"}
 
