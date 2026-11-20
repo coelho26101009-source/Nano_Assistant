@@ -134,7 +134,10 @@ design was chosen. It is also why the script has no "upgrade one package" flag.
 | change the compiler | update `requirements-tools.txt` and `UV_VERSION` together, to a uv released before the anchor |
 
 Dependabot updates the manifests and never regenerates locks, so its pull
-requests fail the lock job until someone does.
+requests fail the lock job until someone does. To keep that noise down it runs
+monthly, only widens a range when a release falls outside it
+(`increase-if-necessary`), skips major versions and never touches `uv`
+(`.github/dependabot.yml`). Majors and lock refreshes are done on purpose.
 
 ## What is and is not guaranteed
 
