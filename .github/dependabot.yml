@@ -75,6 +75,10 @@ updates:
       # uv is pinned on purpose to a release older than the lock anchor in
       # scripts/lock_python_deps.py; it moves together with that anchor.
       - dependency-name: "uv"
+      # The winrt-* projections are one family (pywinrt) and must share a
+      # version; Dependabot widens them one by one, which can never pass the
+      # lock check. They move together, by hand.
+      - dependency-name: "winrt-*"
 
   # ------------------------------------------------------------------ frontend
   - package-ecosystem: npm
