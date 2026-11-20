@@ -303,13 +303,24 @@ const GRAPH_INTERACT = `(async () => {
   const nodes = qa('.graph-node');
   if (!svg || nodes.length < 2) return { measured: false, nodeCount: nodes.length };
 
+  /* The brain is 3D and its camera turns, so a node's place on SCREEN changes
+     from frame to frame. Its place in the LAYOUT does not: every node carries
+     it as data-x/y/z, and that is what these geometry checks read. */
   const positionOf = (g) => {
-    const m = /translate\\((-?[\\d.]+) (-?[\\d.]+)\\)/.exec(g.getAttribute('transform') || '');
-    return m ? { x: parseFloat(m[1]), y: parseFloat(m[2]) } : null;
+    const x = Number(g.getAttribute('data-x'));
+    const y = Number(g.getAttribute('data-y'));
+    const z = Number(g.getAttribute('data-z'));
+    return [x, y, z].every(Number.isFinite) && g.hasAttribute('data-x') ? { x, y, z } : null;
   };
-  const edgeLength = (line) => Math.hypot(
-    Number(line.getAttribute('x2')) - Number(line.getAttribute('x1')),
-    Number(line.getAttribute('y2')) - Number(line.getAttribute('y1')));
+  const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+  const byId = new Map(nodes.map((g) => [g.getAttribute('data-id'), g]));
+  const edgeLength = (line) => {
+    const a = byId.get(line.getAttribute('data-source'));
+    const b = byId.get(line.getAttribute('data-target'));
+    const pa = a && positionOf(a);
+    const pb = b && positionOf(b);
+    return pa && pb ? distance(pa, pb) : 0;
+  };
 
   /* Related nodes should sit nearer than unrelated ones. The fixture's most
      connected node is the project hub; measuring the mean edge length against
@@ -319,7 +330,7 @@ const GRAPH_INTERACT = `(async () => {
   let pairTotal = 0, pairCount = 0;
   for (let i = 0; i < points.length; i += 1) {
     for (let j = i + 1; j < points.length; j += 1) {
-      pairTotal += Math.hypot(points[i].x - points[j].x, points[i].y - points[j].y);
+      pairTotal += distance(points[i], points[j]);
       pairCount += 1;
     }
   }
@@ -358,7 +369,10 @@ const GRAPH_INTERACT = `(async () => {
 
   /* ---- dragging a node moves THAT node and nothing else ------------------ */
   const before = positionOf(target);
-  const others = nodes.filter((g) => g !== target).map(positionOf);
+  /* Keyed by node id, not by DOM position: the nodes are drawn far-to-near,
+     so their order in the DOM changes as the brain turns. */
+  const others = new Map(nodes.filter((g) => g !== target)
+    .map((g) => [g.getAttribute('data-id'), positionOf(g)]));
   const rect = svg.getBoundingClientRect();
   const at = (x, y, type) => new PointerEvent(type, {
     bubbles: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse' });
@@ -367,11 +381,12 @@ const GRAPH_INTERACT = `(async () => {
   svg.dispatchEvent(at(rect.left + 220, rect.top + 190, 'pointerup'));
   await sleep(250);
   const after = positionOf(target);
-  const othersAfter = qa('.graph-node').filter((g) => g !== target).map(positionOf);
-  const draggedBy = (before && after) ? Math.hypot(after.x - before.x, after.y - before.y) : 0;
-  const othersMoved = others.some((point, index) => {
-    const now = othersAfter[index];
-    return point && now && Math.hypot(now.x - point.x, now.y - point.y) > 1;
+  const othersAfter = new Map(qa('.graph-node').filter((g) => g !== target)
+    .map((g) => [g.getAttribute('data-id'), positionOf(g)]));
+  const draggedBy = (before && after) ? distance(after, before) : 0;
+  const othersMoved = [...others].some(([id, point]) => {
+    const now = othersAfter.get(id);
+    return !point || !now || distance(now, point) > 1;
   });
 
   /* ---- the layout is deterministic across renders ------------------------ */

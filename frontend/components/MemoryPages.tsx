@@ -20,7 +20,7 @@
  * textual fallback) rather than implying a semantic search this build does not
  * perform.
  */
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   Badge, Button, ConfirmDialog, EmptyState, Field, Modal, Panel,
@@ -696,31 +696,55 @@ export function NodeDetailModal({
 }
 
 /* ======================================================================
-   GRAPH
+   GRAPH — the Second Brain in 3D
    ====================================================================
 
-   WHY A HAND-WRITTEN LAYOUT AND NOT A LIBRARY
+   WHY A HAND-WRITTEN 3D VIEW AND NOT A LIBRARY
 
-   d3-force, cytoscape and vis-network are all excellent and all far larger
-   than the problem: a few hundred nodes, drawn once, pannable. The whole
-   layout below is about sixty lines, ships nothing, and cannot break the
-   Content-Security-Policy the desktop shell enforces.
+   three.js, d3-force-3d and friends are all excellent and all far larger than
+   the problem: at most a few hundred nodes, drawn as SVG. The layout and the
+   camera below are a couple of hundred lines, ship nothing, and cannot break
+   the Content-Security-Policy the desktop shell enforces. Staying in SVG also
+   keeps every node a real, focusable, labelled element, which a WebGL canvas
+   would not be.
 
-   The simulation is deterministic — a fixed seed, a fixed iteration count, no
-   animation loop — so the same graph draws the same way every time it is
-   opened. A layout that reshuffles on each visit makes a knowledge graph
-   impossible to learn.
+   THE LAYOUT IS STILL DETERMINISTIC. A fixed seed and a fixed iteration count
+   place every node at the same point in 3D space every time the view opens,
+   so the brain can be learned. Only the CAMERA moves: a slow turn while
+   nobody is touching it, an orbit when the background is dragged, a smooth
+   glide when a search finds one node. `data-x/y/z` on each node carry its
+   place in that space; the tests read them, because screen positions change
+   as the brain turns.
+
+   MOTION IS OPTIONAL AND CHEAP. The animation loop runs only while something
+   is actually moving and stops by itself; it never runs with
+   prefers-reduced-motion (then the brain stands still and every change is
+   instant), and it switches itself off on a PC that cannot keep up. The turn
+   always has a visible pause button.
 
    Above SIM_LIMIT nodes the O(n²) repulsion stops being free, so the layout
-   falls back to a deterministic ring clustered by type. It is less pretty and
-   it is instant, which is the right trade at that size.
+   falls back to a sphere banded by type. It is less pretty and it is instant,
+   which is the right trade at that size.
    ==================================================================== */
 
-type Point = { id: string; x: number; y: number };
+type Vec3 = { id: string; x: number; y: number; z: number };
+type Projected = { sx: number; sy: number; f: number; z: number };
 
 const SIM_LIMIT = 220;
 const SIM_ITERATIONS = 160;
 const VIEW = 1000;
+/** Radius of the brain, in layout units. */
+const SPREAD = 330;
+/** Perspective: smaller is stronger. */
+const FOCAL = 1250;
+const ZOOM_MIN = 0.45;
+const ZOOM_MAX = 3.2;
+const START_YAW = -0.5;
+const START_PITCH = 0.32;
+const START_ZOOM = 1.12;
+/** One full turn in about fifty seconds: alive, never busy. */
+const SPIN_PER_MS = 0.00012;
+const MAX_PULSES = 24;
 
 /** Deterministic pseudo-random in [0,1) from a string. No Math.random(). */
 function seeded(id: string): number {
@@ -732,23 +756,30 @@ function seeded(id: string): number {
   return ((hash >>> 0) % 100000) / 100000;
 }
 
-function layout(nodes: KnowledgeNode[], edges: KnowledgeEdge[]): Map<string, Point> {
-  const points: Point[] = nodes.map((node, index) => {
-    const angle = (index / Math.max(1, nodes.length)) * Math.PI * 2;
-    const radius = VIEW * 0.32 * (0.55 + seeded(node.id) * 0.45);
-    return {
-      id: node.id,
-      x: VIEW / 2 + Math.cos(angle) * radius,
-      y: VIEW / 2 + Math.sin(angle) * radius,
-    };
+/** Points spread evenly over a sphere (the golden-angle spiral). */
+function spherePoint(index: number, count: number, radius: number) {
+  const y = 1 - (2 * (index + 0.5)) / Math.max(1, count);
+  const ring = Math.sqrt(Math.max(0, 1 - y * y));
+  const angle = index * 2.399963229728653;
+  return { x: Math.cos(angle) * ring * radius, y: y * radius, z: Math.sin(angle) * ring * radius };
+}
+
+function layout3d(nodes: KnowledgeNode[], edges: KnowledgeEdge[]): Map<string, Vec3> {
+  // Large graphs: a sphere banded by type, so each kind of thing has its own
+  // latitude. Small ones start from the same spiral and then relax.
+  const ordered = nodes.length > SIM_LIMIT
+    ? [...nodes].sort((a, b) => (a.type === b.type ? 0 : a.type < b.type ? -1 : 1))
+    : nodes;
+  const points: Vec3[] = ordered.map((node, index) => {
+    const p = spherePoint(index, ordered.length, SPREAD * (0.6 + seeded(node.id) * 0.4));
+    return { id: node.id, ...p };
   });
   const byId = new Map(points.map((point) => [point.id, point]));
-
   if (nodes.length > SIM_LIMIT || nodes.length < 2) return byId;
 
   const links = edges
     .map((edge) => [byId.get(edge.source), byId.get(edge.target)] as const)
-    .filter((pair): pair is readonly [Point, Point] => Boolean(pair[0] && pair[1]));
+    .filter((pair): pair is readonly [Vec3, Vec3] => Boolean(pair[0] && pair[1]));
 
   for (let step = 0; step < SIM_ITERATIONS; step += 1) {
     const cooling = 1 - step / SIM_ITERATIONS;
@@ -759,41 +790,125 @@ function layout(nodes: KnowledgeNode[], edges: KnowledgeEdge[]): Map<string, Poi
         const b = points[j];
         let dx = a.x - b.x;
         let dy = a.y - b.y;
-        let distance = Math.hypot(dx, dy);
+        let dz = a.z - b.z;
+        let distance = Math.hypot(dx, dy, dz);
         if (distance < 0.01) {
-          // Two nodes exactly on top of each other have no direction to
-          // separate along; nudge them deterministically rather than with a
-          // random jitter that would make the layout unreproducible.
+          // Two nodes on top of each other have no direction to separate
+          // along; nudge them deterministically, never with a random jitter.
           dx = (seeded(a.id) - 0.5) || 0.5;
           dy = (seeded(b.id) - 0.5) || 0.5;
-          distance = Math.hypot(dx, dy) || 1;
+          dz = 0.5;
+          distance = Math.hypot(dx, dy, dz) || 1;
         }
-        const force = (9000 / (distance * distance)) * cooling;
+        const force = (12000 / (distance * distance)) * cooling;
         const ux = (dx / distance) * force;
         const uy = (dy / distance) * force;
-        a.x += ux; a.y += uy;
-        b.x -= ux; b.y -= uy;
+        const uz = (dz / distance) * force;
+        a.x += ux; a.y += uy; a.z += uz;
+        b.x -= ux; b.y -= uy; b.z -= uz;
       }
     }
     // Attraction along real edges, and a gentle pull to the centre so
-    // disconnected nodes do not drift out of the viewport.
+    // disconnected nodes do not drift off into space.
     for (const [a, b] of links) {
       const dx = b.x - a.x;
       const dy = b.y - a.y;
-      const distance = Math.hypot(dx, dy) || 1;
-      const force = ((distance - 150) * 0.012) * cooling;
+      const dz = b.z - a.z;
+      const distance = Math.hypot(dx, dy, dz) || 1;
+      const force = ((distance - 130) * 0.014) * cooling;
       const ux = (dx / distance) * force;
       const uy = (dy / distance) * force;
-      a.x += ux; a.y += uy;
-      b.x -= ux; b.y -= uy;
+      const uz = (dz / distance) * force;
+      a.x += ux; a.y += uy; a.z += uz;
+      b.x -= ux; b.y -= uy; b.z -= uz;
     }
     for (const point of points) {
-      point.x += (VIEW / 2 - point.x) * 0.004 * cooling;
-      point.y += (VIEW / 2 - point.y) * 0.004 * cooling;
+      point.x -= point.x * 0.006 * cooling;
+      point.y -= point.y * 0.006 * cooling;
+      point.z -= point.z * 0.006 * cooling;
     }
   }
+
+  // Centre the cloud and scale it to SPREAD, so a graph of six nodes and a
+  // graph of two hundred both fill the same view.
+  const centre = points.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y, z: acc.z + p.z }),
+    { x: 0, y: 0, z: 0 });
+  centre.x /= points.length; centre.y /= points.length; centre.z /= points.length;
+  let furthest = 1;
+  for (const p of points) {
+    p.x -= centre.x; p.y -= centre.y; p.z -= centre.z;
+    furthest = Math.max(furthest, Math.hypot(p.x, p.y, p.z));
+  }
+  const fit = SPREAD / furthest;
+  for (const p of points) { p.x *= fit; p.y *= fit; p.z *= fit; }
   return byId;
 }
+
+/* The camera. Yaw turns around the vertical axis, pitch tilts, and the target
+   is the point in the middle of the view. Everything that animates eases
+   towards a "...To" value, so a glide and an instant jump are the same code. */
+type Camera = {
+  yaw: number; pitch: number; zoom: number; zoomTo: number;
+  tx: number; ty: number; tz: number; txTo: number; tyTo: number; tzTo: number;
+  spinVelocity: number; tiltVelocity: number; intro: number;
+};
+
+const freshCamera = (): Camera => ({
+  yaw: START_YAW, pitch: START_PITCH, zoom: START_ZOOM, zoomTo: START_ZOOM,
+  tx: 0, ty: 0, tz: 0, txTo: 0, tyTo: 0, tzTo: 0,
+  spinVelocity: 0, tiltVelocity: 0, intro: 1,
+});
+
+function project(p: { x: number; y: number; z: number }, cam: Camera, grow = 1): Projected {
+  const dx = p.x * grow - cam.tx;
+  const dy = p.y * grow - cam.ty;
+  const dz = p.z * grow - cam.tz;
+  const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
+  const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+  const x1 = dx * cy - dz * sy;
+  const z1 = dx * sy + dz * cy;
+  const y2 = dy * cp - z1 * sp;
+  const z2 = dy * sp + z1 * cp;
+  const f = FOCAL / Math.max(FOCAL * 0.25, FOCAL + z2);
+  return { sx: VIEW / 2 + x1 * f * cam.zoom, sy: VIEW / 2 + y2 * f * cam.zoom, f, z: z2 };
+}
+
+/** A movement on screen (viewBox units) as a movement in the brain's space. */
+function unproject(ux: number, uy: number, f: number, cam: Camera) {
+  const cx = ux / (f * cam.zoom);
+  const cyv = uy / (f * cam.zoom);
+  const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+  const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
+  const dy = cyv * cp;
+  const z1 = -cyv * sp;
+  return { dx: cx * cy + z1 * sy, dy, dz: -cx * sy + z1 * cy };
+}
+
+const round = (value: number) => Math.round(value * 100) / 100;
+const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value));
+const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
+
+/** useLayoutEffect in the browser; the static export renders once on the
+    server, where React warns about it and it would do nothing anyway. */
+const useBrowserLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
+
+function usePrefersReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setReduced(media.matches);
+    update();
+    media.addEventListener?.("change", update);
+    return () => media.removeEventListener?.("change", update);
+  }, []);
+  return reduced;
+}
+
+/** The floor rings under the brain: a depth cue, drawn once per frame. */
+const FLOOR_RINGS = [SPREAD * 1.1, SPREAD * 0.62];
+const FLOOR_Y = SPREAD * 0.92;
+const FLOOR_STEPS = 56;
 
 export function GraphPage({
   graph, types, loading, onOpenNode, onRefresh, overview,
@@ -805,31 +920,34 @@ export function GraphPage({
   onRefresh: (type: string) => void;
   overview: MemoryOverview | null;
 }) {
+  const reducedMotion = usePrefersReducedMotion();
   const [type, setType] = useState("");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
-  const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
-  /* MANUAL POSITIONS, laid over the computed ones.
+  /* The turn is ON by default and OFF with reduced motion; the person can
+     still switch it on there, because then it is their choice. */
+  const [spinChoice, setSpinChoice] = useState<boolean | null>(null);
+  const spinning = spinChoice ?? !reducedMotion;
+  /* MANUAL POSITIONS, laid over the computed ones (in 3D).
      Dragging a node moves it here and the simulation is not re-run, so a graph
      the user has arranged by hand stays arranged. It is per-view state and not
      persisted: writing layout coordinates to the database would make the graph
      a document, and the next derived node would arrive with nowhere to go. */
-  const [moved, setMoved] = useState<Record<string, { x: number; y: number }>>({});
-  const panning = useRef<{ x: number; y: number } | null>(null);
-  const draggingNode = useRef<{ id: string; x: number; y: number } | null>(null);
+  const [moved, setMoved] = useState<Record<string, { x: number; y: number; z: number }>>({});
+  const [order, setOrder] = useState<string[]>([]);
   const svgRef = useRef<SVGSVGElement | null>(null);
 
   const nodes = graph?.nodes ?? [];
   const edges = graph?.edges ?? [];
   const nodeTitles = useMemo(() => new Map(nodes.map((node) => [node.id, node.title])), [nodes]);
 
-  const computed = useMemo(() => layout(nodes, edges), [nodes, edges]);
+  const computed = useMemo(() => layout3d(nodes, edges), [nodes, edges]);
   const positions = useMemo(() => {
     if (!Object.keys(moved).length) return computed;
     const merged = new Map(computed);
     for (const [id, point] of Object.entries(moved)) {
-      if (merged.has(id)) merged.set(id, { id, x: point.x, y: point.y });
+      if (merged.has(id)) merged.set(id, { id, ...point });
     }
     return merged;
   }, [computed, moved]);
@@ -859,24 +977,234 @@ export function GraphPage({
     return set;
   }, [focus, edges]);
 
-  /** Client pixels -> viewBox units. Pan and drag are both wrong without it:
-      the SVG is scaled to fit its box and then again by `view.scale`, so a
-      30px gesture is not 30 units of graph. */
-  const toGraphUnits = (dx: number, dy: number) => {
-    const box = svgRef.current?.getBoundingClientRect();
-    const fit = box && box.width ? VIEW / box.width : 1;
-    return { dx: (dx * fit) / view.scale, dy: (dy * fit) / view.scale };
+  /* Signals travelling along the focused node's links: the "thinking" look.
+     Only with motion allowed, and capped so a hub cannot flood the view. */
+  const pulseEdges = useMemo(() => {
+    if (!focus || reducedMotion) return [];
+    return edges.filter((edge) => edge.source === focus || edge.target === focus).slice(0, MAX_PULSES);
+  }, [focus, edges, reducedMotion]);
+
+  /* Nodes are drawn far-to-near so a near sphere covers a far one. The order
+     is recomputed as the brain turns, but applied at most a few times a
+     second: a React re-render per frame would be the expensive part. */
+  const ordered = useMemo(() => {
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    const seen = new Set<string>();
+    const list: KnowledgeNode[] = [];
+    for (const id of order) {
+      const node = byId.get(id);
+      if (node && !seen.has(id)) { list.push(node); seen.add(id); }
+    }
+    for (const node of nodes) if (!seen.has(node.id)) list.push(node);
+    return list;
+  }, [nodes, order]);
+
+  /* ------------------------------------------------------------------ engine
+     Everything the animation loop reads lives in ONE mutable object, so the
+     loop never closes over a stale render. Each render refreshes it below. */
+  const engine = useRef({
+    cam: freshCamera(),
+    positions: new Map<string, Vec3>(),
+    nodeIds: [] as string[],
+    edges: [] as KnowledgeEdge[],
+    pulses: [] as KnowledgeEdge[],
+    focus: null as string | null,
+    proj: new Map<string, Projected>(),
+    nodeEls: new Map<string, SVGGElement>(),
+    parts: new WeakMap<SVGGElement, { body: Element | null; label: Element | null }>(),
+    edgeEls: new Map<string, SVGLineElement>(),
+    pulseEls: new Map<string, SVGCircleElement>(),
+    floorEls: [] as (SVGPolylineElement | null)[],
+    spin: true,
+    reduced: false,
+    pointerInside: false,
+    resumeAt: 0,
+    dragging: false,
+    frame: null as number | null,
+    last: 0,
+    slowFrames: 0,
+    countedFrames: 0,
+    orderKey: "",
+    orderAt: 0,
+    setOrder: (_ids: string[]) => {},
+    onTooSlow: () => {},
+  });
+  const E = engine.current;
+  E.positions = positions;
+  E.nodeIds = nodes.map((node) => node.id);
+  E.edges = edges;
+  E.pulses = pulseEdges;
+  E.focus = focus;
+  E.spin = spinning;
+  E.reduced = reducedMotion;
+  E.setOrder = setOrder;
+  E.onTooSlow = () => setSpinChoice(false);
+
+  const draw = (now: number) => {
+    const cam = E.cam;
+    const grow = easeOut(cam.intro);
+    const proj = new Map<string, Projected>();
+    for (const id of E.nodeIds) {
+      const point = E.positions.get(id);
+      if (point) proj.set(id, project(point, cam, grow));
+    }
+    E.proj = proj;
+
+    for (const [id, el] of E.nodeEls) {
+      const p = proj.get(id);
+      if (!p) continue;
+      const scale = clamp(p.f * cam.zoom, 0.3, 3.4);
+      el.setAttribute("transform", `translate(${round(p.sx)} ${round(p.sy)}) scale(${round(scale)})`);
+      // Fog: far spheres are fainter, so depth reads at a glance.
+      const fog = clamp(0.5 + (p.f - 0.8) * 1.6, 0.5, 1);
+      let parts = E.parts.get(el);
+      if (!parts) {
+        parts = { body: el.querySelector(".graph-node__body"), label: el.querySelector(".graph-node__label") };
+        E.parts.set(el, parts);
+      }
+      parts.body?.setAttribute("opacity", String(round(fog)));
+      parts.label?.setAttribute("fill-opacity", String(round(clamp(0.45 + (p.f - 0.9) * 3, 0.45, 1))));
+    }
+    for (const edge of E.edges) {
+      const el = E.edgeEls.get(edge.id);
+      const a = proj.get(edge.source);
+      const b = proj.get(edge.target);
+      if (!el || !a || !b) continue;
+      el.setAttribute("x1", String(round(a.sx))); el.setAttribute("y1", String(round(a.sy)));
+      el.setAttribute("x2", String(round(b.sx))); el.setAttribute("y2", String(round(b.sy)));
+      el.setAttribute("stroke-opacity", String(round(clamp(0.25 + ((a.f + b.f) / 2 - 0.8) * 1.6, 0.22, 1))));
+    }
+    E.pulses.forEach((edge, index) => {
+      const el = E.pulseEls.get(edge.id);
+      if (!el || !E.focus) return;
+      const from = proj.get(E.focus);
+      const to = proj.get(edge.source === E.focus ? edge.target : edge.source);
+      if (!from || !to) return;
+      const t = ((now / 1500) + index * 0.29) % 1;
+      el.setAttribute("cx", String(round(from.sx + (to.sx - from.sx) * t)));
+      el.setAttribute("cy", String(round(from.sy + (to.sy - from.sy) * t)));
+      el.setAttribute("opacity", String(round(Math.sin(Math.PI * t) * 0.9)));
+    });
+    FLOOR_RINGS.forEach((radius, ring) => {
+      const el = E.floorEls[ring];
+      if (!el) return;
+      const pts: string[] = [];
+      for (let i = 0; i <= FLOOR_STEPS; i += 1) {
+        const angle = (i / FLOOR_STEPS) * Math.PI * 2;
+        const p = project({ x: Math.cos(angle) * radius, y: FLOOR_Y, z: Math.sin(angle) * radius }, cam, grow);
+        pts.push(`${round(p.sx)},${round(p.sy)}`);
+      }
+      el.setAttribute("points", pts.join(" "));
+    });
+
+    // Far-to-near order, applied a few times a second at most.
+    const depthOrder = [...proj.entries()].sort((a, b) => b[1].z - a[1].z).map(([id]) => id);
+    const key = depthOrder.join("|");
+    if (key !== E.orderKey && now - E.orderAt > 140) {
+      E.orderKey = key;
+      E.orderAt = now;
+      E.setOrder(depthOrder);
+    }
   };
 
-  /** Put a node in the middle of the canvas, at the current zoom. */
+  /** Advance the camera by dt ms. Returns true while something still moves. */
+  const advance = (dt: number, now: number) => {
+    const cam = E.cam;
+    let busy = false;
+    if (cam.intro < 1) {
+      cam.intro = E.reduced ? 1 : Math.min(1, cam.intro + dt / 1100);
+      busy = true;
+    }
+    const k = E.reduced ? 1 : 1 - Math.exp(-dt / 170);
+    const glide = (from: number, to: number) => from + (to - from) * k;
+    cam.tx = glide(cam.tx, cam.txTo); cam.ty = glide(cam.ty, cam.tyTo); cam.tz = glide(cam.tz, cam.tzTo);
+    cam.zoom = glide(cam.zoom, cam.zoomTo);
+    if (Math.abs(cam.tx - cam.txTo) + Math.abs(cam.ty - cam.tyTo) + Math.abs(cam.tz - cam.tzTo) > 0.3
+        || Math.abs(cam.zoom - cam.zoomTo) > 0.002) busy = true;
+
+    // A flick of the background keeps turning for a moment, then settles.
+    if (!E.dragging && (Math.abs(cam.spinVelocity) > 0.00002 || Math.abs(cam.tiltVelocity) > 0.00002)) {
+      cam.yaw += cam.spinVelocity * dt;
+      cam.pitch = clamp(cam.pitch + cam.tiltVelocity * dt, -1.25, 1.25);
+      const decay = Math.pow(0.9, dt / 16);
+      cam.spinVelocity *= decay;
+      cam.tiltVelocity *= decay;
+      busy = true;
+    }
+
+    const idle = !E.pointerInside && !E.dragging && !E.focus;
+    if (E.spin && idle) {
+      if (now >= E.resumeAt) cam.yaw += SPIN_PER_MS * dt;
+      busy = true;
+    }
+    if (E.pulses.length) busy = true;
+    return busy;
+  };
+
+  const tick = (now: number) => {
+    E.frame = null;
+    const dt = Math.min(64, Math.max(0, now - E.last));
+    E.last = now;
+    const busy = advance(dt, now);
+    draw(now);
+    /* A PC THAT CANNOT KEEP UP gets a still brain rather than a stuttering
+       one: if most of ~3 seconds of frames took longer than 45 ms, the turn
+       switches itself off (the button shows it, and can switch it back on). */
+    if (busy && E.spin) {
+      E.countedFrames += 1;
+      if (dt > 45) E.slowFrames += 1;
+      if (E.countedFrames >= 90) {
+        if (E.slowFrames > 60) E.onTooSlow();
+        E.countedFrames = 0;
+        E.slowFrames = 0;
+      }
+    }
+    if (busy) E.frame = requestAnimationFrame(tick);
+  };
+
+  const kick = () => {
+    if (E.frame !== null || typeof requestAnimationFrame === "undefined") return;
+    E.last = performance.now();
+    E.frame = requestAnimationFrame(tick);
+  };
+
+  // Every render re-applies the current camera to the (possibly new) DOM, and
+  // restarts the loop if something should be moving.
+  useBrowserLayoutEffect(() => {
+    draw(typeof performance !== "undefined" ? performance.now() : 0);
+    kick();
+  });
+
+  useEffect(() => () => {
+    if (E.frame !== null) cancelAnimationFrame(E.frame);
+    E.frame = null;
+  }, [E]);
+
+  // The brain "grows" out of its centre when it first appears with content.
+  const hasNodes = nodes.length > 0;
+  useEffect(() => {
+    if (!hasNodes) return;
+    E.cam.intro = E.reduced ? 1 : 0;
+    kick();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasNodes]);
+
+  /** Client pixels -> viewBox units. The SVG keeps its aspect ratio, so the
+      viewBox fits the SHORTER side of the box. */
+  const toViewUnits = (dx: number, dy: number) => {
+    const box = svgRef.current?.getBoundingClientRect();
+    const side = box ? Math.min(box.width, box.height) : 0;
+    const fit = side ? VIEW / side : 1;
+    return { ux: dx * fit, uy: dy * fit };
+  };
+
+  /** Glide the camera so this node sits in the middle of the view. */
   const centreOn = (id: string) => {
     const point = positions.get(id);
     if (!point) return;
-    setView((current) => ({
-      ...current,
-      x: (VIEW / 2 - point.x) * current.scale,
-      y: (VIEW / 2 - point.y) * current.scale,
-    }));
+    E.cam.txTo = point.x; E.cam.tyTo = point.y; E.cam.tzTo = point.z;
+    E.cam.zoomTo = Math.max(E.cam.zoomTo, 1.25);
+    kick();
   };
 
   /* WHEEL ZOOM NEEDS A NON-PASSIVE LISTENER.
@@ -890,27 +1218,27 @@ export function GraphPage({
     if (!element) return;
     const handler = (event: WheelEvent) => {
       event.preventDefault();
-      setView((current) => {
-        const next = current.scale * (event.deltaY < 0 ? 1.12 : 1 / 1.12);
-        return { ...current, scale: Math.min(3.5, Math.max(0.35, next)) };
-      });
+      const cam = engine.current.cam;
+      cam.zoomTo = clamp(cam.zoomTo * (event.deltaY < 0 ? 1.12 : 1 / 1.12), ZOOM_MIN, ZOOM_MAX);
+      kick();
     };
     element.addEventListener("wheel", handler, { passive: false });
     return () => element.removeEventListener("wheel", handler);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasNodes]);
 
   /* SEARCH FOCUSES THE MATCH instead of only dimming everything else.
      Typing a name and being left to hunt for the one undimmed dot in a graph
-     you have panned away from is not a search. A single match is selected and
-     centred; several matches stay highlighted, because centring on an arbitrary
-     one of them would be a guess. */
+     you have turned away from is not a search. A single match is selected and
+     the camera glides to it; several matches stay highlighted, because gliding
+     to an arbitrary one of them would be a guess. */
   useEffect(() => {
     if (!matches || matches.size !== 1) return;
     const [id] = [...matches];
     setSelected(id);
     centreOn(id);
     // Only when the query changes: re-centring on every render would fight the
-    // user's own panning.
+    // user's own turning.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needle]);
 
@@ -928,6 +1256,40 @@ export function GraphPage({
       return Object.keys(kept).length === Object.keys(current).length ? current : kept;
     });
   }, [nodes]);
+
+  /* Gestures. Dragging the background turns the brain; dragging a node moves
+     that node in the plane of the screen. A press that moved is not a click. */
+  const orbiting = useRef<{ x: number; y: number; t: number } | null>(null);
+  const draggingNode = useRef<{ id: string; x: number; y: number } | null>(null);
+  const travelled = useRef(0);
+
+  const endGesture = () => {
+    orbiting.current = null;
+    draggingNode.current = null;
+    E.dragging = false;
+    if (E.reduced) { E.cam.spinVelocity = 0; E.cam.tiltVelocity = 0; }
+    kick();
+  };
+
+  const resetView = () => {
+    const intro = E.cam.intro;
+    const next = freshCamera();
+    if (E.reduced) {
+      E.cam = { ...next, intro };
+    } else {
+      // Glide back instead of jumping: only the "...To" values are reset.
+      Object.assign(E.cam, {
+        txTo: 0, tyTo: 0, tzTo: 0, zoomTo: START_ZOOM, spinVelocity: 0, tiltVelocity: 0,
+        yaw: E.cam.yaw, pitch: START_PITCH,
+      });
+    }
+    setSelected(null);
+    // "Repor vista" resets the VIEW and the arrangement. Leaving hand-moved
+    // nodes where they were would make the button a partial undo, which is
+    // the least predictable kind.
+    setMoved({});
+    kick();
+  };
 
   if (loading && graph === null) {
     return <div className="page__inner"><Skeleton height={420} /></div>;
@@ -957,133 +1319,197 @@ export function GraphPage({
         <SearchField id="graph-search" value={query} onChange={setQuery}
                      placeholder={t("Procurar um nó…")} />
         <span className="stage__spacer" />
-        <Button size="sm" onClick={() => {
-          setView({ x: 0, y: 0, scale: 1 });
-          setSelected(null);
-          // "Repor vista" resets the VIEW and the arrangement. Leaving hand-moved
-          // nodes where they were would make the button a partial undo, which is
-          // the least predictable kind.
-          setMoved({});
-        }}>{t("Repor vista")}</Button>
+        <Button size="sm" aria-pressed={spinning} className="graph-spin"
+                onClick={() => { setSpinChoice(!spinning); E.resumeAt = 0; kick(); }}>
+          {spinning ? t("Parar rotação") : t("Rodar")}
+        </Button>
+        <Button size="sm" onClick={resetView}>{t("Repor vista")}</Button>
       </div>
 
-      <div className="graph-canvas">
+      <div className="graph-canvas"
+           onPointerEnter={() => { E.pointerInside = true; }}
+           onPointerLeave={() => {
+             E.pointerInside = false;
+             // A short beat before the turn resumes, so leaving for a moment
+             // does not set the brain spinning under the returning pointer.
+             E.resumeAt = (typeof performance !== "undefined" ? performance.now() : 0) + 1200;
+             kick();
+           }}>
         <svg
           ref={svgRef}
           viewBox={`0 0 ${VIEW} ${VIEW}`}
           className="graph-svg"
           data-focused={focus ? "true" : undefined}
           role="img"
-          aria-label={t("Grafo com {0} nós e {1} ligações", { 0: nodes.length, 1: edges.length })}
+          aria-label={t("Cérebro em 3D com {0} nós e {1} ligações", { 0: nodes.length, 1: edges.length })}
           onPointerDown={(event) => {
-            // Empty canvas: pan. A node starts its own drag in its handler and
-            // stops the event there, so the two gestures never both run.
-            panning.current = { x: event.clientX, y: event.clientY };
+            // Empty space: turn the brain. A node starts its own drag in its
+            // handler and stops the event there, so the two never both run.
+            orbiting.current = { x: event.clientX, y: event.clientY, t: event.timeStamp };
+            travelled.current = 0;
+            E.dragging = true;
+            E.cam.spinVelocity = 0; E.cam.tiltVelocity = 0;
             (event.target as Element).setPointerCapture?.(event.pointerId);
           }}
           onPointerMove={(event) => {
             const node = draggingNode.current;
             if (node) {
-              const { dx, dy } = toGraphUnits(event.clientX - node.x, event.clientY - node.y);
+              const { ux, uy } = toViewUnits(event.clientX - node.x, event.clientY - node.y);
+              travelled.current += Math.hypot(event.clientX - node.x, event.clientY - node.y);
               draggingNode.current = { ...node, x: event.clientX, y: event.clientY };
+              const f = E.proj.get(node.id)?.f ?? 1;
+              const { dx, dy, dz } = unproject(ux, uy, f, E.cam);
               setMoved((current) => {
                 const base = current[node.id] ?? positions.get(node.id);
                 if (!base) return current;
-                return { ...current, [node.id]: { x: base.x + dx, y: base.y + dy } };
+                return { ...current, [node.id]: { x: base.x + dx, y: base.y + dy, z: base.z + dz } };
               });
               return;
             }
-            if (!panning.current) return;
-            const dx = event.clientX - panning.current.x;
-            const dy = event.clientY - panning.current.y;
-            panning.current = { x: event.clientX, y: event.clientY };
-            const moveBy = toGraphUnits(dx, dy);
-            setView((current) => ({
-              ...current,
-              x: current.x + moveBy.dx * current.scale,
-              y: current.y + moveBy.dy * current.scale,
-            }));
+            const orbit = orbiting.current;
+            if (!orbit) return;
+            const dx = event.clientX - orbit.x;
+            const dy = event.clientY - orbit.y;
+            travelled.current += Math.hypot(dx, dy);
+            const elapsed = Math.max(8, event.timeStamp - orbit.t);
+            orbiting.current = { x: event.clientX, y: event.clientY, t: event.timeStamp };
+            E.cam.yaw += dx * 0.0065;
+            E.cam.pitch = clamp(E.cam.pitch + dy * 0.0065, -1.25, 1.25);
+            E.cam.spinVelocity = (dx * 0.0065) / elapsed;
+            E.cam.tiltVelocity = (dy * 0.0065) / elapsed;
+            draw(performance.now());
           }}
-          onPointerUp={() => { panning.current = null; draggingNode.current = null; }}
-          onPointerLeave={() => { panning.current = null; draggingNode.current = null; }}
+          onPointerUp={endGesture}
+          onPointerCancel={endGesture}
+          onClick={() => {
+            // A plain click on empty space lets go of the selection; the end
+            // of a turn does not.
+            if (travelled.current < 4) setSelected(null);
+          }}
+          onKeyDown={(event) => {
+            // The keyboard turns the brain too, from any focused node.
+            const cam = E.cam;
+            const steps: Record<string, () => void> = {
+              ArrowLeft: () => { cam.yaw -= 0.18; },
+              ArrowRight: () => { cam.yaw += 0.18; },
+              ArrowUp: () => { cam.pitch = clamp(cam.pitch - 0.14, -1.25, 1.25); },
+              ArrowDown: () => { cam.pitch = clamp(cam.pitch + 0.14, -1.25, 1.25); },
+              "+": () => { cam.zoomTo = clamp(cam.zoomTo * 1.15, ZOOM_MIN, ZOOM_MAX); },
+              "=": () => { cam.zoomTo = clamp(cam.zoomTo * 1.15, ZOOM_MIN, ZOOM_MAX); },
+              "-": () => { cam.zoomTo = clamp(cam.zoomTo / 1.15, ZOOM_MIN, ZOOM_MAX); },
+            };
+            const action = steps[event.key];
+            if (!action) return;
+            event.preventDefault();
+            action();
+            draw(performance.now());
+            kick();
+          }}
         >
           <defs>
-            <radialGradient id="nano-graph-node" cx="32%" cy="28%" r="76%">
-              <stop offset="0%" stopColor="#f8fbff" />
-              <stop offset="45%" stopColor="#9ec4ff" />
-              <stop offset="100%" stopColor="#356fcd" />
-            </radialGradient>
-            <radialGradient id="nano-graph-selected" cx="35%" cy="25%" r="75%">
-              <stop offset="0%" stopColor="#ffffff" />
-              <stop offset="50%" stopColor="#91bcff" />
-              <stop offset="100%" stopColor="#2870eb" />
-            </radialGradient>
+            {/* Lit spheres: a bright spot up and to the left, a deep shade on
+                the far side. One gradient per colour family. */}
+            {([
+              ["blue", "#f4f8ff", "#7fb0ff", "#1d4fa8"],
+              ["teal", "#effffd", "#5fd6c8", "#0f6b66"],
+              ["amber", "#fff8ea", "#f4be5c", "#8a5a0c"],
+              ["green", "#f0fff4", "#6fd69a", "#17693a"],
+              ["grey", "#f6f8fb", "#a9b6c8", "#3d4a5c"],
+              ["selected", "#ffffff", "#a8ccff", "#2f6fe4"],
+            ] as const).map(([name, light, mid, dark]) => (
+              <radialGradient key={name} id={`nano-sphere-${name}`} cx="34%" cy="28%" r="78%">
+                <stop offset="0%" stopColor={light} />
+                <stop offset="42%" stopColor={mid} />
+                <stop offset="100%" stopColor={dark} />
+              </radialGradient>
+            ))}
           </defs>
-          <g transform={`translate(${view.x} ${view.y}) scale(${view.scale})`}>
+
+          <g className="graph-floor" aria-hidden="true">
+            {FLOOR_RINGS.map((radius, ring) => (
+              <polyline key={radius} fill="none"
+                        ref={(el) => { E.floorEls[ring] = el; }} />
+            ))}
+          </g>
+
+          <g className="graph-edges">
             {edges.map((edge) => {
-              const a = positions.get(edge.source);
-              const b = positions.get(edge.target);
-              if (!a || !b) return null;
+              if (!positions.get(edge.source) || !positions.get(edge.target)) return null;
               // An edge is LIT when it touches the focused node, dimmed when a
-              // focus exists and it does not. Both ends have to be in the
-              // neighbourhood set for the line to belong to the focus, or every
-              // edge leaving a neighbour would light up too.
+              // focus exists and it does not.
               const lit = Boolean(focus)
                 && (edge.source === focus || edge.target === focus);
               const dimmed = Boolean(focus) && !lit;
               return (
-                <line key={edge.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+                <line key={edge.id} data-source={edge.source} data-target={edge.target}
+                      ref={(el) => { if (el) E.edgeEls.set(edge.id, el); else E.edgeEls.delete(edge.id); }}
                       className={`graph-edge${dimmed ? " is-dim" : ""}${lit ? " is-lit" : ""}`}
                       strokeWidth={Math.min(3, 1 + edge.weight * 0.4)}>
                   <title>{`${edge.sourceTitle ?? nodeTitles.get(edge.source) ?? edge.source} — ${relationLabel(edge.relation)} — ${edge.targetTitle ?? nodeTitles.get(edge.target) ?? edge.target}`}</title>
                 </line>
               );
             })}
-            {nodes.map((node) => {
-              const point = positions.get(node.id);
-              if (!point) return null;
-              const radius = 14 + Math.min(12, node.mentionCount * 1.8);
-              const dimmed = (matches && !matches.has(node.id))
-                || (neighbours && !neighbours.has(node.id));
-              return (
-                <g key={node.id}
-                   className={`graph-node${dimmed ? " is-dim" : ""}`
-                              + `${selected === node.id ? " is-selected" : ""}`
-                              + `${focus === node.id ? " is-focus" : ""}`}
-                   data-type={node.type}
-                   transform={`translate(${point.x} ${point.y})`}
-                   tabIndex={0}
-                   role="button"
-                   aria-label={`${node.title} — ${nodeTypeLabel(node.type)}`}
-                   onPointerDown={(event) => {
-                     // The node owns this gesture. Without stopPropagation the
-                     // canvas pans at the same time and the node appears to
-                     // slide twice as fast as the pointer.
-                     event.stopPropagation();
-                     draggingNode.current = { id: node.id, x: event.clientX, y: event.clientY };
-                     (event.currentTarget as Element).setPointerCapture?.(event.pointerId);
-                   }}
-                   onPointerEnter={() => setHovered(node.id)}
-                   onPointerLeave={() => setHovered((current) => (current === node.id ? null : current))}
-                   onFocus={() => setHovered(node.id)}
-                   onBlur={() => setHovered((current) => (current === node.id ? null : current))}
-                   onClick={(event) => {
-                     event.stopPropagation();
-                     setSelected((current) => (current === node.id ? null : node.id));
-                   }}
-                   onDoubleClick={() => onOpenNode(node.id)}
-                   onKeyDown={(event) => {
-                     if (event.key === "Enter") onOpenNode(node.id);
-                     if (event.key === " ") { event.preventDefault(); setSelected(node.id); }
-                   }}>
+          </g>
+
+          <g className="graph-pulses" aria-hidden="true">
+            {pulseEdges.map((edge) => (
+              <circle key={edge.id} r={3.2} className="graph-pulse" opacity={0}
+                      ref={(el) => { if (el) E.pulseEls.set(edge.id, el); else E.pulseEls.delete(edge.id); }} />
+            ))}
+          </g>
+
+          {ordered.map((node) => {
+            const point = positions.get(node.id);
+            if (!point) return null;
+            const radius = 16 + Math.min(13, node.mentionCount * 2);
+            const dimmed = (matches && !matches.has(node.id))
+              || (neighbours && !neighbours.has(node.id));
+            const near = Boolean(neighbours && neighbours.has(node.id))
+              || Boolean(matches && matches.has(node.id));
+            return (
+              <g key={node.id}
+                 ref={(el) => { if (el) E.nodeEls.set(node.id, el); else E.nodeEls.delete(node.id); }}
+                 className={`graph-node${dimmed ? " is-dim" : ""}${near ? " is-near" : ""}`
+                            + `${selected === node.id ? " is-selected" : ""}`
+                            + `${focus === node.id ? " is-focus" : ""}`}
+                 data-type={node.type} data-id={node.id}
+                 data-x={round(point.x)} data-y={round(point.y)} data-z={round(point.z)}
+                 tabIndex={0}
+                 role="button"
+                 aria-label={`${node.title} — ${nodeTypeLabel(node.type)}`}
+                 onPointerDown={(event) => {
+                   // The node owns this gesture. Without stopPropagation the
+                   // brain turns at the same time as the node moves.
+                   event.stopPropagation();
+                   travelled.current = 0;
+                   E.dragging = true;
+                   draggingNode.current = { id: node.id, x: event.clientX, y: event.clientY };
+                   (event.currentTarget as Element).setPointerCapture?.(event.pointerId);
+                 }}
+                 onPointerEnter={() => setHovered(node.id)}
+                 onPointerLeave={() => setHovered((current) => (current === node.id ? null : current))}
+                 onFocus={() => setHovered(node.id)}
+                 onBlur={() => setHovered((current) => (current === node.id ? null : current))}
+                 onClick={(event) => {
+                   event.stopPropagation();
+                   if (travelled.current >= 4) return;
+                   setSelected((current) => (current === node.id ? null : node.id));
+                 }}
+                 onDoubleClick={() => onOpenNode(node.id)}
+                 onKeyDown={(event) => {
+                   if (event.key === "Enter") onOpenNode(node.id);
+                   if (event.key === " ") { event.preventDefault(); setSelected(node.id); }
+                 }}>
+                <g className="graph-node__body">
                   {selected === node.id && <circle r={radius + 9} className="graph-node__halo" />}
                   <circle r={radius} className="graph-node__dot" />
-                  <text y={radius + 15} className="graph-node__label">{node.title}</text>
-                  <title>{t("{0} · {1} · {2} menções", { 0: node.title, 1: nodeTypeLabel(node.type), 2: node.mentionCount })}</title>
+                  <circle r={radius} className="graph-node__rim" />
                 </g>
-              );
-            })}
-          </g>
+                <text y={radius + 16} className="graph-node__label">{node.title}</text>
+                <title>{t("{0} · {1} · {2} menções", { 0: node.title, 1: nodeTypeLabel(node.type), 2: node.mentionCount })}</title>
+              </g>
+            );
+          })}
         </svg>
 
         <div className="graph-legend">
@@ -1110,7 +1536,10 @@ export function GraphPage({
                   : edge.sourceTitle ?? nodeTitles.get(edge.source) ?? edge.source}
               </span>
             ))}
-            <Button size="sm" onClick={() => onOpenNode(selectedNode.id)}>{t("Abrir detalhe")}</Button>
+            <span className="graph-selected__actions">
+              <Button size="sm" onClick={() => centreOn(selectedNode.id)}>{t("Centrar")}</Button>
+              <Button size="sm" onClick={() => onOpenNode(selectedNode.id)}>{t("Abrir detalhe")}</Button>
+            </span>
           </div>
         )}
       </div>
@@ -1132,7 +1561,7 @@ export function GraphPage({
         ) : (
           <span className="dim">
             {t("{0} nós · {1} ligações", { 0: nodes.length, 1: edges.length })}{graph?.truncated && t(" · a mostrar os mais ligados de {0}", { 0: graph.total })}
-            {t(" · arrasta o fundo para mover, arrasta um nó para o recolocar, roda para ampliar, duplo-clique abre o detalhe")}
+            {t(" · arrasta o fundo para rodar o cérebro, arrasta um nó para o recolocar, roda para ampliar, setas rodam com o teclado, duplo-clique abre o detalhe")}
           </span>
         )}
       </div>
