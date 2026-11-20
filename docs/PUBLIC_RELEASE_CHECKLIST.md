@@ -61,7 +61,8 @@ See [BETA_READINESS_REPORT.md](BETA_READINESS_REPORT.md) for evidence and limits
 
 Execution ledger and permission audit history are in-memory. Durable policies,
 conversations, Memory, tasks and settings persist; interrupted actions are not
-replayed on restart. There is no automatic updater or telemetry/crash-upload service.
+replayed on restart. There is no telemetry/crash-upload service. The automatic
+updater (docs/UPDATES.md) exists on `main` from 2026-11-20; 0.3.0-beta.1 predates it.
 These are not silently promised by this Beta. A one-click cross-store data wipe
 exists (Definições → Privacidade → "Apagar todos os dados"); see PRIVACY.md.
 

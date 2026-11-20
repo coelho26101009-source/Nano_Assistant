@@ -1,6 +1,6 @@
 # NANO for Android — Privacy policy
 
-_Last updated: 19 November 2026_
+_Last updated: 20 November 2026_
 
 NANO for Android is a remote for the NANO assistant that runs on **your own PC**.
 The developer runs no servers for it, and the app has no accounts, no ads and no
@@ -30,11 +30,21 @@ text. Depending on your phone this happens on the device or through Google's
 speech service, under Google's terms. The app does not record or keep audio.
 Reading answers aloud uses Android's text-to-speech engine.
 
+## Updates (test version only)
+
+The test version you install from GitHub looks for a newer test build at most
+twice a day, by downloading a small signed file from github.com (Settings →
+About → Check for updates automatically turns this off). GitHub sees your IP
+address, as with any download; nothing about you or your conversations is sent.
+Installing always asks you first. The Play Store version has no updater:
+Google Play updates it.
+
 ## Permissions
 
 - **Network**: to talk to your PC.
 - **Microphone**: only while the microphone button is on.
 - **Notifications, exact alarms, start at boot**: so reminders ring on time, also after a restart.
+- **Install apps** (test version only): to open Android's installer for a new test build. Android asks you every time.
 
 The QR scanner is Google's code scanner: it returns only the code it read, so the
 app does not ask for camera access.

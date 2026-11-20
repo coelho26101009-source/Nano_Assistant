@@ -49,6 +49,22 @@ export type DesktopStatus = {
   lastErrorCode?: "backend_start_failed" | "backend_exited" | "frontend_load_failed" | "renderer_gone" | null;
 };
 
+/** Automatic updates, as measured by the main process (electron/lib/updater.js). */
+export type UpdateState = {
+  status: "idle" | "checking" | "up-to-date" | "available" | "downloading" | "ready" | "error";
+  /** "installed": the packaged app, which installs updates. "source": the project folder, which only reports them. */
+  mode: "installed" | "source";
+  enabled: boolean;
+  currentVersion: string;
+  available: { version: string; notes: string | null; size: number } | null;
+  /** 0..1 while downloading. */
+  progress: number;
+  lastCheck: string | null;
+  error: string | null;
+  lastResult: { ok: boolean; version: string; from?: string | null; attempts?: number } | null;
+  releasesUrl: string;
+};
+
 type NanoAppApi = {
   isDesktop: true;
   minimize: () => void;
@@ -61,6 +77,13 @@ type NanoAppApi = {
   retryShortcut: () => Promise<{ registered: boolean; error: string | null }>;
   setOverlayEnabled: (enabled: boolean) => Promise<boolean>;
   setAutoLaunch: (enabled: boolean) => Promise<AutoLaunchState>;
+  /* Absent in shells older than the updater; every caller checks. */
+  getUpdateStatus?: () => Promise<UpdateState | null>;
+  onUpdateState?: (handler: (state: UpdateState) => void) => () => void;
+  checkForUpdates?: () => Promise<UpdateState | null>;
+  restartToUpdate?: () => Promise<boolean>;
+  setAutoUpdate?: (enabled: boolean) => Promise<boolean>;
+  openUpdatePage?: () => Promise<boolean>;
 };
 
 /** The shell's API, or null in a plain browser. Never throws. */
@@ -139,3 +162,36 @@ export const setOverlayEnabled = (enabled: boolean) =>
   desktop()?.setOverlayEnabled(enabled) ?? Promise.resolve(null);
 export const setAutoLaunch = (enabled: boolean) =>
   desktop()?.setAutoLaunch(enabled) ?? Promise.resolve(null);
+
+/* ── Automatic updates ─────────────────────────────────────────────────── */
+
+/**
+ * Live update state. null outside the desktop shell, or in a shell without
+ * the updater, so the Settings panel can say so instead of pretending.
+ */
+export function useUpdateState() {
+  const [state, setState] = useState<UpdateState | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const api = desktop();
+    if (!api || !api.getUpdateStatus) { setLoading(false); return; }
+    let active = true;
+    api.getUpdateStatus()
+      .then((value) => { if (active) setState(value ?? null); })
+      .catch(() => {})
+      .finally(() => { if (active) setLoading(false); });
+    const unsubscribe = api.onUpdateState
+      ? api.onUpdateState((value) => { if (active) setState(value); })
+      : () => {};
+    return () => { active = false; unsubscribe(); };
+  }, []);
+
+  return { state, setState, loading };
+}
+
+export const checkForUpdates = () => desktop()?.checkForUpdates?.() ?? Promise.resolve(null);
+export const restartToUpdate = () => desktop()?.restartToUpdate?.() ?? Promise.resolve(false);
+export const setAutoUpdate = (enabled: boolean) =>
+  desktop()?.setAutoUpdate?.(enabled) ?? Promise.resolve(null);
+export const openUpdatePage = () => desktop()?.openUpdatePage?.() ?? Promise.resolve(false);

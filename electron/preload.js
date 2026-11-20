@@ -13,13 +13,14 @@
  * Nothing here can:
  *   * run a command, a script or a path
  *   * read or write a file
- *   * reach the network
+ *   * reach the network (an update check is the main process reading one
+ *     fixed GitHub address; the page cannot choose it)
  *   * read a secret
  *   * ask Nano to execute a tool or approve a permission
  *
- * Window control and honest desktop status. That is the whole list. Everything
- * Nano actually *does* still goes over the existing eel bridge and through
- * REQUEST -> POLICY -> PERMISSION -> EXECUTION.
+ * Window control, honest desktop status and the app's own updates. That is
+ * the whole list. Everything Nano actually *does* still goes over the existing
+ * eel bridge and through REQUEST -> POLICY -> PERMISSION -> EXECUTION.
  *
  * Runs with contextIsolation and sandbox enabled, so the page never sees
  * `require`, `process` or any Node primitive.
@@ -67,6 +68,19 @@ const nanoApp = Object.freeze({
 
   setOverlayEnabled: (enabled) => ipcRenderer.invoke('nano:set-overlay-enabled', Boolean(enabled)),
   setAutoLaunch: (enabled) => ipcRenderer.invoke('nano:set-auto-launch', Boolean(enabled)),
+
+  /*
+   * Automatic updates. The page can read the state, ask for a check, switch
+   * automatic updates on or off, open the fixed releases page and say
+   * "restart and update". It can never name a URL, a file or an installer:
+   * what is installed is decided by the signed update feed in the main process.
+   */
+  getUpdateStatus: () => ipcRenderer.invoke('nano:update-status'),
+  onUpdateState: (handler) => subscribe('nano:update-state', handler),
+  checkForUpdates: () => ipcRenderer.invoke('nano:update-check'),
+  restartToUpdate: () => ipcRenderer.invoke('nano:update-install'),
+  setAutoUpdate: (enabled) => ipcRenderer.invoke('nano:set-auto-update', Boolean(enabled)),
+  openUpdatePage: () => ipcRenderer.invoke('nano:open-update-page'),
 });
 
 contextBridge.exposeInMainWorld('nanoApp', nanoApp);

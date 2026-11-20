@@ -6,6 +6,7 @@ import { t, type LanguageChoice } from "../lib/i18n";
 import type { LinkState, NanoLink } from "../lib/link";
 import { askNotifications, isNative, notificationsAllowed } from "../lib/native";
 import { PrivacyPolicy } from "./Privacy";
+import { UpdateSettings } from "../components/Updates";
 
 export type SpeakMode = "voice" | "always" | "never";
 export type ThemeChoice = "dark" | "light" | "system";
@@ -164,6 +165,7 @@ export default function SettingsScreen({
               <div className="row__meta">{t("O NANO do teu PC, no telemóvel.")}</div>
             </div>
           </div>
+          <UpdateSettings toast={toast} />
         </div>
       </section>
 

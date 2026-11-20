@@ -35,6 +35,8 @@ const ALLOWED_PRELOAD_KEYS = [
   'getWindowState', 'onWindowState',
   'getDesktopStatus', 'retryShortcut',
   'setOverlayEnabled', 'setAutoLaunch',
+  'getUpdateStatus', 'onUpdateState', 'checkForUpdates', 'restartToUpdate',
+  'setAutoUpdate', 'openUpdatePage',
 ];
 
 test('the preload exposes one namespace and nothing else', () => {
@@ -131,6 +133,8 @@ const ALLOWED_IPC = [
   'nano:minimize', 'nano:toggle-maximize', 'nano:hide',
   'nano:window-state', 'nano:desktop-status', 'nano:set-overlay-enabled',
   'nano:set-auto-launch', 'nano:retry-shortcut', 'nano:quit',
+  'nano:update-status', 'nano:update-check', 'nano:update-install',
+  'nano:set-auto-update', 'nano:open-update-page',
 ];
 
 test('the main process registers only the allow-listed channels', () => {

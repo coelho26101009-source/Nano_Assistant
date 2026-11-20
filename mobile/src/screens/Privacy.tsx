@@ -20,18 +20,21 @@ export function PrivacyPolicy() {
       <p>{t("As mensagens que escreves ou dizes, as tuas respostas às autorizações e as alterações à agenda e à memória. Vão diretamente para o teu PC, cifradas com AES-256-GCM e uma chave que só o teu telemóvel e o teu PC conhecem. Quem o NANO do PC usa para responder (um modelo local ou um serviço de IA que escolheste) é decidido no PC, como sempre.")}</p>
       <h2>{t("Voz")}</h2>
       <p>{t("Quando carregas no microfone, o reconhecimento de voz do Android transforma a fala em texto. Dependendo do teu telemóvel, isso pode ser feito no aparelho ou pelo serviço de voz da Google. A app não grava áudio. Ler as respostas em voz alta usa o motor de voz do Android.")}</p>
+      <h2>{t("Atualizações (só na versão de teste)")}</h2>
+      <p>{t("A versão de teste que instalas a partir do GitHub procura uma versão nova no máximo duas vezes por dia, descarregando um pequeno ficheiro assinado do github.com (desliga-se em Definições → Sobre). O GitHub vê o teu endereço IP, como em qualquer download; nada sobre ti ou as tuas conversas é enviado. Instalar pede sempre a tua confirmação. A versão da Play Store não tem este sistema: é a Google Play que a atualiza.")}</p>
       <h2>{t("Permissões")}</h2>
       <ul>
         <li>{t("Rede: para falar com o teu PC.")}</li>
         <li>{t("Microfone: só quando carregas no microfone.")}</li>
         <li>{t("Notificações e alarmes exatos: para os lembretes tocarem na hora certa.")}</li>
+        <li>{t("Instalar apps (só na versão de teste): para abrir o instalador do Android com uma versão nova. O Android pergunta-te sempre.")}</li>
       </ul>
       <p>{t("O leitor de QR é o da Google: devolve só o código lido, por isso a app não pede acesso à câmara.")}</p>
       <h2>{t("Apagar os teus dados")}</h2>
       <p>{t("Em Definições → Esquecer este PC, o telemóvel apaga a chave e o PC deixa de o aceitar. Desinstalar a app apaga tudo o que ela guardou. As conversas e memórias vivem no PC e apagam-se lá.")}</p>
       <h2>{t("Contacto")}</h2>
       <p>{t("Dúvidas ou pedidos: abre uma questão em github.com/coelho26101009-source/Nano_Assistant.")}</p>
-      <p className="dim">{t("Última atualização: 19 de novembro de 2026.")}</p>
+      <p className="dim">{t("Última atualização: 20 de novembro de 2026.")}</p>
     </div>
   );
 }

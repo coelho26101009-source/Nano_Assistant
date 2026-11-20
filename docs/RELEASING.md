@@ -4,8 +4,9 @@
 ("Beta 3"), published on 2026-11-19 as a GitHub **pre-release**. Attached: the
 unsigned NSIS x64 installer, the Android APK (signed with the test key, from the
 Android workflow run on the release commit) and `SHA256SUMS.txt` covering both;
-the MSI is built by the workflow but not published. There is no automatic
-updater: Beta updates are manual. Notes:
+the MSI is built by the workflow but not published. 0.3.0-beta.1 has no
+automatic updater, so it is updated by hand; from the next Beta on, the
+installed app updates itself (see [UPDATES.md](UPDATES.md)). Notes:
 [RELEASE_NOTES_0.3.0-beta.1.md](RELEASE_NOTES_0.3.0-beta.1.md).
 
 How 0.3.0-beta.1 was actually built, because it did not follow the flow below
@@ -126,7 +127,16 @@ therefore used `0.2.0-beta.1`, and the third Beta `0.3.0-beta.1` rather than
         │
         ▼
   GitHub prerelease (only with explicit publish input and matching version tag)
+        │
+        ▼
+  signed nano-update.json on the `desktop-update` release
+  (only with the NANO_UPDATE_SIGNING_KEY secret): installed apps update
 ```
+
+**Publishing is now an update for everyone who installed NANO.** Once the feed
+is written, installed copies download the new version within hours and install
+it when they close. Run the full test gate first, and see
+[UPDATES.md](UPDATES.md) for what the apps check and what happens on failure.
 
 ### The test gate
 

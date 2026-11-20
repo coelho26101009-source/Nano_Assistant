@@ -28,6 +28,7 @@ If startup fails, the window stays open and prints the reason.
 | [VOICE.md](VOICE.md) | Voice runtime: local STT, Microsoft-backed TTS, wake detection |
 | [design/README.md](design/README.md) | Visual identity and design decisions |
 | [PUBLIC_RELEASE_CHECKLIST.md](PUBLIC_RELEASE_CHECKLIST.md) | What is done and what genuinely blocks a public beta |
+| [UPDATES.md](UPDATES.md) | Automatic updates on the PC and the phone: the signed feed, the checks, failures and the signing key |
 | [RELEASING.md](RELEASING.md) | Versioning and the release process that does not exist yet |
 | [DEPENDENCIES.md](DEPENDENCIES.md) | Python dependency manifests, the hashed locks generated from them, and how to change either |
 

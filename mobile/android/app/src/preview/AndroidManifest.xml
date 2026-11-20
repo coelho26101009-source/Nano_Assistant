@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Merged only into this build type, never into the Play Store (release) build.
+     REQUEST_INSTALL_PACKAGES lets NANO open Android's installer for a new test
+     build it downloaded from GitHub (NanoUpdaterPlugin). Android still asks the
+     person to confirm every install, and only accepts an APK signed with the
+     same key. Explained in mobile/PRIVACY.md. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+</manifest>
