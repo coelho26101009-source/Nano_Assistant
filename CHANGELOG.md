@@ -20,6 +20,24 @@ versioning policy.
 
 ## [Unreleased]
 
+### Added — the NANO island (2026-11-20)
+
+- **The voice capsule became the NANO island**: a black pill at the top centre
+  of the screen that changes shape for what NANO is doing, with smooth spring
+  animations. Listening (with an elapsed clock), thinking, speaking, a tool
+  being used ("A pesquisar na web…"), an approval waiting (amber; click opens
+  NANO, the decision stays in NANO), reminders, PC alerts, finished downloads.
+- **Modo ambiente**: at rest the island stays as a small pill, ready (hover
+  shows the shortcut). Switch it off in the tray or Definições → Geral.
+- **Music on the island**: the song playing on the PC (Spotify, a browser, any
+  app in Windows' media controls) with cover, title, progress and previous /
+  play-pause / next; the player opens for a moment when the song changes.
+- **Volume on the island**: a level bar when the system volume changes.
+- The tray menu now follows the interface language.
+- New runtime dependency on Windows: `winrt-Windows.Media.Control` (+ runtime,
+  Foundation, Storage.Streams), for the music only. Without it the island works
+  and shows no music.
+
 ### Added — JARVIS P1 (2026-11-20)
 
 - **Voice ready in one click.** Definições → Voz → "Preparar a voz" (also in the

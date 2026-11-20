@@ -234,7 +234,7 @@ def test_eel_is_never_asked_to_launch_a_browser_itself():
 #: Exactly what the desktop shell may ask of the backend.
 EXPECTED_OPERATIONS = {
     "ping", "voice_status", "start_voice_turn", "cancel_voice_turn",
-    "data_location", "report_shortcut", "shutdown",
+    "data_location", "report_shortcut", "media_control", "shutdown",
 }
 
 

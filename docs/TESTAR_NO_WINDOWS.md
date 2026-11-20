@@ -123,7 +123,7 @@ e o que aconteceu.
 
 ### Voz (só se instalaste a parte opcional)
 - [ ] 29. **Definições → Voz**: o teste do microfone ouve-te e transcreve.
-- [ ] 30. O overlay de voz aparece em baixo, ao centro, e responde falado.
+- [ ] 30. A ilha do NANO (em cima, ao centro) mostra "A ouvir…" com o tempo a contar e responde falado.
 
 ### Novidades JARVIS (P1)
 - [ ] 31. **Definições → Voz → Preparar a voz**: instala e descarrega com barra de progresso (uns minutos). No fim pergunta se queres ligar "Ei NANO"; responde "Sim, ligar".
@@ -131,6 +131,19 @@ e o que aconteceu.
 - [ ] 33. **Definições → Geral → Personalidade**: escolhe "Formal", escreve em "Como o NANO te trata" `chefe` e pergunta "olá". A resposta muda de tom e trata-te por chefe.
 - [ ] 34. **PC → Modos → Os teus protocolos**: carrega no modelo "Modo jogo", guarda, e escreve no chat `modo jogo`. O NANO abre o Steam e o Discord (pede autorização se for preciso) e diz a frase do fim.
 - [ ] 35. **Avisos do PC**: descarrega um ficheiro qualquer no navegador; quando acabar, o NANO avisa "Download terminado". Desliga o Wi-Fi uns 2 minutos: avisa "Sem rede" e, quando voltas a ligar, "A ligação à rede voltou".
+
+### A ilha do NANO (Modo ambiente)
+Antes, na pasta do NANO, instala as bibliotecas novas uma vez:
+`python -m pip install --require-hashes --no-build-isolation -r requirements\runtime.lock`
+- [ ] 36. Com o NANO aberto e a janela minimizada, aparece uma pílula preta pequena em cima, ao centro. Passa o rato por cima: cresce e mostra `Ctrl Shift Espaço`. Clicar abre o NANO.
+- [ ] 37. Com a janela do NANO à frente, a ilha esconde-se; minimiza o NANO e ela volta.
+- [ ] 38. `Ctrl+Shift+Espaço`: a ilha passa a "A ouvir…" com o tempo a contar e barras a mexer, depois "A processar…", "A falar…" e "Pronto".
+- [ ] 39. Escreve no telemóvel (ou no NANO e minimiza logo) "pesquisa na web o tempo em Lisboa": a ilha mostra "A pensar…" e depois "A pesquisar na web…".
+- [ ] 40. Pede algo que precise de autorização (ex.: "fecha a janela do Bloco de notas") com o NANO minimizado: a ilha fica amarela "O NANO precisa da tua aprovação". Clica nela: abre o NANO com o pedido. Decide lá (a ilha não tem botão de aceitar, de propósito).
+- [ ] 41. Cria um lembrete para daqui a 1 minuto e minimiza o NANO: quando chega, a ilha abre um cartão com o sino a tocar.
+- [ ] 42. Abre o **Spotify** e põe uma música: a ilha abre o leitor com a capa e o nome durante uns segundos e depois fica pequena com a capa e barras a mexer. Passa o rato por cima: aparecem a barra de tempo e os botões anterior / pausa / seguinte. Experimenta os três.
+- [ ] 43. Muda o volume (teclas do teclado ou o ícone do som do Windows): a ilha mostra "Volume" com a barra a acompanhar. Tira o som: mostra "Sem som".
+- [ ] 44. No ícone do NANO no tabuleiro: "Ilha sempre no ecrã (modo ambiente)" desligado esconde a pílula quando não há nada a mostrar; "Ilha do NANO" desligado esconde-a por completo. As mesmas opções estão em **Definições → Geral**.
 
 ---
 

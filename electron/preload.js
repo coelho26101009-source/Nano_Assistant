@@ -67,6 +67,8 @@ const nanoApp = Object.freeze({
   retryShortcut: () => ipcRenderer.invoke('nano:retry-shortcut'),
 
   setOverlayEnabled: (enabled) => ipcRenderer.invoke('nano:set-overlay-enabled', Boolean(enabled)),
+  /** Modo ambiente: keep the NANO island on screen while nothing is happening. */
+  setIslandAlwaysVisible: (enabled) => ipcRenderer.invoke('nano:set-island-always-visible', Boolean(enabled)),
   setAutoLaunch: (enabled) => ipcRenderer.invoke('nano:set-auto-launch', Boolean(enabled)),
 
   /*

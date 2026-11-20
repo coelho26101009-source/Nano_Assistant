@@ -3,42 +3,47 @@
 <head>
 <meta charset="utf-8" />
 <!--
-  NANO VOICE OVERLAY
+  THE NANO ISLAND
 
-  A quiet status capsule that appears bottom-centre while Nano is listening
-  and disappears when it is done. It is NOT a window the user interacts with:
-  it is click-through, never takes focus, and has no controls.
+  A black pill at the top centre of the screen that changes shape for what
+  NANO is doing, in the spirit of a phone's "dynamic island":
 
-  Design: the NANO language of the main window, scaled down — charcoal
-  glass, the approved N symbol, one hairline of blue, and motion that says
-  which phase the turn is in without shouting. It has to sit on top of a game
-  or a document, so every animation is small, slow, and stops the moment the
-  overlay hides.
+    idle     a small resting pill (Modo ambiente), hover to see the shortcut
+    compact  listening, thinking, speaking, done: one line and a live sign
+    wide     a tool being used, a choice to make, a short error
+    card     an approval, a reminder, a PC alert, a finished download
 
-  HONEST MOTION. The bars in the visualiser are a LOOP, not a meter. The
-  backend does not send audio amplitude to this window, so nothing here can
-  claim to show your voice level; the wave is decorative and deliberately
-  regular, which is what a loop looks like and what a level meter does not.
-  Every STATE, by contrast, comes from a real backend voice event (see
-  lib/overlay-state.js). This file never advances a state on its own.
+  It sits on top of games and documents, so it never takes focus. It is
+  click-through except over the pill itself, where a click opens NANO (and
+  nothing else: an approval is answered in NANO, never here).
+
+  HONEST MOTION. Every state comes from a real backend event (main.js builds
+  the view from lib/island.js). The bars are a loop, not a meter: the backend
+  sends no audio level, so nothing here claims to show your voice. The clock
+  while listening is real elapsed time. Nothing loops while the island rests.
 -->
 <meta http-equiv="Content-Security-Policy"
       content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src 'self' data:;" />
-<title>Nano</title>
+<title>NANO</title>
 <style>
-  /* Tokens mirrored from frontend/styles/globals.css. The overlay is a
-     separate Electron window with its own CSP and cannot import that file, so
-     the few values it needs are restated here — and only those. */
+  /* Tokens mirrored from the dark theme in frontend/styles/globals.css. The
+     island is a separate window with its own CSP and cannot import that file.
+     It is black in both themes: it floats over whatever the person is doing. */
   :root {
-    --accent:     #2F6FED;
-    --accent-hot: #8EB5FF;
-    --danger: #F49BB4;
-    --surface:    rgba(19, 24, 32, .97);
-    --border:     rgba(192, 211, 239, .27);
-    --hairline:   rgba(224, 236, 255, 0.12);
-    --text:       #F4F7FC;
-    --text-dim:   #C7D0DD;
-    --quiet:      #AEB9C8;
+    --island: #000;
+    --text: #F5F5F7;
+    --text-dim: #A1A1AA;
+    --information: #4FD1C5;
+    --accent: #6EA6FF;
+    --success: #6FD69B;
+    --warning: #F2C14E;
+    --danger: #FF8F8F;
+    --neutral: #A1A1AA;
+    --tone: var(--neutral);
+    /* A spring with a small overshoot: the shape settles like a liquid. */
+    --spring: cubic-bezier(0.3, 1.32, 0.45, 1);
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --morph: 520ms;
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -47,234 +52,453 @@
     width: 100%; height: 100%;
     background: transparent;
     overflow: hidden;
-    -webkit-user-select: none;
-    user-select: none;
+    -webkit-user-select: none; user-select: none;
     cursor: default;
-    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
 
-  #panel {
-    position: absolute; inset: 8px 10px;
-    display: flex; align-items: center; gap: 12px;
-    padding: 0 22px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    /* One shadow, one hairline border, nothing else. The overlay stays a dark
-       floating panel in both themes — it is drawn over whatever the user is
-       doing, so it never adopts the workspace's cream. Its identity comes from
-       the mark and blue state line. */
-    box-shadow: 0 9px 24px -8px rgba(0, 0, 0, .55), 0 2px 7px rgba(0, 0, 0, .2);
-    backdrop-filter: none;
+  /* ── The island ─────────────────────────────────────────────────────── */
+  #island {
+    position: absolute; top: 8px; left: 50%;
+    width: var(--w, 34px); height: var(--h, 34px);
+    border-radius: var(--r, 17px);
+    background: var(--island);
+    color: var(--text);
+    overflow: hidden;
+    /* A hairline so the pill still has an edge over a black screen. */
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, .07), 0 12px 30px -12px rgba(0, 0, 0, .65);
+    transform: translateX(-50%);
+    transition:
+      width var(--morph) var(--spring),
+      height var(--morph) var(--spring),
+      border-radius var(--morph) var(--spring),
+      transform var(--morph) var(--spring),
+      opacity 240ms ease,
+      box-shadow 300ms ease;
+    cursor: pointer;
+  }
+  #island[data-visible="false"] {
+    --w: 34px; --h: 34px; --r: 17px;
     opacity: 0;
-    transform: translateY(7px);
-    transition: opacity 160ms ease, transform 190ms cubic-bezier(0.22, 1, 0.36, 1);
+    transform: translateX(-50%) translateY(-10px) scale(.55);
+    pointer-events: none;
+    transition:
+      width 260ms var(--ease-out), height 260ms var(--ease-out),
+      border-radius 260ms var(--ease-out), transform 300ms var(--ease-out), opacity 220ms ease;
   }
-  #panel[data-visible="true"] { opacity: 1; transform: translateY(0); }
 
-  /* ── The mark and its state ring ───────────────────────────────────── */
-  #orb { position: relative; width: 36px; height: 36px; flex: none; display: grid; place-items: center; }
+  #island[data-size="idle"]    { --w: 128px; --h: 34px; --r: 17px; }
+  #island[data-size="idle"][data-hover="true"] { --w: 336px; --h: 40px; --r: 20px; }
+  #island[data-size="compact"] { --w: 300px; --h: 42px; --r: 21px; }
+  #island[data-size="wide"]    { --w: 380px; --h: 62px; --r: 27px; }
+  #island[data-size="card"]    { --w: 432px; --h: 108px; --r: 34px; }
+  #island[data-size="player"]  { --w: 440px; --h: 176px; --r: 42px; }
+  #island[data-hover="true"]:not([data-size="idle"]) { transform: translateX(-50%) scale(1.025); }
 
-  /* The disc the mark sits on, matching .mark-disc in the shell. */
-  #disc {
+  #island[data-tone="info"]    { --tone: var(--information); }
+  #island[data-tone="accent"]  { --tone: var(--accent); }
+  #island[data-tone="success"] { --tone: var(--success); }
+  #island[data-tone="warning"] { --tone: var(--warning); }
+  #island[data-tone="danger"]  { --tone: var(--danger); }
+
+  /* ── Layouts: one per shape, cross-faded with a short blur ─────────── */
+  .layout {
+    position: absolute; inset: 0;
+    display: flex; align-items: center;
+    opacity: 0; filter: blur(6px); transform: scale(.94);
+    transition: opacity 200ms ease, filter 260ms ease, transform 360ms var(--spring);
+    pointer-events: none;
+  }
+  #island[data-layout="idle"] #l-idle,
+  #island[data-layout="pill"] #l-pill,
+  #island[data-layout="card"] #l-card,
+  #island[data-layout="player"] #l-player {
+    opacity: 1; filter: blur(0); transform: scale(1);
+    transition-delay: 90ms;
+  }
+
+  /* Idle: the mark, a ready dot, and on hover the shortcut. */
+  #l-idle { padding: 0 14px; gap: 9px; }
+  #l-idle .mark { width: 15px; height: 15px; opacity: .85; flex: none; }
+  #l-idle .ready { width: 6px; height: 6px; border-radius: 50%; background: var(--success); flex: none; margin-left: auto; }
+  #idle-text {
+    flex: 1; min-width: 0; white-space: nowrap; overflow: hidden;
+    font-size: 12px; color: var(--text-dim);
+    opacity: 0; transform: translateX(-6px);
+    transition: opacity 180ms ease, transform 320ms var(--spring);
+  }
+  #idle-text b { color: var(--text); font-weight: 600; margin-right: 6px; }
+  #idle-text kbd {
+    font: 600 10.5px/1 inherit; color: var(--text);
+    padding: 3px 5px; border-radius: 5px; background: rgba(255, 255, 255, .1); margin-left: 3px;
+  }
+  #island[data-hover="true"] #idle-text { opacity: 1; transform: none; transition-delay: 120ms; }
+
+  /* Pill: lead icon, text, trailing live sign. */
+  #l-pill { padding: 0 16px 0 7px; gap: 10px; }
+  #island[data-size="wide"] #l-pill { padding-left: 11px; gap: 12px; }
+
+  .lead { position: relative; width: 28px; height: 28px; flex: none; display: grid; place-items: center; }
+  #island[data-size="wide"] .lead { width: 40px; height: 40px; }
+  .lead .disc {
     position: absolute; inset: 0; border-radius: 50%;
-    background: radial-gradient(circle at 50% 30%, rgba(90, 153, 255, .20), rgba(47, 111, 237, .06) 70%);
-    border: 1px solid rgba(142, 181, 255, .3);
+    background: color-mix(in srgb, var(--tone) 18%, transparent);
+    transition: background 300ms ease;
   }
-
-  /* No ambient glow; the status label and stateful indicator carry feedback. */
-  #halo { display: none; }
-
-  /* A single arc that orbits the mark while a request is being worked on.
-     One arc with a gap, not a full ring: a closed ring reads as a progress
-     circle, and there is no progress to report. */
-  #ring {
+  .lead .ring {
     position: absolute; inset: -3px; border-radius: 50%;
-    border: 1.5px solid transparent;
-    border-top-color: var(--accent-hot);
-    border-right-color: rgba(142, 181, 255, .3);
-    opacity: 0;
-    transition: opacity 200ms ease;
+    border: 1.5px solid transparent; border-top-color: var(--tone);
+    border-right-color: color-mix(in srgb, var(--tone) 35%, transparent);
+    opacity: 0; transition: opacity 200ms ease;
   }
-
-  #mark { width: 21px; height: 21px; object-fit: contain; position: relative; }
-
-  /* ── Text ──────────────────────────────────────────────────────────── */
-  #text { flex: 1; min-width: 0; }
-  #label {
-    font-size: 14px; font-weight: 600; letter-spacing: -0.01em;
-    color: var(--text); white-space: nowrap;
-    overflow: hidden; text-overflow: ellipsis;
+  .lead .pulse {
+    position: absolute; inset: 0; border-radius: 50%;
+    border: 1.5px solid var(--tone); opacity: 0;
   }
-  #detail {
-    font-size: 11px; color: var(--text-dim); margin-top: 2px;
+  .lead img.mark { width: 15px; height: 15px; position: relative; }
+  #island[data-size="wide"] .lead img.mark { width: 19px; height: 19px; }
+  .lead svg { width: 15px; height: 15px; position: relative; color: var(--tone); }
+  #island[data-size="wide"] .lead svg { width: 19px; height: 19px; }
+
+  .text { flex: 1; min-width: 0; }
+  .label {
+    font-size: 13.5px; font-weight: 600; letter-spacing: -0.01em;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  #detail:empty { display: none; }
-
-  /* ── The visualiser ────────────────────────────────────────────────── */
-  #viz {
-    display: flex; align-items: center; gap: 4px;
-    height: 22px; flex: none; opacity: 0;
-    transition: opacity 180ms ease;
+  .detail {
+    font-size: 11.5px; color: var(--text-dim); margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  #viz i {
-    display: block; width: 3px; height: 4px; border-radius: 2px;
-    background: var(--accent-hot);
-    box-shadow: none;
-    transform-origin: center;
+  .detail:empty { display: none; }
+  #island[data-size="compact"] #pill-detail { display: none; }
+
+  .trail { display: flex; align-items: center; gap: 9px; flex: none; }
+  .clock {
+    font-size: 12.5px; font-weight: 600; color: var(--tone);
+    font-variant-numeric: tabular-nums; min-width: 0;
+  }
+  .clock:empty { display: none; }
+
+  /* The live sign: five bars (listening, speaking) or three dots (thinking). */
+  .viz { display: none; align-items: center; gap: 3px; height: 20px; }
+  .viz i { display: block; width: 3px; height: 4px; border-radius: 2px; background: var(--tone); }
+  .dots { display: none; gap: 4px; }
+  .dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--tone); opacity: .35; }
+
+  /* The indeterminate rail along the bottom while a tool runs. */
+  .rail {
+    position: absolute; left: 22px; right: 22px; bottom: 6px; height: 2px; border-radius: 2px;
+    background: rgba(255, 255, 255, .08); overflow: hidden; opacity: 0; transition: opacity 200ms ease;
+  }
+  .rail i { display: block; width: 30%; height: 100%; border-radius: 2px;
+    background: linear-gradient(90deg, transparent, var(--tone), transparent); transform: translateX(-110%); }
+
+  /* Card: icon tile, title, text, hint. */
+  #l-card { padding: 0 22px 0 16px; gap: 14px; }
+  .tile {
+    width: 54px; height: 54px; border-radius: 17px; flex: none;
+    display: grid; place-items: center; position: relative;
+    background: color-mix(in srgb, var(--tone) 17%, #0b0b0c);
+    color: var(--tone);
+  }
+  .tile svg { width: 26px; height: 26px; }
+  .tile .pulse { position: absolute; inset: -1px; border-radius: 18px; border: 1.5px solid var(--tone); opacity: 0; }
+  #card-label { font-size: 14.5px; }
+  #card-detail {
+    white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    font-size: 12.5px; line-height: 1.35; color: #D4D4D8; margin-top: 3px;
+  }
+  #card-hint { font-size: 11px; color: var(--tone); margin-top: 5px; font-weight: 600; }
+  #card-hint:empty { display: none; }
+
+  /* Icons are a fixed set; the state picks one, data never does. */
+  .icon { display: none; }
+  #island[data-icon="mark"] .icon-mark,
+  #island[data-icon="mic"] .icon-mic,
+  #island[data-icon="gear"] .icon-gear,
+  #island[data-icon="check"] .icon-check,
+  #island[data-icon="alert"] .icon-alert,
+  #island[data-icon="shield"] .icon-shield,
+  #island[data-icon="bell"] .icon-bell,
+  #island[data-icon="battery"] .icon-battery,
+  #island[data-icon="disk"] .icon-disk,
+  #island[data-icon="wifi"] .icon-wifi,
+  #island[data-icon="download"] .icon-download,
+  #island[data-icon="spark"] .icon-spark,
+  #island[data-icon="speaker"] .icon-speaker,
+  #island[data-icon="mute"] .icon-mute { display: block; }
+
+  /* ── Music: the cover in the pill, moving bars, the player card ──────── */
+  .art {
+    display: none; width: 100%; height: 100%; object-fit: cover; position: relative;
+    border-radius: 8px;
+  }
+  #island[data-has-art="true"][data-icon="music"] #l-pill .art { display: block; }
+  #island[data-icon="music"] #l-pill .disc { border-radius: 8px; }
+  #island[data-icon="music"][data-has-art="false"] .icon-music { display: block; }
+  .eq { display: none; align-items: flex-end; gap: 2.5px; height: 16px; }
+  .eq i { width: 3px; height: 5px; border-radius: 1.5px; background: var(--tone); }
+  #island[data-state="media"] .eq { display: flex; }
+  #island[data-state="media"][data-playing="true"] .eq i { animation: eq 1000ms ease-in-out infinite; }
+  #island[data-state="media"][data-playing="false"] .eq i { opacity: .5; }
+  .eq i:nth-child(1) { animation-delay: -200ms !important; }
+  .eq i:nth-child(2) { animation-delay: -650ms !important; }
+  .eq i:nth-child(3) { animation-delay: -400ms !important; }
+  .eq i:nth-child(4) { animation-delay: -850ms !important; }
+
+  /* Volume: a level bar that slides to the new value. */
+  .level { display: none; width: 104px; height: 5px; border-radius: 3px; background: rgba(255, 255, 255, .14); overflow: hidden; }
+  .level i { display: block; height: 100%; width: 0; border-radius: 3px; background: var(--tone);
+    transition: width 260ms var(--spring); }
+  .level-num { display: none; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-dim); min-width: 26px; text-align: right; }
+  #island[data-state="volume"] .level,
+  #island[data-state="volume"] .level-num { display: block; }
+  #island[data-state="volume"] .lead svg { animation: pop 380ms var(--spring) 1; }
+
+  #l-player { flex-direction: column; align-items: stretch; justify-content: center; padding: 16px 22px 14px; gap: 10px; }
+  .p-top { display: flex; align-items: center; gap: 13px; min-width: 0; }
+  .p-art {
+    width: 58px; height: 58px; border-radius: 13px; flex: none; overflow: hidden;
+    background: color-mix(in srgb, var(--tone) 16%, #0b0b0c); color: var(--tone);
+    display: grid; place-items: center;
+  }
+  .p-art img { width: 100%; height: 100%; object-fit: cover; display: none; }
+  .p-art svg { width: 26px; height: 26px; }
+  #island[data-has-art="true"] .p-art img { display: block; }
+  #island[data-has-art="true"] .p-art svg { display: none; }
+  #island[data-layout="player"] .p-art { animation: art-in 520ms var(--spring) 1; }
+  .p-text { flex: 1; min-width: 0; }
+  #p-title { font-size: 15px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #p-artist { font-size: 13px; color: var(--text-dim); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .p-time { display: flex; align-items: center; gap: 9px; font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+  .p-bar { flex: 1; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .16); overflow: hidden; }
+  .p-bar i { display: block; height: 100%; width: 0; background: #E4E4E7; border-radius: 2px; transition: width 900ms linear; }
+  .p-controls { display: flex; align-items: center; justify-content: center; gap: 30px; }
+  .p-controls button {
+    all: unset; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center;
+    color: var(--text); cursor: pointer; transition: background 160ms ease, transform 160ms var(--spring), opacity 160ms ease;
+  }
+  .p-controls button:hover { background: rgba(255, 255, 255, .12); }
+  .p-controls button:active { transform: scale(.88); }
+  .p-controls button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .p-controls button:disabled { opacity: .3; cursor: default; background: none; }
+  .p-controls svg { width: 22px; height: 22px; }
+  .p-controls #p-toggle svg { width: 26px; height: 26px; }
+  #p-toggle .i-play { display: none; }
+  #island[data-playing="false"] #p-toggle .i-play { display: block; }
+  #island[data-playing="false"] #p-toggle .i-pause { display: none; }
+
+  /* ══ States ═════════════════════════════════════════════════════════ */
+
+  /* Listening: the microphone is really open. Breathing ring + live bars. */
+  #island[data-state="activated"] .viz,
+  #island[data-state="listening"] .viz { display: flex; }
+  #island[data-state="activated"] .viz i,
+  #island[data-state="listening"] .viz i { animation: wave 1100ms ease-in-out infinite; }
+  #island[data-state="activated"] #l-pill .pulse,
+  #island[data-state="listening"] #l-pill .pulse { animation: breathe 1800ms ease-out infinite; }
+
+  /* Speaking: a smoother, calmer wave in blue. A loop, not a meter. */
+  #island[data-state="speaking"] .viz { display: flex; }
+  #island[data-state="speaking"] .viz i { animation: speak 900ms ease-in-out infinite; }
+
+  /* Transcribing and thinking: the arc orbits the mark, three dots wait. */
+  #island[data-state="transcribing"] .dots,
+  #island[data-state="processing"] .dots,
+  #island[data-state="thinking"] .dots { display: flex; }
+  #island[data-state="transcribing"] .dots i,
+  #island[data-state="processing"] .dots i,
+  #island[data-state="thinking"] .dots i { animation: blip 1200ms ease-in-out infinite; }
+  #island[data-state="processing"] .ring,
+  #island[data-state="thinking"] .ring,
+  #island[data-state="working"] .ring { opacity: 1; animation: orbit 1400ms linear infinite; }
+  #island[data-state="processing"] #pill-label,
+  #island[data-state="thinking"] #pill-label {
+    background: linear-gradient(90deg, var(--text) 0%, var(--text) 35%, var(--tone) 50%, var(--text) 65%, var(--text) 100%);
+    background-size: 220% 100%;
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    animation: shimmer 2200ms linear infinite;
   }
 
-  /* ── Progress rail ─────────────────────────────────────────────────── */
-  #rail {
-    position: absolute; left: 70px; right: 64px; bottom: 5px;
-    height: 2px; border-radius: 2px;
-    background: var(--hairline);
-    overflow: hidden; opacity: 0;
-    transition: opacity 160ms ease;
-  }
-  #rail i {
-    display: block; width: 32%; height: 100%; border-radius: 2px;
-    background: linear-gradient(90deg, transparent, var(--accent-hot), transparent);
-    transform: translateX(-100%);
-  }
+  /* Working: a tool is running. The gear turns slowly, the rail travels. */
+  #island[data-state="working"] .rail { opacity: 1; }
+  #island[data-state="working"] .rail i { animation: travel 1400ms ease-in-out infinite; }
+  #island[data-state="working"] .icon-gear { animation: turn 3200ms linear infinite; }
 
-  /* ══ STATE: LISTENING ═══════════════════════════════════════════════
-     A slow blue breath plus a live wave. This is the only state where the
-     microphone is genuinely open, so it is the loudest of the six. */
-  #panel[data-state="activated"] #viz,
-  #panel[data-state="listening"] #viz { opacity: 1; }
-  #panel[data-state="activated"] #viz i,
-  #panel[data-state="listening"] #viz i {
-    animation-name: wave; animation-duration: 1100ms;
-    animation-timing-function: ease-in-out; animation-iteration-count: infinite;
-  }
+  /* Done: the check draws itself once. */
+  #island[data-state="done"] .icon-check path { stroke-dasharray: 24; stroke-dashoffset: 24; animation: draw 520ms var(--ease-out) 120ms forwards; }
 
-  /* ══ STATE: TRANSCRIBING ════════════════════════════════════════════
-     The microphone is closed and Whisper is working. Quieter by design: the
-     same five marks, but pulsing in sequence as dots rather than rising as
-     bars — nothing is being heard any more. */
-  #panel[data-state="transcribing"] #viz { opacity: 0.75; }
-  #panel[data-state="transcribing"] #viz i {
-    height: 4px; width: 4px; border-radius: 50%;
-    background: var(--accent-hot);
-    animation-name: blip; animation-duration: 1300ms;
-    animation-timing-function: ease-in-out; animation-iteration-count: infinite;
-  }
+  /* Error: one small shake, no more. */
+  #island[data-state="error"] .lead { animation: shake 420ms ease 1; }
+  #island[data-state="busy"] #pill-label,
+  #island[data-state="quiet"] #pill-label { color: var(--text-dim); }
 
-  /* ══ STATE: PROCESSING ══════════════════════════════════════════════
-     The model is thinking. The arc orbits the mark and the rail travels. */
-  #panel[data-state="processing"] #ring { opacity: 1; animation: orbit 1500ms linear infinite; }
-  #panel[data-state="processing"] #rail { opacity: 1; }
-  #panel[data-state="processing"] #rail i { animation: travel 1400ms ease-in-out infinite; }
+  /* Approval: amber, and the outline pulses faster than anything else --
+     NANO is waiting for the person. */
+  #island[data-state="approval"] { box-shadow: 0 0 0 1px color-mix(in srgb, var(--warning) 55%, transparent), 0 12px 30px -12px rgba(0, 0, 0, .65); }
+  #island[data-state="approval"] .tile .pulse { animation: breathe 1100ms ease-out infinite; }
 
-  /* ══ STATE: SPEAKING ════════════════════════════════════════════════
-     Nano is talking. A smooth symmetric wave — see the note at the top of this
-     file: it is a loop, not a level meter, because no amplitude is sent here. */
-  #panel[data-state="speaking"] #viz { opacity: 1; }
-  #panel[data-state="speaking"] #viz i {
-    animation-name: speak; animation-duration: 900ms;
-    animation-timing-function: ease-in-out; animation-iteration-count: infinite;
-  }
+  /* Reminder: the bell rings once on arrival. */
+  #island[data-state="reminder"] .icon-bell { transform-origin: 50% 12%; animation: ring 900ms ease 220ms 1; }
+  /* Download: the arrow drops in once. */
+  #island[data-state="download"] .icon-download .arrow { animation: drop 700ms var(--spring) 180ms 1 backwards; }
+  /* PC alert: the tile pulses twice. */
+  #island[data-state="alert"] .tile .pulse { animation: breathe 900ms ease-out 2; }
+  /* Briefing / heads-up: the spark turns in. */
+  #island[data-state="notice"] .icon-spark { animation: spin-in 700ms var(--spring) 160ms 1 backwards; }
 
-  /* ══ STATE: BUSY ════════════════════════════════════════════════════
-     A second activation arrived while a turn was already running. Nothing new
-     is happening, so the only motion is a slow rail. */
-  #panel[data-state="busy"] #rail { opacity: 1; }
-  #panel[data-state="busy"] #rail i {
-    background: linear-gradient(90deg, transparent, var(--quiet), transparent);
-    animation: travel 2100ms ease-in-out infinite;
-  }
-  #panel[data-state="busy"] #disc,
-  #panel[data-state="quiet"] #disc { border-color: rgba(224, 236, 255, 0.10); background: rgba(224, 236, 255, 0.04); }
-  #panel[data-state="busy"] #mark,
-  #panel[data-state="quiet"] #mark { opacity: 0.65; }
-  #panel[data-state="busy"] #label,
-  #panel[data-state="quiet"] #label { color: var(--text-dim); }
+  /* New text slides in softly whenever it changes. */
+  .swap { animation: text-in 320ms var(--ease-out) 1; }
 
-  /* ══ STATE: ERROR ═══════════════════════════════════════════════════
-     Red, and no more than that. Something did not work; the overlay is not
-     the place to make a scene about it. */
-  #panel[data-state="error"] { border-color: var(--danger); }
-  #panel[data-state="error"] #label { color: var(--danger); }
-
-  /* ══ STATE: DONE ════════════════════════════════════════════════════
-     A brief acknowledgement on the way out. */
-  #panel[data-state="done"] #mark { animation: flare 620ms ease-out 1; }
-
-  @keyframes breathe {
-    0%, 100% { opacity: 0.12; transform: scale(0.88); }
-    50%      { opacity: 0.34; transform: scale(1.08); }
-  }
+  @keyframes wave { 0%, 100% { height: 4px; opacity: .55; } 50% { height: 18px; opacity: 1; } }
+  @keyframes speak { 0%, 100% { height: 5px; opacity: .6; } 50% { height: 13px; opacity: 1; } }
+  @keyframes blip { 0%, 100% { opacity: .25; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-2px); } }
+  @keyframes breathe { 0% { opacity: .7; transform: scale(1); } 100% { opacity: 0; transform: scale(1.45); } }
   @keyframes orbit { to { transform: rotate(360deg); } }
-  @keyframes travel {
-    0%   { transform: translateX(-110%); }
-    100% { transform: translateX(340%); }
-  }
-  /* The bars share one keyframe and are separated by delay, so the wave reads
-     as a single travelling shape instead of five independent blinks. */
-  @keyframes wave {
-    0%, 100% { height: 4px;  opacity: 0.55; }
-    50%      { height: 18px; opacity: 1; }
-  }
-  @keyframes speak {
-    0%, 100% { height: 5px;  opacity: 0.6; }
-    50%      { height: 14px; opacity: 1; }
-  }
-  @keyframes blip {
-    0%, 100% { opacity: 0.25; }
-    50%      { opacity: 1; }
-  }
-  /* One brief accent acknowledgement at completion. */
-  @keyframes flare {
-    0%   { filter: drop-shadow(0 0 0 rgba(142, 181, 255, 0)); }
-    35%  { filter: drop-shadow(0 0 7px rgba(142, 181, 255, 0.55)); }
-    100% { filter: drop-shadow(0 0 0 rgba(142, 181, 255, 0)); }
-  }
+  @keyframes turn { to { transform: rotate(360deg); } }
+  @keyframes travel { 0% { transform: translateX(-110%); } 100% { transform: translateX(340%); } }
+  @keyframes shimmer { 0% { background-position: 110% 0; } 100% { background-position: -110% 0; } }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  @keyframes shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-3px); } 40% { transform: translateX(3px); } 60% { transform: translateX(-2px); } 80% { transform: translateX(2px); } }
+  @keyframes ring { 0%, 100% { transform: rotate(0); } 15% { transform: rotate(16deg); } 30% { transform: rotate(-14deg); } 45% { transform: rotate(10deg); } 60% { transform: rotate(-6deg); } 75% { transform: rotate(3deg); } }
+  @keyframes drop { 0% { transform: translateY(-9px); opacity: 0; } 100% { transform: translateY(0); opacity: 1; } }
+  @keyframes spin-in { 0% { transform: rotate(-90deg) scale(.4); opacity: 0; } 100% { transform: none; opacity: 1; } }
+  @keyframes eq { 0%, 100% { height: 4px; } 30% { height: 15px; } 60% { height: 8px; } 80% { height: 12px; } }
+  @keyframes pop { 0% { transform: scale(.7); } 100% { transform: scale(1); } }
+  @keyframes art-in { 0% { transform: scale(.6); border-radius: 30px; opacity: .3; } 100% { transform: none; opacity: 1; } }
+  @keyframes text-in { 0% { opacity: 0; filter: blur(4px); transform: translateY(3px); } 100% { opacity: 1; filter: blur(0); transform: none; } }
 
-  /* Delays span roughly half the cycle, so the five bars form one travelling
-     shape. They are longhand-only rules for the same reason the state rules
-     are: the `animation` shorthand would reset them. */
-  #viz i:nth-child(1) { animation-delay: -420ms; }
-  #viz i:nth-child(2) { animation-delay: -280ms; }
-  #viz i:nth-child(3) { animation-delay: 0ms; }
-  #viz i:nth-child(4) { animation-delay: -280ms; }
-  #viz i:nth-child(5) { animation-delay: -420ms; }
+  .viz i:nth-child(1) { animation-delay: -420ms !important; }
+  .viz i:nth-child(2) { animation-delay: -280ms !important; }
+  .viz i:nth-child(3) { animation-delay: 0ms !important; }
+  .viz i:nth-child(4) { animation-delay: -280ms !important; }
+  .viz i:nth-child(5) { animation-delay: -420ms !important; }
+  .dots i:nth-child(2) { animation-delay: 160ms !important; }
+  .dots i:nth-child(3) { animation-delay: 320ms !important; }
 
-  /* Nothing animates while hidden: a window nobody can see must not repaint. */
-  #panel[data-visible="false"] #ring,
-  #panel[data-visible="false"] #viz i,
-  #panel[data-visible="false"] #rail i { animation: none !important; }
+  /* Nothing animates while hidden: a window nobody sees must not repaint. */
+  #island[data-visible="false"] *,
+  #island[data-layout="idle"] * { animation: none !important; }
 
   @media (prefers-reduced-motion: reduce) {
-    #ring, #viz i, #rail i, #mark { animation: none !important; }
-    /* The states must still be told apart without motion, so the visualiser
-       stays visible at a fixed height and the arc stays parked. */
-    #panel[data-state="processing"] #ring { opacity: 1; }
-    #viz i { height: 10px; }
-    #panel { transition: opacity 120ms linear; transform: none; }
+    #island, #island *, .layout { animation: none !important; transition-duration: 1ms !important; transition-delay: 0ms !important; }
+    #island { transition: opacity 120ms linear !important; }
+    .layout { filter: none !important; transform: none !important; }
+    /* The states stay distinguishable without motion. */
+    .viz i { height: 10px; }
+    .dots i { opacity: .8; }
+    #island[data-state="processing"] #pill-label,
+    #island[data-state="thinking"] #pill-label { background: none; color: var(--text); }
+    .icon-check path { stroke-dashoffset: 0 !important; }
+    .eq i { height: 10px !important; }
   }
 </style>
 </head>
 <body>
-  <div id="panel" data-visible="false" data-state="idle" role="status" aria-live="polite">
-    <div id="orb">
-      <div id="halo"></div>
-      <div id="disc"></div>
-      <div id="ring"></div>
-      <!-- The approved N, generated from the same master as the app icon by
-           scripts/build_app_icon.ps1. Never redrawn here. -->
-      <img id="mark" src="nano-mark.png" alt="" aria-hidden="true" draggable="false" />
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <g id="g-mic"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></g>
+      <g id="g-gear"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M21.2 12h-2.6M5.4 12H2.8M18.5 5.5l-1.8 1.8M7.3 16.7l-1.8 1.8M18.5 18.5l-1.8-1.8M7.3 7.3 5.5 5.5"/></g>
+      <g id="g-alert"><path d="M12 3.5 2.8 19.5h18.4L12 3.5z"/><path d="M12 10v4.2M12 17h.01"/></g>
+      <g id="g-shield"><path d="M12 3 4.5 6v5.5c0 4.6 3.1 8 7.5 9.5 4.4-1.5 7.5-4.9 7.5-9.5V6L12 3z"/><path d="m8.8 12.2 2.2 2.2 4.4-4.6"/></g>
+      <g id="g-bell"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.6 1.8H4.4L6 16.5z"/><path d="M10 20.5a2.2 2.2 0 0 0 4 0"/></g>
+      <g id="g-battery"><rect x="2.5" y="7" width="17" height="10" rx="2.5"/><path d="M21.5 10.5v3"/><rect x="5" y="9.5" width="3.2" height="5" rx="1" fill="currentColor" stroke="none"/></g>
+      <g id="g-disk"><ellipse cx="12" cy="6" rx="7.5" ry="2.8"/><path d="M4.5 6v12c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8V6M4.5 12c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8"/></g>
+      <g id="g-wifi"><path d="M2.5 9a14 14 0 0 1 19 0M5.8 12.6a9 9 0 0 1 12.4 0M9.1 16.1a4.2 4.2 0 0 1 5.8 0"/><path d="M12 19.6h.01"/></g>
+      <g id="g-download"><path class="arrow" d="M12 3.5v11M7.5 10l4.5 4.5 4.5-4.5"/><path d="M4 16.5v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></g>
+      <g id="g-spark"><path d="M12 3c.6 4.6 3.4 7.4 9 9-5.6 1.6-8.4 4.4-9 9-.6-4.6-3.4-7.4-9-9 5.6-1.6 8.4-4.4 9-9z"/></g>
+      <g id="g-check"><path d="m5 12.5 4.5 4.5L19 7.5"/></g>
+      <g id="g-music"><path d="M9 18V5.5l11-2v12.5"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></g>
+      <g id="g-speaker"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4.5 4.5 0 0 1 0 6M18.3 6.5a8 8 0 0 1 0 11"/></g>
+      <g id="g-mute"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="m16 9.5 5 5M21 9.5l-5 5"/></g>
+    </defs>
+  </svg>
+
+  <div id="island" data-visible="false" data-size="idle" data-state="idle" data-tone="neutral" data-icon="mark"
+       role="status" aria-live="polite">
+
+    <div class="layout" id="l-idle" aria-hidden="true">
+      <!-- The approved N, generated from the same master as the app icon. -->
+      <img class="mark" src="nano-mark.png" alt="" draggable="false" />
+      <div id="idle-text"><b id="idle-name">NANO</b><span id="idle-hint"></span></div>
+      <span class="ready"></span>
     </div>
 
-    <div id="text">
-      <div id="label">Nano</div>
-      <div id="detail"></div>
+    <div class="layout" id="l-pill">
+      <div class="lead" aria-hidden="true">
+        <span class="disc"></span><span class="pulse"></span><span class="ring"></span>
+        <img class="icon icon-mark mark" src="nano-mark.png" alt="" draggable="false" />
+        <svg class="icon icon-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#g-mic"/></svg>
+        <svg class="icon icon-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><use href="#g-gear"/></svg>
+        <svg class="icon icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>
+        <svg class="icon icon-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#g-alert"/></svg>
+        <svg class="icon icon-music" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#g-music"/></svg>
+        <svg class="icon icon-speaker" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#g-speaker"/></svg>
+        <svg class="icon icon-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#g-mute"/></svg>
+        <img class="art" id="pill-art" alt="" draggable="false" />
+      </div>
+      <div class="text">
+        <div class="label" id="pill-label"></div>
+        <div class="detail" id="pill-detail"></div>
+      </div>
+      <div class="trail" aria-hidden="true">
+        <span class="clock" id="clock"></span>
+        <span class="dots"><i></i><i></i><i></i></span>
+        <span class="viz"><i></i><i></i><i></i><i></i><i></i></span>
+        <span class="eq"><i></i><i></i><i></i><i></i></span>
+        <span class="level"><i id="level-fill"></i></span>
+        <span class="level-num" id="level-num"></span>
+      </div>
+      <div class="rail" aria-hidden="true"><i></i></div>
     </div>
 
-    <div id="viz" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="layout" id="l-card">
+      <div class="tile" aria-hidden="true">
+        <span class="pulse"></span>
+        <svg class="icon icon-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><use href="#g-shield"/></svg>
+        <svg class="icon icon-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><use href="#g-bell"/></svg>
+        <svg class="icon icon-battery" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><use href="#g-battery"/></svg>
+        <svg class="icon icon-disk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><use href="#g-disk"/></svg>
+        <svg class="icon icon-wifi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><use href="#g-wifi"/></svg>
+        <svg class="icon icon-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><use href="#g-download"/></svg>
+        <svg class="icon icon-spark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><use href="#g-spark"/></svg>
+      </div>
+      <div class="text">
+        <div class="label" id="card-label"></div>
+        <div class="detail" id="card-detail"></div>
+        <div id="card-hint"></div>
+      </div>
+    </div>
 
-    <div id="rail" aria-hidden="true"><i></i></div>
+    <div class="layout" id="l-player">
+      <div class="p-top">
+        <div class="p-art" aria-hidden="true">
+          <img id="p-art" alt="" draggable="false" />
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><use href="#g-music"/></svg>
+        </div>
+        <div class="p-text">
+          <div id="p-title"></div>
+          <div id="p-artist"></div>
+        </div>
+        <span class="eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+      </div>
+      <div class="p-time" aria-hidden="true">
+        <span id="p-pos">0:00</span><span class="p-bar"><i id="p-fill"></i></span><span id="p-left">0:00</span>
+      </div>
+      <div class="p-controls">
+        <button type="button" id="p-prev" data-action="previous">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5.5h2v13H6zM20 5.8v12.4a.8.8 0 0 1-1.2.7L9.5 12.7a.8.8 0 0 1 0-1.4l9.3-6.2a.8.8 0 0 1 1.2.7z"/></svg>
+        </button>
+        <button type="button" id="p-toggle" data-action="play_pause">
+          <svg class="i-pause" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4.5" width="4" height="15" rx="1.2"/><rect x="14" y="4.5" width="4" height="15" rx="1.2"/></svg>
+          <svg class="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.9v14.2a.9.9 0 0 0 1.4.8l11-7.1a.9.9 0 0 0 0-1.6l-11-7.1A.9.9 0 0 0 7 4.9z"/></svg>
+        </button>
+        <button type="button" id="p-next" data-action="next">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 5.5h2v13h-2zM4 5.8v12.4a.8.8 0 0 0 1.2.7l9.3-6.2a.8.8 0 0 0 0-1.4L5.2 5.1A.8.8 0 0 0 4 5.8z"/></svg>
+        </button>
+      </div>
+    </div>
   </div>
 
   <script src="overlay.js"></script>

@@ -131,8 +131,14 @@ Renderer settings: `contextIsolation: true`, `nodeIntegration: false`,
 navigation confined to the backend's own origin, popups denied and external
 `http(s)` links handed to the OS browser after validation.
 
-The overlay's preload has exactly one entry, `onState`, and no way to send
-anything back: it is a status light, not a control.
+The island's preload (`electron/overlay/preload.js`) receives one state and
+can send exactly three fixed signals: `setPointer(bool)` (stop being
+click-through while the pointer is over the pill), `open()` (bring NANO to the
+front) and `media(action)` with `action` one of `previous`, `play_pause`,
+`next`. The main process accepts them only from the island's own
+`webContents`, checks the action again, and the backend checks it a third time
+(`core/now_playing.py`). It has no way to approve, start or change anything
+else: an approval on the island is answered in NANO.
 
 ## Where the data lives
 
@@ -171,19 +177,39 @@ Remembered geometry is validated before use (`electron/lib/window-state.js`): a
 position that no longer lands on an existing display is dropped and the window
 is centred, so unplugging a second monitor cannot hide Nano offscreen.
 
-## The overlay
+## The NANO island (Modo ambiente)
 
-A second `BrowserWindow`: frameless, transparent, always-on-top (above
-full-screen apps), `skipTaskbar`, `focusable: false`, click-through, hidden by
-default, positioned bottom-centre of the **work area** of the display under the
-cursor.
+The voice capsule became the **island** (2026-11-20): a black pill at the top
+centre of the work area, in the spirit of a phone's "dynamic island", that
+changes shape for what NANO is doing. A second `BrowserWindow`: frameless,
+transparent, always-on-top (above full-screen apps), `skipTaskbar`,
+`focusable: false`, click-through except over the pill, placed on the display
+under the cursor when it appears.
 
-Every state it shows comes from a real backend event — `voice_phase` while the
-turn progresses, `voice_turn_ended` when it finishes, and the backend's own busy
-answer when a second activation is refused. `electron/lib/overlay-state.js` is
-the whole mapping and is pure, so it is unit-tested without a window. It never
-advances a state on its own: if the backend goes quiet, the overlay keeps
-showing the last thing that actually happened.
+Shapes: a small resting pill (shown while NANO is idle when "Modo ambiente" is
+on, the default; hover shows the shortcut), a compact pill (listening with a
+real elapsed clock, thinking, speaking, done), a wide pill (a tool step, a
+choice, an error), a card (approval, reminder, PC alert, download, briefing),
+the volume bar, and the music player (cover, title, artist, progress,
+previous / play-pause / next) that opens on hover and for a few seconds when
+the song changes.
+
+Several things can be true at once, so `electron/lib/island.js` keeps one view
+per layer and shows the most important: approval > voice > volume > notices >
+chat > music, then the resting pill. While the NANO window itself is focused
+only a voice turn stays on the island (the window already shows the rest).
+
+Every state comes from a real backend event over the control pipe:
+`voice_phase` / `voice_turn_ended` (mapped by `lib/overlay-state.js`, as
+before), `chat_activity` (thinking / a tool step by name / done / error),
+`approval` (request and resolved; action and target only, never arguments),
+`reminder_due`, `nano_notice` (PC alerts, briefings), `media` and `volume`
+(`core/now_playing.py`: Windows' media controls through
+`winrt-Windows.Media.Control`, and the default device's master volume), and
+`backend_started` / `ui_language` for the language. Nothing advances a state on
+its own; the only clocks are facts (a listening turn's elapsed time, a playing
+song's position moved on from when Windows reported it). Timed moments (a
+reminder's 9 s, "Pronto") expire in the main process.
 
 User-visible error text is short and human. Internal codes, provider messages
 and tracebacks stay in `logs/nano.log`; a test asserts no label looks like an

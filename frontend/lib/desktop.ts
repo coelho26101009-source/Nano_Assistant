@@ -37,6 +37,8 @@ export type DesktopStatus = {
   shortcutRegistered: boolean;
   shortcutError: string | null;
   overlayEnabled: boolean;
+  /* Absent in shells older than the NANO island. */
+  islandAlwaysVisible?: boolean;
   autoLaunch: AutoLaunchState;
   dataDir: string;
   packaged: boolean;
@@ -76,6 +78,7 @@ type NanoAppApi = {
   getDesktopStatus: () => Promise<DesktopStatus>;
   retryShortcut: () => Promise<{ registered: boolean; error: string | null }>;
   setOverlayEnabled: (enabled: boolean) => Promise<boolean>;
+  setIslandAlwaysVisible?: (enabled: boolean) => Promise<boolean>;
   setAutoLaunch: (enabled: boolean) => Promise<AutoLaunchState>;
   /* Absent in shells older than the updater; every caller checks. */
   getUpdateStatus?: () => Promise<UpdateState | null>;
@@ -160,6 +163,8 @@ export const quitNano = () => desktop()?.quit();
 export const retryShortcut = () => desktop()?.retryShortcut() ?? Promise.resolve(null);
 export const setOverlayEnabled = (enabled: boolean) =>
   desktop()?.setOverlayEnabled(enabled) ?? Promise.resolve(null);
+export const setIslandAlwaysVisible = (enabled: boolean) =>
+  desktop()?.setIslandAlwaysVisible?.(enabled) ?? Promise.resolve(null);
 export const setAutoLaunch = (enabled: boolean) =>
   desktop()?.setAutoLaunch(enabled) ?? Promise.resolve(null);
 

@@ -19,7 +19,7 @@
 const { app, BrowserWindow, screen } = require('electron');
 const path = require('path');
 
-const OVERLAY_SIZE = { width: 548, height: 84 };
+const OVERLAY_SIZE = { width: 540, height: 210 };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let mainWindow = null;

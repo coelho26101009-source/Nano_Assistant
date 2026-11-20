@@ -1168,6 +1168,7 @@ winrt-runtime==3.2.1 \
     --hash=sha256:e36e587ab5fd681ee472cd9a5995743f75107a1a84d749c64f7e490bc86bc814 \
     --hash=sha256:e94f3cb40ea2d723c44c82c16d715c03c6b3bd977d135b49535fdd5415fd9130
     # via
+    #   -c requirements/runtime.lock
     #   -r requirements-optional.txt
     #   winrt-windows-foundation
     #   winrt-windows-foundation-collections
@@ -1195,7 +1196,9 @@ winrt-windows-foundation==3.2.1 \
     --hash=sha256:de5e4f61d253a91ba05019dbf4338c43f962bdad935721ced5e7997933994af5 \
     --hash=sha256:ebbf6e8168398c9ed0c72c8bdde95a406b9fbb9a23e3705d4f0fe28e5a209705 \
     --hash=sha256:f3762be2f6e0f2aedf83a0742fd727290b397ffe3463d963d29211e4ebb53a7e
-    # via -r requirements-optional.txt
+    # via
+    #   -c requirements/runtime.lock
+    #   -r requirements-optional.txt
 winrt-windows-foundation-collections==3.2.1 \
     --hash=sha256:0eff1ad0d8d763ad17e9e7bbd0c26a62b27215016393c05b09b046d6503ae6d5 \
     --hash=sha256:15704eef3125788f846f269cf54a3d89656fa09a1dc8428b70871f717d595ad6 \
@@ -1300,4 +1303,6 @@ winrt-windows-storage-streams==3.2.1 \
     --hash=sha256:e4508ee135af53e4fc142876abbf4bc7c2a95edfc7d19f52b291a8499cacd6dc \
     --hash=sha256:efdf250140340a75647e8e8ad002782d91308e9fdd1e19470a5b9cc969ae4780 \
     --hash=sha256:fa90244191108f85f6f7afb43a11d365aca4e0722fe8adc62fb4d2c678d0993d
-    # via -r requirements-optional.txt
+    # via
+    #   -c requirements/runtime.lock
+    #   -r requirements-optional.txt
