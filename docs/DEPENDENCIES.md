@@ -74,13 +74,13 @@ images) are never installed by default. All of them at once, on Windows:
 .venv\Scripts\python -m pip install --require-hashes --no-build-isolation -r requirements\optional.lock
 ```
 
-Or one capability, still pinned and hash-checked — pip takes the versions and
-hashes from the lock used as a constraints file, and refuses a file whose hash
-does not match:
+Just the speech-to-text part (faster-whisper and the packages it needs, still
+pinned and hash-checked): use **Definições → Voz → Preparar a voz**, which
+copies exactly those entries out of `optional.lock` (`core/voice_setup.py`).
 
-```bat
-.venv\Scripts\python -m pip install --require-hashes --no-build-isolation -c requirements\optional.lock faster-whisper
-```
+Installing one package with `-c requirements\optional.lock faster-whisper`
+does **not** work: pip does not read hashes from a constraints file, so
+`--require-hashes` refuses it. Use `-r` with the whole lock instead.
 
 The packaged application's embedded interpreter is built by
 `scripts/prepare_windows_runtime.ps1`, which installs `build.lock` and then
