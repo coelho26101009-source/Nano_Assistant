@@ -20,6 +20,37 @@ versioning policy.
 
 ## [Unreleased]
 
+---
+
+## [0.4.0-beta.1] - 2026-11-21
+
+"Beta 4". Release notes: [docs/RELEASE_NOTES_0.4.0-beta.1.md](docs/RELEASE_NOTES_0.4.0-beta.1.md).
+The first Beta that updates itself.
+
+### Added — the phone's camera, with permission each time (2026-11-21)
+
+- **"O que é isto?"** A camera button in the phone app's chat takes one photo
+  and sends it with the message.
+- **NANO can ask to see** (`phone_camera_look`): the phone shows a card, and
+  only a tap on "Abrir a câmara" opens it; one photo, "Recusar" or 90 s
+  without an answer is a no. A red "Câmara ligada" sign while it is open.
+  Nothing is recorded; the photo travels inside the encrypted link, is
+  described by a vision model (a local one first) and dropped.
+
+### Added — the Second Brain in 3D (2026-11-20)
+
+- The memory graph is now real 3D: black space, lit spheres, a slow turn and
+  smooth animations; drag to turn it, search to glide to a node. Nothing moves
+  with reduced motion.
+
+### Fixed — before the release (2026-11-21)
+
+- The island's music reader gives up after 4 s when Windows' media controls do
+  not answer (seen with Spotify playing), instead of freezing; a skip that gets
+  no answer falls back to the keyboard media key. The island test no longer
+  reads the real media session, so the suite no longer hangs on a PC that is
+  playing music.
+
 ### Added — Memory M3: remembering past conversations (2026-11-20)
 
 - **NANO remembers older conversations and what was decided in them.** Each

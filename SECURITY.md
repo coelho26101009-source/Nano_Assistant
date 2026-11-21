@@ -12,11 +12,12 @@ security fixes land on `main` and can be included in later Beta releases.
 | Version | Supported |
 | --- | --- |
 | `main` (development) | Yes — fixes land here |
-| `0.3.0-beta.1` | Current public Beta; update manually when a fix is released |
+| `0.4.0-beta.1` | Current public Beta; updates itself when a fix is released |
+| `0.3.0-beta.1` | Previous Beta; update to the current Beta (by hand, it has no updater) |
 | `0.2.0-beta.1` | Previous Beta; update to the current Beta |
 | `0.1.0-beta.1` | Previous Beta; update to the current Beta |
 
-There is no automatic updater or promised backport schedule.
+From 0.4.0-beta.1 the installed app updates itself to the newest Beta (see [docs/UPDATES.md](docs/UPDATES.md)). There is no promised backport schedule.
 
 ## Reporting a vulnerability
 

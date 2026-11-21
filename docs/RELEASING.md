@@ -23,8 +23,11 @@ code. The release was then created by hand with `gh release create`.
 | `Nano-Setup-0.3.0-beta.1-x64.exe` | `27f20bb1896d5e8368115ea727b98050b1a41d4be59f532dbd8e4a87b749edf4` |
 | `NANO-Android-0.3.0-beta.1.apk` | `4ac996af8add52ac9a8f84e4fd8d1ff0b461ab3727baee716d35a7e98d85388e` |
 
-The next Beta can go back to the normal flow: tag, then dispatch the workflow on
-the tag with `publish_release: true`, then attach the APK.
+From 0.4.0-beta.1 the flow is fully in CI: push the tag, run **Build Windows**
+on the tag with `publish_release: true` (and a `release_title`); it publishes the
+release with `docs/RELEASE_NOTES_<version>.md` as its text, the installer, the
+checksums and the signed update feed. Then run **Android** on the same tag: its
+`attach` job adds `NANO-Android-<version>.apk` and its line in `SHA256SUMS.txt`.
 
 The first Beta shipped with the open items in
 [`PUBLIC_RELEASE_CHECKLIST.md`](PUBLIC_RELEASE_CHECKLIST.md) still unchecked,

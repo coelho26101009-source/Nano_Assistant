@@ -44,6 +44,12 @@ on:
           release checklist in docs/RELEASING.md has been completed.
         type: boolean
         default: false
+      release_title:
+        description: >-
+          Title of the GitHub Release, for example "NANO 0.4.0-beta.1 (Beta 4)".
+          Empty: "NANO <version>".
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -230,6 +236,26 @@ jobs:
           name: Nano-Windows
           path: installers
 
+      # The release text is docs/RELEASE_NOTES_<version>.md from the tagged
+      # commit, so what users read is reviewed with the code it describes.
+      - name: Checkout the release notes
+        uses: actions/checkout@v7
+        with:
+          path: notes
+          sparse-checkout: docs
+          sparse-checkout-cone-mode: true
+
+      - name: Release title and notes
+        id: text
+        env:
+          TITLE: ${{ inputs.release_title }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          notes="notes/docs/RELEASE_NOTES_${version}.md"
+          test -f "$notes" || { echo "::error::$notes is missing: write the release notes first."; exit 1; }
+          echo "notes=$notes" >> "$GITHUB_OUTPUT"
+          echo "title=${TITLE:-NANO $version}" >> "$GITHUB_OUTPUT"
+
       - name: Publish GitHub release
         # The only third-party action in this repository, and it runs in the
         # only job that holds `contents: write`. A mutable `@v2` tag can be
@@ -241,6 +267,8 @@ jobs:
         # is moving to in the pull request.
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
+          name: ${{ steps.text.outputs.title }}
+          body_path: ${{ steps.text.outputs.notes }}
           prerelease: true
           fail_on_unmatched_files: true
           # NSIS ONLY, DELIBERATELY. The MSI is produced and verified by the
