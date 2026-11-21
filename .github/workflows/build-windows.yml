@@ -231,6 +231,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Only to start the Android workflow on the new tag (last step).
+      actions: write
     steps:
       - name: Download installers
         uses: actions/download-artifact@v8
@@ -268,7 +270,9 @@ jobs:
           echo "notes=$notes" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "title=${TITLE:-NANO $version}" >> "$GITHUB_OUTPUT"
+          # Without a title: "NANO <version> (Beta N)", N from the notes' first line.
+          beta=$(head -n 1 "$notes" | grep -o '"Beta [0-9]*"' | head -n 1 | tr -d '"' || true)
+          echo "title=${TITLE:-NANO ${version}${beta:+ (${beta})}}" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub release
         # The only third-party action in this repository, and it runs in the
@@ -355,3 +359,11 @@ jobs:
               --notes "Not a download. Installed copies of NANO read nano-update.json here to find the newest Beta. The installers are on each version's own release."
           fi
           gh release upload desktop-update nano-update.json --clobber
+
+      # The Android app belongs in the same release: start the Android
+      # workflow on the new tag; its `attach` job adds the APK and its checksum.
+      - name: Build and attach the Android app
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run android.yml --ref "${{ steps.text.outputs.tag }}"

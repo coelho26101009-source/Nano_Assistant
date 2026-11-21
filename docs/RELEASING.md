@@ -28,8 +28,10 @@ From 0.4.0-beta.1 the flow is fully in CI: run **Build Windows** on `main`
 `release_title`. It creates the tag `v<version.json>` at the commit it built
 (cloud sessions cannot push tags, and it refuses if the tag already exists),
 and publishes the release with `docs/RELEASE_NOTES_<version>.md` as its text,
-the installer, the checksums and the signed update feed. Then run **Android** on the same tag: its
-`attach` job adds `NANO-Android-<version>.apk` and its line in `SHA256SUMS.txt`.
+the installer, the checksums and the signed update feed. It then starts
+**Android** on the new tag, whose `attach` job adds `NANO-Android-<version>.apk`
+and its line in `SHA256SUMS.txt`. Without a `release_title` the release is
+called "NANO <version> (Beta N)", N from the notes' first line.
 
 The first Beta shipped with the open items in
 [`PUBLIC_RELEASE_CHECKLIST.md`](PUBLIC_RELEASE_CHECKLIST.md) still unchecked,
