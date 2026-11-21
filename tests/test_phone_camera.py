@@ -12,6 +12,8 @@ import base64
 import threading
 import time
 
+from urllib.parse import urlsplit
+
 import pytest
 
 from core import attachments, mobile_link, mobile_server, phone_camera, vision
@@ -49,6 +51,10 @@ def phone():
 def broker(phone):
     return phone_camera.CameraBroker(publish=phone.publish, ready=lambda: True,
                                      seen_by=lambda: {"provider": "ollama", "local": True})
+
+
+def _went_to_groq(sent) -> bool:
+    return any(urlsplit(url).hostname == "api.groq.com" for url, _ in sent)
 
 
 def _ask_in_background(broker, question="o que é isto?", timeout=5):
@@ -184,7 +190,7 @@ def test_look_describes_the_photo_and_keeps_nothing(broker, phone, local_vision)
     assert out["ok"] and out["status"] == "seen" and out["local"] is True
     assert out["text"] == "Uma caneca azul com café."
     assert "data" not in out and JPEG not in str(out)
-    assert not any("groq.com" in url for url, _ in local_vision)
+    assert not _went_to_groq(local_vision)
 
 
 def test_look_says_why_when_the_person_says_no(broker, phone, local_vision):
@@ -243,7 +249,7 @@ def test_a_camera_photo_in_a_message_prefers_local_vision(local_vision):
     out = attachments.prepare(files, question="o que é isto?")
     assert "data" not in out[0] and "camera" not in out[0]
     assert "Uma caneca azul" in out[0]["text"]
-    assert not any("groq.com" in url for url, _ in local_vision)
+    assert not _went_to_groq(local_vision)
 
 
 def test_an_ordinary_picture_still_follows_the_mode(local_vision):
@@ -251,7 +257,7 @@ def test_an_ordinary_picture_still_follows_the_mode(local_vision):
                                        "mime": "image/jpeg", "data": JPEG}])
     assert "camera" not in files[0]
     attachments.prepare(files)
-    assert any("groq.com" in url for url, _ in local_vision)
+    assert _went_to_groq(local_vision)
 
 
 # ── the link ──────────────────────────────────────────────────────────────
