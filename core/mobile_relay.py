@@ -52,9 +52,9 @@ from core.mobile_link import LinkError, MobileLink
 
 logger = logging.getLogger("nano.mobile.relay")
 
-#: Where NANO's relay runs. Empty until it is deployed (see relay/README.md);
+#: Where NANO's relay runs: relay/ deployed by .github/workflows/relay.yml.
 #: ``NANO_RELAY_URL`` overrides it, for a self-hosted relay or a test.
-DEFAULT_RELAY_URL = ""
+DEFAULT_RELAY_URL = "https://nano-relay.coelho26101009.workers.dev"
 RELAY_URL_ENV = "NANO_RELAY_URL"
 
 #: Same limit as a request on the home Wi-Fi (core/mobile_server.py).

@@ -110,3 +110,9 @@ jobs:
             sleep 10
           done
           echo "::warning::The relay was deployed but did not answer yet at $url (a new workers.dev address can take a minute)."
+      - name: Check a PC and a phone can meet through it
+        if: steps.secrets.outputs.ready == 'true'
+        run: |
+          url=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy.log | head -n1)
+          [ -n "$url" ] || exit 0
+          node test/live.mjs "$url"

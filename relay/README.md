@@ -38,8 +38,10 @@ messages count 20 to 1, so a phone in use all day is a few hundred.
    `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
 
 `.github/workflows/relay.yml` then tests and deploys every change to `relay/` on `main`
-(Actions → Relay → Run workflow deploys by hand). The address it prints goes
-into `DEFAULT_RELAY_URL` in `core/mobile_relay.py`. A self-hosted relay can be
+(Actions → Relay → Run workflow deploys by hand), and after each deploy plays a
+PC and a phone against the live relay (`test/live.mjs`). NANO's relay lives at
+`https://nano-relay.coelho26101009.workers.dev`, which is `DEFAULT_RELAY_URL`
+in `core/mobile_relay.py`. A self-hosted relay can be
 used instead with the `NANO_RELAY_URL` environment variable on the PC.
 
 ## Develop
@@ -49,4 +51,5 @@ npm ci
 npm test                 # wire rules (shared vector with tests/test_mobile_relay.py)
 npx wrangler dev         # the real Worker on http://127.0.0.1:8787
 NANO_RELAY_E2E_URL=http://127.0.0.1:8787 python -m pytest tests/test_mobile_relay.py
+node test/live.mjs http://127.0.0.1:8787   # the relay alone, as after a deploy
 ```
