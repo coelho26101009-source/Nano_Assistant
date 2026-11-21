@@ -37,7 +37,7 @@ messages count 20 to 1, so a phone in use all day is a few hundred.
 3. GitHub → Settings → Secrets and variables → Actions:
    `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
 
-`.github/workflows/relay.yml` then tests and deploys every change on `main`
+`.github/workflows/relay.yml` then tests and deploys every change to `relay/` on `main`
 (Actions → Relay → Run workflow deploys by hand). The address it prints goes
 into `DEFAULT_RELAY_URL` in `core/mobile_relay.py`. A self-hosted relay can be
 used instead with the `NANO_RELAY_URL` environment variable on the PC.
