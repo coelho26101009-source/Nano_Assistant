@@ -13,13 +13,16 @@
  *
  * The PC is tried at every address the QR listed (home Wi-Fi first, then a
  * private network such as Tailscale), plus any address the person added by
- * hand, and the one that answered last is tried first next time.
+ * hand, and finally through NANO's relay when the PC offered one (away from
+ * home: see relay.ts; the relay only carries the sealed envelopes). The route
+ * that answered last is tried first next time.
  */
 import {
   AAD, b64d, b64e, importKey, newPairingKeys, openFromPc, openSealed, pairingCode, randomId, seal,
   type Envelope, type PhoneBox,
 } from "./crypto";
 import { httpPost, HttpError } from "./http";
+import { parseRelay, RelayChannel, type RelayInfo } from "./relay";
 import { loadPairing, savePairing, clearPairing, type Pairing } from "./storage";
 
 export type PairLink = {
@@ -29,7 +32,12 @@ export type PairLink = {
   session: string;
   secret: Uint8Array;
   pcName: string;
+  /** NANO's relay, when the PC offers it: the way in away from home. */
+  relay: RelayInfo | null;
 };
+
+/** One way to reach the PC: straight over the network, or through the relay. */
+type Route = { kind: "direct"; host: string; port: number } | { kind: "relay" };
 
 export type PairState = "connecting" | "pending" | "approved" | "denied" | "expired" | "unreachable" | "error";
 
@@ -63,10 +71,11 @@ export function parsePairLink(text: string): PairLink {
   if (version < PAIR_PROTOCOL) throw new Error("old_pc");
   if (version !== PAIR_PROTOCOL) throw new Error("unsupported_version");
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("not_a_nano_code");
-  if (!/^[0-9a-f]{16}$/.test(session) || secret.length !== 32 || hosts.length === 0) {
+  const relay = parseRelay(query.get("r"), query.get("rr"));
+  if (!/^[0-9a-f]{16}$/.test(session) || secret.length !== 32 || (hosts.length === 0 && !relay)) {
     throw new Error("not_a_nano_code");
   }
-  return { version, hosts, port, session, secret, pcName: (query.get("n") || "NANO PC").slice(0, 60) };
+  return { version, hosts, port, session, secret, pcName: (query.get("n") || "NANO PC").slice(0, 60), relay };
 }
 
 function urlFor(host: string, port: number, path: string): string {
@@ -106,22 +115,46 @@ export async function pair(
   const pk = b64e(mine.publicRaw);
   const code = await pairingCode(link.session, mine.publicRaw);
   onCode?.(code);
-  const call = async (host: string, op: "request" | "status", extra: Record<string, unknown> = {}) => {
+  const channel = link.relay ? new RelayChannel(link.relay) : null;
+  const call = async (route: Route, op: "request" | "status", extra: Record<string, unknown> = {}) => {
     const id = randomId();
     const body: Envelope & { i?: string } = await seal(
       key, { op, id, ts: Date.now(), pk, ...extra }, AAD.pair(link.session));
     body.i = link.session;
-    const reply = await httpPost(urlFor(host, link.port, "/v1/pair"), body, 8000);
+    const reply = route.kind === "relay"
+      ? await channel!.post("pair", body, 8000)
+      : await httpPost(urlFor(route.host, link.port, "/v1/pair"), body, 8000);
     return openSealed<PairReply>(key, reply as Envelope, AAD.pairReply(link.session, id));
   };
+  const routes: Route[] = link.hosts.map((host) => ({ kind: "direct" as const, host, port: link.port }));
+  if (channel) routes.push({ kind: "relay" });
+  try {
+    return await pairOver(routes, call, link, mine.privateKey, code, deviceName, platform, onState, signal);
+  } finally {
+    channel?.close();
+  }
+}
 
+async function pairOver(
+  routes: Route[],
+  call: (route: Route, op: "request" | "status", extra?: Record<string, unknown>) => Promise<PairReply>,
+  link: PairLink,
+  privateKey: CryptoKey,
+  code: string,
+  deviceName: string,
+  platform: string,
+  onState: (state: PairState, host?: string) => void,
+  signal?: { cancelled: boolean },
+): Promise<Pairing | null> {
   onState("connecting");
+  let route: Route | null = null;
   let host = "";
-  let first: { state: string } | null = null;
-  for (const candidate of link.hosts) {
+  let first: PairReply | null = null;
+  for (const candidate of routes) {
     try {
       first = await call(candidate, "request", { name: deviceName, platform });
-      host = candidate;
+      route = candidate;
+      host = candidate.kind === "relay" ? "relay" : candidate.host;
       break;
     } catch (error) {
       if (error instanceof HttpError && error.status === 410) { onState("expired"); return null; }
@@ -141,7 +174,7 @@ export async function pair(
     if (Date.now() > deadline) { onState("expired"); return null; }
     await new Promise((resolve) => setTimeout(resolve, 1500));
     try {
-      reply = await call(host, "status");
+      reply = await call(route!, "status");
     } catch (error) {
       if (error instanceof HttpError && error.status === 410) { onState("expired"); return null; }
       // A dropped request while waiting is not an answer; keep asking.
@@ -152,7 +185,7 @@ export async function pair(
   let deviceKey = "";
   try {
     const opened = await openFromPc<{ key: string }>(
-      mine.privateKey, link.secret, AAD.pairKey(link.session, reply.deviceId), reply.box);
+      privateKey, link.secret, AAD.pairKey(link.session, reply.deviceId), reply.box);
     deviceKey = String(opened.key || "");
     if (b64d(deviceKey).length !== 32) throw new Error("bad_key");
   } catch {
@@ -163,10 +196,12 @@ export async function pair(
     deviceId: reply.deviceId,
     key: deviceKey,
     pcName: reply.pcName || link.pcName,
-    hosts: [host, ...link.hosts.filter((h) => h !== host)],
+    hosts: route!.kind === "direct" ? [host, ...link.hosts.filter((h) => h !== host)] : [...link.hosts],
     port: link.port,
     extraHosts: [],
     pairedAt: Date.now(),
+    relay: link.relay,
+    preferRelay: route!.kind === "relay",
   };
   await savePairing(pairing);
   onState("approved", host);
@@ -184,6 +219,7 @@ type StateListener = (state: LinkState) => void;
 export class NanoLink {
   private pairing: Pairing | null = null;
   private key: CryptoKey | null = null;
+  private channel: RelayChannel | null = null;
   private listeners = new Set<Listener>();
   private stateListeners = new Set<StateListener>();
   private running = false;
@@ -199,6 +235,7 @@ export class NanoLink {
     if (!this.pairing) { this.setState("unpaired"); return false; }
     this.key = await importKey(b64d(this.pairing.key));
     this.pcName = this.pairing.pcName;
+    this.channel = this.pairing.relay ? new RelayChannel(this.pairing.relay) : null;
     this.setState("connecting");
     return true;
   }
@@ -222,28 +259,45 @@ export class NanoLink {
     this.stateListeners.forEach((fn) => fn(state));
   }
 
-  private candidates(): { host: string; port: number }[] {
+  /** Whether the PC offered NANO's relay, so this phone also works away from home. */
+  get awayFromHome(): boolean { return this.channel !== null; }
+
+  private candidates(): Route[] {
     if (!this.pairing) return [];
-    const list = this.pairing.hosts.map((host) => ({ host, port: this.pairing!.port }));
+    const list: Route[] = this.pairing.hosts.map((host) => ({ kind: "direct" as const, host, port: this.pairing!.port }));
     for (const manual of this.pairing.extraHosts) {
       const parsed = parseManualAddress(manual, this.pairing.port);
-      if (parsed) list.push(parsed);
+      if (parsed) list.push({ kind: "direct", ...parsed });
     }
     const seen = new Set<string>();
-    return list.filter((c) => {
+    const direct = list.filter((c) => {
+      if (c.kind !== "direct") return false;
       const id = `${c.host}:${c.port}`;
       if (seen.has(id)) return false;
       seen.add(id);
       return true;
     });
+    if (!this.channel) return direct;
+    // The relay goes first when it answered last (the phone is away from
+    // home), last otherwise: at home the Wi-Fi is the shorter way.
+    return this.pairing.preferRelay ? [{ kind: "relay" }, ...direct] : [...direct, { kind: "relay" }];
   }
 
-  private async remember(host: string) {
-    if (!this.pairing || this.pairing.hosts[0] === host) return;
-    if (this.pairing.hosts.includes(host)) {
-      this.pairing = { ...this.pairing, hosts: [host, ...this.pairing.hosts.filter((h) => h !== host)] };
+  private async remember(route: Route) {
+    if (!this.pairing) return;
+    if (route.kind === "relay") {
+      if (this.pairing.preferRelay) return;
+      this.pairing = { ...this.pairing, preferRelay: true };
       await savePairing(this.pairing);
+      return;
     }
+    const host = route.host;
+    const first = this.pairing.hosts[0] === host;
+    if (first && !this.pairing.preferRelay) return;
+    const hosts = this.pairing.hosts.includes(host)
+      ? [host, ...this.pairing.hosts.filter((h) => h !== host)] : this.pairing.hosts;
+    this.pairing = { ...this.pairing, hosts, preferRelay: false };
+    await savePairing(this.pairing);
   }
 
   /**
@@ -267,10 +321,12 @@ export class NanoLink {
     for (const candidate of this.candidates()) {
       attempt += 1;
       try {
-        const reply = await httpPost(urlFor(candidate.host, candidate.port, "/v1/rpc"), body, timeoutMs);
+        const reply = candidate.kind === "relay"
+          ? await this.channel!.post("rpc", body, timeoutMs)
+          : await httpPost(urlFor(candidate.host, candidate.port, "/v1/rpc"), body, timeoutMs);
         const value = await openSealed<{ id: string; ok: boolean; r?: T; error?: string }>(
           this.key, reply as Envelope, AAD.rpcReply(deviceId, id));
-        void this.remember(candidate.host);
+        void this.remember(candidate);
         if (this.state !== "online") this.setState("online");
         if (!value.ok) throw new RpcError(value.error || "error");
         return value.r as T;
@@ -333,6 +389,9 @@ export class NanoLink {
   stop() {
     this.running = false;
     this.loopToken++;
+    // The relay socket is reopened by the next call; a phone in the
+    // background keeps nothing open.
+    this.channel?.close();
   }
 
   /** Begin the feed at "now": old events from before the app opened are not replayed. */
@@ -342,6 +401,27 @@ export class NanoLink {
       this.after = result.last;
       if (typeof result.epoch === "string") this.epoch = result.epoch;
     } catch { /* the loop will retry */ }
+  }
+
+  /**
+   * Learn the PC's relay when this phone was paired before the PC had one.
+   * The answer comes through the sealed link itself, so it is as trustworthy
+   * as anything else the PC says; it changes nothing the person must set up.
+   */
+  async refreshRelay() {
+    if (!this.pairing) return;
+    let result: { url?: string; room?: string } | null = null;
+    try {
+      result = await this.call<{ url?: string; room?: string } | null>("relay.info", {}, 8000);
+    } catch { return; /* an older NANO on the PC, or offline: try again next start */ }
+    const relay = result ? parseRelay(result.url ?? null, result.room ?? null) : null;
+    const current = this.pairing.relay;
+    if (relay?.url === current?.url && relay?.room === current?.room) return;
+    if (!this.pairing) return;
+    this.pairing = { ...this.pairing, relay, preferRelay: relay ? this.pairing.preferRelay : false };
+    await savePairing(this.pairing);
+    this.channel?.close();
+    this.channel = relay ? new RelayChannel(relay) : null;
   }
 
   async addManualHost(text: string): Promise<boolean> {
@@ -368,6 +448,8 @@ export class NanoLink {
     await clearPairing();
     this.pairing = null;
     this.key = null;
+    this.channel?.close();
+    this.channel = null;
     this.after = 0;
     this.epoch = null;
     this.setState("unpaired");

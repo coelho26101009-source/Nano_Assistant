@@ -25,7 +25,7 @@ export const EN: Record<string, string> = {
   "Apagado.": "Deleted.",
   "Apagar os teus dados": "Deleting your data",
   "Apagar {0}": "Delete {0}",
-  "As mensagens que escreves ou dizes, as tuas respostas às autorizações e as alterações à agenda e à memória. Vão diretamente para o teu PC, cifradas com AES-256-GCM e uma chave que só o teu telemóvel e o teu PC conhecem. Quem o NANO do PC usa para responder (um modelo local ou um serviço de IA que escolheste) é decidido no PC, como sempre.": "The messages you type or say, your answers to approval requests, and changes to your agenda and memory. They go straight to your PC, encrypted with AES-256-GCM and a key only your phone and your PC know. What NANO on your PC uses to answer (a local model or an AI service you chose) is decided on the PC, as always.",
+  "As mensagens que escreves ou dizes, as tuas respostas às autorizações e as alterações à agenda e à memória. Vão para o teu PC cifradas com AES-256-GCM e uma chave que só o teu telemóvel e o teu PC conhecem: diretamente pela tua rede ou, fora de casa, pelo reencaminhador do NANO (um Cloudflare Worker), que só passa as mensagens cifradas, não as consegue ler nem alterar, não guarda nada e só vê o teu endereço IP, o tamanho das mensagens e quando foram enviadas. Quem o NANO do PC usa para responder (um modelo local ou um serviço de IA que escolheste) é decidido no PC, como sempre.": "The messages you type or say, your answers to approval requests, and changes to your agenda and memory. They go to your PC encrypted with AES-256-GCM and a key only your phone and your PC know: directly over your network or, away from home, through NANO's relay (a Cloudflare Worker), which only passes the encrypted messages, cannot read or change them, keeps nothing, and sees only your IP address, the size of the messages and when they were sent. What NANO on your PC uses to answer (a local model or an AI service you chose) is decided on the PC, as always.",
   "As tuas escolhas: idioma, tema e voz.": "Your choices: language, theme and voice.",
   "Aspeto": "Appearance",
   "Autorização no PC": "Approval on your PC",
@@ -266,4 +266,8 @@ export const EN: Record<string, string> = {
   "Câmara: só enquanto o ecrã da câmara está aberto, depois de tocares para o abrir.": "Camera: only while the camera screen is open, after you tapped to open it.",
   "O leitor de QR é o da Google: devolve só o código lido e não usa o acesso da app à câmara.": "The QR scanner is Google's code scanner: it returns only the code it read and does not use the app's camera access.",
   "À espera da tua resposta no telemóvel…": "Waiting for your answer on the phone…",
+  "Ligado: funciona em qualquer lado, sempre cifrado": "On: works anywhere, always encrypted",
+  "Este telemóvel já funciona fora de casa, sem configurar nada. Liga-se ao PC por um reencaminhador do NANO que só passa mensagens cifradas e não as consegue ler. O PC tem de estar ligado, com o NANO aberto.": "This phone already works away from home, with nothing to set up. It reaches your PC through a NANO relay that only passes encrypted messages and cannot read them. Your PC must be on, with NANO open.",
+  "Se preferires, também podes usar o Tailscale: uma rede privada só tua, gratuita para uso pessoal.": "If you prefer, you can also use Tailscale: a private network of your own, free for personal use.",
+  "Não consigo chegar ao {0}. Confirma que o PC está ligado, com o NANO aberto e com internet.": "Can't reach {0}. Check that your PC is on, with NANO open and connected to the internet.",
 };

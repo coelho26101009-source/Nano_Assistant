@@ -17,7 +17,7 @@ import { t } from "../lib/i18n";
 
 export type ViewId =
   | "chat" | "agenda" | "tasks" | "activity" | "modes"
-  | "permissions" | "agents" | "memory" | "knowledge" | "graph" | "integrations"
+  | "permissions" | "agents" | "memory" | "recaps" | "knowledge" | "graph" | "integrations"
   | "capabilities" | "status" | "settings";
 
 export type SectionId = "chat" | "agenda" | "tools" | "pc" | "memory" | "settings";
@@ -71,9 +71,10 @@ export const SECTIONS: SectionEntry[] = [
     ],
   },
   {
-    // MEMÓRIA is what Nano remembers and what it knows. Three views, because
-    // they answer three different questions: what do you remember about me,
-    // what do you know about my world, and how is it connected?
+    // MEMÓRIA is what Nano remembers and what it knows. Four views, because
+    // they answer four different questions: what do you remember about me,
+    // what do you remember of our conversations, what do you know about my
+    // world, and how is it connected?
     //
     // Privacidade is deliberately NOT a fourth view here. The switches that
     // govern memory are settings, they live with every other setting in
@@ -83,6 +84,9 @@ export const SECTIONS: SectionEntry[] = [
     label: t("Memória"),
     views: [
       { id: "memory", label: t("Memórias"), hint: t("O que o NANO sabe sobre ti") },
+      // Memory M3: what NANO remembers of older conversations and what was
+      // decided in them -- visible, editable and forgettable, like a memory.
+      { id: "recaps", label: t("Conversas antigas"), hint: t("O que o NANO lembra das conversas passadas e do que decidiste") },
       { id: "knowledge", label: t("Second Brain"), hint: t("Pessoas, projetos e coisas que o NANO conhece") },
       { id: "graph", label: t("Grafo"), hint: t("Como tudo se liga") },
     ],

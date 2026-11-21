@@ -5,6 +5,10 @@
  * code; when a phone reads it, THIS dialog asks "<phone> quer ligar-se" and
  * nothing is issued until the person approves it here, on the PC. Paired
  * phones are listed and can be removed at any time. See core/mobile_link.py.
+ *
+ * "Fora de casa" (on by default) keeps one outgoing connection to NANO's relay
+ * so the phone also works away from the home Wi-Fi. The relay only carries the
+ * sealed messages and cannot read them (core/mobile_relay.py).
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { call, expose } from "../lib/backend";
@@ -14,13 +18,17 @@ import { Button, MetricRow, Modal, Panel, StatusIndicator, Toggle } from "./ui";
 
 type Address = { address: string; kind: "lan" | "private_network" };
 type Device = { id: string; name: string; platform: string; pairedAt?: number; lastSeen?: number };
+type RelayStatus = {
+  available: boolean; enabled: boolean; host: string; error: string;
+  state: "off" | "connecting" | "connected" | "offline" | "unavailable";
+};
 type MobileStatus = {
   ok: boolean; enabled: boolean; running: boolean; error: string; port: number; missing?: string[];
-  addresses: Address[]; devices: Device[]; pcName: string;
+  addresses: Address[]; devices: Device[]; pcName: string; relay?: RelayStatus;
 };
 type Pairing = {
   ok: boolean; error?: string; sessionId: string; link: string; qrSvg: string;
-  addresses: Address[]; expiresIn: number; remoteReady: boolean;
+  addresses: Address[]; expiresIn: number; remoteReady: boolean; relay?: boolean;
 };
 type PairState = {
   state: "waiting" | "pending" | "approved" | "connected" | "denied" | "expired";
@@ -122,7 +130,9 @@ function PairDialog({ onClose }: { onClose: (changed: boolean) => void }) {
           </p>
           {left <= 0 && <Button size="sm" onClick={() => void start()}>{t("Gerar um código novo")}</Button>}
           <p className="dim" style={{ fontSize: 12 }}>
-            {pairing.remoteReady
+            {pairing.relay
+              ? t("O telemóvel também vai funcionar fora de casa, sempre cifrado, sem configurar nada.")
+              : pairing.remoteReady
               ? t("Tailscale detetado: o telemóvel também vai funcionar fora de casa.")
               : t("O telemóvel tem de estar no mesmo Wi-Fi. Para usar fora de casa, instala o Tailscale no PC e no telemóvel.")}
           </p>
@@ -189,6 +199,14 @@ export default function PhonePanel() {
     } finally { setBusy(false); }
   };
 
+  const toggleRelay = async (value: boolean) => {
+    setBusy(true);
+    try {
+      const result = await call<MobileStatus>("set_mobile_relay", value);
+      if (result) setStatus(result);
+    } finally { setBusy(false); }
+  };
+
   const remove = async (device: Device) => {
     setRemoving(null);
     await call("mobile_remove_device", device.id);
@@ -196,6 +214,14 @@ export default function PhonePanel() {
   };
 
   const listening = status.enabled && status.running;
+  const relay = status.relay;
+  // The relay connects only while there is a phone to serve (or a QR code on
+  // screen), so "off" with no phone paired is not a fault.
+  const relayLabel = !relay ? "" : relay.state === "connected" ? t("Ligado, cifrado de ponta a ponta")
+    : relay.state === "connecting" ? t("A ligar…")
+    : relay.state === "offline" ? t("Sem ligação. Volta a tentar sozinho.")
+    : status.devices.length === 0 ? t("Liga-se quando houver um telemóvel ligado")
+    : t("Desligado");
   return (
     <Panel title={t("Telemóvel")}>
       <p className="muted" style={{ fontSize: 13, marginBottom: 10 }}>{t("Usa o NANO no telemóvel Android, com as mesmas conversas, memória e agenda. Tudo vai cifrado entre o telemóvel e este PC, e nada fica aberto à internet.")}</p>
@@ -229,6 +255,23 @@ export default function PhonePanel() {
             <Button variant="primary" size="sm" disabled={!listening} onClick={() => setPairing(true)}>{t("Ligar um telemóvel")}</Button>
           </div>
           <p className="dim" style={{ fontSize: 11, marginTop: 8 }}>{tj("Na primeira vez, o Windows pode perguntar pela firewall: escolhe {0}.", { 0: <strong>{t("Redes privadas")}</strong> })}</p>
+          {relay?.available && (
+            <div style={{ marginTop: 14 }}>
+              <Toggle
+                label={t("Fora de casa")}
+                hint={t("O telemóvel chega a este PC em qualquer lado, sem abrir portas nem configurar nada. Passa por um reencaminhador do NANO que só vê mensagens cifradas e não as consegue ler.")}
+                checked={relay.enabled}
+                disabled={busy}
+                onChange={(value) => void toggleRelay(value)}
+              />
+              {relay.enabled && (
+                <MetricRow label={t("Estado")} value={
+                  <StatusIndicator state={relay.state === "connected" ? "READY" : relay.state === "offline" ? "OFFLINE" : "WAITING"}
+                    label={relayLabel} />
+                } />
+              )}
+            </div>
+          )}
         </>
       )}
       {status.devices.length > 0 && (

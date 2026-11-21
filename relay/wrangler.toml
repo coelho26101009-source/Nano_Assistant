@@ -1,0 +1,19 @@
+# NANO relay on Cloudflare Workers (free plan). See README.md.
+name = "nano-relay"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+preview_urls = false
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+# The free plan offers only SQLite-backed Durable Objects. The relay stores
+# nothing; SQLite is just the kind of object the free plan allows.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
+
+[observability]
+enabled = false

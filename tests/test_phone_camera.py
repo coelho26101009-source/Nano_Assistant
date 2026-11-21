@@ -267,11 +267,17 @@ def test_the_phone_feed_carries_camera_events():
 
 
 def test_a_sealed_photo_fits_in_one_request():
-    from core.mobile_link import b64e, seal
-    photo = base64.b64encode(b"\xff" * (900 * 1024)).decode()
-    envelope = seal(b"k" * 32, {"id": "x" * 16, "m": "camera.respond",
-                                "a": {"data": photo, "mime": "image/jpeg"}}, "aad")
+    """The phone keeps a photo under 120 KB of JPEG (mobile/src/lib/camera.ts):
+    sealed, it fits one request on the Wi-Fi and through the relay."""
     import json
-    body = json.dumps({"d": "dev_x", **envelope})
+
+    from core import mobile_relay
+    from core.mobile_link import seal
+    photo = base64.b64encode(b"\xff" * (120 * 1024)).decode()
+    envelope = seal(b"k" * 32, {"id": "x" * 32, "ts": 1_700_000_000_000, "m": "chat.send",
+                                "a": {"text": "O que é isto?" * 20, "msgId": "y" * 32,
+                                      "photo": {"data": photo, "mime": "image/jpeg"}}}, "aad")
+    body = json.dumps({"d": "dev_" + "0" * 16, **envelope}, separators=(",", ":"))
     assert len(body.encode()) < mobile_server.MAX_BODY_BYTES
-    assert len(envelope["c"]) < 3_000_000 and b64e(b"") == ""
+    assert len(body) < mobile_relay.MAX_BODY_BYTES
+    assert len(body) + 200 < mobile_relay.MAX_FRAME

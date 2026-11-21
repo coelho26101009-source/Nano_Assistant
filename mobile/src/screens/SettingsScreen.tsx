@@ -93,7 +93,9 @@ export default function SettingsScreen({
             <Icon name="globe" />
             <div className="row__body">
               <div className="row__title">{t("Usar fora de casa")}</div>
-              <div className="row__meta">{t("Com o Tailscale, grátis e sem abrir portas")}</div>
+              <div className="row__meta">{link.awayFromHome
+                ? t("Ligado: funciona em qualquer lado, sempre cifrado")
+                : t("Com o Tailscale, grátis e sem abrir portas")}</div>
             </div>
             <Icon name="chevronRight" />
           </button>
@@ -175,7 +177,15 @@ export default function SettingsScreen({
           <div className="sheet__grab" />
           <h2>{t("Usar fora de casa")}</h2>
           <div className="stack">
-            <p className="hint">{t("Em casa, o telemóvel fala com o PC pelo Wi-Fi. Para funcionar em qualquer lado sem abrir o teu PC à internet, usa o Tailscale: uma rede privada só tua, gratuita para uso pessoal.")}</p>
+            {link.awayFromHome && (
+              <div className="banner" style={{ alignItems: "flex-start" }}>
+                <Icon name="lock" size={20} />
+                <span>{t("Este telemóvel já funciona fora de casa, sem configurar nada. Liga-se ao PC por um reencaminhador do NANO que só passa mensagens cifradas e não as consegue ler. O PC tem de estar ligado, com o NANO aberto.")}</span>
+              </div>
+            )}
+            <p className="hint">{link.awayFromHome
+              ? t("Se preferires, também podes usar o Tailscale: uma rede privada só tua, gratuita para uso pessoal.")
+              : t("Em casa, o telemóvel fala com o PC pelo Wi-Fi. Para funcionar em qualquer lado sem abrir o teu PC à internet, usa o Tailscale: uma rede privada só tua, gratuita para uso pessoal.")}</p>
             <ol className="steps">
               <li><span>{tj("Instala o {0} no PC e no telemóvel e entra com a mesma conta.", { 0: <b>Tailscale</b> })}</span></li>
               <li><span>{t("No PC, abre o NANO → Definições → Geral → Telemóvel e gera um código novo: o endereço do Tailscale já vai incluído.")}</span></li>

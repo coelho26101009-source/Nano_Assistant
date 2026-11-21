@@ -14,11 +14,13 @@
  * track, which turns the camera off.
  */
 
-/** The longest side of a photo sent to the PC. Enough for a vision model to
- *  read a label, small enough to cross the Wi-Fi in a moment. */
-export const MAX_SIDE = 1280;
-/** The largest photo sent, as bytes of JPEG (base64 is a third bigger). */
-export const MAX_PHOTO_BYTES = 900 * 1024;
+/** The longest side of a photo sent to the PC. Vision models look at about
+ *  this much anyway, and it is enough to read a label. */
+export const MAX_SIDE = 1024;
+/** The largest photo sent, as bytes of JPEG. Sealed, it is base64 twice over
+ *  (about 1.8x), and one request may be 256 KB at most, on the Wi-Fi and
+ *  through NANO's relay away from home (core/mobile_server.py). */
+export const MAX_PHOTO_BYTES = 120 * 1024;
 
 export type Photo = { mime: "image/jpeg"; data: string; width: number; height: number };
 
@@ -66,21 +68,25 @@ export function closeCamera(stream: MediaStream | null | undefined): void {
 
 /** One still from the live preview, as a JPEG that fits MAX_SIDE and MAX_PHOTO_BYTES. */
 export function capture(video: HTMLVideoElement): Photo | null {
-  const size = fitSize(video.videoWidth, video.videoHeight);
-  if (!size.width) return null;
   const canvas = document.createElement("canvas");
-  canvas.width = size.width;
-  canvas.height = size.height;
   const context = canvas.getContext("2d");
   if (!context) return null;
-  context.drawImage(video, 0, 0, size.width, size.height);
-  let data = "";
-  for (const quality of [0.82, 0.7, 0.55, 0.4]) {
-    data = jpegBase64(canvas.toDataURL("image/jpeg", quality));
-    if (data && base64Bytes(data) <= MAX_PHOTO_BYTES) break;
+  // Smaller sides only when the larger one cannot fit MAX_PHOTO_BYTES.
+  for (const side of [MAX_SIDE, 768, 512]) {
+    const size = fitSize(video.videoWidth, video.videoHeight, side);
+    if (!size.width) return null;
+    canvas.width = size.width;
+    canvas.height = size.height;
+    context.drawImage(video, 0, 0, size.width, size.height);
+    for (const quality of [0.8, 0.68, 0.55, 0.42]) {
+      const data = jpegBase64(canvas.toDataURL("image/jpeg", quality));
+      if (data && base64Bytes(data) <= MAX_PHOTO_BYTES) {
+        canvas.width = canvas.height = 0;
+        return { mime: "image/jpeg", data, width: size.width, height: size.height };
+      }
+    }
   }
   // The canvas is dropped with this function; nothing else holds the pixels.
   canvas.width = canvas.height = 0;
-  if (!data || base64Bytes(data) > MAX_PHOTO_BYTES) return null;
-  return { mime: "image/jpeg", data, width: size.width, height: size.height };
+  return null;
 }

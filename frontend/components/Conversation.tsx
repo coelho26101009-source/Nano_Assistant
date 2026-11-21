@@ -15,6 +15,7 @@ import Icon from "./Icon";
 import NanoLogo from "./NanoLogo";
 import { Button, formatTime } from "./ui";
 import { BRAND_NAME } from "../lib/brand";
+import { call } from "../lib/backend";
 import { t } from "../lib/i18n";
 import {
   ACCEPT, MAX_FILES, formatSize, readAttachment,
@@ -72,6 +73,9 @@ export interface ResponseMeta {
   completion_tokens?: number;
   time_to_first_token_ms?: number;
   total_latency_ms?: number;
+  /** Memory M3: older conversations this answer drew on. Ids and dates only;
+   *  the title is looked up, so a deleted conversation leaves nothing here. */
+  recalled?: { conversationId: string; at?: string }[];
 }
 
 /** Provider ids as a person says them. Unknown ids print as they arrived. */
@@ -644,6 +648,63 @@ function TechnicalDetails({ meta, id }: { meta: ResponseMeta; id: string }) {
 
 /** Initials from the name the backend actually knows, or nothing at all.
  *  An invented "PA" would be a claim about the user that nothing measured. */
+/** Opens an older conversation from a "Lembrei-me de" chip. */
+const RecallContext = React.createContext<((id: string) => void) | null>(null);
+
+/** Titles already looked up, shared by every chip in the window. */
+const recallTitles = new Map<string, string | null>();
+
+/** "Fui buscar a: «PC novo» · 12/11" — where an answer's memory came from.
+ *
+ * Memory M3. Shown on every answer that recalled an older conversation, not
+ * only in Advanced mode: knowing that NANO is quoting last week is part of the
+ * answer, and the chip is how the user checks it. Clicking opens that
+ * conversation. A conversation deleted since then is simply not listed. */
+function RecallChips({ recalled }: { recalled: NonNullable<ResponseMeta["recalled"]> }) {
+  const open = React.useContext(RecallContext);
+  const ids = recalled.map((item) => item.conversationId);
+  const [, setVersion] = useState(0);
+  useEffect(() => {
+    const missing = ids.filter((id) => !recallTitles.has(id));
+    if (!missing.length) return;
+    let alive = true;
+    call<{ titles?: Record<string, string> }>("conversation_titles", missing).then((result) => {
+      for (const id of missing) recallTitles.set(id, result?.titles?.[id] ?? null);
+      if (alive) setVersion((value) => value + 1);
+    });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ids.join("|")]);
+  const shown = recalled.filter((item) => recallTitles.get(item.conversationId));
+  if (!shown.length) return null;
+  return (
+    <div className="msg__recall" aria-label={t("Conversas anteriores usadas nesta resposta")}>
+      <span className="msg__recall-label">
+        <Icon name="history" size={13} /> {t("Lembrei-me de")}
+      </span>
+      {shown.map((item) => {
+        const title = recallTitles.get(item.conversationId) as string;
+        const date = item.at ? formatRecallDate(item.at) : "";
+        return (
+          <button key={item.conversationId} type="button" className="recall-chip"
+                  disabled={!open}
+                  title={t("Abrir a conversa «{0}»", { 0: title })}
+                  onClick={() => open?.(item.conversationId)}>
+            <span className="recall-chip__title">{title}</span>
+            {date && <span className="recall-chip__date">{date}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function formatRecallDate(value: string): string {
+  const parsed = new Date(`${value.slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
 function initialsOf(name?: string | null): string | null {
   const parts = String(name ?? "").trim().split(/\s+/).filter(Boolean);
   if (!parts.length) return null;
@@ -808,6 +869,10 @@ function MessageBubble({
         </div>
       )}
 
+      {!isUser && !message.streaming && message.meta?.recalled?.length ? (
+        <RecallChips recalled={message.meta.recalled} />
+      ) : null}
+
       {onChoose && !isUser && !message.streaming && message.clarification?.options?.length ? (
         <ClarificationChoices clarification={message.clarification} onChoose={onChoose} />
       ) : null}
@@ -867,9 +932,11 @@ export function greeting(name?: string | null, now: Date = new Date()): string {
 
 export function Conversation({
   messages, status, thinking, userName, connecting = false, onRetry, onEdit, onChoose, advanced = false,
-  onOpenPanel, readAloud = null,
+  onOpenPanel, readAloud = null, onOpenConversation,
 }: {
   messages: Message[];
+  /** Open an older conversation from a "Lembrei-me de" chip (Memory M3). */
+  onOpenConversation?: (id: string) => void;
   /** Read an answer aloud; null when NANO's voice can't speak. */
   readAloud?: ReadAloud | null;
   /** Open a long answer or code block in the side panel. */
@@ -964,6 +1031,7 @@ export function Conversation({
 
   return (
     <PanelContext.Provider value={onOpenPanel ?? null}>
+    <RecallContext.Provider value={onOpenConversation ?? null}>
     <ReadAloudContext.Provider value={readAloud}>
     <div className="conversation" role="log" aria-live="polite" aria-label={t("Conversa")}
          ref={scrollRef} onScroll={onScroll}>
@@ -1002,6 +1070,7 @@ export function Conversation({
       )}
     </div>
     </ReadAloudContext.Provider>
+    </RecallContext.Provider>
     </PanelContext.Provider>
   );
 }

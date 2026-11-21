@@ -39,6 +39,7 @@ const PATHS = {
   arrowDown: "M12 5v14M19 12l-7 7-7-7",
   waves: "M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4",
   speaker: "M11 5 6 9H3v6h3l5 4V5ZM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13",
+  history: "M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2",
 } as const;
 
 export type IconName = keyof typeof PATHS;

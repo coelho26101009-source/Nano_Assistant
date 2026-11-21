@@ -123,17 +123,32 @@ def search_history(query: str, limit: int = 10) -> dict:
     limit = max(1, min(int(limit or 10), 25))
 
     if stack is not None:
-        hits = stack.conversations.search_messages(query, limit=limit)
-        if hits:
+        conversations = _recalled_conversations(stack, query)
+        forgotten = {row["conversationId"] for row in
+                     stack.recaps.list(limit=500) if row.get("forgotten")}
+        hits = [hit for hit in stack.conversations.search_messages(query, limit=limit)
+                if hit.scope not in forgotten]
+        if hits or conversations:
+            titles: dict[str, str] = {}
+            for hit in hits:
+                if hit.scope and hit.scope not in titles:
+                    thread = stack.conversations.get(hit.scope)
+                    titles[hit.scope] = thread["title"] if thread else ""
             return {
                 "query": query,
+                # Memory M3: whole conversations first -- title, date, what it
+                # was about and what was decided -- then the exact messages.
+                "conversations": conversations,
                 "results": [{"role": hit.metadata.get("role", "user"),
                              "content": hit.body[:400],
                              "conversation_id": hit.scope,
+                             "conversation_title": titles.get(hit.scope, ""),
                              "score": round(hit.score, 3),
                              "timestamp": hit.created_at} for hit in hits],
                 "count": len(hits),
                 "total_messages": stack.conversations.total_messages(),
+                "note": ("Diz sempre de que conversa e de que data vem o que "
+                         "recordares (título e data acima)."),
             }
 
     try:
@@ -151,6 +166,29 @@ def search_history(query: str, limit: int = 10) -> dict:
     ]
     return {"query": query, "results": results, "count": len(results),
             "total_messages": memory.count_messages()}
+
+
+def _recalled_conversations(stack, query: str, limit: int = 4) -> list[dict]:
+    """Recaps of old conversations matching `query` (Memory M3)."""
+    if not getattr(stack, "recall_active", False):
+        return []
+    out: list[dict] = []
+    try:
+        hits = stack.recaps.search(query, limit=limit, min_score=0.2)
+    except Exception:
+        logger.exception("Recall search failed")
+        return []
+    for hit in hits:
+        recap = stack.recaps.get(hit.scope)
+        if not recap or recap.get("forgotten"):
+            continue
+        out.append({"conversation_id": recap["conversationId"],
+                    "title": recap["title"],
+                    "date": str(recap.get("lastMessageAt") or "")[:10],
+                    "summary": recap["summary"],
+                    "decisions": recap["decisions"][:6],
+                    "topics": recap["topics"][:6]})
+    return out
 
 
 def get_tools() -> list[dict]:
@@ -181,8 +219,10 @@ def get_tools() -> list[dict]:
         {"type": "function", "function": {
             "name": "memory_search_history",
             "description": (
-                "Pesquisa por palavras em conversas antigas. Usa quando o utilizador pergunta "
-                "'o que é que eu disse sobre X?' ou 'lembras-te de...'."
+                "Pesquisa conversas antigas: devolve as conversas relevantes (título, data, "
+                "resumo e decisões tomadas) e as mensagens exatas. Usa quando o utilizador "
+                "pergunta 'o que é que eu disse sobre X?', 'o que decidimos sobre Y?' ou "
+                "'lembras-te de...'. Diz sempre de que conversa e data vem a resposta."
             ),
             "parameters": {"type": "object", "required": ["query"], "properties": {
                 "query": {"type": "string"},

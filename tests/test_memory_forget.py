@@ -1083,8 +1083,8 @@ def test_upgrading_with_long_term_memory_off_still_removes_ghosts(db_path):
 # ============================================================ schema v3 itself
 
 
-def test_a_fresh_database_starts_at_v3_with_provenance(stack):
-    assert memory_schema.current_version(stack.conn) == memory_schema.SCHEMA_VERSION == 3
+def test_a_fresh_database_starts_at_the_current_version_with_provenance(stack):
+    assert memory_schema.current_version(stack.conn) == memory_schema.SCHEMA_VERSION >= 3
     columns = {row[1] for row in stack.conn.execute("PRAGMA table_info(knowledge_edges)")}
     assert "origin" in columns
     assert stack.conn.execute(
@@ -1132,7 +1132,9 @@ def test_the_v3_upgrade_runs_once_and_a_second_pass_changes_nothing(db_path):
 
     engine, built = _open()
     try:
-        assert [step["version"] for step in built.migration["applied"]] == [3]
+        # v3, then every later step (v4: Memory M3 recaps) on the way up.
+        assert [step["version"] for step in built.migration["applied"]][0] == 3
+        assert built.migration["applied"][-1]["version"] == memory_schema.SCHEMA_VERSION
         assert built.migration["applied"][0]["manual_summaries_cleared"] == 1
         first = _graph_state(built)
         again = memory_schema.apply(built.conn)
@@ -1168,7 +1170,7 @@ def test_a_v3_upgrade_that_fails_part_way_is_retried_and_converges(db_path, monk
     monkeypatch.setattr(memory_schema, "_clear_copied_manual_summaries", original)
     retried = memory_schema.apply(engine.conn)
     assert retried["ok"], retried
-    assert [step["version"] for step in retried["applied"]] == [3]
+    assert [step["version"] for step in retried["applied"]][0] == 3
     engine.close()
 
     engine, built = _open()

@@ -14,6 +14,9 @@ PyAudio>=0.2.14,<1
 # between the phone and the PC, and the pairing QR code. segno is pure Python.
 cryptography>=46,<51
 segno>=1.6,<2
+# NANO on the phone away from home (core/mobile_relay.py): the PC's one
+# outgoing WebSocket to NANO's relay. Already installed with edge-tts.
+aiohttp>=3.9,<4
 # The NANO island's music (core/now_playing.py): the song playing on this PC,
 # read from Windows' own media controls (the media flyout's source) through the
 # WinRT projection. Windows only, local only; nothing is uploaded.

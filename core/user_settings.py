@@ -75,6 +75,8 @@ ALLOWED_KEYS: frozenset[str] = frozenset({
     # conversations at all, and whether it may decide by itself what to carry.
     "memory_long_term_enabled",
     "memory_auto_capture",
+    # Memory M3: recall old conversations and their decisions, with the source.
+    "memory_recall_enabled",
     # Screen text (local OCR). Off until the user turns it on in Privacidade.
     "screen_text_enabled",
     # Screen vision (a picture of the screen to a vision model). Off by default.
@@ -84,6 +86,9 @@ ALLOWED_KEYS: frozenset[str] = frozenset({
     "proactive_event_alerts", "proactive_event_lead_minutes", "proactive_prep",
     # NANO on the phone (core/mobile_link.py). Off until the person turns it on.
     "mobile_access_enabled",
+    # Reach this PC from the phone away from home through NANO's relay, which
+    # only carries sealed messages (core/mobile_relay.py). On by default.
+    "mobile_relay_enabled",
     # Personality (core/personality.py): tone, form of address, answer length,
     # personal instructions and the speaking voice.
     "personality_tone", "personality_length", "personality_address",
@@ -96,9 +101,10 @@ _BOOLEAN_KEYS = frozenset({
     "onboarding_completed", "wake_phrase_enabled", "wake_phrase_allow_nano_only",
     "voice_enabled", "tts_enabled", "typed_chat_tts", "voice_reply_tts",
     "voice_conversation_mode", "voice_barge_in", "reduce_motion", "memory_facts_enabled", "memory_rag_enabled",
-    "memory_long_term_enabled", "memory_auto_capture", "advanced_mode", "screen_text_enabled",
+    "memory_long_term_enabled", "memory_auto_capture", "memory_recall_enabled",
+    "advanced_mode", "screen_text_enabled",
     "screen_vision_enabled", "proactive_briefing", "proactive_event_alerts", "proactive_prep",
-    "mobile_access_enabled", "pc_alerts_battery", "pc_alerts_disk", "pc_alerts_network",
+    "mobile_access_enabled", "mobile_relay_enabled", "pc_alerts_battery", "pc_alerts_disk", "pc_alerts_network",
     "pc_alerts_downloads",
 })
 
@@ -271,6 +277,8 @@ def apply_overlay(config: dict[str, Any]) -> dict[str, Any]:
         memory_cfg["long_term_enabled"] = stored["memory_long_term_enabled"]
     if "memory_auto_capture" in stored:
         memory_cfg["auto_capture"] = stored["memory_auto_capture"]
+    if "memory_recall_enabled" in stored:
+        memory_cfg["recall_enabled"] = stored["memory_recall_enabled"]
     if "input_device_index" in stored:
         voice.setdefault("microphone", {})["device_index"] = stored["input_device_index"]
 

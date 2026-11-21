@@ -133,6 +133,15 @@ it never executes in practice. See `docs/SECURITY_POLICY.md`.
   like any request, described by a vision model (a local one first) and dropped;
   only the description is kept. Anything that lets the PC, a model or a web page
   open the camera without that tap is a vulnerability.
+* **`core/mobile_relay.py` and `relay/`** — the phone away from home. The PC
+  keeps one OUTGOING WebSocket to NANO's relay (a Cloudflare Worker) and the
+  phone meets it there; no port is opened and nothing connects in to the PC.
+  The relay only forwards the same sealed envelopes, which it cannot open; the
+  PC answers them with the same `handle_pair`/`handle_rpc` as on the Wi-Fi, so
+  pairing still needs the yes on the PC and replay protection and revocation are
+  unchanged. A PC's room is SHA-256 of a 256-bit token in the secret store,
+  proven on connect. Anything that lets the relay read or forge a message, or
+  lets another party sit in a PC's room, is a vulnerability.
 * **Prompt injection** — external content (web pages, file contents, tool
   output) is data, never instructions. It may not grant a permission.
 

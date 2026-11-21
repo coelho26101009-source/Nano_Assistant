@@ -20,6 +20,25 @@ versioning policy.
 
 ## [Unreleased]
 
+### Added — Memory M3: remembering past conversations (2026-11-20)
+
+- **NANO remembers older conversations and what was decided in them.** Each
+  conversation with at least two of your messages gets a recap (summary,
+  decisions, topics) made only from sentences you wrote, locally and without a
+  model call (`core/conversation_recall.py`, schema v4 `conversation_recaps`).
+- When a new message touches the same subject, or asks "lembras-te…?" / "what
+  did we decide…?", the recap of that conversation reaches the model with its
+  title and date as the source, and the answer shows **Lembrei-me de «…»** with
+  a chip that opens that conversation. On a question about the past, the exact
+  old messages of other conversations are searched too.
+- **Memória → Conversas antigas**: see, search, edit (your version is kept),
+  forget (the conversation stays, NANO stops recalling it) or bring back every
+  recap; "Esquecer todas". Deleting a conversation deletes its recap; "Apagar
+  todos os dados" empties them with everything else. Switch: Definições →
+  Memória → "Lembrar conversas antigas" (needs cross-conversation memory on).
+- The `memory_search_history` tool now returns whole conversations (title, date,
+  summary, decisions) before the matching messages.
+
 ### Added — deep research with a report and sources (2026-11-20)
 
 - **"Investiga a fundo…", "pesquisa com fontes…", "faz-me um relatório
@@ -38,6 +57,21 @@ versioning policy.
   every redirect is checked, so a result cannot reach this PC or the router;
   the pages are fenced as external content. `core/research.py`,
   `plugins/research.py`, tests in `tests/test_research.py`.
+
+### Added — the phone away from home, always encrypted (2026-11-20)
+
+- **The phone app works away from home with nothing to set up.** The PC keeps
+  one outgoing connection to NANO's relay (`relay/`, a Cloudflare Worker on the
+  free plan) and the phone meets it there. No port is opened on the router and
+  nothing connects in to the PC.
+- **The relay cannot read anything.** It only forwards the same AES-256-GCM
+  envelopes the phone sends on the home Wi-Fi, sealed with the phone's own key.
+  Pairing over it still needs the yes on the PC and the same six digits on both
+  screens; replay protection and removing a phone work exactly as at home.
+- Settings → General → Phone → **Away from home** (on by default) shows whether
+  the PC is connected. Phones paired before this learn the relay on their next
+  start at home, without pairing again. Tailscale still works as an
+  alternative.
 
 ### Added — the NANO island (2026-11-20)
 

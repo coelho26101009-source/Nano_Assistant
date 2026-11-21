@@ -125,8 +125,44 @@ export type MemoryOverview = {
   migration: { from?: number; to?: number; ok: boolean; error?: string | null };
   longTermEnabled: boolean;
   captureEnabled: boolean;
+  /** Memory M3: whether old conversations are recapped and recalled. */
+  recallEnabled?: boolean;
+  recaps?: RecapCounts;
   documentsSupported: boolean;
   documentsNote: string;
+};
+
+/**
+ * Memory M3: what NANO remembers of one older conversation.
+ *
+ * Mirrors core/conversation_recall.py. Made from sentences the USER wrote in
+ * that conversation, never the assistant's prose. `edited` means the user
+ * rewrote it and later messages will not overwrite it; `forgotten` means the
+ * user asked NANO not to recall that conversation (the conversation stays).
+ */
+export type ConversationRecap = {
+  conversationId: string;
+  title: string;
+  summary: string;
+  decisions: string[];
+  topics: string[];
+  messageCount: number;
+  startedAt: string;
+  lastMessageAt: string;
+  edited: boolean;
+  forgotten: boolean;
+  updatedAt: string;
+};
+
+export type RecapCounts = { recaps: number; forgotten: number; decisions: number };
+
+export type RecapsPayload = {
+  ok: boolean;
+  recaps: ConversationRecap[];
+  counts?: RecapCounts;
+  enabled?: boolean;
+  longTermEnabled?: boolean;
+  error?: string;
 };
 
 /** Portuguese labels for the memory categories the backend defines. */

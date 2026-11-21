@@ -20,6 +20,10 @@ export type Pairing = {
   port: number;
   extraHosts: string[];
   pairedAt: number;
+  /** NANO's relay for this PC (away from home), when the PC offered one. */
+  relay?: { url: string; room: string } | null;
+  /** The relay answered last: try it first. */
+  preferRelay?: boolean;
 };
 
 const PAIRING_KEY = "nano.pairing.v1";
@@ -46,6 +50,9 @@ export async function loadPairing(): Promise<Pairing | null> {
       extraHosts: Array.isArray(parsed.extraHosts) ? parsed.extraHosts : [],
       pcName: parsed.pcName || "NANO PC",
       pairedAt: parsed.pairedAt || 0,
+      relay: parsed.relay && typeof parsed.relay.url === "string" && typeof parsed.relay.room === "string"
+        ? { url: parsed.relay.url, room: parsed.relay.room } : null,
+      preferRelay: parsed.preferRelay === true,
     };
   } catch {
     return null;

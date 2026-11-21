@@ -4,8 +4,8 @@ import { closeTopOverlay, pushOverlay } from "../src/lib/overlay";
 
 describe("camera helpers", () => {
   it("fits the longest side and never scales up", () => {
-    expect(fitSize(4000, 3000)).toEqual({ width: MAX_SIDE, height: 960 });
-    expect(fitSize(1080, 1920)).toEqual({ width: 720, height: MAX_SIDE });
+    expect(fitSize(4000, 3000)).toEqual({ width: MAX_SIDE, height: 768 });
+    expect(fitSize(1080, 1920)).toEqual({ width: 576, height: MAX_SIDE });
     expect(fitSize(640, 480)).toEqual({ width: 640, height: 480 });
     expect(fitSize(0, 480)).toEqual({ width: 0, height: 0 });
   });

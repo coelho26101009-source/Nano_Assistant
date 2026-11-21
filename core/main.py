@@ -42,7 +42,7 @@ from core import vision
 from core import proactive
 from core import now_playing
 from core import local_setup
-from core import mobile_link, mobile_server, phone_camera
+from core import mobile_link, mobile_relay, mobile_server, phone_camera
 from core.i18n import tr
 from core.brain import Brain
 from core.config import CONFIG_PATH, load_config
@@ -107,6 +107,7 @@ memory_stack = MemoryStack(
     memory,
     long_term_enabled=bool(_MEMORY_CFG.get("long_term_enabled", True)),
     capture_enabled=bool(_MEMORY_CFG.get("auto_capture", True)),
+    recall_enabled=bool(_MEMORY_CFG.get("recall_enabled", True)),
 )
 if not memory_stack.ready:
     logger.error("Memória avançada indisponível: %s", memory_stack.migration.get("error"))
@@ -2145,6 +2146,7 @@ def get_settings() -> dict:
                    "correspondência textual simples.")),
             "longTermEnabled": bool(memory_stack.long_term_enabled),
             "captureEnabled": bool(memory_stack.capture_enabled),
+            "recallEnabled": bool(memory_stack.recall_enabled),
             "ready": bool(memory_stack.ready),
             "retrieval": memory_stack.index.stats(),
             "stats": memory_stack.memories.stats() if memory_stack.ready else {},
@@ -2319,6 +2321,12 @@ def update_setting(key: str, value) -> dict:
     elif key == "memory_auto_capture":
         CONFIG.setdefault("memory", {})["auto_capture"] = bool(value)
         memory_stack.capture_enabled = bool(value)
+    elif key == "memory_recall_enabled":
+        CONFIG.setdefault("memory", {})["recall_enabled"] = bool(value)
+        memory_stack.recall_enabled = bool(value)
+        if value:
+            # Conversations that happened while it was off get their recaps now.
+            memory_stack._defer(memory_stack.backfill_recaps)  # noqa: SLF001
     elif key == "tts_voice":
         _apply_tts_voice()
 
@@ -2598,6 +2606,8 @@ def get_memory_overview() -> dict:
         "migration": overview.get("migration", {}),
         "longTermEnabled": overview.get("longTermEnabled", False),
         "captureEnabled": overview.get("captureEnabled", False),
+        "recallEnabled": overview.get("recallEnabled", False),
+        "recaps": overview.get("recaps", {}),
         "ragEnabled": bool(CONFIG.get("memory", {}).get("rag_enabled")),
         "documents": [],
         "documentsSupported": fts_available,
@@ -2676,6 +2686,76 @@ def clear_memories() -> dict:
     result = memory_stack.memories.clear()
     result["memory"] = get_memory_overview()
     return result
+
+
+# ------------------------------------------------- memory M3: old conversations
+
+
+@eel.expose
+def list_conversation_recaps(query: str = "", limit: int = 200) -> dict:
+    """Memória → Conversas antigas: what NANO remembers of each conversation."""
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable", "recaps": []}
+    return {"ok": True,
+            "recaps": memory_stack.recaps.list(query=str(query or "")[:200],
+                                               limit=int(limit)),
+            "counts": memory_stack.recaps.counts(),
+            "enabled": bool(memory_stack.recall_enabled),
+            "longTermEnabled": bool(memory_stack.long_term_enabled)}
+
+
+@eel.expose
+def update_conversation_recap(conversation_id: str, summary: str = None,
+                              decisions: list = None) -> dict:
+    """The user's own version of a recap. Kept: later refreshes never overwrite it."""
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    if decisions is not None and not isinstance(decisions, (list, tuple)):
+        return {"ok": False, "error": "invalid_decisions"}
+    return memory_stack.recaps.update(
+        str(conversation_id or "")[:80],
+        summary=None if summary is None else str(summary)[:4000],
+        decisions=None if decisions is None else [str(item)[:400] for item in decisions[:24]])
+
+
+@eel.expose
+def forget_conversation_recap(conversation_id: str) -> dict:
+    """Stop recalling one conversation. The conversation itself stays."""
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    return memory_stack.recaps.forget(str(conversation_id or "")[:80])
+
+
+@eel.expose
+def restore_conversation_recap(conversation_id: str) -> dict:
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    return memory_stack.restore_recap(str(conversation_id or "")[:80])
+
+
+@eel.expose
+def forget_all_conversation_recaps() -> dict:
+    """Forget what NANO remembers of every existing conversation. Confirmed first.
+
+    The conversations stay, and so do long-term memories. Conversations held
+    after this are recalled again, unless the switch in Definições is off.
+    """
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    return memory_stack.recaps.forget_all()
+
+
+@eel.expose
+def conversation_titles(conversation_ids: list) -> dict:
+    """Titles for the "Lembrei-me de" chips under an answer. Existing ones only."""
+    if not memory_stack.ready or not isinstance(conversation_ids, (list, tuple)):
+        return {"ok": False, "titles": {}}
+    titles: dict[str, str] = {}
+    for raw in list(conversation_ids)[:12]:
+        thread = memory_stack.conversations.get(str(raw or "")[:80])
+        if thread:
+            titles[thread["id"]] = thread["title"]
+    return {"ok": True, "titles": titles}
 
 
 # --------------------------------------------------------------- second brain
@@ -3304,6 +3384,22 @@ _MOBILE_LOCK = threading.Lock()
 _SECRETISH = re.compile(r"secret|token|password|key|credential", re.I)
 
 
+def _mobile_relay_wanted() -> bool:
+    """Should the PC sit in its relay room right now? (core/mobile_relay.py)
+
+    Only while phone access is on and listening, "Away from home" is on, and
+    there is something to serve: a paired phone, or a QR code on the screen.
+    """
+    if not MOBILE.active:
+        return False
+    if user_settings.get("mobile_relay_enabled", True) is False:
+        return False
+    return MOBILE.devices.has_devices() or MOBILE.pairing_open()
+
+
+_MOBILE_RELAY = mobile_relay.RelayClient(MOBILE, _mobile_relay_wanted)
+
+
 def _mobile_port() -> int:
     try:
         port = int(os.getenv("NANO_MOBILE_PORT") or 0)
@@ -3504,8 +3600,18 @@ def _m_memory_delete(id: str = "") -> dict:  # noqa: A002
     return delete_memory(_text(id, 80))
 
 
+def _m_relay_info() -> dict | None:
+    """Where this PC waits away from home, for a phone paired before it had a
+    relay. Asked over the sealed link, so only a paired phone ever learns it."""
+    if user_settings.get("mobile_relay_enabled", True) is False:
+        return None
+    room = _MOBILE_RELAY.room()
+    return {"url": mobile_relay.relay_url(), "room": room} if room else None
+
+
 for _name, _fn in {
     "hello": _m_hello,
+    "relay.info": _m_relay_info,
     "status": _m_status,
     "chat.send": _m_chat_send,
     "chat.retry": _m_chat_retry,
@@ -3545,10 +3651,13 @@ def _apply_mobile_access(enabled: bool) -> dict:
             if _MOBILE_SERVER is None:
                 _MOBILE_SERVER = mobile_server.MobileServer(MOBILE, _mobile_port())
             MOBILE.active = bool(_MOBILE_SERVER.start())
+            if MOBILE.active:
+                _MOBILE_RELAY.start()
         else:
             MOBILE.active = False
             MOBILE.cancel_pairing()
             phone_camera.BROKER.cancel()
+            _MOBILE_RELAY.poke()          # it sees access is off and leaves
             if _MOBILE_SERVER is not None:
                 _MOBILE_SERVER.stop()
             # Nothing said while access is off is kept for the phone, and what
@@ -3594,6 +3703,8 @@ def get_mobile_status() -> dict:
         "addresses": mobile_link.local_addresses(),
         "devices": MOBILE.devices.list(),
         "pcName": mobile_link.pc_name(),
+        "relay": {**_MOBILE_RELAY.info(),
+                  "enabled": user_settings.get("mobile_relay_enabled", True) is not False},
     }
 
 
@@ -3613,9 +3724,24 @@ def mobile_start_pairing() -> dict:
     server = _MOBILE_SERVER
     if server is None or not server.running:
         return {"ok": False, "error": "access_off"}
-    result = MOBILE.start_pairing(server.port)
+    relay = None
+    room = _MOBILE_RELAY.room() if user_settings.get("mobile_relay_enabled", True) is not False else None
+    if room:
+        relay = {"url": mobile_relay.relay_url(), "room": room}
+    result = MOBILE.start_pairing(server.port, relay=relay)
     result["qrSvg"] = _qr_svg(result["link"])
+    _MOBILE_RELAY.poke()              # a QR on screen: be reachable for it
     return result
+
+
+@eel.expose
+def set_mobile_relay(enabled: bool) -> dict:
+    """Settings → Phone → Away from home. On by default; off keeps NANO home-only."""
+    result = user_settings.set_value("mobile_relay_enabled", enabled is True)
+    if not result.get("ok"):
+        return {"ok": False, "error": "invalid_value"}
+    _MOBILE_RELAY.poke()
+    return get_mobile_status()
 
 
 @eel.expose
@@ -3637,7 +3763,13 @@ def mobile_cancel_pairing() -> dict:
 
 @eel.expose
 def mobile_remove_device(device_id: str) -> dict:
-    return {"ok": MOBILE.devices.remove(str(device_id or "")), "devices": MOBILE.devices.list()}
+    removed = MOBILE.devices.remove(str(device_id or ""))
+    if removed and not MOBILE.devices.has_devices():
+        # No phone left: the next pairing gets a fresh relay room, so a phone
+        # removed today does not even know where to knock tomorrow.
+        _MOBILE_RELAY.token.forget()
+    _MOBILE_RELAY.poke()
+    return {"ok": removed, "devices": MOBILE.devices.list()}
 
 
 _NOOP_CALLBACK = lambda *_args: None

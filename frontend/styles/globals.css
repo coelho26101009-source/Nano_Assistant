@@ -1750,6 +1750,33 @@ kbd {
 
 .tag-chip { padding: 1px 7px; border-radius: var(--r-full); font-size: 11px; background: var(--surface-active); color: var(--text-muted); white-space: nowrap; }
 
+/* MEMORY M3 — old conversations. A recap card is a memory card with a title
+   and a list of decisions; the decisions carry a thin accent rule so "what was
+   decided" reads before "what it was about". */
+.recap-card__title { margin: 0; font-size: var(--fs-md); font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.recap-card__summary { margin: 0; font-size: var(--fs-sm); line-height: 1.6; color: var(--text-secondary); overflow-wrap: anywhere; }
+.recap-card__decisions { margin: 0; padding: 0 0 0 var(--sp-3); list-style: none; border-left: 2px solid var(--border-accent); display: flex; flex-direction: column; gap: 4px; }
+.recap-card__decisions li { font-size: var(--fs-sm); line-height: 1.5; color: var(--text); overflow-wrap: anywhere; }
+.recap-card--forgotten { opacity: .62; }
+.recap-card--forgotten:hover { opacity: 1; }
+
+/* "Lembrei-me de" under an answer: where its memory came from. Quiet, so it
+   never competes with the answer, and every chip opens that conversation. */
+.msg__recall { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: var(--sp-2); min-width: 0; }
+.msg__recall-label { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); color: var(--text-dim); }
+.recall-chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  padding: 2px 9px; border-radius: var(--r-full);
+  border: 1px solid var(--border); background: var(--surface-hover);
+  color: var(--text-muted); font: inherit; font-size: var(--fs-xs); cursor: pointer;
+  transition: color var(--transition), background var(--transition), border-color var(--transition);
+}
+.recall-chip:hover:not(:disabled) { color: var(--text); border-color: var(--border-strong); background: var(--surface-active); }
+.recall-chip:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.recall-chip:disabled { cursor: default; }
+.recall-chip__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 28ch; }
+.recall-chip__date { color: var(--text-dim); white-space: nowrap; }
+
 .memory-danger {
   display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap;
   margin-top: var(--sp-8); padding-top: var(--sp-4);

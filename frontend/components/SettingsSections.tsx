@@ -156,6 +156,16 @@ export function MemorySection({
           disabledReason={t("Precisa da memória entre conversas ligada.")}
           onChange={(value) => onUpdate("memory_auto_capture", value)}
         />
+        {/* Memory M3. Under the cross-conversation switch because it IS
+            cross-conversation memory: with that one off, nothing is recalled. */}
+        <Toggle
+          label={t("Lembrar conversas antigas")}
+          hint={t("Quando falas de algo que já foi conversado, o NANO lembra-se do resumo e das decisões dessa conversa e diz de onde e de quando vem. Vê, edita ou esquece cada uma em Memória → Conversas antigas.")}
+          checked={memory?.recallEnabled !== false}
+          disabled={!memory?.longTermEnabled}
+          disabledReason={t("Precisa da memória entre conversas ligada.")}
+          onChange={(value) => onUpdate("memory_recall_enabled", value)}
+        />
         {/* Document retrieval is not installed. It is HIDDEN rather than shown
             as a dead toggle -- an option that cannot do anything is worse than
             no option. */}
