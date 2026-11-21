@@ -42,7 +42,7 @@ from core import vision
 from core import proactive
 from core import now_playing
 from core import local_setup
-from core import mobile_link, mobile_relay, mobile_server
+from core import mobile_link, mobile_relay, mobile_server, phone_camera
 from core.i18n import tr
 from core.brain import Brain
 from core.config import CONFIG_PATH, load_config
@@ -3467,7 +3467,10 @@ def _m_hello() -> dict:
         name = ""
     return {"pcName": mobile_link.pc_name(), "version": nano_version.display(),
             "language": i18n.current(), "displayName": name,
-            "protocol": mobile_link.PROTOCOL, "methods": MOBILE.methods()}
+            "protocol": mobile_link.PROTOCOL, "methods": MOBILE.methods(),
+            # What this PC understands beyond the methods: "camera" = chat.send
+            # takes a photo, and camera requests arrive on the feed.
+            "features": ["camera"]}
 
 
 def _m_status() -> dict:
@@ -3480,11 +3483,34 @@ def _m_status() -> dict:
             "emergencyStop": bool(get_emergency_stop_state().get("enabled"))}
 
 
-def _m_chat_send(text: str = "", msgId: str = "") -> dict:  # noqa: N803 - wire name
+def _m_chat_send(text: str = "", msgId: str = "", photo: dict | None = None) -> dict:  # noqa: N803 - wire name
+    """A message from the phone, optionally with ONE photo from its camera.
+
+    The photo is the person's own request (they pressed the camera button and
+    the shutter): it goes through the same path as a picture attached on the
+    PC -- described by a vision model, local first, and only the description is
+    kept (core/attachments.py, core/phone_camera.py).
+    """
     msg_id = _text(msgId, 64) or None
     if msg_id and not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", msg_id):
         msg_id = None
-    return send_message(_text(text, 8000), msg_id)
+    attachments = None
+    if photo is not None:
+        if not isinstance(photo, dict) or not isinstance(photo.get("data"), str):
+            return {"ok": False, "accepted": False, "error": "bad_attachments"}
+        # A plain name on purpose: "foto da câmara" in the turn's text would
+        # offer the model the camera tool, which would ask for ANOTHER photo.
+        attachments = [{"name": tr("foto") + ".jpg", "kind": "image", "camera": True,
+                        "mime": _text(photo.get("mime"), 32).lower(), "data": photo["data"]}]
+    return send_message(_text(text, 8000), msg_id, attachments)
+
+
+def _m_camera_respond(requestId: str = "", declined: bool = False,  # noqa: N803 - wire names
+                      data: str = "", mime: str = "") -> dict:
+    """The phone's answer to NANO asking to see: one photo, or no."""
+    return phone_camera.BROKER.respond(_text(requestId, 64), declined=declined is True,
+                                       data=data if isinstance(data, str) else "",
+                                       mime=_text(mime, 32))
 
 
 def _m_chat_retry(text: str = "", msgId: str = "") -> dict:  # noqa: N803
@@ -3595,6 +3621,7 @@ for _name, _fn in {
     "conversations.create": _m_conversations_create,
     "conversations.delete": _m_conversations_delete,
     "confirm.respond": _m_confirm,
+    "camera.respond": _m_camera_respond,
     "agenda.get": _m_agenda,
     "agenda.addReminder": _m_agenda_add_reminder,
     "agenda.deleteReminder": _m_agenda_delete_reminder,
@@ -3605,6 +3632,15 @@ for _name, _fn in {
     "memory.delete": _m_memory_delete,
 }.items():
     MOBILE.register(_name, _fn)
+
+
+def _camera_ready() -> bool:
+    server = _MOBILE_SERVER
+    return bool(MOBILE.active and server is not None and server.running and MOBILE.devices.has_devices())
+
+
+phone_camera.BROKER.configure(publish=MOBILE.publish, ready=_camera_ready,
+                              seen_by=phone_camera._seen_by)
 
 
 def _apply_mobile_access(enabled: bool) -> dict:
@@ -3620,6 +3656,7 @@ def _apply_mobile_access(enabled: bool) -> dict:
         else:
             MOBILE.active = False
             MOBILE.cancel_pairing()
+            phone_camera.BROKER.cancel()
             _MOBILE_RELAY.poke()          # it sees access is off and leaves
             if _MOBILE_SERVER is not None:
                 _MOBILE_SERVER.stop()

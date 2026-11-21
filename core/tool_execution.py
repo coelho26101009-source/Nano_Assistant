@@ -249,6 +249,12 @@ def _pc_control_target(tool_name: str, args: dict) -> str | None:
     return tool_name
 
 
+#: Plugin tools that legitimately wait longer than a minute. The phone camera
+#: waits up to 90 s for the person to say yes and take the photo, then up to a
+#: minute for the vision model.
+_PLUGIN_TIMEOUTS: dict[str, int] = {"phone_camera_look": 170}
+
+
 class ToolExecutor:
     """Registry and runner for real Nano tools with permission enforcement."""
 
@@ -444,7 +450,7 @@ class ToolExecutor:
                 function.get("parameters") or {"type": "object"},
                 handler=self._make_plugin_handler(name),
                 risk=risk.value,
-                timeout=60,
+                timeout=_PLUGIN_TIMEOUTS.get(name, 60),
                 requires_confirmation=self.permission_manager.is_approval_gated(capability),
                 provider="plugin",
                 capabilities=[capability],

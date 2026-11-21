@@ -10,6 +10,7 @@ values, and register the language in ``core.i18n``.
 from __future__ import annotations
 
 EN: dict[str, str] = {
+    "foto": "photo",
     "Atingi o limite de operações encadeadas. Podes reformular o pedido?": "I hit the limit of chained operations. Could you rephrase the request?",
     "Cloud indisponível": "Cloud unavailable",
     "\n\n_(A resposta foi interrompida. Pede outra vez para continuar.)_": "\n\n_(The answer was interrupted. Ask again to continue.)_",

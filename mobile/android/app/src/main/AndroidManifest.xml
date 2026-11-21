@@ -43,10 +43,16 @@
          RECORD_AUDIO (from the speech plugin): only while the microphone button is on.
          POST_NOTIFICATIONS, SCHEDULE_EXACT_ALARM, RECEIVE_BOOT_COMPLETED (from the
          notifications plugin): reminders that ring on time, also after a restart.
-         No camera permission: the QR scanner is Google's code scanner, which
-         returns only the code it read. -->
+         CAMERA: only while the camera screen is open, after the person tapped
+         the camera button (or "Abrir a câmara" on NANO's request), for ONE
+         still photo that is sent encrypted to their PC and kept nowhere. The
+         QR scanner does not use it: it is Google's code scanner, which returns
+         only the code it read. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- A phone without a camera can still install NANO (no camera button). -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <!-- Android 11+ package visibility: the speech recogniser and the TTS engine. -->
     <queries>

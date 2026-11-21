@@ -82,7 +82,10 @@ test('HTTP readiness requires an actual successful page', async () => {
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   try {
-    await waitForHttp(server.address().port, 1000, { intervalMs: 5 });
+    // The deadline is generous on purpose: this checks that a 503 is not
+    // taken as ready, not how fast a loaded Windows CI runner answers (a 1 s
+    // budget timed out there while the full Python suite ran alongside).
+    await waitForHttp(server.address().port, 10000, { intervalMs: 5 });
     assert.strictEqual(calls, 2);
   } finally { await new Promise((resolve) => server.close(resolve)); }
 });

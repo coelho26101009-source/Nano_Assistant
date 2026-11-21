@@ -180,6 +180,7 @@ class ToolCategory(str, Enum):
     MEMORY = "MEMORY"
     SCHEDULE = "SCHEDULE"
     IOT = "IOT"
+    PHONE_CAMERA = "PHONE_CAMERA"
 
 
 # Which registered tool names belong to which category. Matching is by prefix
@@ -259,6 +260,7 @@ _CATEGORY_TOOLS: dict[ToolCategory, tuple[str, ...]] = {
         "cancel_reminder",
     ),
     ToolCategory.IOT: ("iot_command", "phone_notify"),
+    ToolCategory.PHONE_CAMERA: ("phone_camera_look",),
 }
 
 # Keyword evidence for each category, Portuguese first.
@@ -396,6 +398,15 @@ _CATEGORY_KEYWORDS: dict[ToolCategory, tuple[str, ...]] = {
         "telemovel", "telefone", "notificacao", "notifica",
         "light", "lights", "plug", "notify", "phone",
     ),
+    # Looking through the phone's camera (core/phone_camera.py). Only words
+    # that name the camera or "look at this": a bare "o que e isto?" typed on
+    # the PC stays a question.
+    ToolCategory.PHONE_CAMERA: (
+        "camara", "camera", "pela camara", "pelo telemovel", "olha para isto",
+        "olha isto", "ve isto", "ves isto", "o que estou a segurar",
+        "o que tenho na mao", "look at this", "through my phone", "through the phone",
+        "what am i holding", "what s in my hand",
+    ),
 }
 
 # When the request clearly wants an action but no category matches, send this
@@ -484,6 +495,11 @@ def classify(text: str) -> TaskClass:
     # Code in the message is unambiguous evidence of real work.
     if any(marker in raw.lower() for marker in _CODE_MARKERS):
         return TaskClass.COMPLEX
+
+    # Asking NANO to look through the phone's camera is an action even when
+    # it is phrased as a question ("o que e isto pela camara?").
+    if _has_any(normalized, _CATEGORY_KEYWORDS[ToolCategory.PHONE_CAMERA]):
+        return TaskClass.ACTION
 
     if _has_any(normalized, _RESEARCH_MARKERS):
         return TaskClass.COMPLEX

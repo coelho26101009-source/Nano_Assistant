@@ -46,6 +46,8 @@ UNTRUSTED_OUTPUT_CAPABILITIES = frozenset({
     # Whatever is on screen -- a web page, an email -- is external content.
     "pc.screen.read_text",
     "pc.screen.describe",
+    # A photo from the phone's camera can show a note that says anything.
+    "phone.camera.look",
     # Documents the user indexed were written by someone else.
     "nano.documents.read",
     "browser.read",

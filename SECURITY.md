@@ -121,10 +121,18 @@ it never executes in practice. See `docs/SECURITY_POLICY.md`.
   is AES-256-GCM sealed and bound to the device, the request id and the
   direction, with a ±5-minute window and replay rejection. A phone can call only
   the methods registered in `core/main.py` (chat, conversations, agenda, memory,
-  approvals, status): never settings, keys, permissions or the emergency stop.
+  approvals, status, and the answer to a camera request): never settings, keys,
+  permissions or the emergency stop.
   Approvals it answers are the same approvals the PC shows. Removing a phone on
   the PC deletes its key. Anything that widens that method list, or lets a
   phone pair without the PC's yes, is a vulnerability.
+* **`core/phone_camera.py`** — seeing through the phone's camera. The PC can
+  only ASK (the `phone_camera_look` tool puts a request card on the phone); the
+  camera opens only after a tap on the phone, every time, with a visible
+  "Camera on" sign, for one still photo. Nothing is recorded: the photo is sealed
+  like any request, described by a vision model (a local one first) and dropped;
+  only the description is kept. Anything that lets the PC, a model or a web page
+  open the camera without that tap is a vulnerability.
 * **`core/mobile_relay.py` and `relay/`** — the phone away from home. The PC
   keeps one OUTGOING WebSocket to NANO's relay (a Cloudflare Worker) and the
   phone meets it there; no port is opened and nothing connects in to the PC.

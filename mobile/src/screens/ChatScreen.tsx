@@ -7,7 +7,9 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Icon from "../components/Icon";
 import Markdown from "../components/Markdown";
 import { NanoMark } from "../components/Brand";
-import type { Approval, Chat, Message } from "../lib/chat";
+import CameraSheet from "../components/CameraSheet";
+import { cameraSupported, type Photo } from "../lib/camera";
+import type { Approval, CameraRequest, Chat, Message } from "../lib/chat";
 import { t } from "../lib/i18n";
 import { listen, speak, speechAvailable, stopSpeaking, tap, type Listening } from "../lib/native";
 
@@ -35,6 +37,29 @@ function ApprovalCard({ approval, onAnswer }: { approval: Approval; onAnswer: (i
       <div className="confirm__actions">
         <button className="btn" onClick={() => onAnswer(approval.requestId, false)}>{t("Recusar")}</button>
         <button className="btn btn--primary" onClick={() => onAnswer(approval.requestId, true)}>{t("Permitir")}</button>
+      </div>
+    </section>
+  );
+}
+
+/** Where a photo will be seen, in words, and that nothing is recorded. */
+function seenNote(seenBy?: { local: boolean; provider: string }): string {
+  if (!seenBy || seenBy.local) return t("A foto é vista no teu PC e não é guardada.");
+  const names: Record<string, string> = { groq: "Groq", mistral: "Mistral", google: "Google Gemini" };
+  return t("A foto é vista por {0}, o serviço de IA escolhido no teu PC, e não é guardada.", { 0: names[seenBy.provider] ?? seenBy.provider });
+}
+
+function CameraRequestCard({ request, onAllow, onDecline }: {
+  request: CameraRequest; onAllow: () => void; onDecline: () => void;
+}) {
+  return (
+    <section className="confirm confirm--camera" role="alertdialog" aria-label={t("O NANO quer ver pela câmara")}>
+      <div className="confirm__head"><Icon name="camera" size={18} />{t("O NANO quer ver pela câmara")}</div>
+      {request.question && <p className="confirm__message">{request.question}</p>}
+      <p className="confirm__note">{seenNote(request.seenBy)} {t("Só tu abres a câmara e tiras a foto, e só desta vez.")}</p>
+      <div className="confirm__actions">
+        <button className="btn" onClick={onDecline}>{t("Recusar")}</button>
+        <button className="btn btn--primary" onClick={onAllow}>{t("Abrir a câmara")}</button>
       </div>
     </section>
   );
@@ -84,11 +109,13 @@ function Row({ message, last, onRetry, initials, reading, onRead }: {
 }
 
 export default function ChatScreen({
-  chat, online, displayName, onVoiceTurn,
+  chat, online, displayName, onVoiceTurn, cameraReady,
 }: {
   chat: Chat;
   online: boolean;
   displayName: string;
+  /** The PC understands photos from the camera (its "hello" says so). */
+  cameraReady: boolean;
   /** Called before a spoken message is sent, so its answer is read aloud. */
   onVoiceTurn: () => void;
 }) {
@@ -99,6 +126,11 @@ export default function ChatScreen({
   const [micError, setMicError] = useState("");
   /** The answer being read aloud with the phone's own voice, if any. */
   const [readingId, setReadingId] = useState<string | null>(null);
+  /** The camera is open: for the person's own photo, or to answer NANO's request. */
+  const [camera, setCamera] = useState<{ kind: "own" } | { kind: "request"; request: CameraRequest } | null>(null);
+  /** A photo the person took, waiting to go with the next message. */
+  const [photo, setPhoto] = useState<Photo | null>(null);
+  const canCamera = cameraReady && cameraSupported();
   const reading = useRef<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLTextAreaElement>(null);
@@ -120,13 +152,17 @@ export default function ChatScreen({
   }, [text]);
 
   const submit = async (value = text, spoken = false) => {
+    const sending = photo;
+    // A photo with no words asks the obvious question.
+    if (!value.trim() && sending) value = t("O que é isto?");
     if (!value.trim() || chat.busy) return;
     if (spoken) onVoiceTurn();
     stick.current = true;
     setText("");
+    setPhoto(null);
     void tap();
-    const ok = await chat.send(value);
-    if (!ok) setText(value);
+    const ok = await chat.send(value, sending);
+    if (!ok) { setText(value); setPhoto(sending); }
   };
 
   /* "Ler em voz alta" uses the phone's own voice, so it works with the PC
@@ -197,6 +233,11 @@ export default function ChatScreen({
               reading={readingId === m.id} onRead={() => void readAloud(m)} />
           ))
         )}
+        {chat.cameraRequests.map((r) => (
+          <CameraRequestCard key={r.requestId} request={r}
+            onAllow={() => { void tap(); setCamera({ kind: "request", request: r }); }}
+            onDecline={() => { void tap(); void chat.answerCamera(r.requestId, null); }} />
+        ))}
         {chat.approvals.map((a) => (
           <ApprovalCard key={a.requestId} approval={a} onAnswer={(id, ok) => { void tap(); void chat.answer(id, ok); }} />
         ))}
@@ -209,12 +250,25 @@ export default function ChatScreen({
           </div>
         )}
         {micError && <p className="error-text" style={{ padding: "0 6px 8px" }} role="alert">{micError}</p>}
+        {photo && (
+          <div className="photo-chip">
+            <img src={`data:${photo.mime};base64,${photo.data}`} alt={t("Foto para o NANO")} />
+            <span>{t("Foto pronta")}</span>
+            <button className="icon-btn" onClick={() => setPhoto(null)} aria-label={t("Tirar a foto da mensagem")}><Icon name="close" size={18} /></button>
+          </div>
+        )}
         <div className={`composer ${listening ? "composer--listening" : ""}`}>
           <label htmlFor="composer" className="sr-only">{t("Mensagem para o NANO")}</label>
           <textarea id="composer" ref={field} rows={1} value={text} enterKeyHint="send"
             placeholder={online ? t("Escreve ao NANO…") : t("Sem ligação ao PC")}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submit(); } }} />
+          {canCamera && (
+            <button className="icon-btn" onClick={() => { void tap(); setCamera({ kind: "own" }); }}
+              disabled={!online || chat.busy || Boolean(listening)} aria-label={t("Mostrar ao NANO com a câmara")}>
+              <Icon name="camera" />
+            </button>
+          )}
           {canSpeak && (
             <button className={`icon-btn ${listening ? "mic-btn--live" : ""}`} onClick={() => void toggleMic()}
               disabled={!online || chat.busy} aria-pressed={Boolean(listening)}
@@ -222,12 +276,27 @@ export default function ChatScreen({
               <Icon name={listening ? "stop" : "mic"} />
             </button>
           )}
-          <button className="send-btn" onClick={() => void submit()} disabled={!text.trim() || chat.busy || !online}
+          <button className="send-btn" onClick={() => void submit()} disabled={(!text.trim() && !photo) || chat.busy || !online}
             aria-label={t("Enviar")}>
             <Icon name="send" size={20} strokeWidth={2.2} />
           </button>
         </div>
       </div>
+      {camera && (
+        <CameraSheet
+          title={camera.kind === "request" ? (camera.request.question || t("O NANO quer ver pela câmara")) : t("Mostra ao NANO")}
+          note={camera.kind === "request" ? seenNote(camera.request.seenBy) : t("A foto vai cifrada para o teu PC e não é guardada.")}
+          onPhoto={(taken) => {
+            if (camera.kind === "request") void chat.answerCamera(camera.request.requestId, taken);
+            else { setPhoto(taken); field.current?.focus(); }
+            setCamera(null);
+          }}
+          onCancel={() => {
+            // Closing the camera on NANO's request is a no; the card goes.
+            if (camera.kind === "request") void chat.answerCamera(camera.request.requestId, null);
+            setCamera(null);
+          }} />
+      )}
     </div>
   );
 }

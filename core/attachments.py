@@ -126,8 +126,13 @@ def normalise(raw: Any) -> tuple[list[dict], str | None]:
             problem = vision.check_image(data, mime)
             if problem:
                 return [], problem
-            files.append({"name": name, "kind": "image", "size": size, "data": data,
-                          "mime": mime, "text": ""})
+            entry = {"name": name, "kind": "image", "size": size, "data": data,
+                     "mime": mime, "text": ""}
+            if item.get("camera") is True:
+                # A photo from the phone's camera: a local vision model first
+                # (core/phone_camera.py explains why).
+                entry["camera"] = True
+            files.append(entry)
     _share(files)
     return files, None
 
@@ -203,7 +208,7 @@ def prepare(files: list[dict], *, question: str | None = None) -> list[dict]:
             entry["text"], entry["truncated"] = pdf_text(_decode(data))
         else:
             result = vision.describe(data, str(entry.get("mime") or "image/png"),
-                                     question=question)
+                                     question=question, prefer_local=bool(entry.pop("camera", False)))
             if result.get("ok"):
                 where = tr("no teu PC") if result.get("local") else str(result.get("provider"))
                 entry["text"] = (tr("Descrição da imagem feita por um modelo de visão ({where}):",

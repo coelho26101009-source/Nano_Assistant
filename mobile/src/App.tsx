@@ -11,6 +11,7 @@ import { t, type LanguageChoice } from "./lib/i18n";
 import { NanoLink, RpcError, type LinkState } from "./lib/link";
 import { isNative, notify, speak, syncReminders } from "./lib/native";
 import { setPref } from "./lib/storage";
+import { closeTopOverlay } from "./lib/overlay";
 import AgendaScreen, { parseLocal, type AgendaData } from "./screens/AgendaScreen";
 import ChatScreen from "./screens/ChatScreen";
 import MemoryScreen from "./screens/MemoryScreen";
@@ -43,6 +44,7 @@ export default function App({ initial }: { initial: { theme: ThemeChoice; langua
   const [drawer, setDrawer] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [displayName, setDisplayName] = useState("");
+  const [cameraReady, setCameraReady] = useState(false);
   const [agenda, setAgenda] = useState<AgendaData | null>(null);
   const [remindersOnPhone, setRemindersOnPhone] = useState(0);
   const [toastText, setToastText] = useState("");
@@ -86,6 +88,10 @@ export default function App({ initial }: { initial: { theme: ThemeChoice; langua
     onTurnDone: () => { void refreshAgenda(); },
   });
 
+  // NANO asked to see through the camera: its card is in the chat.
+  const cameraAsks = chat.cameraRequests.length;
+  useEffect(() => { if (cameraAsks > 0) { setDrawer(false); setTab("chat"); } }, [cameraAsks]);
+
   const connect = useCallback(async () => {
     await link.syncCursor();
     await chat.loadHistory();
@@ -94,8 +100,9 @@ export default function App({ initial }: { initial: { theme: ThemeChoice; langua
     // also works away from home without being paired again.
     void link.refreshRelay();
     try {
-      const hello = await link.call<{ displayName?: string; pcName?: string }>("hello");
+      const hello = await link.call<{ displayName?: string; pcName?: string; features?: string[] }>("hello");
       setDisplayName(hello.displayName || "");
+      setCameraReady(Array.isArray(hello.features) && hello.features.includes("camera"));
     } catch { /* shown by the connection state */ }
     void refreshAgenda();
   }, [link, chat, refreshAgenda]);
@@ -132,6 +139,7 @@ export default function App({ initial }: { initial: { theme: ThemeChoice; langua
     let remove: (() => void) | undefined;
     if (isNative()) {
       void CapApp.addListener("backButton", () => {
+        if (closeTopOverlay()) return;
         if (drawerRef.current) setDrawer(false);
         else if (tabRef.current !== "chat") setTab("chat");
         else void CapApp.minimizeApp();
@@ -228,7 +236,8 @@ export default function App({ initial }: { initial: { theme: ThemeChoice; langua
           <UpdateBanner offer={updateOffer} toast={toast} onDismiss={() => setUpdateDismissed(true)} />
         )}
         {tab === "chat" && (
-          <ChatScreen chat={chat} online={online} displayName={displayName} onVoiceTurn={() => { voiceTurn.current = true; }} />
+          <ChatScreen chat={chat} online={online} displayName={displayName} onVoiceTurn={() => { voiceTurn.current = true; }}
+            cameraReady={cameraReady} />
         )}
         {tab === "agenda" && <AgendaScreen link={link} data={agenda} reload={refreshAgenda} online={online} toast={toast} />}
         {tab === "memory" && <MemoryScreen link={link} online={online} toast={toast} />}

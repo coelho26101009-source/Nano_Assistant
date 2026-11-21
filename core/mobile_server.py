@@ -31,6 +31,9 @@ from core.mobile_link import LinkError, MobileLink
 
 logger = logging.getLogger("nano.mobile.server")
 
+#: One sealed request. A camera photo is the largest thing a phone sends: the
+#: app keeps it under 120 KB of JPEG (mobile/src/lib/camera.ts) so that, base64
+#: twice over, it fits here and through NANO's relay (core/mobile_relay.py).
 MAX_BODY_BYTES = 256 * 1024
 _ROUTES = {"/v1/pair", "/v1/rpc"}
 _ALLOWED_ORIGIN_HOSTS = {"localhost", "127.0.0.1"}

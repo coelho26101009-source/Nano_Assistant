@@ -27,6 +27,19 @@ sent. Your PC can turn this off (Settings → Phone → Away from home). Which m
 answer (a local model or an AI service you configured) is decided on the PC; see
 the PC app's [privacy notes](../PRIVACY.md).
 
+## Camera
+
+The app uses the camera only when you ask it to: when you tap the camera button
+in the chat, or when NANO on your PC asks to see something and you tap **Open the
+camera** on its request card (you can always tap **Decline**; NANO never opens
+the camera by itself, and there is no "always allow"). While the camera is open a
+red **Camera on** sign is shown. One still photo is taken when you press the
+shutter: no video, no sound. It is not saved on the phone or in your gallery. It
+goes to your PC encrypted like your messages, where a vision model describes it
+(a local one first when your PC has one; otherwise the AI service chosen on your
+PC, as the request card says) and the photo is then dropped. Only the written
+description is kept, in that conversation.
+
 ## Voice
 
 When you tap the microphone, Android's speech recognition turns your voice into
@@ -47,11 +60,12 @@ Google Play updates it.
 
 - **Network**: to talk to your PC.
 - **Microphone**: only while the microphone button is on.
+- **Camera**: only while the camera screen is open, after you tapped to open it.
 - **Notifications, exact alarms, start at boot**: so reminders ring on time, also after a restart.
 - **Install apps** (test version only): to open Android's installer for a new test build. Android asks you every time.
 
-The QR scanner is Google's code scanner: it returns only the code it read, so the
-app does not ask for camera access.
+The QR scanner is Google's code scanner: it returns only the code it read and does
+not use the app's camera access.
 
 ## Deleting your data
 
