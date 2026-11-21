@@ -43,7 +43,7 @@ from core import text_normalize
 logger = logging.getLogger("nano.memory_schema")
 
 #: Bump this when a new step is added to ``_STEPS``.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 #: The silence that separates two conversations in the back-fill. Identical to
 #: SESSION_GAP_MS in frontend/lib/conversations.ts, which is the rule the rail
@@ -443,10 +443,40 @@ def _apply_v3(conn: sqlite3.Connection) -> dict:
     return {"manual_summaries_cleared": _clear_copied_manual_summaries(conn)}
 
 
+# ---------------------------------------------------------------------- v4
+
+def _apply_v4(conn: sqlite3.Connection) -> dict:
+    """Memory M3: one recap per conversation (see ``core.conversation_recall``).
+
+    Derived from the messages and rebuilt on demand, except where the user
+    edited it (``edited``) or asked NANO to stop recalling that conversation
+    (``excluded``): those two flags are the user's decisions and survive a
+    refresh. The rows are filled in the background after the upgrade.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS conversation_recaps (
+            conversation_id TEXT PRIMARY KEY
+                            REFERENCES conversations(id) ON DELETE CASCADE,
+            summary         TEXT NOT NULL DEFAULT '',
+            decisions       TEXT NOT NULL DEFAULT '[]',
+            topics          TEXT NOT NULL DEFAULT '[]',
+            message_count   INTEGER NOT NULL DEFAULT 0,
+            covered_through INTEGER NOT NULL DEFAULT 0,
+            edited          INTEGER NOT NULL DEFAULT 0,
+            excluded        INTEGER NOT NULL DEFAULT 0,
+            updated_at      TEXT NOT NULL
+        )
+        """
+    )
+    return {}
+
+
 #: (target version, description, step). Ordered, applied in sequence.
 _STEPS: tuple[tuple[int, str, object], ...] = (
     (2, "conversation threads, long-term memory and the knowledge graph", _apply_v2),
     (3, "provenance for derived Second Brain state", _apply_v3),
+    (4, "recaps of old conversations (Memory M3)", _apply_v4),
 )
 
 

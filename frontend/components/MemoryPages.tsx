@@ -1,9 +1,10 @@
 /**
  * Memória: what Nano remembers, what it knows, and how the two connect.
  *
- * Three views, one section:
+ * Four views, one section:
  *
  *   Memórias      the durable facts, with their provenance and their controls
+ *   Conversas antigas  what NANO remembers of older conversations (Memory M3)
  *   Second Brain  the entities those facts are about
  *   Grafo         the same entities, drawn
  *
@@ -27,7 +28,8 @@ import {
   Skeleton, StatusIndicator, Tabs, formatDateTime,
 } from "./ui";
 import type {
-  KnowledgeEdge, KnowledgeGraphPayload, KnowledgeNode, Memory, MemoryOverview,
+  ConversationRecap, KnowledgeEdge, KnowledgeGraphPayload, KnowledgeNode, Memory, MemoryOverview,
+  RecapsPayload,
 } from "../lib/memory";
 import { kindLabel, nodeTypeLabel, originLabel, relationLabel } from "../lib/memory";
 import { t } from "../lib/i18n";
@@ -425,6 +427,211 @@ export function MemoriesPage({
         message={t("Todas as memórias de longo prazo são apagadas deste computador. As conversas e o Second Brain não são afetados.")}
         onConfirm={() => { setConfirmClear(false); onClearAll(); }}
         onCancel={() => setConfirmClear(false)}
+      />
+    </div>
+  );
+}
+
+/* ======================================================================
+   CONVERSAS ANTIGAS (Memory M3)
+   ==================================================================== */
+
+/**
+ * What NANO remembers of each older conversation, and what was decided in it.
+ *
+ * The same contract as Memórias: nothing NANO recalls is hidden. Every recap
+ * can be read, rewritten (and the rewrite is kept), forgotten -- the
+ * conversation stays, NANO just stops bringing it up -- or brought back. The
+ * conversation itself is one click away, because the recap is only ever a
+ * pointer to what was actually said.
+ */
+export function RecapsPage({
+  payload, loading, onUpdate, onForget, onRestore, onForgetAll, onOpenConversation,
+  onOpenSettings,
+}: {
+  payload: RecapsPayload | null;
+  loading: boolean;
+  onUpdate: (id: string, summary: string, decisions: string[]) => void;
+  onForget: (id: string) => void;
+  onRestore: (id: string) => void;
+  onForgetAll: () => void;
+  onOpenConversation: (id: string) => void;
+  onOpenSettings: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [scope, setScope] = useState<"remembered" | "forgotten">("remembered");
+  const [editing, setEditing] = useState<ConversationRecap | null>(null);
+  const [summaryDraft, setSummaryDraft] = useState("");
+  const [decisionsDraft, setDecisionsDraft] = useState("");
+  const [confirmForget, setConfirmForget] = useState<ConversationRecap | null>(null);
+  const [confirmAll, setConfirmAll] = useState(false);
+
+  const recaps = payload?.recaps ?? [];
+  const counts = {
+    remembered: recaps.filter((recap) => !recap.forgotten).length,
+    forgotten: recaps.filter((recap) => recap.forgotten).length,
+  };
+  const rows = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return recaps
+      .filter((recap) => (scope === "forgotten") === recap.forgotten)
+      .filter((recap) => !needle
+        || recap.title.toLowerCase().includes(needle)
+        || recap.summary.toLowerCase().includes(needle)
+        || recap.decisions.some((item) => item.toLowerCase().includes(needle))
+        || recap.topics.some((item) => item.toLowerCase().includes(needle)));
+  }, [recaps, scope, query]);
+
+  if (loading && !payload) {
+    return (
+      <div className="page__inner stack">
+        <Skeleton height={56} /><Skeleton height={96} /><Skeleton height={96} />
+      </div>
+    );
+  }
+
+  const off = payload ? (payload.enabled === false || payload.longTermEnabled === false) : false;
+  const decisionCount = payload?.counts?.decisions ?? 0;
+
+  return (
+    <div className="page__inner">
+      <div className="memory-head">
+        <div className="memory-head__stats">
+          <span className="stat-chip">{tj("{0} conversas lembradas", { 0: <strong>{counts.remembered}</strong> })}</span>
+          <span className="stat-chip">{tj("{0} decisões", { 0: <strong>{decisionCount}</strong> })}</span>
+        </div>
+      </div>
+
+      <p className="dim memory-note">{t("Quando falas de algo que já foi conversado, o NANO lembra-se e diz de que conversa e de que dia vem. Só guarda frases que tu escreveste, e tudo fica neste computador.")}</p>
+
+      {off && (
+        <div className="notice notice--warn">
+          <strong>{t("Lembrar conversas antigas está desligado.")}</strong>{" "}
+          {t("O NANO não cria nem usa estas recordações. O que já existe continua aqui.")}
+          <Button size="sm" onClick={onOpenSettings}>{t("Abrir definições")}</Button>
+        </div>
+      )}
+
+      <div className="memory-toolbar">
+        <Tabs
+          value={scope}
+          onChange={(next) => setScope(next as "remembered" | "forgotten")}
+          tabs={[
+            { value: "remembered", label: t("Lembradas"), count: counts.remembered },
+            { value: "forgotten", label: t("Esquecidas"), count: counts.forgotten },
+          ]}
+        />
+        <span className="stage__spacer" />
+        <SearchField id="recap-search" value={query} onChange={setQuery}
+                     placeholder={t("Procurar nas conversas antigas…")} />
+      </div>
+
+      {rows.length === 0 ? (
+        <EmptyState
+          title={query ? t("Nada corresponde a essa pesquisa") : scope === "forgotten"
+            ? t("Nenhuma conversa esquecida") : t("Ainda não há conversas para lembrar")}
+          hint={scope === "forgotten"
+            ? t("As conversas que pedires para esquecer aparecem aqui, e podes voltar a lembrá-las.")
+            : t("Depois de uma conversa com pelo menos duas mensagens tuas, o NANO guarda aqui o resumo e as decisões.")}
+        />
+      ) : (
+        <div className="stack stack--tight">
+          {rows.map((recap) => (
+            <article className={`memory-card${recap.forgotten ? " recap-card--forgotten" : ""}`}
+                     key={recap.conversationId}>
+              <div className="memory-card__main">
+                <h3 className="recap-card__title">{recap.title || t("Conversa")}</h3>
+                {recap.forgotten ? (
+                  <p className="recap-card__summary">{t("O NANO não usa esta conversa nas respostas. A conversa continua guardada.")}</p>
+                ) : (
+                  <>
+                    {recap.summary && <p className="recap-card__summary">{recap.summary}</p>}
+                    {recap.decisions.length > 0 && (
+                      <ul className="recap-card__decisions" aria-label={t("Decisões")}>
+                        {recap.decisions.map((item, index) => <li key={index}>{item}</li>)}
+                      </ul>
+                    )}
+                  </>
+                )}
+                <div className="memory-card__meta">
+                  {recap.edited && (
+                    <span className="origin-chip origin-chip--manual">{t("editada por ti")}</span>
+                  )}
+                  {!recap.forgotten && recap.topics.slice(0, 6).map((topic) => (
+                    <span className="tag-chip" key={topic}>{topic}</span>
+                  ))}
+                  <span className="dim">{t("{0} · {1} mensagens", { 0: formatDateTime(recap.lastMessageAt), 1: recap.messageCount })}</span>
+                </div>
+              </div>
+              <div className="memory-card__actions">
+                <Button size="sm" onClick={() => onOpenConversation(recap.conversationId)}>{t("Abrir")}</Button>
+                {recap.forgotten ? (
+                  <Button size="sm" variant="primary"
+                          onClick={() => onRestore(recap.conversationId)}>{t("Voltar a lembrar")}</Button>
+                ) : (
+                  <>
+                    <Button size="sm" onClick={() => {
+                      setSummaryDraft(recap.summary);
+                      setDecisionsDraft(recap.decisions.join("\n"));
+                      setEditing(recap);
+                    }}>{t("Editar")}</Button>
+                    <Button size="sm" variant="danger"
+                            onClick={() => setConfirmForget(recap)}>{t("Esquecer")}</Button>
+                  </>
+                )}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+
+      {counts.remembered > 0 && (
+        <div className="memory-danger">
+          <Button size="sm" variant="danger" onClick={() => setConfirmAll(true)}>{t("Esquecer todas")}</Button>
+          <span className="dim" style={{ fontSize: 11 }}>{t("O NANO deixa de lembrar as conversas que já existem. As conversas não são apagadas.")}</span>
+        </div>
+      )}
+
+      <Modal
+        open={Boolean(editing)} onClose={() => setEditing(null)} title={t("Editar o que o NANO lembra")}
+        width="narrow"
+        footer={
+          <>
+            <Button onClick={() => setEditing(null)}>{t("Cancelar")}</Button>
+            <Button variant="primary" onClick={() => {
+              if (editing) {
+                onUpdate(editing.conversationId, summaryDraft.trim(),
+                  decisionsDraft.split("\n").map((line) => line.trim()).filter(Boolean));
+              }
+              setEditing(null);
+            }}>{t("Guardar")}</Button>
+          </>
+        }
+      >
+        <Field label={t("Resumo")} hint={t("Do que tratou esta conversa, nas tuas palavras.")}>
+          <textarea className="input input--area" rows={3} value={summaryDraft}
+                    onChange={(event) => setSummaryDraft(event.target.value)} />
+        </Field>
+        <Field label={t("Decisões")} hint={t("Uma por linha. Chaves e palavras-passe são recusadas. A tua versão é mantida mesmo que a conversa continue.")}>
+          <textarea className="input input--area" rows={4} value={decisionsDraft}
+                    onChange={(event) => setDecisionsDraft(event.target.value)} />
+        </Field>
+      </Modal>
+
+      <ConfirmDialog
+        open={Boolean(confirmForget)} danger title={t("Esquecer esta conversa?")}
+        confirmLabel={t("Esquecer")}
+        message={<>{tj("O NANO deixa de lembrar {0} nas respostas. A conversa não é apagada e podes voltar a lembrá-la.", { 0: <strong>{confirmForget?.title}</strong> })}</>}
+        onConfirm={() => { if (confirmForget) onForget(confirmForget.conversationId); setConfirmForget(null); }}
+        onCancel={() => setConfirmForget(null)}
+      />
+
+      <ConfirmDialog
+        open={confirmAll} danger title={t("Esquecer todas as conversas antigas?")}
+        confirmLabel={t("Esquecer todas")}
+        message={t("O NANO deixa de lembrar as conversas que já existem. As conversas, as memórias e o Second Brain não são afetados. As conversas novas voltam a ser lembradas.")}
+        onConfirm={() => { setConfirmAll(false); onForgetAll(); }}
+        onCancel={() => setConfirmAll(false)}
       />
     </div>
   );

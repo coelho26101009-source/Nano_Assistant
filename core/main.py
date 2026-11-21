@@ -107,6 +107,7 @@ memory_stack = MemoryStack(
     memory,
     long_term_enabled=bool(_MEMORY_CFG.get("long_term_enabled", True)),
     capture_enabled=bool(_MEMORY_CFG.get("auto_capture", True)),
+    recall_enabled=bool(_MEMORY_CFG.get("recall_enabled", True)),
 )
 if not memory_stack.ready:
     logger.error("Memória avançada indisponível: %s", memory_stack.migration.get("error"))
@@ -2145,6 +2146,7 @@ def get_settings() -> dict:
                    "correspondência textual simples.")),
             "longTermEnabled": bool(memory_stack.long_term_enabled),
             "captureEnabled": bool(memory_stack.capture_enabled),
+            "recallEnabled": bool(memory_stack.recall_enabled),
             "ready": bool(memory_stack.ready),
             "retrieval": memory_stack.index.stats(),
             "stats": memory_stack.memories.stats() if memory_stack.ready else {},
@@ -2319,6 +2321,12 @@ def update_setting(key: str, value) -> dict:
     elif key == "memory_auto_capture":
         CONFIG.setdefault("memory", {})["auto_capture"] = bool(value)
         memory_stack.capture_enabled = bool(value)
+    elif key == "memory_recall_enabled":
+        CONFIG.setdefault("memory", {})["recall_enabled"] = bool(value)
+        memory_stack.recall_enabled = bool(value)
+        if value:
+            # Conversations that happened while it was off get their recaps now.
+            memory_stack._defer(memory_stack.backfill_recaps)  # noqa: SLF001
     elif key == "tts_voice":
         _apply_tts_voice()
 
@@ -2598,6 +2606,8 @@ def get_memory_overview() -> dict:
         "migration": overview.get("migration", {}),
         "longTermEnabled": overview.get("longTermEnabled", False),
         "captureEnabled": overview.get("captureEnabled", False),
+        "recallEnabled": overview.get("recallEnabled", False),
+        "recaps": overview.get("recaps", {}),
         "ragEnabled": bool(CONFIG.get("memory", {}).get("rag_enabled")),
         "documents": [],
         "documentsSupported": fts_available,
@@ -2676,6 +2686,76 @@ def clear_memories() -> dict:
     result = memory_stack.memories.clear()
     result["memory"] = get_memory_overview()
     return result
+
+
+# ------------------------------------------------- memory M3: old conversations
+
+
+@eel.expose
+def list_conversation_recaps(query: str = "", limit: int = 200) -> dict:
+    """Memória → Conversas antigas: what NANO remembers of each conversation."""
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable", "recaps": []}
+    return {"ok": True,
+            "recaps": memory_stack.recaps.list(query=str(query or "")[:200],
+                                               limit=int(limit)),
+            "counts": memory_stack.recaps.counts(),
+            "enabled": bool(memory_stack.recall_enabled),
+            "longTermEnabled": bool(memory_stack.long_term_enabled)}
+
+
+@eel.expose
+def update_conversation_recap(conversation_id: str, summary: str = None,
+                              decisions: list = None) -> dict:
+    """The user's own version of a recap. Kept: later refreshes never overwrite it."""
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    if decisions is not None and not isinstance(decisions, (list, tuple)):
+        return {"ok": False, "error": "invalid_decisions"}
+    return memory_stack.recaps.update(
+        str(conversation_id or "")[:80],
+        summary=None if summary is None else str(summary)[:4000],
+        decisions=None if decisions is None else [str(item)[:400] for item in decisions[:24]])
+
+
+@eel.expose
+def forget_conversation_recap(conversation_id: str) -> dict:
+    """Stop recalling one conversation. The conversation itself stays."""
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    return memory_stack.recaps.forget(str(conversation_id or "")[:80])
+
+
+@eel.expose
+def restore_conversation_recap(conversation_id: str) -> dict:
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    return memory_stack.restore_recap(str(conversation_id or "")[:80])
+
+
+@eel.expose
+def forget_all_conversation_recaps() -> dict:
+    """Forget what NANO remembers of every existing conversation. Confirmed first.
+
+    The conversations stay, and so do long-term memories. Conversations held
+    after this are recalled again, unless the switch in Definições is off.
+    """
+    if not memory_stack.ready:
+        return {"ok": False, "error": "memory_unavailable"}
+    return memory_stack.recaps.forget_all()
+
+
+@eel.expose
+def conversation_titles(conversation_ids: list) -> dict:
+    """Titles for the "Lembrei-me de" chips under an answer. Existing ones only."""
+    if not memory_stack.ready or not isinstance(conversation_ids, (list, tuple)):
+        return {"ok": False, "titles": {}}
+    titles: dict[str, str] = {}
+    for raw in list(conversation_ids)[:12]:
+        thread = memory_stack.conversations.get(str(raw or "")[:80])
+        if thread:
+            titles[thread["id"]] = thread["title"]
+    return {"ok": True, "titles": titles}
 
 
 # --------------------------------------------------------------- second brain

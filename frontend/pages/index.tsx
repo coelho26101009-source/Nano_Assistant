@@ -49,10 +49,10 @@ import {
   SettingsPayload, TaskCounts, TaskRow, VoiceDiagnostics,
   call, expose, useBridgeReady, useFetch, usePolled,
 } from "../lib/backend";
-import { MemoriesPage, GraphPage, KnowledgePage, NodeDetailModal } from "../components/MemoryPages";
+import { MemoriesPage, GraphPage, KnowledgePage, NodeDetailModal, RecapsPage } from "../components/MemoryPages";
 import { Thread, ThreadMessage } from "../lib/conversations";
 import type {
-  KnowledgeGraphPayload, KnowledgeNode, MemoryOverview,
+  KnowledgeGraphPayload, KnowledgeNode, MemoryOverview, RecapsPayload,
 } from "../lib/memory";
 import { useIsDesktop } from "../lib/desktop";
 // The product version comes from version.json, which core/version.py and the
@@ -269,9 +269,12 @@ export default function Home() {
      of them (the retrieval footer and the stats are shared); the node list and
      the graph slice are fetched only by the view that draws them, because both
      are bounded server-side reads that nothing else needs. */
-  const inMemorySection = view === "memory" || view === "knowledge" || view === "graph";
+  const inMemorySection = view === "memory" || view === "recaps" || view === "knowledge" || view === "graph";
   const { data: memoryData, loading: memoryLoading, refresh: refreshMemory } =
     useFetch<MemoryOverview>("get_memory_overview", ready && inMemorySection, [view]);
+  /* Memory M3: Memória -> Conversas antigas. */
+  const { data: recapsData, loading: recapsLoading, refresh: refreshRecaps } =
+    useFetch<RecapsPayload>("list_conversation_recaps", ready && view === "recaps", []);
   const { data: knowledgeData, loading: knowledgeLoading, refresh: refreshKnowledge } =
     useFetch<any>("list_knowledge_nodes", ready && view === "knowledge", []);
   const { data: graphData, loading: graphLoading, refresh: refreshGraph } =
@@ -922,6 +925,20 @@ export default function Home() {
     });
   }, [activeThreadId, notify, showThreadMessages, narrow]);
 
+  /** Open a conversation by id: from a "Lembrei-me de" chip under an answer or
+   *  from Memória -> Conversas antigas (Memory M3). */
+  const openThreadById = useCallback((id: string) => {
+    if (id === activeThreadId) { setView("chat"); return; }
+    call<any>("open_conversation", id).then((result) => {
+      if (!result?.ok) { notify(t("Esta conversa já não existe"), "error"); return; }
+      setActiveThreadId(result.conversation.id);
+      showThreadMessages(result.messages);
+      setInput("");
+      setView("chat");
+      if (narrow) setRailOpen(false);
+    });
+  }, [activeThreadId, notify, showThreadMessages, narrow]);
+
   const renameThread = useCallback((thread: Thread, title: string) => {
     call<any>("rename_conversation", thread.id, title).then((result) => {
       if (result?.ok) { reloadThreads(); notify(t("Conversa renomeada")); }
@@ -1289,6 +1306,39 @@ export default function Home() {
     });
   }, [notify, refreshMemory]);
 
+  /* Memory M3: the recap of an older conversation -- edit, forget, restore. */
+  const updateRecap = useCallback((id: string, summary: string, decisions: string[]) => {
+    call<any>("update_conversation_recap", id, summary, decisions).then((result) => {
+      if (result?.ok) { notify(t("Guardado. O NANO passa a lembrar a tua versão."), "success"); refreshRecaps(); }
+      else if (result?.error === "secret") notify(t("Não guardei: parece conter uma palavra-passe ou chave."), "error");
+      else notify(t("Não foi possível guardar"), "error");
+    });
+  }, [notify, refreshRecaps]);
+
+  const forgetRecap = useCallback((id: string) => {
+    call<any>("forget_conversation_recap", id).then((result) => {
+      notify(result?.ok ? t("O NANO já não lembra esta conversa") : t("Falhou"),
+             result?.ok ? "success" : "error");
+      refreshRecaps();
+    });
+  }, [notify, refreshRecaps]);
+
+  const restoreRecap = useCallback((id: string) => {
+    call<any>("restore_conversation_recap", id).then((result) => {
+      notify(result?.ok ? t("O NANO volta a lembrar esta conversa") : t("Falhou"),
+             result?.ok ? "success" : "error");
+      refreshRecaps();
+    });
+  }, [notify, refreshRecaps]);
+
+  const forgetAllRecaps = useCallback(() => {
+    call<any>("forget_all_conversation_recaps").then((result) => {
+      notify(result?.ok ? t("{0} conversa(s) esquecida(s)", { 0: result.forgotten }) : t("Falhou"),
+             result?.ok ? "success" : "error");
+      refreshRecaps();
+    });
+  }, [notify, refreshRecaps]);
+
   const createNode = useCallback((title: string, type: string, summary: string) => {
     call<any>("create_knowledge_node", title, type, summary, "", []).then((result) => {
       if (result?.ok) { notify(t("Nó criado"), "success"); refreshKnowledge(); refreshGraph(); }
@@ -1569,6 +1619,7 @@ export default function Home() {
                       onChoose={(reply) => sendMessage(reply)}
                       onOpenPanel={setPanelDoc}
                       readAloud={readAloud}
+                      onOpenConversation={openThreadById}
                     />
                   )}
                   {/* The provider's own wait, counted down, until it is over. It
@@ -1656,6 +1707,15 @@ export default function Home() {
                       overview={memoryData} loading={memoryLoading}
                       onCreate={createMemory} onUpdate={updateMemory}
                       onDelete={deleteMemory} onClearAll={clearMemories}
+                      onOpenSettings={() => openSettingsSection("memory")}
+                    />
+                  )}
+                  {view === "recaps" && (
+                    <RecapsPage
+                      payload={recapsData} loading={recapsLoading}
+                      onUpdate={updateRecap} onForget={forgetRecap}
+                      onRestore={restoreRecap} onForgetAll={forgetAllRecaps}
+                      onOpenConversation={openThreadById}
                       onOpenSettings={() => openSettingsSection("memory")}
                     />
                   )}

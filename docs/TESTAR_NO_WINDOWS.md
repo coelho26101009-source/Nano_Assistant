@@ -150,6 +150,13 @@ Antes, na pasta do NANO, instala as bibliotecas novas uma vez:
 - [ ] 46. O relatório tem título, **Resumo**, **O que as fontes dizem** com números entre parênteses retos ([1], [2]...), **Onde não concordam** e **Confiança**. No fim vem **Fontes** com ligações numeradas: carrega numa e abre o sítio certo no navegador.
 - [ ] 47. Carrega no botão "Abrir ao lado" por baixo do relatório: abre-o no painel lateral. No telemóvel, escreve `pesquisa com fontes qual o melhor portátil para a escola até 600 euros`: o relatório e as fontes aparecem lá também, e "Ler em voz alta" não lê os [1] nem as ligações.
 
+### Memória M3: lembrar conversas antigas
+- [ ] 48. Numa conversa nova escreve duas mensagens tuas, por exemplo `Quero montar um PC novo para jogar` e `Decidi ficar com a RTX 4060 e o Ryzen 5 7600.` Depois abre **Memória → Conversas antigas**: aparece essa conversa com o resumo e a decisão.
+- [ ] 49. Começa outra conversa (Nova conversa) e pergunta `Lembras-te que placa gráfica escolhi?`. O NANO responde com a RTX 4060, diz de que conversa e de que dia vem, e por baixo da resposta aparece **Lembrei-me de** com o nome da conversa. Clica no nome: abre essa conversa.
+- [ ] 50. Em **Conversas antigas**, carrega em **Editar**, muda a decisão para `Ficou a RTX 4070` e guarda. Pergunta outra vez numa conversa nova: o NANO usa a tua versão.
+- [ ] 51. Carrega em **Esquecer** nessa conversa: passa para **Esquecidas** e o NANO deixa de a lembrar (a conversa continua na barra lateral). **Voltar a lembrar** trá-la de volta.
+- [ ] 52. **Definições → Memória → Lembrar conversas antigas** desligado: o NANO deixa de lembrar outras conversas.
+
 ---
 
 ## O que já sabemos que ainda não está perfeito

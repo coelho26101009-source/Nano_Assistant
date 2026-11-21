@@ -234,6 +234,22 @@ def for_message(meta: Any) -> dict[str, Any]:
         }
         if shaped_memory:
             out["memory"] = shaped_memory
+        # Memory M3: which OTHER conversations this answer drew on, so the
+        # message can show "Lembrei-me de: «…»" and open them. Ids and dates
+        # only -- never their text, and not even their title: the UI looks the
+        # title up, so deleting a conversation leaves no copy of it here.
+        recalled = memory.get("recalled")
+        if isinstance(recalled, (list, tuple)):
+            shaped_recalled = []
+            for item in list(recalled)[:4]:
+                if not isinstance(item, dict):
+                    continue
+                conversation_id = str(item.get("conversationId") or "").strip()[:64]
+                if conversation_id:
+                    shaped_recalled.append({"conversationId": conversation_id,
+                                            "at": str(item.get("at") or "")[:10]})
+            if shaped_recalled:
+                out["recalled"] = shaped_recalled
 
     return out
 

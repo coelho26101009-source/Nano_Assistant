@@ -59,6 +59,7 @@ from typing import Any, Callable
 from core.i18n import tr
 from core import memory_extraction, memory_schema, summarizer, text_normalize
 from core.context_composer import ComposedContext, ContextComposer
+from core.conversation_recall import ConversationRecaps
 from core.conversation_store import ConversationStore
 from core.knowledge_graph import (DEFAULT_RELATION, SYMMETRIC_RELATIONS, DerivedGraph,
                                   DerivedNode, KnowledgeGraph, edge_target, node_target)
@@ -76,7 +77,8 @@ class MemoryStack:
     """Threads, memories, knowledge and context — assembled and ready to use."""
 
     def __init__(self, memory_engine, *, background: bool = True,
-                 long_term_enabled: bool = True, capture_enabled: bool = True):
+                 long_term_enabled: bool = True, capture_enabled: bool = True,
+                 recall_enabled: bool = True):
         self.engine = memory_engine
         self.conn = memory_engine.conn
         self._lock = memory_engine._lock
@@ -91,13 +93,19 @@ class MemoryStack:
         self.memories = LongTermMemory(self.conn, self._lock, self.index,
                                        on_change=self._memory_changed)
         self.knowledge = KnowledgeGraph(self.conn, self._lock, self.index)
-        self.composer = ContextComposer(self.conversations, self.memories, self.knowledge)
+        self.recaps = ConversationRecaps(self.conn, self._lock, self.index)
+        self.composer = ContextComposer(self.conversations, self.memories, self.knowledge,
+                                        recaps=self.recaps)
 
         #: Whether cross-conversation memory may be written and read at all.
         self.long_term_enabled = bool(long_term_enabled)
         #: Whether Nano may PROPOSE memories on its own. Explicit "lembra-te
         #: que..." requests are honoured regardless: that is the user asking.
         self.capture_enabled = bool(capture_enabled)
+        #: Memory M3: whether old conversations are recapped and recalled. It
+        #: only acts while long-term memory is on -- recalling another
+        #: conversation IS carrying something between conversations.
+        self.recall_enabled = bool(recall_enabled)
 
         self._active_id: str | None = None
         #: Threads a turn has been dispatched to but has not written yet. An
@@ -143,6 +151,46 @@ class MemoryStack:
                             memories, messages)
         except Exception:
             logger.exception("Falha a preencher o índice de recuperação")
+        self.backfill_recaps()
+
+    # ------------------------------------------------- memory M3: recaps
+
+    @property
+    def recall_active(self) -> bool:
+        return bool(self.ready and self.long_term_enabled and self.recall_enabled)
+
+    def refresh_recap(self, conversation_id: str) -> dict | None:
+        """Bring one conversation's recap up to date. Cheap; never raises."""
+        if not self.recall_active or not conversation_id:
+            return None
+        try:
+            thread = self.conversations.get(conversation_id)
+            if thread is None:
+                return None
+            messages = self.conversations.messages_after(conversation_id, 0)
+            return self.recaps.refresh(conversation_id, messages, title=thread["title"])
+        except Exception:
+            logger.exception("Falha a atualizar a recordação da conversa %s", conversation_id)
+            return None
+
+    def backfill_recaps(self, *, limit: int = 200) -> int:
+        """Recap conversations that existed before Memory M3. Background only."""
+        if not self.recall_active:
+            return 0
+        made = 0
+        for conversation_id in self.recaps.missing(limit=limit):
+            if self.refresh_recap(conversation_id):
+                made += 1
+        if made:
+            logger.info("Recordações criadas para %d conversa(s) antigas", made)
+        return made
+
+    def restore_recap(self, conversation_id: str) -> dict:
+        result = self.recaps.restore(conversation_id)
+        if result.get("ok"):
+            result["recap"] = self.refresh_recap(conversation_id) or self.recaps.get(
+                conversation_id)
+        return result
 
     def reconcile_knowledge(self) -> tuple[int, int]:
         """Rebuild the derived Second Brain from the ACTIVE memories, exactly.
@@ -379,6 +427,8 @@ class MemoryStack:
 
     def delete_conversation(self, conversation_id: str) -> dict:
         result = self.conversations.delete(conversation_id)
+        if result.get("ok"):
+            self.recaps.delete(conversation_id)
         if result.get("ok") and self._active_id == conversation_id:
             self._active_id = None
         # A node linked to a conversation that no longer exists would draw an
@@ -403,6 +453,8 @@ class MemoryStack:
             return {"ok": False, "error": "memory_unavailable", "removed": 0}
         result = self.conversations.delete_many(conversation_ids)
         deleted = [str(value) for value in result.get("deleted") or []]
+        for conversation_id in deleted:
+            self.recaps.delete(conversation_id)
         if deleted:
             self.knowledge.prune_links("conversation", deleted)
         if self._active_id in deleted:
@@ -433,6 +485,7 @@ class MemoryStack:
             thread_id, "assistant", text, trust=TrustLevel.USER.value, metadata=metadata)
         if stored is not None:
             self._defer(lambda: self.compact(thread_id))
+            self._defer(lambda: self.refresh_recap(thread_id))
         return stored
 
     def _after_user_message(self, conversation_id: str, stored: dict) -> None:
@@ -746,7 +799,8 @@ class MemoryStack:
         context = self.composer.compose(
             thread_id, query, recent_messages=recent_messages,
             long_term_enabled=self.long_term_enabled,
-            knowledge_enabled=self.long_term_enabled)
+            knowledge_enabled=self.long_term_enabled,
+            recall_enabled=self.recall_active)
         if context.memory_ids:
             self._defer(lambda: self.memories.touch(context.memory_ids))
         return context
@@ -772,6 +826,8 @@ class MemoryStack:
                           "error": self.migration.get("error")},
             "longTermEnabled": self.long_term_enabled,
             "captureEnabled": self.capture_enabled,
+            "recallEnabled": self.recall_enabled,
+            "recaps": self.recaps.counts() if self.ready else {},
             "memories": self.memories.stats() if self.ready else {},
             "knowledge": self.knowledge.stats() if self.ready else {},
             "retrieval": self.index.stats(),
@@ -788,6 +844,7 @@ class MemoryStack:
     #: live in other files and are configuration or the security record, not
     #: personal content (see ``erase_all_data`` in core/main.py).
     _PURGE_TABLES = (
+        "conversation_recaps",
         "conversation_facts",
         "conversation_summaries",
         "knowledge_links",
