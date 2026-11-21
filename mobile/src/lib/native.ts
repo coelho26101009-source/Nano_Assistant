@@ -72,16 +72,25 @@ export async function listen(onPartial: (text: string) => void, onEnd: (text: st
 
 // ── text to speech ─────────────────────────────────────────────────────────
 
-/** Speak an answer. Markdown marks and code are left out of what is said. */
-export async function speak(text: string) {
-  const spoken = text
+/** What an answer sounds like: no markdown, code, links, [n] citations or the
+ *  list of sources under a research report. */
+export function spokenText(text: string): string {
+  return text
+    .replace(/(?:^|\n)\*\*(?:Fontes|Sources)(?::[^\n]*)?\*\*\n[\s\S]*$/, "")
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/[*_#>|~]+/g, " ")
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/\s?\[\d{1,2}(?:\s*[,;–-]\s*\d{1,2})*\]/g, "")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 3000);
+}
+
+/** Speak an answer. Markdown marks and code are left out of what is said. */
+export async function speak(text: string) {
+  const spoken = spokenText(text);
   if (!spoken) return;
   if (isNative()) {
     try { await TextToSpeech.speak({ text: spoken, lang: speechTag(), rate: 1.0, pitch: 1.0, volume: 1.0 }); } catch { /* no engine */ }

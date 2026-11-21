@@ -165,6 +165,8 @@ class PolicyEngine:
         "web_search": "browser.read",
         "web_extract_prices": "browser.read",
         "web_screenshot": "browser.read",
+        # Several searches and page reads, nothing clicked or sent (core/research.py).
+        "deep_research": "browser.read",
         "phone_notify": "external.send",
         "iot_command": "external.send",
         "calendar_add_event": "external.send",

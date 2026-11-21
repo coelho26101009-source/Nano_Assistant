@@ -11,6 +11,7 @@ export const EN: Record<string, string> = {
   "A pensar…": "Thinking…",
   "A usar {0} ferramentas…": "Using {0} tools…",
   "A usar {0}…": "Using {0}…",
+  "A investigar a fundo: várias pesquisas e sítios…": "Researching in depth: several searches and sites…",
   "Acesso do telemóvel": "Phone access",
   "Adicionar": "Add",
   "Agenda": "Agenda",

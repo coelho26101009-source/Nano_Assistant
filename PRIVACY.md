@@ -324,6 +324,14 @@ Requests are restricted to public HTTP(S) destinations
 (`core.browser_agent.validate_public_http_url`): loopback, private and
 link-local addresses, `file://` and other schemes are refused.
 
+**Deep research** ("investiga a fundo…", "pesquisa com fontes…") does the
+same several times in one go: it sends up to four search phrases to
+DuckDuckGo (or Bing, when DuckDuckGo gives nothing) and the question to
+Wikipedia, then reads up to eight of the sites found. Every site and every
+redirect is checked as above. No cookies, logins or forms are used. The
+paragraphs kept from those sites go to the provider answering the turn, like
+any page text.
+
 ---
 
 ## What Nano never does

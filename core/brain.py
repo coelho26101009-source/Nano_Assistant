@@ -1437,6 +1437,11 @@ class Brain:
                 if note:
                     yield note
                     text += note
+                # A research report ends with the sources NANO really read.
+                sources = self._research_sources_note()
+                if sources:
+                    yield sources
+                    text += sources
                 self.conversation.append({"role": "assistant", "content": text})
                 outcome["done"] = True
                 return
@@ -1711,6 +1716,33 @@ class Brain:
                     return None
         logger.warning("The model claimed a reminder without calling set_reminder")
         return "\n\n" + reminder_intent.unbacked_claim_note(answer)
+
+    def _research_sources_note(self) -> str | None:
+        """The numbered sources of this turn's deep research, as markdown.
+
+        Written by NANO from what core/research.py really read, never by the
+        model: the model only cites [n], so no link under a report can be
+        invented. Several researches in one turn are numbered as they were
+        given to the model, each under its own question.
+        """
+        from core import research  # noqa: PLC0415 - only needed after a research turn
+
+        found = []
+        for result in (getattr(self, "_turn_tool_results", None) or {}).values():
+            output = result.get("output") if isinstance(result, dict) else None
+            if isinstance(output, dict) and output.get("kind") == "nano_research" and output.get("sources"):
+                found.append(output)
+        if not found:
+            return None
+        blocks = []
+        for output in found:
+            heading = tr("Fontes")
+            if len(found) > 1:
+                heading = f"{heading}: {research.safe_title(str(output.get('question') or ''), '')}"
+            block = research.sources_markdown(output["sources"], heading)
+            if block:
+                blocks.append(block)
+        return "\n\n" + "\n\n".join(blocks) if blocks else None
 
     def _protocol_for(self, user_message: str) -> dict | None:
         try:
@@ -2322,6 +2354,12 @@ class Brain:
             "trust": TrustLevel.UNTRUSTED_EXTERNAL.value,
             "injection_findings": metadata.get("injection_findings") or [],
         }
+        if name == "deep_research" and result.get("success"):
+            # NANO's own words, so they sit OUTSIDE the fence: how to turn the
+            # evidence below into a report. Nothing here comes from a page.
+            from core import research  # noqa: PLC0415
+
+            payload["nano_instructions"] = research.REPORT_INSTRUCTIONS
         body = wrap_untrusted(Brain._extract_external_text(result), source=name)
         return json.dumps(payload, ensure_ascii=False) + "\n" + body
 
@@ -2497,6 +2535,9 @@ class Brain:
                             self.last_metadata["local_malformed_tool_call"] = True
                             text = tr("Não consegui completar esse pedido com o modelo local. "
                                       "Tenta outra vez daqui a pouco.")
+                        sources = self._research_sources_note()
+                        if sources:
+                            text += sources
                         self.conversation.append({"role": "assistant", "content": text})
                         local_attempt["outcome"] = "ok"
                         if text:
@@ -2574,6 +2615,9 @@ class Brain:
 
                     text = "".join(streamed).strip()
                     if text:
+                        sources = self._research_sources_note()
+                        if sources:
+                            text += sources
                         self.conversation.append({"role": "assistant", "content": text})
                         local_attempt["outcome"] = "ok"
                     else:
