@@ -1,7 +1,9 @@
 name: Build Nano Windows (manual)
 
 # This workflow produces beta installers for manual validation. Publishing
-# requires an explicit input and a matching version tag; pushes never publish.
+# requires an explicit input, run either on the tag v<version.json> or on
+# main (the release then creates that tag at the commit it was built from;
+# cloud sessions cannot push tags). Pushes never publish.
 #
 # It used to run on every push to main and to publish a GitHub Release on any
 # `v*` tag. Neither is appropriate yet:
@@ -121,8 +123,8 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content version.json -Raw | ConvertFrom-Json).product
-          if ($env:GITHUB_REF -ne "refs/tags/v$version") {
-            throw 'Publishing requires the exact tag from version.json.'
+          if ($env:GITHUB_REF -ne "refs/tags/v$version" -and $env:GITHUB_REF -ne 'refs/heads/main') {
+            throw 'Publishing requires main or the exact tag from version.json.'
           }
 
       # NO `npm run fetch-electron` HERE, DELIBERATELY. Electron 42 stopped
@@ -225,7 +227,7 @@ jobs:
   # a working directory it never ran in still exists.
   publish:
     needs: build
-    if: inputs.publish_release && startsWith(github.ref, 'refs/tags/v')
+    if: inputs.publish_release && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -242,18 +244,30 @@ jobs:
         uses: actions/checkout@v7
         with:
           path: notes
-          sparse-checkout: docs
-          sparse-checkout-cone-mode: true
+          sparse-checkout: |
+            docs
+            version.json
+          sparse-checkout-cone-mode: false
 
       - name: Release title and notes
         id: text
         env:
           TITLE: ${{ inputs.release_title }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version=$(jq -r .product notes/version.json)
+          tag="v${version}"
+          if [ "${GITHUB_REF}" != "refs/heads/main" ] && [ "${GITHUB_REF}" != "refs/tags/${tag}" ]; then
+            echo "::error::version.json says ${version} but this run is on ${GITHUB_REF}."; exit 1
+          fi
+          if [ "${GITHUB_REF}" = "refs/heads/main" ] && \
+             git ls-remote --exit-code --tags "https://github.com/${GITHUB_REPOSITORY}" "refs/tags/${tag}" > /dev/null; then
+            echo "::error::Tag ${tag} already exists: bump version.json or run this workflow on the tag."; exit 1
+          fi
           notes="notes/docs/RELEASE_NOTES_${version}.md"
           test -f "$notes" || { echo "::error::$notes is missing: write the release notes first."; exit 1; }
           echo "notes=$notes" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "title=${TITLE:-NANO $version}" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub release
@@ -267,6 +281,8 @@ jobs:
         # is moving to in the pull request.
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
+          tag_name: ${{ steps.text.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           name: ${{ steps.text.outputs.title }}
           body_path: ${{ steps.text.outputs.notes }}
           prerelease: true
@@ -308,12 +324,13 @@ jobs:
         env:
           NANO_UPDATE_SIGNING_KEY: ${{ secrets.NANO_UPDATE_SIGNING_KEY }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${{ steps.text.outputs.version }}"
+          tag="${{ steps.text.outputs.tag }}"
           set +e
           node src/scripts/update_feed.mjs sign --product nano-desktop --channel beta \
             --version "$version" \
-            --url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/Nano-Setup-${version}-x64.exe" \
-            --notes "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}" \
+            --url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/Nano-Setup-${version}-x64.exe" \
+            --notes "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${tag}" \
             --file "installers/Nano-Setup-${version}-x64.exe" --out nano-update.json
           code=$?
           set -e
