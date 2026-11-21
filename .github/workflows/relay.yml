@@ -83,10 +83,18 @@ jobs:
       - name: Deploy
         if: steps.secrets.outputs.ready == 'true'
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RAW_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          RAW_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           WRANGLER_SEND_METRICS: 'false'
         run: |
+          set -o pipefail
+          # A secret pasted with a stray space or line break is the usual
+          # first-deploy failure ("Invalid account ID"): trim both.
+          token="$(printf '%s' "$RAW_TOKEN" | tr -d '[:space:]')"
+          account="$(printf '%s' "$RAW_ACCOUNT" | tr -d '[:space:]')"
+          echo "::add-mask::$token"
+          echo "::add-mask::$account"
+          export CLOUDFLARE_API_TOKEN="$token" CLOUDFLARE_ACCOUNT_ID="$account"
           npx wrangler deploy 2>&1 | tee deploy.log
           url=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy.log | head -n1)
           echo "Relay address: ${url:-not found in the log}"
