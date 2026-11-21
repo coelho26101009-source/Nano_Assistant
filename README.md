@@ -295,6 +295,17 @@ prazo relevantes e as entradas do Second Brain a que dizem respeito. Cada secç�
 tem o seu próprio orçamento de tokens e tudo é desduplicado, para que um facto
 repetido em quatro sítios não seja enviado quatro vezes.
 
+**Conversas antigas (Memória M3).** Cada conversa com pelo menos duas
+mensagens tuas fica com uma recordação: resumo, decisões e temas, tirados só de
+frases que **tu** escreveste (`core/conversation_recall.py`, extrativo e local,
+como o resumo das threads). Quando uma mensagem nova toca no mesmo assunto, ou
+perguntas "lembras-te…?" / "o que decidimos…?", a recordação dessa conversa
+entra no contexto com o título e a data como fonte, e a resposta mostra
+**Lembrei-me de «…»** com um botão para abrir essa conversa. Em **Memória →
+Conversas antigas** vês, editas (a tua versão fica), esqueces ou voltas a lembrar
+cada uma; apagar a conversa apaga a recordação, e há um interruptor em
+Definições → Memória.
+
 **Second Brain.** Nós e relações entre as coisas de que as memórias falam. A
 contenção é a escolha de design: um nó só nasce de uma memória ativa ou de uma
 ação explícita tua — nunca de texto solto — e uma aresta só é escrita quando

@@ -50,10 +50,10 @@ CSS = FRONTEND / "styles" / "globals.css"
 # instead of one page. The contract this list guards is unchanged and still
 # enforced below -- every view is rendered by the shell, and every view is owned
 # by exactly one section -- so the expectation moves with the product while the
-# guarantees stay put.
+# guarantees stay put. "recaps" (Conversas antigas) joined with Memory M3.
 VIEWS = (
     "chat", "agenda", "tasks", "modes", "activity", "permissions",
-    "agents", "memory", "knowledge", "graph",
+    "agents", "memory", "recaps", "knowledge", "graph",
     "integrations", "capabilities", "status", "settings",
 )
 

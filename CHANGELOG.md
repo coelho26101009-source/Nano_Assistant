@@ -20,6 +20,25 @@ versioning policy.
 
 ## [Unreleased]
 
+### Added — Memory M3: remembering past conversations (2026-11-20)
+
+- **NANO remembers older conversations and what was decided in them.** Each
+  conversation with at least two of your messages gets a recap (summary,
+  decisions, topics) made only from sentences you wrote, locally and without a
+  model call (`core/conversation_recall.py`, schema v4 `conversation_recaps`).
+- When a new message touches the same subject, or asks "lembras-te…?" / "what
+  did we decide…?", the recap of that conversation reaches the model with its
+  title and date as the source, and the answer shows **Lembrei-me de «…»** with
+  a chip that opens that conversation. On a question about the past, the exact
+  old messages of other conversations are searched too.
+- **Memória → Conversas antigas**: see, search, edit (your version is kept),
+  forget (the conversation stays, NANO stops recalling it) or bring back every
+  recap; "Esquecer todas". Deleting a conversation deletes its recap; "Apagar
+  todos os dados" empties them with everything else. Switch: Definições →
+  Memória → "Lembrar conversas antigas" (needs cross-conversation memory on).
+- The `memory_search_history` tool now returns whole conversations (title, date,
+  summary, decisions) before the matching messages.
+
 ### Added — deep research with a report and sources (2026-11-20)
 
 - **"Investiga a fundo…", "pesquisa com fontes…", "faz-me um relatório

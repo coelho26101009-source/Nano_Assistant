@@ -281,6 +281,8 @@ export type SettingsPayload = {
     longTermEnabled: boolean;
     /** Whether Nano may PROPOSE memories on its own. */
     captureEnabled: boolean;
+    /** Memory M3: recall old conversations and their decisions, with the source. */
+    recallEnabled?: boolean;
     ready: boolean;
     retrieval: { mode: string; engine: string; entries: number; byKind: Record<string, number> };
     stats: Record<string, any>;
