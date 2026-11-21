@@ -145,6 +145,11 @@ Antes, na pasta do NANO, instala as bibliotecas novas uma vez:
 - [ ] 43. Muda o volume (teclas do teclado ou o ícone do som do Windows): a ilha mostra "Volume" com a barra a acompanhar. Tira o som: mostra "Sem som".
 - [ ] 44. No ícone do NANO no tabuleiro: "Ilha sempre no ecrã (modo ambiente)" desligado esconde a pílula quando não há nada a mostrar; "Ilha do NANO" desligado esconde-a por completo. As mesmas opções estão em **Definições → Geral**.
 
+### Investigação profunda com fontes (P2)
+- [ ] 45. Escreve no chat `investiga a fundo se vale a pena trocar a GTX 1660 Ti por uma RTX 4060`. Enquanto trabalha aparece "A investigar a fundo: várias pesquisas e sítios…" (e na ilha "A investigar a fundo…"). Demora uns 15 a 40 segundos.
+- [ ] 46. O relatório tem título, **Resumo**, **O que as fontes dizem** com números entre parênteses retos ([1], [2]...), **Onde não concordam** e **Confiança**. No fim vem **Fontes** com ligações numeradas: carrega numa e abre o sítio certo no navegador.
+- [ ] 47. Carrega no botão "Abrir ao lado" por baixo do relatório: abre-o no painel lateral. No telemóvel, escreve `pesquisa com fontes qual o melhor portátil para a escola até 600 euros`: o relatório e as fontes aparecem lá também, e "Ler em voz alta" não lê os [1] nem as ligações.
+
 ---
 
 ## O que já sabemos que ainda não está perfeito

@@ -71,8 +71,9 @@ CATEGORIES: tuple[Category, ...] = (
     ),
     Category(
         "web", "Web",
-        "Abrir endereços e pesquisar na web.",
+        "Abrir endereços, pesquisar na web e investigar a fundo com fontes.",
         prefixes=("pc_web_", "web_"),
+        exact=frozenset({"deep_research"}),
     ),
     Category(
         "display", "Ecrã e monitores",

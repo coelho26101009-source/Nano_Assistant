@@ -990,6 +990,7 @@ export const EN: Record<string, string> = {
   "Não foi possível guardar a preferência.": "The preference could not be saved.",
   "Ouvi-te — diz o comando": "I heard you — say the command",
   "A usar {0}…": "Using {0}…",
+  "A investigar a fundo: várias pesquisas e sítios…": "Researching in depth: several searches and sites…",
   "A usar {0} ferramentas…": "Using {0} tools…",
   "A executar {0}…": "Running {0}…",
   "{0} concluída": "{0} done",
