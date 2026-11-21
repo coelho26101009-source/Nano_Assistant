@@ -87,6 +87,15 @@ const userMessageId = (requestId: string) => `user:${requestId}`;
  * "A pensar…" (the per-message technical details still say exactly which
  * provider answered and why); anything else keeps its own short text.
  */
+/** Tools whose raw name says little: a sentence for the status line and card. */
+const TOOL_SUMMARY: Record<string, () => string> = {
+  deep_research: () => t("A investigar a fundo: várias pesquisas e sítios…"),
+};
+
+function toolStatus(name: string): string {
+  return TOOL_SUMMARY[name]?.() ?? t("A usar {0}…", { 0: name });
+}
+
 function friendlyStatus(raw: string): string {
   const text = String(raw ?? "").replace(/^_thinking_:?\s*/, "").trim();
   // 🧠 local fallback, 🔄 switching provider: routing, not activity.
@@ -498,7 +507,7 @@ export default function Home() {
       const match = /⚙️\s*(.+?)\.\.\./.exec(text);
       if (match) {
         const names = match[1].split(",").map((name) => name.trim()).filter(Boolean);
-        setStatus(names.length === 1 ? t("A usar {0}…", { 0: names[0] }) : t("A usar {0} ferramentas…", { 0: names.length }));
+        setStatus(names.length === 1 ? toolStatus(names[0]) : t("A usar {0} ferramentas…", { 0: names.length }));
         setMessages((prev) => {
           const next = [...prev];
           for (let i = next.length - 1; i >= 0; i -= 1) {
@@ -507,7 +516,7 @@ export default function Home() {
               const merged: ToolEvent[] = [...existing];
               for (const name of names) {
                 if (!merged.some((tool) => tool.name === name)) {
-                  merged.push({ name, state: "running", summary: t("A executar {0}…", { 0: name }) });
+                  merged.push({ name, state: "running", summary: TOOL_SUMMARY[name]?.() ?? t("A executar {0}…", { 0: name }) });
                 }
               }
               next[i] = { ...next[i], tools: merged };

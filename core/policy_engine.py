@@ -165,6 +165,8 @@ class PolicyEngine:
         "web_search": "browser.read",
         "web_extract_prices": "browser.read",
         "web_screenshot": "browser.read",
+        # Several searches and page reads, nothing clicked or sent (core/research.py).
+        "deep_research": "browser.read",
         "phone_notify": "external.send",
         # Only ASKS the paired phone; the person opens the camera there, each
         # time (core/phone_camera.py). The yes on the phone is the consent.

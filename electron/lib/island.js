@@ -108,6 +108,7 @@ function fromChatActivity(payload) {
  */
 const TOOL_LABELS = Object.freeze({
   web_search: 'A pesquisar na web…',
+  deep_research: 'A investigar a fundo…',
   web_navigate_extract: 'A ler uma página…',
   web_extract_prices: 'A comparar preços…',
   web_interact: 'A usar uma página…',
@@ -414,6 +415,7 @@ const EN = Object.freeze({
   'Volume': 'Volume',
   'Sem som': 'Muted',
   'A pesquisar na web…': 'Searching the web…',
+  'A investigar a fundo…': 'Researching in depth…',
   'A ler uma página…': 'Reading a page…',
   'A comparar preços…': 'Comparing prices…',
   'A usar uma página…': 'Using a page…',

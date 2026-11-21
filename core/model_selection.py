@@ -106,6 +106,19 @@ _COMPLEX_KEYWORDS = (
     "architecture", "debug", "prove", "derive",
 )
 
+# Asking for RESEARCH: several sources, cross-checked, written up with
+# citations (core/research.py). Always COMPLEX, so the stronger model writes
+# the report and it gets the room a report needs, and always the web tools,
+# even when it is phrased as a question ("porque é que ... ? investiga").
+_RESEARCH_MARKERS = (
+    "investiga", "investigar", "investigues", "investigacao", "a fundo",
+    "pesquisa aprofundada", "pesquisa profunda", "investigacao profunda",
+    "com fontes", "cita as fontes", "cita fontes", "compara fontes",
+    "faz um relatorio", "faz me um relatorio", "relatorio sobre", "relatorio com",
+    "deep research", "research", "investigate", "in depth", "with sources",
+    "cite sources", "cite your sources", "report on",
+)
+
 _CODE_MARKERS = ("```", "def ", "class ", "function ", "import ", "select ", "#include")
 
 _SMALL_TALK = (
@@ -232,6 +245,7 @@ _CATEGORY_TOOLS: dict[ToolCategory, tuple[str, ...]] = {
         "pc_file_recycle", "pc_folder_recycle",
     ),
     ToolCategory.BROWSER: (
+        "deep_research",
         "web_navigate_extract", "web_extract_prices", "web_search",
         "web_interact", "web_screenshot",
         "pc_web_open_url", "pc_web_search",
@@ -450,8 +464,10 @@ _RELATIVE_TIME = re.compile(
 
 def _categories_for(normalized: str) -> list[ToolCategory]:
     relative_time = bool(_RELATIVE_TIME.search(normalized))
+    research = _has_any(normalized, _RESEARCH_MARKERS)
     return [cat for cat, words in _CATEGORY_KEYWORDS.items()
-            if _has_any(normalized, words) or (cat is ToolCategory.SCHEDULE and relative_time)]
+            if _has_any(normalized, words) or (cat is ToolCategory.SCHEDULE and relative_time)
+            or (cat is ToolCategory.BROWSER and research)]
 
 
 def _is_imperative(normalized: str) -> bool:
@@ -484,6 +500,9 @@ def classify(text: str) -> TaskClass:
     # it is phrased as a question ("o que e isto pela camara?").
     if _has_any(normalized, _CATEGORY_KEYWORDS[ToolCategory.PHONE_CAMERA]):
         return TaskClass.ACTION
+
+    if _has_any(normalized, _RESEARCH_MARKERS):
+        return TaskClass.COMPLEX
 
     # "O que e um algoritmo de ordenacao?" is a definition request, not a
     # request to write one. An explanatory question is answered from knowledge,

@@ -2040,6 +2040,11 @@ def is_closing_phrase(text: str) -> bool:
 _CODE_BLOCK = re.compile(r"```.*?(?:```|$)", re.S)
 _MD_LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
 _BARE_URL = re.compile(r"https?://\S+")
+#: The [1], [2][4] citations of a research report (core/research.py): read on
+#: screen, noise when spoken.
+_CITATION = re.compile(r"\s?\[\d{1,2}(?:\s*[,;–-]\s*\d{1,2})*\]")
+#: The list of sources NANO adds under a report: links, never spoken.
+_SOURCES_BLOCK = re.compile(r"(?:^|\n)\*\*(?:Fontes|Sources)(?::[^\n]*)?\*\*\n.*$", re.S)
 _INLINE_CODE = re.compile(r"`([^`]*)`")
 _TABLE_RULE = re.compile(r"^\s*\|?\s*:?-{3,}[-|: ]*$", re.M)
 _LINE_MARK = re.compile(r"^\s{0,3}(?:#{1,6}|>|[-*+•]|\d{1,2}[.)])\s+", re.M)
@@ -2059,8 +2064,10 @@ def speech_text(text: str, limit: int = SPEECH_LIMIT) -> str:
     the middle of a word.
     """
     clean = _CODE_BLOCK.sub(" ", str(text or ""))
+    clean = _SOURCES_BLOCK.sub("", clean)
     clean = _MD_LINK.sub(r"\1", clean)
     clean = _BARE_URL.sub(" ", clean)
+    clean = _CITATION.sub("", clean)
     clean = _INLINE_CODE.sub(r"\1", clean)
     clean = _TABLE_RULE.sub(" ", clean)
     clean = _LINE_MARK.sub("", clean)

@@ -174,7 +174,7 @@ EN: dict[str, str] = {
     "Ficheiros e pastas": "Files and folders",
     "Procurar, abrir, criar, copiar e reciclar. Nunca apaga em definitivo.": "Find, open, create, copy and recycle. Never deletes permanently.",
     "Web": "Web",
-    "Abrir endereços e pesquisar na web.": "Open addresses and search the web.",
+    "Abrir endereços, pesquisar na web e investigar a fundo com fontes.": "Open addresses, search the web and research in depth with sources.",
     "Ecrã e monitores": "Screen and monitors",
     "Monitores, brilho e captura de ecrã.": "Monitors, brightness and screenshots.",
     "Escrita e área de transferência": "Typing and clipboard",
@@ -367,4 +367,8 @@ EN: dict[str, str] = {
     "Sem rede": "No network",
     "Um protocolo precisa de pelo menos uma frase para o ativar.": "A protocol needs at least one phrase to start it.",
     "{name}: feito.": "{name}: done.",
+    # Deep research (core/research.py, core/brain.py).
+    "Fontes": "Sources",
+    "Diz o que queres que eu investigue.": "Tell me what you want me to research.",
+    "Não encontrei resultados na internet para isso. Verifica a ligação ou reformula a pergunta.": "I found no results on the internet for that. Check the connection or rephrase the question.",
 }

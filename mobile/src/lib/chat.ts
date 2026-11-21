@@ -48,6 +48,7 @@ function friendlyStatus(text: string): string {
   if (match) {
     const names = match[1].split(",").map((n) => n.trim()).filter(Boolean);
     if (names.includes("phone_camera_look")) return t("À espera da tua resposta no telemóvel…");
+    if (names.length === 1 && names[0] === "deep_research") return t("A investigar a fundo: várias pesquisas e sítios…");
     return names.length === 1 ? t("A usar {0}…", { 0: names[0] }) : t("A usar {0} ferramentas…", { 0: names.length });
   }
   return "";

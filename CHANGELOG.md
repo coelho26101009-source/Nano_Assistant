@@ -20,6 +20,25 @@ versioning policy.
 
 ## [Unreleased]
 
+### Added — deep research with a report and sources (2026-11-20)
+
+- **"Investiga a fundo…", "pesquisa com fontes…", "faz-me um relatório
+  sobre…"**: NANO searches the question from up to four angles (DuckDuckGo,
+  Bing when DuckDuckGo gives nothing, and Wikipedia), reads up to eight sites
+  (at most two per domain), keeps the paragraphs that answer the question and
+  cross-checks them: pages found by several searches rank first, and figures
+  that appear in more than one site ("8 GB", "115 W") are listed with the
+  sources that agree. The report has a summary, the facts with `[n]`
+  citations, where the sources disagree and a confidence line.
+- **The list of sources under the report is written by NANO**, from the pages
+  really read, never by the model, so a link cannot be invented. Links are
+  clickable on the PC and on the phone; spoken replies skip the `[n]` marks
+  and the list.
+- Read-only and public only (`browser.read`, no card): every address and
+  every redirect is checked, so a result cannot reach this PC or the router;
+  the pages are fenced as external content. `core/research.py`,
+  `plugins/research.py`, tests in `tests/test_research.py`.
+
 ### Added — the NANO island (2026-11-20)
 
 - **The voice capsule became the NANO island**: a black pill at the top centre
