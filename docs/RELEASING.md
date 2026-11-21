@@ -1,22 +1,29 @@
 # Releasing Nano
 
-**Current public release: [`0.3.0-beta.1`](https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.3.0-beta.1)**
-("Beta 3"), published on 2026-11-19 as a GitHub **pre-release**. Attached: the
-unsigned NSIS x64 installer, the Android APK (signed with the test key, from the
-Android workflow run on the release commit) and `SHA256SUMS.txt` covering both;
-the MSI is built by the workflow but not published. 0.3.0-beta.1 has no
-automatic updater, so it is updated by hand; from the next Beta on, the
-installed app updates itself (see [UPDATES.md](UPDATES.md)). Notes:
-[RELEASE_NOTES_0.3.0-beta.1.md](RELEASE_NOTES_0.3.0-beta.1.md).
+**Current public release: [`0.4.0-beta.1`](https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.4.0-beta.1)**
+("Beta 4"), published on 2026-11-21 as a GitHub **pre-release**, the first one
+made entirely by CI: Build Windows run on `main` (`b1f180b`) with
+`publish_release`, which created the tag, the release (text from
+[RELEASE_NOTES_0.4.0-beta.1.md](RELEASE_NOTES_0.4.0-beta.1.md)), the signed
+`nano-update.json` on `desktop-update` (key id `d9c6b38f2b29f486`), and started
+the Android workflow on the tag, which attached the APK. It is the first Beta
+whose installed copies update themselves; 0.3.0-beta.1 is updated by hand once.
 
-How 0.3.0-beta.1 was actually built, because it did not follow the flow below
-exactly: the tag `v0.3.0-beta.1` points at `f40fd3e`, but the workflow at that
-tag could not build (Ubuntu 26.04 runners lack Python 3.12.10, `get-pip.py`
-changed upstream, and the package gates flagged `cryptography`'s OpenSSH
-header constant and pip's vendored certifi tests). Those were fixed on `main`
-and the installer was built from `059628a` with `publish_release: false`; the
-diff from the tag is build tooling and documentation only, no application
-code. The release was then created by hand with `gh release create`.
+| Asset | SHA-256 |
+| --- | --- |
+| `Nano-Setup-0.4.0-beta.1-x64.exe` | `a9e633c396884a2e0839489136b5c3b12817127dd7348b5308c5f5926301b081` |
+| `NANO-Android-0.4.0-beta.1.apk` | `1fb233970e349b5f455790a57f9ac3af7a2d1b64ab99c6dec4a26f0de1f443f8` |
+
+Previous: [`0.3.0-beta.1`](https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.3.0-beta.1)
+("Beta 3", 2026-11-19), notes in
+[RELEASE_NOTES_0.3.0-beta.1.md](RELEASE_NOTES_0.3.0-beta.1.md). How it was
+built, because it did not follow the flow below: the tag `v0.3.0-beta.1` points
+at `f40fd3e`, but the workflow at that tag could not build (Ubuntu 26.04 runners
+lack Python 3.12.10, `get-pip.py` changed upstream, and the package gates
+flagged `cryptography`'s OpenSSH header constant and pip's vendored certifi
+tests). Those were fixed on `main` and the installer was built from `059628a`
+with `publish_release: false`; the release was then created by hand with
+`gh release create`.
 
 | Asset | SHA-256 |
 | --- | --- |
