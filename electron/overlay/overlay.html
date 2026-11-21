@@ -26,19 +26,24 @@
       content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src 'self' data:;" />
 <title>NANO</title>
 <style>
-  /* Tokens mirrored from the dark theme in frontend/styles/globals.css. The
-     island is a separate window with its own CSP and cannot import that file.
-     It is black in both themes: it floats over whatever the person is doing. */
+  /* A sober palette, in the spirit of Simão's personal site: a soft black,
+     warm off-white text, quiet greys, and only a whisper of colour in each
+     tone so the states stay tellable apart without shouting. The island is a
+     separate window with its own CSP and cannot import the app's CSS. It is
+     dark in both themes: it floats over whatever the person is doing. */
   :root {
-    --island: #000;
-    --text: #F5F5F7;
-    --text-dim: #A1A1AA;
-    --information: #4FD1C5;
-    --accent: #6EA6FF;
-    --success: #6FD69B;
-    --warning: #F2C14E;
-    --danger: #FF8F8F;
-    --neutral: #A1A1AA;
+    --island: #0C0C0D;
+    --text: #EDEDE9;
+    --text-dim: #8E8E89;
+    --text-soft: #C9C9C4;
+    --information: #B7BCC2;
+    --accent: #A9BEDF;
+    --success: #A6B8A2;
+    --warning: #CDB98C;
+    --danger: #CF9C95;
+    --neutral: #8E8E89;
+    --hairline: rgba(255, 255, 255, .08);
+    --tile: #141415;
     --tone: var(--neutral);
     /* A spring with a small overshoot: the shape settles like a liquid. */
     --spring: cubic-bezier(0.3, 1.32, 0.45, 1);
@@ -67,7 +72,7 @@
     color: var(--text);
     overflow: hidden;
     /* A hairline so the pill still has an edge over a black screen. */
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, .07), 0 12px 30px -12px rgba(0, 0, 0, .65);
+    box-shadow: 0 0 0 1px var(--hairline), 0 12px 30px -12px rgba(0, 0, 0, .65);
     transform: translateX(-50%);
     transition:
       width var(--morph) var(--spring),
@@ -121,7 +126,7 @@
   /* Idle: the mark, a ready dot, and on hover the shortcut. */
   #l-idle { padding: 0 14px; gap: 9px; }
   #l-idle .mark { width: 15px; height: 15px; opacity: .85; flex: none; }
-  #l-idle .ready { width: 6px; height: 6px; border-radius: 50%; background: var(--success); flex: none; margin-left: auto; }
+  #l-idle .ready { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; margin-left: auto; }
   #idle-text {
     flex: 1; min-width: 0; white-space: nowrap; overflow: hidden;
     font-size: 12px; color: var(--text-dim);
@@ -143,7 +148,7 @@
   #island[data-size="wide"] .lead { width: 40px; height: 40px; }
   .lead .disc {
     position: absolute; inset: 0; border-radius: 50%;
-    background: color-mix(in srgb, var(--tone) 18%, transparent);
+    background: color-mix(in srgb, var(--tone) 13%, transparent);
     transition: background 300ms ease;
   }
   .lead .ring {
@@ -199,7 +204,7 @@
   .tile {
     width: 54px; height: 54px; border-radius: 17px; flex: none;
     display: grid; place-items: center; position: relative;
-    background: color-mix(in srgb, var(--tone) 17%, #0b0b0c);
+    background: color-mix(in srgb, var(--tone) 12%, var(--tile));
     color: var(--tone);
   }
   .tile svg { width: 26px; height: 26px; }
@@ -207,7 +212,7 @@
   #card-label { font-size: 14.5px; }
   #card-detail {
     white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-    font-size: 12.5px; line-height: 1.35; color: #D4D4D8; margin-top: 3px;
+    font-size: 12.5px; line-height: 1.35; color: var(--text-soft); margin-top: 3px;
   }
   #card-hint { font-size: 11px; color: var(--tone); margin-top: 5px; font-weight: 600; }
   #card-hint:empty { display: none; }
@@ -260,7 +265,7 @@
   .p-top { display: flex; align-items: center; gap: 13px; min-width: 0; }
   .p-art {
     width: 58px; height: 58px; border-radius: 13px; flex: none; overflow: hidden;
-    background: color-mix(in srgb, var(--tone) 16%, #0b0b0c); color: var(--tone);
+    background: color-mix(in srgb, var(--tone) 12%, var(--tile)); color: var(--tone);
     display: grid; place-items: center;
   }
   .p-art img { width: 100%; height: 100%; object-fit: cover; display: none; }
@@ -273,7 +278,7 @@
   #p-artist { font-size: 13px; color: var(--text-dim); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .p-time { display: flex; align-items: center; gap: 9px; font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
   .p-bar { flex: 1; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .16); overflow: hidden; }
-  .p-bar i { display: block; height: 100%; width: 0; background: #E4E4E7; border-radius: 2px; transition: width 900ms linear; }
+  .p-bar i { display: block; height: 100%; width: 0; background: var(--text-soft); border-radius: 2px; transition: width 900ms linear; }
   .p-controls { display: flex; align-items: center; justify-content: center; gap: 30px; }
   .p-controls button {
     all: unset; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center;
@@ -336,7 +341,7 @@
 
   /* Approval: amber, and the outline pulses faster than anything else --
      NANO is waiting for the person. */
-  #island[data-state="approval"] { box-shadow: 0 0 0 1px color-mix(in srgb, var(--warning) 55%, transparent), 0 12px 30px -12px rgba(0, 0, 0, .65); }
+  #island[data-state="approval"] { box-shadow: 0 0 0 1px color-mix(in srgb, var(--warning) 40%, transparent), 0 12px 30px -12px rgba(0, 0, 0, .65); }
   #island[data-state="approval"] .tile .pulse { animation: breathe 1100ms ease-out infinite; }
 
   /* Reminder: the bell rings once on arrival. */
