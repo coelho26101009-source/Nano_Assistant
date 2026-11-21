@@ -20,3 +20,5 @@ eel>=0.18.2,<1
 # core/mobile_link.py (phone pairing and the sealed messages) and the QR code.
 cryptography>=46,<51
 segno>=1.6,<2
+# core/mobile_relay.py (the phone away from home) and its tests' stand-in relay.
+aiohttp>=3.9,<4

@@ -17,7 +17,7 @@ export function PrivacyPolicy() {
       </ul>
       <p>{t("A cópia de segurança do Android está desligada para esta app, por isso nada disto sai do telemóvel.")}</p>
       <h2>{t("O que vai para o teu PC")}</h2>
-      <p>{t("As mensagens que escreves ou dizes, as tuas respostas às autorizações e as alterações à agenda e à memória. Vão diretamente para o teu PC, cifradas com AES-256-GCM e uma chave que só o teu telemóvel e o teu PC conhecem. Quem o NANO do PC usa para responder (um modelo local ou um serviço de IA que escolheste) é decidido no PC, como sempre.")}</p>
+      <p>{t("As mensagens que escreves ou dizes, as tuas respostas às autorizações e as alterações à agenda e à memória. Vão para o teu PC cifradas com AES-256-GCM e uma chave que só o teu telemóvel e o teu PC conhecem: diretamente pela tua rede ou, fora de casa, pelo reencaminhador do NANO (um Cloudflare Worker), que só passa as mensagens cifradas, não as consegue ler nem alterar, não guarda nada e só vê o teu endereço IP, o tamanho das mensagens e quando foram enviadas. Quem o NANO do PC usa para responder (um modelo local ou um serviço de IA que escolheste) é decidido no PC, como sempre.")}</p>
       <h2>{t("Voz")}</h2>
       <p>{t("Quando carregas no microfone, o reconhecimento de voz do Android transforma a fala em texto. Dependendo do teu telemóvel, isso pode ser feito no aparelho ou pelo serviço de voz da Google. A app não grava áudio. Ler as respostas em voz alta usa o motor de voz do Android.")}</p>
       <h2>{t("Atualizações (só na versão de teste)")}</h2>

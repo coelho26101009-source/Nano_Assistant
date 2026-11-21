@@ -84,6 +84,9 @@ ALLOWED_KEYS: frozenset[str] = frozenset({
     "proactive_event_alerts", "proactive_event_lead_minutes", "proactive_prep",
     # NANO on the phone (core/mobile_link.py). Off until the person turns it on.
     "mobile_access_enabled",
+    # Reach this PC from the phone away from home through NANO's relay, which
+    # only carries sealed messages (core/mobile_relay.py). On by default.
+    "mobile_relay_enabled",
     # Personality (core/personality.py): tone, form of address, answer length,
     # personal instructions and the speaking voice.
     "personality_tone", "personality_length", "personality_address",
@@ -98,7 +101,7 @@ _BOOLEAN_KEYS = frozenset({
     "voice_conversation_mode", "voice_barge_in", "reduce_motion", "memory_facts_enabled", "memory_rag_enabled",
     "memory_long_term_enabled", "memory_auto_capture", "advanced_mode", "screen_text_enabled",
     "screen_vision_enabled", "proactive_briefing", "proactive_event_alerts", "proactive_prep",
-    "mobile_access_enabled", "pc_alerts_battery", "pc_alerts_disk", "pc_alerts_network",
+    "mobile_access_enabled", "mobile_relay_enabled", "pc_alerts_battery", "pc_alerts_disk", "pc_alerts_network",
     "pc_alerts_downloads",
 })
 

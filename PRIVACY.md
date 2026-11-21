@@ -387,6 +387,7 @@ model can neither see nor trigger it.
 | **Microsoft** (`speech.platform.bing.com`) | Spoken replies, **any mode** | The text to be read aloud |
 | **Ollama** | LOCAL, and the AUTO fallback | Message text — but it runs on your machine |
 | **Websites** | Only when you ask Nano to open, search or read one | A normal web request |
+| **NANO's relay** (Cloudflare Workers) | Phone access on, "Away from home" on, and a phone paired or a pairing code on screen | The phone's messages **sealed with AES-256-GCM** with a key only the phone and the PC hold; it cannot read them. It sees the PC's and the phone's IP addresses, message sizes and times. `core/mobile_relay.py`, `relay/` |
 
 A provider you have not configured a key for is never contacted, in any mode:
 its status is reported without a network call.

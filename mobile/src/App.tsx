@@ -90,6 +90,9 @@ export default function App({ initial }: { initial: { theme: ThemeChoice; langua
     await link.syncCursor();
     await chat.loadHistory();
     link.start();
+    // A phone paired before the PC offered the relay learns it here, so it
+    // also works away from home without being paired again.
+    void link.refreshRelay();
     try {
       const hello = await link.call<{ displayName?: string; pcName?: string }>("hello");
       setDisplayName(hello.displayName || "");
@@ -210,7 +213,9 @@ export default function App({ initial }: { initial: { theme: ThemeChoice; langua
         {state === "offline" && tab !== "settings" && (
           <div className="banner" style={{ margin: "12px 16px 0" }}>
             <Icon name="wifi" size={20} />
-            <span>{t("Não consigo chegar ao {0}. Confirma que o NANO está aberto no PC e que estás no mesmo Wi-Fi ou no Tailscale.", { 0: link.pcName })}</span>
+            <span>{link.awayFromHome
+              ? t("Não consigo chegar ao {0}. Confirma que o PC está ligado, com o NANO aberto e com internet.", { 0: link.pcName })
+              : t("Não consigo chegar ao {0}. Confirma que o NANO está aberto no PC e que estás no mesmo Wi-Fi ou no Tailscale.", { 0: link.pcName })}</span>
           </div>
         )}
         {state === "revoked" && (

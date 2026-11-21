@@ -1,0 +1,104 @@
+name: Relay
+
+# NANO's away-from-home relay (relay/): a Cloudflare Worker that passes the
+# phone's sealed messages to the PC and back without being able to read them.
+# Every change is tested here. On main it is also deployed to the owner's free
+# Cloudflare account -- only when the CLOUDFLARE_API_TOKEN and
+# CLOUDFLARE_ACCOUNT_ID secrets exist; without them the deploy step says so
+# and does nothing. relay/README.md has the details.
+on:
+  push:
+    branches: [main, 'claude/**']
+    paths:
+      - 'relay/**'
+      - '.github/workflows/relay.yml'
+  pull_request:
+    paths:
+      - 'relay/**'
+      - '.github/workflows/relay.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: relay-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: relay
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: relay/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      # The Worker builds (no deploy): catches a syntax or binding mistake.
+      - run: npx wrangler deploy --dry-run --outdir dist
+        env:
+          WRANGLER_SEND_METRICS: 'false'
+
+  deploy:
+    name: Deploy to Cloudflare
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: relay
+    steps:
+      - name: Check for the Cloudflare secrets
+        id: secrets
+        working-directory: .
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "$TOKEN" ] && [ -n "$ACCOUNT" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::The relay was not deployed: add the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets (relay/README.md)."
+          fi
+      - uses: actions/checkout@v7
+        if: steps.secrets.outputs.ready == 'true'
+      - uses: actions/setup-node@v7
+        if: steps.secrets.outputs.ready == 'true'
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: relay/package-lock.json
+      - if: steps.secrets.outputs.ready == 'true'
+        run: npm ci --no-audit --no-fund
+      - name: Deploy
+        if: steps.secrets.outputs.ready == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_SEND_METRICS: 'false'
+        run: |
+          npx wrangler deploy 2>&1 | tee deploy.log
+          url=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy.log | head -n1)
+          echo "Relay address: ${url:-not found in the log}"
+          echo "### NANO relay" >> "$GITHUB_STEP_SUMMARY"
+          echo "Address: \`${url:-not found in the log}\`" >> "$GITHUB_STEP_SUMMARY"
+      - name: Check it answers
+        if: steps.secrets.outputs.ready == 'true'
+        run: |
+          url=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy.log | head -n1)
+          [ -n "$url" ] || exit 0
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS "$url/" | grep -q "NANO relay"; then echo "The relay answers at $url"; exit 0; fi
+            sleep 10
+          done
+          echo "::warning::The relay was deployed but did not answer yet at $url (a new workers.dev address can take a minute)."

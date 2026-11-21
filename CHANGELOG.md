@@ -20,6 +20,21 @@ versioning policy.
 
 ## [Unreleased]
 
+### Added — the phone away from home, always encrypted (2026-11-20)
+
+- **The phone app works away from home with nothing to set up.** The PC keeps
+  one outgoing connection to NANO's relay (`relay/`, a Cloudflare Worker on the
+  free plan) and the phone meets it there. No port is opened on the router and
+  nothing connects in to the PC.
+- **The relay cannot read anything.** It only forwards the same AES-256-GCM
+  envelopes the phone sends on the home Wi-Fi, sealed with the phone's own key.
+  Pairing over it still needs the yes on the PC and the same six digits on both
+  screens; replay protection and removing a phone work exactly as at home.
+- Settings → General → Phone → **Away from home** (on by default) shows whether
+  the PC is connected. Phones paired before this learn the relay on their next
+  start at home, without pairing again. Tailscale still works as an
+  alternative.
+
 ### Added — the NANO island (2026-11-20)
 
 - **The voice capsule became the NANO island**: a black pill at the top centre

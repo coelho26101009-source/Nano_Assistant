@@ -44,8 +44,10 @@ THE SECURITY MODEL, PLAINLY
 * REVOCABLE. Removing a phone on the PC deletes its key; its next request
   fails.
 * NOTHING ON THE INTERNET. The server listens on the local network. Away from
-  home the person uses a private network such as Tailscale, which the QR
-  already lists when the PC has one; no port is ever opened on the router.
+  home the PC keeps one OUTGOING connection to NANO's relay and the phone meets
+  it there (``core.mobile_relay``): the relay only copies these sealed
+  envelopes, which it cannot open, and no port is ever opened on the router.
+  A private network such as Tailscale still works too; the QR lists it.
 
 What it is NOT: a defence against malware already running as the same user on
 the PC. Such a process can read the secret store directly; see SECURITY.md.
@@ -544,8 +546,13 @@ class MobileLink:
             self._failures.setdefault(client, deque(maxlen=50)).append(self.clock())
 
     # pairing, PC side
-    def start_pairing(self, port: int, addresses: list[dict] | None = None) -> dict:
-        """A fresh QR. Any earlier unfinished pairing is cancelled."""
+    def start_pairing(self, port: int, addresses: list[dict] | None = None,
+                      relay: dict | None = None) -> dict:
+        """A fresh QR. Any earlier unfinished pairing is cancelled.
+
+        ``relay`` ({"url", "room"}) adds the away-from-home relay to the code,
+        so the phone can reach this PC when it is not on the same Wi-Fi.
+        """
         with self._lock:
             self._sessions = {k: s for k, s in self._sessions.items()
                               if s.state == "approved" and not s.delivered}
@@ -557,9 +564,20 @@ class MobileLink:
         name = pc_name()
         link = (f"nano://pair?v={PROTOCOL}&h={quote(host_list, safe=',')}&p={int(port)}"
                 f"&i={session.id}&s={b64e(session.secret)}&n={quote(name)}")
+        relay_ok = bool(relay and relay.get("url") and relay.get("room"))
+        if relay_ok:
+            link += f"&r={quote(str(relay['url']), safe='')}&rr={relay['room']}"
         return {"ok": True, "sessionId": session.id, "link": link, "addresses": hosts,
                 "port": int(port), "pcName": name, "expiresIn": PAIRING_TTL_SECONDS,
-                "remoteReady": any(row["kind"] == "private_network" for row in hosts)}
+                "relay": relay_ok,
+                "remoteReady": relay_ok or any(row["kind"] == "private_network" for row in hosts)}
+
+    def pairing_open(self) -> bool:
+        """Is a QR code still usable, or a phone waiting for its answer?"""
+        with self._lock:
+            return any(self._live_session(sid) is not None and
+                       self._sessions[sid].state in ("waiting", "pending", "approved")
+                       for sid in list(self._sessions))
 
     def cancel_pairing(self) -> None:
         with self._lock:

@@ -17,9 +17,13 @@ Android backup is turned off for this app, so none of this leaves your phone.
 ## What goes to your PC
 
 The messages you type or say, your answers to approval requests, and changes to
-your agenda and memory. They go directly to your PC, over your local network or
-your own private network (such as Tailscale), encrypted with AES-256-GCM and a
-key only your phone and your PC know. Which model the NANO on your PC uses to
+your agenda and memory. They go to your PC encrypted with AES-256-GCM and a key
+only your phone and your PC know: directly over your local network or your own
+private network (such as Tailscale), or, away from home, through NANO's relay
+(a Cloudflare Worker run for NANO). The relay only passes the encrypted messages
+between your phone and your PC: it cannot read or change them, keeps nothing,
+and sees only your IP address, the sizes of the messages and when they were
+sent. Your PC can turn this off (Settings → Phone → Away from home). Which model the NANO on your PC uses to
 answer (a local model or an AI service you configured) is decided on the PC; see
 the PC app's [privacy notes](../PRIVACY.md).
 

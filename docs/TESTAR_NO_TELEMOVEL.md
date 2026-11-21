@@ -85,18 +85,33 @@ telemóvel Android 7 ou mais recente, e os dois no **mesmo Wi-Fi**.
 - **Remover:** no PC, em Telemóveis ligados, carrega em **Remover**. A app
   deve dizer que foi removida e deixar de conseguir falar com o PC.
 
-## Fora de casa (opcional)
+## Fora de casa
 
-Por omissão só funciona no mesmo Wi-Fi, e nada fica aberto à internet. Para
-usar fora de casa, instala o **Tailscale** (grátis) no PC e no telemóvel, com
-a mesma conta, e volta a ligar o telemóvel: o QR passa a incluir o endereço
-do Tailscale.
+Não precisas de configurar nada. Com **Definições → Geral → Telemóvel → Fora
+de casa** ligado (vem ligado), o PC faz uma única ligação de saída ao
+reencaminhador do NANO e o telemóvel encontra-o lá quando não está no Wi-Fi de
+casa. Tudo continua cifrado com a chave do teu telemóvel: o reencaminhador só
+passa as mensagens e não as consegue ler. Nenhuma porta é aberta no router.
+
+Para testar:
+
+1. Com o telemóvel em casa, abre a app uma vez (um telemóvel ligado antes
+   desta versão aprende o caminho sozinho; não precisas de o ligar de novo).
+2. No PC, em Telemóvel, a linha **Fora de casa** deve dizer *Ligado, cifrado
+   de ponta a ponta*.
+3. No telemóvel, desliga o Wi-Fi e usa os dados móveis. Manda uma mensagem:
+   a resposta deve chegar como em casa (o primeiro pedido pode demorar alguns
+   segundos enquanto a app percebe que não está em casa).
+4. No PC, desliga **Fora de casa**: o telemóvel em dados móveis deve deixar de
+   chegar ao PC.
+
+O **Tailscale** continua a funcionar como alternativa, se o preferires.
 
 ## Se algo correr mal
 
 | O que vês | O que fazer |
 |---|---|
-| "Não consigo chegar ao PC" | Confirma que o NANO está aberto, o Acesso do telemóvel ligado e os dois no mesmo Wi-Fi. |
+| "Não consigo chegar ao PC" | Confirma que o NANO está aberto e o Acesso do telemóvel ligado. Em casa, os dois no mesmo Wi-Fi; fora de casa, o PC com internet e **Fora de casa** ligado. |
 | Funciona no PC mas nunca no telemóvel | Provavelmente a firewall. Windows → *Firewall do Windows Defender* → *Permitir uma aplicação* → procura **Python** e marca **Privada**. |
 | "A porta 47821 está ocupada" | Outro programa usa essa porta. Fecha e abre o NANO; se continuar, diz-me. |
 | O QR não lê | Usa "Sem câmara? Copia o código" no PC, envia-o para o telemóvel e toca em **Colar o código em vez disso**. |
