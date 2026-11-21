@@ -7,6 +7,9 @@ can call back (media_control).
 """
 from __future__ import annotations
 
+import asyncio
+import time
+
 import pytest
 
 from core import now_playing
@@ -222,5 +225,36 @@ def test_app_names_are_readable(app_id, name):
     assert now_playing.app_name(app_id) == name
 
 
-def test_off_windows_there_is_no_music_and_no_error():
-    assert now_playing.read_media() is None or now_playing.winrt_available()
+def test_without_winrt_there_is_no_music_and_no_error(monkeypatch):
+    # Never the real Windows media controls here: with Spotify playing on the
+    # test PC, reading the real session's cover hung this test for ever.
+    monkeypatch.setattr(now_playing, "winrt_available", lambda: False)
+    assert now_playing.read_media() is None
+
+
+def test_a_windows_call_that_never_answers_gives_up(monkeypatch):
+    async def never_answers(_want_art_for):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(now_playing, "winrt_available", lambda: True)
+    monkeypatch.setattr(now_playing, "_read_media_async", never_answers)
+    monkeypatch.setattr(now_playing, "WINDOWS_CALL_TIMEOUT", 0.05)
+    started = time.monotonic()
+    assert now_playing.read_media() is None
+    assert time.monotonic() - started < 2
+
+
+def test_a_skip_that_never_answers_falls_back_to_the_media_key(monkeypatch):
+    from core.pc_control import keyboard
+
+    async def never_answers(_action):
+        await asyncio.Event().wait()
+
+    pressed = []
+    monkeypatch.setattr(now_playing, "winrt_available", lambda: True)
+    monkeypatch.setattr(now_playing, "_control_async", never_answers)
+    monkeypatch.setattr(now_playing, "WINDOWS_CALL_TIMEOUT", 0.05)
+    monkeypatch.setattr(keyboard, "press_media", lambda name: pressed.append(name) or {"sent": True})
+    watcher = now_playing.NowPlaying(emit=lambda *_: None)
+    assert watcher.control("next") == {"ok": True}
+    assert pressed == ["next"]

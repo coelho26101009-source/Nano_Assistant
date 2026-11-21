@@ -53,6 +53,10 @@ VOLUME_TICK_SECONDS = 0.25
 SEEK_TOLERANCE = 2.5
 #: Covers bigger than this are not sent (a normal cover is 20-60 KB).
 MAX_ART_BYTES = 280_000
+#: One reading (or one skip/pause) gives up after this long. Windows' media
+#: controls can leave a call unanswered for ever -- seen with Spotify playing,
+#: where reading the cover never completed -- and the island must not freeze.
+WINDOWS_CALL_TIMEOUT = 4.0
 ART_TYPES = {"image/png": "png", "image/jpeg": "jpeg", "image/jpg": "jpeg",
              "image/webp": "webp", "image/bmp": "bmp"}
 
@@ -192,7 +196,19 @@ def read_media(want_art_for: str | None = None) -> dict | None:
     """
     if not winrt_available():
         return None
-    return asyncio.run(_read_media_async(want_art_for))
+    return _run_bounded(_read_media_async(want_art_for))
+
+
+def _run_bounded(coroutine):
+    """Run one Windows call, but never for longer than WINDOWS_CALL_TIMEOUT."""
+    async def bounded():
+        return await asyncio.wait_for(coroutine, WINDOWS_CALL_TIMEOUT)
+
+    try:
+        return asyncio.run(bounded())
+    except (asyncio.TimeoutError, TimeoutError):
+        logger.debug("Windows' media controls did not answer in %.0f s", WINDOWS_CALL_TIMEOUT)
+        return None
 
 
 async def _control_async(action: str) -> bool:
@@ -290,7 +306,7 @@ class NowPlaying:
         done = False
         if winrt_available():
             try:
-                done = asyncio.run(_control_async(action))
+                done = bool(_run_bounded(_control_async(action)))
             except Exception:
                 logger.debug("SMTC control failed", exc_info=True)
         if not done:
