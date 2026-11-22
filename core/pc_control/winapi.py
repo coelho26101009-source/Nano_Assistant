@@ -430,12 +430,22 @@ _SLOT_VOL_SET_MUTE = 14
 _SLOT_VOL_GET_MUTE = 15
 
 _E_RENDER = 0
+_E_CAPTURE = 1
 _E_CONSOLE = 0
 _CLSCTX_ALL = 23
 
 
 class AudioEndpoint:
-    """The default playback device's master volume. Context manager."""
+    """The default playback device's master volume. Context manager.
+
+    ``AudioEndpoint(capture=True)`` opens the default MICROPHONE instead, so
+    NANO can tell when Windows (or a headset's mute button, which many
+    headsets report to Windows) has it muted: "Ei Nano" can never be heard
+    then, and saying so beats listening to silence.
+    """
+
+    def __init__(self, capture: bool = False) -> None:
+        self._flow = _E_CAPTURE if capture else _E_RENDER
 
     def __enter__(self) -> "AudioEndpoint":
         _require_windows()
@@ -450,8 +460,8 @@ class AudioEndpoint:
                 raise OSError("could not create the audio device enumerator")
             if _vcall(self._enumerator, _SLOT_ENUM_GET_DEFAULT_ENDPOINT,
                       (c_int, c_int, POINTER(c_void_p)),
-                      _E_RENDER, _E_CONSOLE, byref(self._device)):
-                raise OSError("no default audio playback device")
+                      getattr(self, "_flow", _E_RENDER), _E_CONSOLE, byref(self._device)):
+                raise OSError("no default audio device")
             volume_iid = _guid(IID_IAudioEndpointVolume)
             if _vcall(self._device, _SLOT_DEVICE_ACTIVATE,
                       (POINTER(_GUID), c_int, c_void_p, POINTER(c_void_p)),

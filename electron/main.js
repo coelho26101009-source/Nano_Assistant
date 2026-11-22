@@ -426,7 +426,15 @@ function onBackendEvent(event, payload) {
       // Paused or played again: the small music pill for a moment, so the
       // hidden island still shows that it took.
       : changed === 'status' ? island.mediaBlip(payload) : null;
-    if (card && !islandStack.has('notice')) islandStack.set('notice', card.view, card.ttl);
+    // The music card already on screen is replaced, not kept: skipping songs
+    // quickly (Fn+F3) used to leave the OLD song's card up for its 5 s, over
+    // the new song. Only a reminder or an alert keeps its place.
+    const showingMusic = islandStack.has('notice') && islandStack.peek('notice').state === 'media';
+    if (changed === 'art' && showingMusic && islandStack.peek('notice').expanded) {
+      // The app swapped in the new song's cover: refresh the open card.
+      const refreshed = island.trackCard(payload);
+      if (refreshed) islandStack.set('notice', refreshed.view, refreshed.ttl);
+    } else if (card && (!islandStack.has('notice') || showingMusic)) islandStack.set('notice', card.view, card.ttl);
     else if (!next && islandStack.peek('notice') && islandStack.peek('notice').state === 'media') islandStack.clear('notice');
     renderIsland();
     return;

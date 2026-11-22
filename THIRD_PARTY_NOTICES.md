@@ -70,6 +70,36 @@ must be confirmed from the project's own `LICENSE` file before distribution. It
 is not optional: it is how eel serves its WebSocket, so it is on the critical
 path of the local control plane.
 
+## Python — speech pack, shipped in the Windows installer since 0.4.0-beta.3
+
+The installer's embedded Python now carries `faster-whisper` and exactly the
+packages it needs (computed from `requirements/optional.lock` by
+`core/voice_setup.py`, installed by `scripts/prepare_windows_runtime.ps1`), so
+"Ei Nano" works on an installed NANO. Licences read from the installed
+packages' metadata. The Whisper **model weights** are still downloaded on the
+person's request, not shipped (see the REVIEW note below).
+
+| Package | Version | Licence |
+| --- | --- | --- |
+| `faster-whisper` | 1.2.1 | MIT |
+| `ctranslate2` | 4.9.0 | MIT |
+| `onnxruntime` | 1.31.1 | MIT |
+| `av` (PyAV) | 19.0.2 | BSD-3-Clause — **its wheel bundles FFmpeg libraries (LGPL-2.1-or-later); REVIEW** |
+| `tokenizers` | 0.23.3 | Apache-2.0 |
+| `huggingface-hub` | 2.4.0 | Apache-2.0 |
+| `hf-xet` | 1.8.0 | Apache-2.0 |
+| `numpy` | 2.5.4 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 |
+| `protobuf` | 7.36.2 | BSD-3-Clause |
+| `flatbuffers` | 25.12.19 | Apache-2.0 |
+| `fsspec` | 2026.9.0 | BSD-3-Clause |
+| `filelock` | 4.2.10 | MIT |
+| `tqdm` | 4.70.1 | MPL-2.0 AND MIT |
+| `click` | 8.5.1 | BSD-3-Clause |
+| `colorama` | 0.4.6 | BSD |
+| `truststore` | 0.10.5 | MIT |
+| `httpx2` / `httpcore2` | 2.16.0 | BSD-3-Clause |
+| Microsoft Visual C++ runtime (`msvcp140*.dll`, copied from the build host) | 14.40 or newer | Microsoft Visual Studio redistributable ("Distributable Code"); app-local, replaces the older copy inside `winrt` — **REVIEW** |
+
 ## Python — optional (`requirements-optional.txt`)
 
 Not installed by default. Licences shown for those present in this development

@@ -3053,6 +3053,12 @@ def _speech_pack_ready() -> None:
     voice.stt_provider.online = True
     _apply_voice_quality()
     logger.info("Pacote de voz instalado; reconhecimento de voz disponível.")
+    # "Ei Nano" was already switched on (before the model was in, or on a
+    # NANO whose installer had no speech recognition): start listening now,
+    # not at the next restart.
+    if CONFIG.get("voice", {}).get("wake_phrase_enabled") and not voice.wake_phrase_provider._engine.running:
+        _start_wake_phrase()
+        _emit_wake_state()
 
 
 try:
@@ -4475,14 +4481,48 @@ def _start_wake_phrase() -> None:
     if not CONFIG.get("voice", {}).get("wake_phrase_enabled", False):
         return
     try:
+        if voice_setup.package_installed() and not voice_setup.model_cached(_wanted_stt_model()):
+            # The ears are installed but the model is not on disk yet. Starting
+            # now would make faster-whisper fetch ~480 MB silently inside the
+            # listening thread; the voice pack downloads it with progress in
+            # Definições > Voz instead, and _speech_pack_ready starts the
+            # listening when it is in. The person switched "Ei Nano" on, which
+            # is the ask for the download.
+            logger.info("Wake phrase waits for the voice model (%s) to download", _wanted_stt_model())
+            speech_pack.start(on_ready=_speech_pack_ready)
+            return
         started = voice.start_wake_phrase(_on_wake_phrase)
         status = voice.wake_phrase_provider.status()
         if started:
             logger.info("Wake phrase started: '%s'", status.get("phrase"))
+            _warn_if_microphone_muted()
         else:
             logger.warning("Wake phrase not started: %s", status.get("error") or "setup required")
     except Exception:
         logger.exception("Error starting wake-phrase")
+
+
+def _warn_if_microphone_muted() -> None:
+    """Say it on the island when "Ei Nano" listens to a muted microphone.
+
+    Seen on Simão's PC: the headset's mute button had the Windows microphone
+    muted, every chunk was exact silence, and "Ei Nano" simply never answered.
+    Only said, never changed: the microphone may be muted on purpose.
+    """
+    try:
+        from core import wake_phrase as _wake_phrase
+
+        if _wake_phrase.microphone_muted() is not True:
+            return
+    except Exception:
+        return
+    logger.warning("Wake phrase is on, but Windows reports the microphone as muted")
+    payload = {"kind": "", "title": tr("Microfone sem som"),
+               "text": tr("O NANO não te consegue ouvir: o microfone está em mute no Windows "
+                          "ou no headset.")}
+    if _DESKTOP_BRIDGE is not None:
+        _desktop_emit("nano_notice", payload)
+    _notify_ui("on_proactive_notice", payload)
 
 @eel.expose
 def get_audio_devices():

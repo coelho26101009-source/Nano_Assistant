@@ -234,3 +234,24 @@ def pytest_itemcollected(item):
     """
     if _CHROMIUM_FIXTURES.intersection(getattr(item, "fixturenames", ())):
         item.add_marker("chromium")
+
+
+import pytest as _pytest
+
+
+@_pytest.fixture(autouse=True)
+def _no_real_microphone_mute_state(monkeypatch):
+    """Never read the test PC's real microphone mute switch.
+
+    core.wake_phrase.microphone_muted asks Windows whether the default
+    microphone is muted. On a PC whose headset happens to be muted, every
+    readiness test then said MIC_MUTED instead of what it was testing. A test
+    about the mute state patches it back in itself.
+    """
+    import importlib
+
+    try:
+        wake_phrase = importlib.import_module("core.wake_phrase")
+    except Exception:
+        return
+    monkeypatch.setattr(wake_phrase, "microphone_muted", lambda *a, **k: None)

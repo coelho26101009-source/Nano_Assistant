@@ -1,4 +1,13 @@
-**Current public release: [`0.4.0-beta.2`](https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.4.0-beta.2)**
+**Current release being prepared: `0.4.0-beta.3`** ("Beta 4", second update),
+prepared on 2026-11-22: the island stays hidden until it is needed, "Ei Nano"
+works on an installed NANO (the speech pack now ships in the installer's
+embedded Python), the island follows track skips, and NANO says when the
+microphone is muted. Users and the site still call it "Beta 4". Release notes:
+[RELEASE_NOTES_0.4.0-beta.3.md](RELEASE_NOTES_0.4.0-beta.3.md). Checksums are
+added here once it is published. The installer is bigger than before (the
+speech pack adds about 220 MB unpacked to the runtime).
+
+Previous update: **[`0.4.0-beta.2`](https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.4.0-beta.2)**
 ("Beta 4", first update), published on 2026-11-22 as a GitHub **pre-release**:
 the same Beta 4 with the island in sober colours. Users and the site still call
 it "Beta 4"; the technical version rises so that installed 0.4.0-beta.1 copies

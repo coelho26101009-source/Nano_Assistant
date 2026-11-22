@@ -1201,3 +1201,39 @@ def test_the_api_key_never_reaches_response_metadata():
         assert forbidden not in body.lower().replace("prompt_tokens", "").replace("max_tokens", ""), (
             f"response metadata may leak {forbidden!r}"
         )
+
+
+def test_a_muted_microphone_is_said_before_anything_else(monkeypatch):
+    # Seen on a real PC: the headset's mute button had Windows' microphone
+    # muted, so "Ei Nano" listened to exact silence and never answered.
+    from core import wake_phrase
+    from core.wake_phrase import WakePhraseEngine, WakePhraseReadiness
+
+    class Mic:
+        _available = True
+        gate = speech_filter.AdaptiveGate()
+        def capture(self, seconds):
+            return _wav(amplitude=0, seconds=0.2)
+
+    class FakeSTT:
+        online = True
+
+    monkeypatch.setattr(wake_phrase, "microphone_muted", lambda *a, **k: True)
+    engine = WakePhraseEngine({"wake_phrase_enabled": True}, lambda t: None,
+                              audio_provider=Mic(), stt_provider=FakeSTT())
+    assert engine.readiness() is WakePhraseReadiness.MIC_MUTED
+    assert "mute" in engine.explain().lower()
+
+
+def test_the_mute_state_is_cached_and_never_read_off_windows(monkeypatch):
+    import sys as _sys
+
+    from core import wake_phrase
+
+    monkeypatch.undo()                       # the real function, not the conftest stub
+    monkeypatch.setattr(_sys, "platform", "linux")
+    assert wake_phrase.microphone_muted() is None
+    monkeypatch.setattr(_sys, "platform", "win32")
+    monkeypatch.setattr(wake_phrase, "_MUTE_CACHE", {"at": 100.0, "value": True})
+    # Within MUTE_CHECK_SECONDS the cached reading is used; Windows is not asked.
+    assert wake_phrase.microphone_muted(now=lambda: 101.0) is True
