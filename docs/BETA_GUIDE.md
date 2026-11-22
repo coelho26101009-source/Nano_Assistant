@@ -1,7 +1,7 @@
-# Nano 0.4.0-beta.1 — guia da Beta
+# Nano 0.4.0-beta.2 — guia da Beta
 
 Esta é uma Beta pública para Windows x64. O instalador
-principal é `Nano-Setup-0.4.0-beta.1-x64.exe` (NSIS, por utilizador). O MSI é
+principal é `Nano-Setup-0.4.0-beta.2-x64.exe` (NSIS, por utilizador). O MSI é
 compilado para validação, mas não é publicado nesta Beta. Python e a interface já vão
 incluídos; o utilizador não precisa de instalar Python, Node.js ou npm.
 

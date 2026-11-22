@@ -1,7 +1,12 @@
-# Releasing Nano
+**Current public release: [`0.4.0-beta.2`](https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.4.0-beta.2)**
+("Beta 4", first update), prepared on 2026-11-22: the same Beta 4 with the
+island in sober colours. Users and the site still call it "Beta 4"; the
+technical version rises so that installed 0.4.0-beta.1 copies update to it.
+Release notes: [RELEASE_NOTES_0.4.0-beta.2.md](RELEASE_NOTES_0.4.0-beta.2.md).
+Checksums are added here once it is published.
 
-**Current public release: [`0.4.0-beta.1`](https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.4.0-beta.1)**
-("Beta 4"), published on 2026-11-21 as a GitHub **pre-release**, the first one
+Beta 4 as first published: [`0.4.0-beta.1`](https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.4.0-beta.1)
+on 2026-11-21 as a GitHub **pre-release**, the first one
 made entirely by CI: Build Windows run on `main` (`b1f180b`) with
 `publish_release`, which created the tag, the release (text from
 [RELEASE_NOTES_0.4.0-beta.1.md](RELEASE_NOTES_0.4.0-beta.1.md)), the signed
@@ -13,6 +18,12 @@ whose installed copies update themselves; 0.3.0-beta.1 is updated by hand once.
 | --- | --- |
 | `Nano-Setup-0.4.0-beta.1-x64.exe` | `a9e633c396884a2e0839489136b5c3b12817127dd7348b5308c5f5926301b081` |
 | `NANO-Android-0.4.0-beta.1.apk` | `1fb233970e349b5f455790a57f9ac3af7a2d1b64ab99c6dec4a26f0de1f443f8` |
+
+**Updates inside one Beta.** A fix or small change to a published Beta keeps
+its user-facing name ("Beta 4") and raises only the prerelease number
+(`0.4.0-beta.1` → `0.4.0-beta.2`): the updater only installs a strictly newer
+version. The notes' first line must still contain `"Beta N"` in quotes, so the
+release title stays "NANO <version> (Beta N)".
 
 Previous: [`0.3.0-beta.1`](https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.3.0-beta.1)
 ("Beta 3", 2026-11-19), notes in

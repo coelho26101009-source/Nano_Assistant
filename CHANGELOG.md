@@ -22,6 +22,22 @@ versioning policy.
 
 ---
 
+## [0.4.0-beta.2] - 2026-11-22
+
+"Beta 4", first update. Release notes: [docs/RELEASE_NOTES_0.4.0-beta.2.md](docs/RELEASE_NOTES_0.4.0-beta.2.md).
+Installed copies of 0.4.0-beta.1 update to it by themselves.
+
+### Changed — the island in sober colours (2026-11-21)
+
+- The island uses a soft black (`#0C0C0D`) instead of pure black, warm
+  off-white text and quiet greys. Each
+  tone (info, accent, success, warning, danger) is desaturated to a hint of
+  colour, so the states stay tellable apart without being vibrant; the ready
+  dot is pale blue. Hard-coded colours in the overlay now go through tokens
+  (`--hairline`, `--tile`, `--text-soft`).
+
+---
+
 ## [0.4.0-beta.1] - 2026-11-21
 
 "Beta 4". Release notes: [docs/RELEASE_NOTES_0.4.0-beta.1.md](docs/RELEASE_NOTES_0.4.0-beta.1.md).
