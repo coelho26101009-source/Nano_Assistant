@@ -1,9 +1,17 @@
 **Current public release: [`0.4.0-beta.2`](https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.4.0-beta.2)**
-("Beta 4", first update), prepared on 2026-11-22: the same Beta 4 with the
-island in sober colours. Users and the site still call it "Beta 4"; the
-technical version rises so that installed 0.4.0-beta.1 copies update to it.
-Release notes: [RELEASE_NOTES_0.4.0-beta.2.md](RELEASE_NOTES_0.4.0-beta.2.md).
-Checksums are added here once it is published.
+("Beta 4", first update), published on 2026-11-22 as a GitHub **pre-release**:
+the same Beta 4 with the island in sober colours. Users and the site still call
+it "Beta 4"; the technical version rises so that installed 0.4.0-beta.1 copies
+update to it. Build Windows run on `main` (`456a0fc`) with `publish_release`
+created the tag, the release (text from
+[RELEASE_NOTES_0.4.0-beta.2.md](RELEASE_NOTES_0.4.0-beta.2.md)), the signed
+`nano-update.json` on `desktop-update` (now `0.4.0-beta.2`, key id
+`d9c6b38f2b29f486`) and the APK.
+
+| Asset | SHA-256 |
+| --- | --- |
+| `Nano-Setup-0.4.0-beta.2-x64.exe` | `ec2411dd5fa420d6f08398431b57ebe7b07d13b61a138fc63a1e439b581aee7f` |
+| `NANO-Android-0.4.0-beta.2.apk` | `9ad3f1e95bdc576e7cd4e68b76fff9c6e5de750fdf8bb379b300bb6ad8599285` |
 
 Beta 4 as first published: [`0.4.0-beta.1`](https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.4.0-beta.1)
 on 2026-11-21 as a GitHub **pre-release**, the first one
