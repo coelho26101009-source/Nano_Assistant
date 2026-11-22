@@ -4,7 +4,7 @@ Groq>=0.11,<1
 httpx>=0.27,<1
 python-dotenv>=1.0,<2
 PyYAML>=6.0,<7
-psutil>=6.0,<7
+psutil>=6.0,<8
 # Reads the text of a PDF attached in the chat (core/attachments.py). Pure Python.
 pypdf>=6.21.4,<7
 edge-tts>=7.0,<8
