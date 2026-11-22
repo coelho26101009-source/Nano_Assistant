@@ -133,6 +133,10 @@ def engine_status() -> dict:
         return {"available": False, "reason": "unsupported_platform",
                 "message": "Ler texto do ecrã só funciona no Windows."}
     try:
+        # Before any winrt import: see core.now_playing._load_onnxruntime_first.
+        from core.now_playing import _load_onnxruntime_first
+
+        _load_onnxruntime_first()
         from winrt.windows.media.ocr import OcrEngine  # type: ignore
     except Exception:
         return {"available": False, "reason": "missing_dependency",

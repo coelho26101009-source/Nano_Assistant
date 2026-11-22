@@ -239,8 +239,17 @@ def _powershell_commands(source: str) -> list[str]:
 
 def test_the_packaged_runtime_installs_only_from_hashed_locks():
     script = REPO_ROOT / "scripts" / "prepare_windows_runtime.ps1"
-    commands = _pip_installs(_powershell_commands(script.read_text(encoding="utf-8")))
-    installed = [_assert_locked_install(command, script.name) for command in commands]
+    text = script.read_text(encoding="utf-8")
+    commands = _pip_installs(_powershell_commands(text))
+    # The speech pack (since 0.4.0-beta.3): a hash-pinned file the script
+    # writes from requirements/optional.lock with core/voice_setup.py, the
+    # exact list the "Preparar a voz" button installs. Checked separately.
+    speech = [command for command in commands if "$speechRequirements" in command]
+    assert len(speech) == 1, f"the speech pack is installed {len(speech)} times"
+    assert "--require-hashes" in speech[0] and "--no-build-isolation" in speech[0]
+    assert "--only-binary=:all:" in speech[0], "the speech pack must never build from source"
+    assert "voice_setup.requirements_text(voice_setup.OPTIONAL_LOCK" in text
+    installed = [_assert_locked_install(command, script.name) for command in commands if command not in speech]
     assert installed == ["build", "runtime"], f"the embedded runtime installs {installed}"
 
 

@@ -150,9 +150,55 @@ def test_the_cover_is_only_asked_for_a_new_song():
         return dict(_song(), art="") if key is None else _song()
 
     watcher = now_playing.NowPlaying(emit=lambda *_: None, media_reader=reader, clock=Clock(1000.0))
-    watcher.media_tick()
-    watcher.media_tick()
-    assert asked == [None, "Spotify.exe|Entropy|Beach Bunny"]
+    for _ in range(2 + now_playing.ART_RECHECKS):
+        watcher.media_tick()
+    # A new song: its cover, then a few more looks (the app may swap it in a
+    # moment late), then never again for the same song.
+    assert asked == [None] * (1 + now_playing.ART_RECHECKS) + ["Spotify.exe|Entropy|Beach Bunny"]
+
+
+def test_a_cover_swapped_in_after_a_skip_reaches_the_island():
+    # Spotify after Fn+F3: the new title arrives with the OLD cover; the right
+    # one shows up a tick later and must be sent, not kept from the island.
+    old, new = "data:image/png;base64,OLD", "data:image/png;base64,NEW"
+    queue = [dict(_song(), art=old),
+             dict(_song(key="Spotify.exe|Next|Band", title="Next", artist="Band", position=0.0), art=old),
+             dict(_song(key="Spotify.exe|Next|Band", title="Next", artist="Band", position=1.0,
+                        position_at=1_001_000.0), art=new)]
+    events = []
+    watcher = now_playing.NowPlaying(emit=lambda e, p: events.append(p), media_reader=lambda _k: queue.pop(0),
+                                     clock=Clock(1000.0))
+    for _ in range(3):
+        watcher.media_tick()
+    assert [(e["changed"], e["title"], e["art"]) for e in events] == [
+        ("track", "Entropy", old), ("track", "Next", old), ("art", "Next", new)]
+
+
+def test_a_stuck_windows_call_does_not_freeze_the_island(monkeypatch):
+    # A WinRT call that ignores cancellation: the reading gives up anyway, and
+    # stuck readers are capped instead of piling up.
+    import threading as _threading
+
+    release = _threading.Event()
+
+    async def stuck(_want_art_for):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            release.wait(5)          # cancelling it hangs too
+
+    monkeypatch.setattr(now_playing, "winrt_available", lambda: True)
+    monkeypatch.setattr(now_playing, "_read_media_async", stuck)
+    monkeypatch.setattr(now_playing, "WINDOWS_CALL_TIMEOUT", 0.05)
+    monkeypatch.setattr(now_playing, "_stuck_readers", [])
+    try:
+        started = time.monotonic()
+        for _ in range(now_playing.MAX_STUCK_READERS + 2):
+            assert now_playing.read_media() is None
+        assert time.monotonic() - started < 2 + now_playing.MAX_STUCK_READERS * 1.2
+        assert len(now_playing._stuck_readers) <= now_playing.MAX_STUCK_READERS
+    finally:
+        release.set()
 
 
 def test_pause_skip_and_seek_are_news_but_playing_on_is_not():

@@ -20,6 +20,37 @@ versioning policy.
 
 ## [Unreleased]
 
+---
+
+## [0.4.0-beta.3] - 2026-11-22
+
+"Beta 4", second update. Release notes: [docs/RELEASE_NOTES_0.4.0-beta.3.md](docs/RELEASE_NOTES_0.4.0-beta.3.md).
+Installed copies of 0.4.0-beta.1 and 0.4.0-beta.2 update to it by themselves.
+
+### Fixed — "Ei Nano" did nothing on an installed NANO (2026-11-22)
+- The installer had no speech recognition: faster-whisper lives in the
+  optional lock, and the "Preparar a voz" button could not install it in an
+  installation (the lock is not packaged, and anything pip put into
+  `resourcespp` would be wiped by the next update). The speech pack
+  (faster-whisper and exactly its locked dependencies, hash-checked) now ships
+  in the embedded runtime, built by `scripts/prepare_windows_runtime.ps1`; the
+  model is still downloaded only on request.
+- Switching "Ei Nano" on before the voice model is on disk downloads it (with
+  progress) instead of letting faster-whisper fetch ~480 MB silently in the
+  listening thread, and listening starts as soon as the voice is ready, not at
+  the next restart.
+- A muted microphone (Windows, or a headset's mute button) is now said on the
+  island ("Microfone sem som") and in Settings, instead of "Ei Nano" quietly
+  listening to exact silence.
+
+### Fixed — the island follows track skips (2026-11-22)
+- Skipping songs quickly (Fn+F3) left the previous song's card on the island;
+  a new song now replaces the music card on screen.
+- The cover is looked at again for a few seconds after a new song, because
+  Spotify names the new song a moment before it swaps the cover.
+- A Windows media call that never answers can no longer freeze the island's
+  music for good: each reading runs on its own thread with a hard limit.
+
 ### Changed — the island stays hidden until it is needed (2026-11-22)
 - The island is no longer always on screen. It comes out for a voice turn, an
   approval, a reminder or alert, a tool at work, the volume or the song

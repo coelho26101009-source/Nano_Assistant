@@ -111,6 +111,63 @@ if ($LASTEXITCODE -ne 0) { throw 'Failed to install the build backend into the e
     --require-hashes -r (Join-Path $root 'requirements\runtime.lock')
 if ($LASTEXITCODE -ne 0) { throw 'Failed to install Nano runtime dependencies.' }
 
+# THE SPEECH PACK SHIPS IN THE RUNTIME. Until 0.4.0-beta.3 the installer had no
+# speech recognition at all: faster-whisper lives in requirements/optional.lock,
+# and the "Preparar a voz" button that pip-installs it at run time could not
+# work in an installation -- optional.lock is not packaged, so it stopped at
+# "lock_missing", and anything pip had put into resources\app would have been
+# wiped by the next automatic update anyway. "Ei Nano" therefore did nothing
+# on an installed NANO. The pack is now installed here, at build time, with
+# exactly the same package list the button uses (core/voice_setup.py computes
+# it from the lock), every download hash-checked. The model itself (~480 MB)
+# is still downloaded only when the person presses "Preparar a voz".
+$speechRequirements = Join-Path $work 'speech-requirements.txt'
+$previousAppRootForSpeech = $env:NANO_APP_ROOT
+$previousDataDirForSpeech = $env:NANO_DATA_DIR
+$speechProbeData = Join-Path $work 'speech-probe-data'
+New-Item -ItemType Directory -Force -Path $speechProbeData | Out-Null
+$env:NANO_APP_ROOT = $root
+$env:NANO_DATA_DIR = $speechProbeData
+try {
+    & $python -c "import os, sys; sys.path.insert(0, os.environ['NANO_APP_ROOT']); from core import voice_setup; text = voice_setup.requirements_text(voice_setup.OPTIONAL_LOCK.read_text(encoding='utf-8')); assert 'faster-whisper==' in text, 'speech pack missing from optional.lock'; open(sys.argv[1], 'w', encoding='utf-8').write(text)" $speechRequirements
+    if ($LASTEXITCODE -ne 0) { throw 'Could not compute the speech pack requirements.' }
+}
+finally {
+    $env:NANO_APP_ROOT = $previousAppRootForSpeech
+    $env:NANO_DATA_DIR = $previousDataDirForSpeech
+}
+& $python -m pip install --disable-pip-version-check --no-warn-script-location `
+    --no-cache-dir --no-build-isolation --only-binary=:all: --index-url https://pypi.org/simple `
+    --require-hashes -r $speechRequirements
+if ($LASTEXITCODE -ne 0) { throw 'Failed to install the speech pack (faster-whisper).' }
+
+# ONE C++ RUNTIME FOR THE WHOLE PROCESS. The winrt wheels (island music,
+# local OCR) carry their own msvcp140.dll, version 14.29. Windows loads a DLL
+# name only once per process, so once winrt was imported, onnxruntime (the
+# Silero voice detector "Ei Nano" listens with) got that old copy and the
+# backend died with 0xC0000005 the moment it loaded -- seen on Simao's PC with
+# the first 0.4.0-beta.3 build. onnxruntime needs 14.40 or newer. The build
+# host's current Microsoft C++ runtime (app-local deployment of these files is
+# allowed by Microsoft) goes next to python.exe and replaces winrt's copy; a
+# newer msvcp140 is backward compatible with code built for an older one.
+$minimumCpp = [version]'14.40.0.0'
+$cppNames = @('msvcp140.dll', 'msvcp140_1.dll', 'msvcp140_2.dll', 'msvcp140_atomic_wait.dll', 'msvcp140_codecvt_ids.dll')
+$systemCpp = Join-Path $env:SystemRoot 'System32\msvcp140.dll'
+if (-not (Test-Path -LiteralPath $systemCpp)) { throw 'The build host has no Microsoft C++ runtime (msvcp140.dll).' }
+$systemCppVersion = [version]((Get-Item -LiteralPath $systemCpp).VersionInfo.FileVersion -split ' ')[0]
+if ($systemCppVersion -lt $minimumCpp) { throw "The build host's msvcp140.dll is $systemCppVersion; onnxruntime needs $minimumCpp or newer." }
+foreach ($name in $cppNames) {
+    $source = Join-Path $env:SystemRoot "System32\$name"
+    if (Test-Path -LiteralPath $source) { Copy-Item -LiteralPath $source -Destination (Join-Path $runtime $name) -Force }
+}
+Get-ChildItem $sitePackages -Recurse -File -Filter 'msvcp140.dll' -ErrorAction SilentlyContinue | ForEach-Object {
+    $version = [version](($_.VersionInfo.FileVersion -split ' ')[0])
+    if ($version -lt $minimumCpp) {
+        Copy-Item -LiteralPath $systemCpp -Destination $_.FullName -Force
+        Write-Host ("  replaced old msvcp140.dll {0} in {1}" -f $version, $_.DirectoryName.Substring($sitePackages.Length + 1))
+    }
+}
+
 # Caches are build-host droppings: they are large, they are not reproducible,
 # and a stale one can shadow a source file that changed.
 Get-ChildItem $runtime -Recurse -Directory -Filter '__pycache__' -ErrorAction SilentlyContinue |
@@ -147,6 +204,19 @@ foreach ($relative in $prunable) {
         Write-Host "  pruned $relative"
     }
 }
+# The speech pack brings numpy, onnxruntime, av and friends, each with its own
+# test folders. electron/scripts/verify-built-package.js refuses any folder
+# named test(s) in the package, so every one left is removed here; the import
+# checks below prove nothing that is imported went with them.
+Get-ChildItem $sitePackages -Recurse -Directory -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -in @('tests', 'test') } |
+    Sort-Object { $_.FullName.Length } -Descending |
+    ForEach-Object {
+        if (Test-Path -LiteralPath $_.FullName) {
+            Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Host ("  pruned " + $_.FullName.Substring($sitePackages.Length + 1))
+        }
+    }
 
 # ---------------------------------------------------------------- verification
 # The runtime is proved by running it, not by trusting that pip exited zero.
@@ -178,6 +248,17 @@ try {
 
     & $python -c "import eel, httpx, groq, psutil, yaml, dotenv, pygame, edge_tts, pyaudio, sqlite3, ssl; print('Nano embedded dependencies OK')"
     if ($LASTEXITCODE -ne 0) { throw 'Embedded dependency import check failed.' }
+
+    # The ears: the transcriber, and the Silero voice detector that "Ei Nano"
+    # listens with (core/listening.py loads it from faster-whisper's assets).
+    & $python -c "import faster_whisper, ctranslate2, av, onnxruntime, tokenizers; from faster_whisper.vad import get_vad_model; get_vad_model(); print('Nano speech pack OK', faster_whisper.__version__)"
+    if ($LASTEXITCODE -ne 0) { throw 'Embedded speech pack import check failed.' }
+
+    # The order the backend really uses: winrt first (the island's music
+    # starts before "Ei Nano"), THEN the voice detector. This is the exact
+    # sequence that crashed with 0xC0000005 when winrt's old msvcp140.dll won.
+    & $python -c "import winrt.windows.media.control; from faster_whisper.vad import get_vad_model; get_vad_model(); print('Nano winrt + voice detector in one process OK')"
+    if ($LASTEXITCODE -ne 0) { throw 'winrt and the voice detector cannot load in one process (C++ runtime clash).' }
 
     # Exactly how the shipped application reaches its own code: the app root
     # arrives through NANO_APP_ROOT, never through the ._pth.

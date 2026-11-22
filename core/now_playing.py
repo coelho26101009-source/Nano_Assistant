@@ -57,6 +57,14 @@ MAX_ART_BYTES = 280_000
 #: controls can leave a call unanswered for ever -- seen with Spotify playing,
 #: where reading the cover never completed -- and the island must not freeze.
 WINDOWS_CALL_TIMEOUT = 4.0
+#: After a new song, its cover is read again on this many more ticks. Spotify
+#: names the new song a moment before it swaps the cover, so the first reading
+#: after a skip (Fn+F3, or the island's own button) can carry the OLD cover.
+ART_RECHECKS = 3
+#: Readings left running past their timeout (a Windows call that never
+#: returns). Beyond this many, no new reading is started until one finishes,
+#: so a stuck media service cannot pile up threads.
+MAX_STUCK_READERS = 3
 ART_TYPES = {"image/png": "png", "image/jpeg": "jpeg", "image/jpg": "jpeg",
              "image/webp": "webp", "image/bmp": "bmp"}
 
@@ -117,9 +125,36 @@ def art_data_url(data: bytes | None, content_type: str | None) -> str:
 
 # ── Reading Windows ─────────────────────────────────────────────────────────
 
+_cpp_runtime_ready = False
+
+
+def _load_onnxruntime_first() -> None:
+    """Load onnxruntime BEFORE winrt, when both are installed.
+
+    The winrt wheels carry an old msvcp140.dll (14.29). Windows loads a DLL
+    name once per process, so after winrt the voice detector's onnxruntime got
+    that copy and NANO's backend crashed with 0xC0000005. Loaded first,
+    onnxruntime brings the current C++ runtime and winrt shares it. The
+    installer also ships a current msvcp140 (scripts/prepare_windows_runtime.ps1);
+    this covers a NANO run from source.
+    """
+    global _cpp_runtime_ready
+    if _cpp_runtime_ready:
+        return
+    _cpp_runtime_ready = True
+    try:
+        import importlib.util
+
+        if "winrt" not in sys.modules and importlib.util.find_spec("onnxruntime") is not None:
+            import onnxruntime  # type: ignore  # noqa: F401
+    except Exception:
+        logger.debug("onnxruntime preload failed", exc_info=True)
+
+
 def winrt_available() -> bool:
     if sys.platform != "win32":
         return False
+    _load_onnxruntime_first()
     try:
         import winrt.windows.media.control  # type: ignore  # noqa: F401
         return True
@@ -199,16 +234,46 @@ def read_media(want_art_for: str | None = None) -> dict | None:
     return _run_bounded(_read_media_async(want_art_for))
 
 
+_stuck_readers: list[threading.Thread] = []
+
+
 def _run_bounded(coroutine):
-    """Run one Windows call, but never for longer than WINDOWS_CALL_TIMEOUT."""
+    """Run one Windows call, but never for longer than WINDOWS_CALL_TIMEOUT.
+
+    On its own thread with its own event loop, and the caller waits at most a
+    second past the timeout. ``asyncio.wait_for`` alone was not enough: when a
+    WinRT call never answers, cancelling it can hang too, and then the island's
+    media loop froze for good -- the song on the island stopped changing when
+    the person skipped tracks (seen with Fn+F3 and Spotify).
+    """
     async def bounded():
         return await asyncio.wait_for(coroutine, WINDOWS_CALL_TIMEOUT)
 
-    try:
-        return asyncio.run(bounded())
-    except (asyncio.TimeoutError, TimeoutError):
-        logger.debug("Windows' media controls did not answer in %.0f s", WINDOWS_CALL_TIMEOUT)
+    _stuck_readers[:] = [t for t in _stuck_readers if t.is_alive()]
+    if len(_stuck_readers) >= MAX_STUCK_READERS:
+        coroutine.close()
+        logger.debug("Windows' media controls are stuck; not asking again yet")
         return None
+    box: dict[str, Any] = {}
+
+    def run() -> None:
+        try:
+            box["value"] = asyncio.run(bounded())
+        except (asyncio.TimeoutError, TimeoutError):
+            logger.debug("Windows' media controls did not answer in %.0f s", WINDOWS_CALL_TIMEOUT)
+        except BaseException as exc:  # handed to the caller below
+            box["error"] = exc
+
+    worker = threading.Thread(target=run, name="nano-smtc-call", daemon=True)
+    worker.start()
+    worker.join(WINDOWS_CALL_TIMEOUT + 1.0)
+    if worker.is_alive():
+        _stuck_readers.append(worker)
+        logger.debug("a Windows media call is stuck; carrying on without it")
+        return None
+    if "error" in box:
+        raise box["error"]
+    return box.get("value")
 
 
 async def _control_async(action: str) -> bool:
@@ -237,6 +302,7 @@ class NowPlaying:
         self._clock = clock
         self._last: dict | None = None
         self._art: tuple[str, str] = ("", "")       # (key, data url)
+        self._art_rechecks = 0
         self._volume: dict | None = None
         self._stop = threading.Event()
         self._wake = threading.Event()
@@ -245,13 +311,22 @@ class NowPlaying:
     # media
     def media_tick(self) -> dict | None:
         """Read the session once; emit and return the payload if it is news."""
+        recheck = self._art_rechecks > 0
         try:
-            reading = self._read_media(self._art[0] or None)
+            reading = self._read_media(None if recheck else (self._art[0] or None))
         except Exception:
             logger.debug("media read failed", exc_info=True)
             reading = None
+        art_changed = False
         if reading is not None and "art" in reading:
-            self._art = (reading["key"], reading.pop("art") or "")
+            art = reading.pop("art") or ""
+            if reading["key"] != self._art[0]:
+                self._art_rechecks = ART_RECHECKS    # a new song: look at its cover again soon
+            elif recheck:
+                self._art_rechecks -= 1
+                art_changed = bool(art) and art != self._art[1]
+                art = art or self._art[1]
+            self._art = (reading["key"], art)
         if reading is None or reading.get("status") not in {"playing", "paused"} or not reading.get("title"):
             if self._last is not None:
                 self._last = None
@@ -260,6 +335,8 @@ class NowPlaying:
                 return payload
             return None
         changed = self._what_changed(reading)
+        if not changed and art_changed and self._last is not None:
+            changed = "art"        # the app swapped in the new song's cover
         if not changed:
             return None
         payload = dict(reading, changed=changed,

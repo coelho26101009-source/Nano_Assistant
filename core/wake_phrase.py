@@ -164,7 +164,43 @@ class WakePhraseReadiness(str, Enum):
     # The thread is alive and chunks are arriving, but they carry no energy.
     # Reporting LISTENING here is a lie: the wake phrase can never fire.
     MIC_SILENT = "MIC_SILENT"
+    # Windows reports the default microphone as muted (often a headset's own
+    # mute button). Every chunk is exact silence: nothing can ever be heard.
+    MIC_MUTED = "MIC_MUTED"
     ERROR = "ERROR"
+
+
+_MUTE_CACHE: dict[str, float | bool | None] = {"at": 0.0, "value": None}
+#: How long one reading of the microphone's mute switch is trusted.
+MUTE_CHECK_SECONDS = 5.0
+
+
+def microphone_muted(now: Callable[[], float] = time.monotonic) -> bool | None:
+    """Whether Windows has the default microphone muted. None: cannot tell.
+
+    Read through Core Audio (the same endpoint API the volume tools use), at
+    most once every MUTE_CHECK_SECONDS. Never changes anything: unmuting is
+    the person's choice, it may be muted for a call on purpose.
+    """
+    import sys
+
+    if sys.platform != "win32":
+        return None
+    moment = now()
+    cached_at = float(_MUTE_CACHE["at"] or 0.0)
+    if cached_at and moment - cached_at < MUTE_CHECK_SECONDS:
+        return _MUTE_CACHE["value"]  # type: ignore[return-value]
+    value: bool | None
+    try:
+        from core.pc_control import winapi
+
+        with winapi.AudioEndpoint(capture=True) as endpoint:
+            value = bool(endpoint.get_mute())
+    except Exception:
+        logger.debug("microphone mute state unavailable", exc_info=True)
+        value = None
+    _MUTE_CACHE.update(at=moment, value=value)
+    return value
 
 
 # How much each analysis window overlaps the previous one. Without overlap a
@@ -463,6 +499,8 @@ class WakePhraseEngine:
             return WakePhraseReadiness.MIC_UNAVAILABLE
         if self.last_error:
             return WakePhraseReadiness.ERROR
+        if microphone_muted() is True:
+            return WakePhraseReadiness.MIC_MUTED
         # Honesty rule: a live thread is not the same as a working microphone.
         # If chunks are arriving with no energy at all, say so instead of
         # cheerfully reporting "A ouvir" while nothing can ever be heard.
@@ -475,6 +513,9 @@ class WakePhraseEngine:
     def explain(self) -> str:
         """A sentence the UI can show the user, in Portuguese."""
         readiness = self.readiness()
+        if readiness == WakePhraseReadiness.MIC_MUTED:
+            return ("O microfone está sem som (mute) no Windows ou no headset, por isso o "
+                    "Nano não te consegue ouvir. Liga o som do microfone.")
         if readiness == WakePhraseReadiness.MIC_SILENT:
             return ("O Nano não está a receber áudio suficiente do microfone. "
                     "Verifica o dispositivo de entrada e o nível de captura no Windows.")

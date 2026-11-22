@@ -371,4 +371,7 @@ EN: dict[str, str] = {
     "Fontes": "Sources",
     "Diz o que queres que eu investigue.": "Tell me what you want me to research.",
     "Não encontrei resultados na internet para isso. Verifica a ligação ou reformula a pergunta.": "I found no results on the internet for that. Check the connection or rephrase the question.",
+    # "Ei Nano" listening to a muted microphone (core/main.py).
+    "Microfone sem som": "Microphone muted",
+    "O NANO não te consegue ouvir: o microfone está em mute no Windows ou no headset.": "NANO can't hear you: the microphone is muted in Windows or on your headset.",
 }
