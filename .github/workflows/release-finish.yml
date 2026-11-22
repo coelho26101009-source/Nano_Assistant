@@ -1,0 +1,107 @@
+name: Finish a release (update feed + Android)
+
+# ONE CLICK TO FINISH A RELEASE THAT STOPPED HALF WAY. "Build Nano Windows"
+# with "Publish a GitHub Release" does three things in order: publish the
+# release (installer + checksums), sign the automatic-update feed, and start
+# the Android build that attaches the APK. On 2026-11-22 the release of
+# 0.4.0-beta.3 was published but the feed was refused (the GitHub account had
+# been renamed, see build-windows.yml), so installed copies were not offered
+# it and the APK was never attached. Building again is not possible (the tag
+# exists) and not needed (the installer is already public).
+#
+# This workflow, run on main, takes the version from version.json and:
+#   1. downloads that release's installer and checks it against the release's
+#      own SHA256SUMS.txt,
+#   2. signs nano-update.json for it and puts it on `desktop-update`, so every
+#      installed NANO is offered the update,
+#   3. starts the Android workflow on the tag, unless the APK is already there.
+# It never builds, never changes the release text and never moves a tag.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  finish:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      # Only to start the Android workflow on the tag (last step).
+      actions: write
+    steps:
+      # Only the signer, the feed rules it checks against, and the version.
+      - uses: actions/checkout@v7
+        with:
+          path: src
+          sparse-checkout: |
+            scripts/update_feed.mjs
+            electron/lib
+            version.json
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Download the published installer and check it
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version=$(jq -r .product src/version.json)
+          tag="v${version}"
+          exe="Nano-Setup-${version}-x64.exe"
+          gh release view "$tag" > /dev/null || { echo "::error::Release $tag does not exist: publish it with Build Nano Windows first."; exit 1; }
+          mkdir installers
+          gh release download "$tag" --pattern "$exe" --pattern SHA256SUMS.txt --dir installers
+          (cd installers && tr -d '\r' < SHA256SUMS.txt | grep "  ${exe}\$" | sha256sum -c -)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "exe=$exe" >> "$GITHUB_OUTPUT"
+
+      - name: Sign the update feed
+        env:
+          NANO_UPDATE_SIGNING_KEY: ${{ secrets.NANO_UPDATE_SIGNING_KEY }}
+          # The path every installed NANO accepts (electron/lib/update-feed.js
+          # REPO_PATH); GitHub redirects it to the renamed account.
+          NANO_RELEASE_REPO: coelho26101009-source/Nano_Assistant
+        run: |
+          version="${{ steps.release.outputs.version }}"
+          tag="${{ steps.release.outputs.tag }}"
+          exe="${{ steps.release.outputs.exe }}"
+          node src/scripts/update_feed.mjs sign --product nano-desktop --channel beta \
+            --version "$version" \
+            --url "https://github.com/${NANO_RELEASE_REPO}/releases/download/${tag}/${exe}" \
+            --notes "https://github.com/${NANO_RELEASE_REPO}/releases/tag/${tag}" \
+            --file "installers/${exe}" --out nano-update.json
+
+      - name: Publish the update feed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ! gh release view desktop-update > /dev/null 2>&1; then
+            gh release create desktop-update --prerelease --target "${GITHUB_SHA}" \
+              --title "NANO desktop update feed" \
+              --notes "Not a download. Installed copies of NANO read nano-update.json here to find the newest Beta. The installers are on each version's own release."
+          fi
+          gh release upload desktop-update nano-update.json --clobber
+
+      - name: Build and attach the Android app (if it is not there yet)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="${{ steps.release.outputs.tag }}"
+          apk="NANO-Android-${{ steps.release.outputs.version }}.apk"
+          if gh release view "$tag" --json assets -q '.assets[].name' | grep -qx "$apk"; then
+            echo "$apk is already on $tag."
+          else
+            gh workflow run android.yml --ref "$tag"
+            echo "Started the Android workflow on $tag; it attaches $apk in a few minutes."
+          fi

@@ -1,11 +1,28 @@
-**Current release being prepared: `0.4.0-beta.3`** ("Beta 4", second update),
-prepared on 2026-11-22: the island stays hidden until it is needed, "Ei Nano"
-works on an installed NANO (the speech pack now ships in the installer's
-embedded Python), the island follows track skips, and NANO says when the
-microphone is muted. Users and the site still call it "Beta 4". Release notes:
-[RELEASE_NOTES_0.4.0-beta.3.md](RELEASE_NOTES_0.4.0-beta.3.md). Checksums are
-added here once it is published. The installer is bigger than before (the
-speech pack adds about 220 MB unpacked to the runtime).
+**Current public release: [`0.4.0-beta.3`](https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.4.0-beta.3)**
+("Beta 4", second update), published on 2026-11-22 as a GitHub **pre-release**
+by Build Windows on `main` (`4df09d1`): the island stays hidden until it is
+needed, "Ei Nano" works on an installed NANO (the speech pack now ships in the
+installer's embedded Python), the island follows track skips, and NANO says
+when the microphone is muted. Users and the site still call it "Beta 4".
+Release notes: [RELEASE_NOTES_0.4.0-beta.3.md](RELEASE_NOTES_0.4.0-beta.3.md).
+The installer is bigger than before (~200 MB; the speech pack adds about
+220 MB unpacked to the runtime).
+
+| File | SHA-256 |
+| --- | --- |
+| `Nano-Setup-0.4.0-beta.3-x64.exe` | `07226bc4e5e4108ff43de32a20b5e0fe17edffae5e865c4ef7dc0719b16e06be` |
+
+**The account was renamed.** GitHub now calls the repository
+`coelho97sc/Nano_Assistant`; the old `coelho26101009-source` URLs redirect.
+Installed NANO apps only accept update downloads under the OLD path
+(`electron/lib/update-feed.js`, `mobile/src/lib/updates.ts`), so the feed
+signers use that path explicitly, never `github.repository`. The first
+publish of 0.4.0-beta.3 used `github.repository`, the signer refused it
+(`feed_bad_url`), and the release came out without its update feed or APK.
+**Finish a release (update feed + Android)** (`.github/workflows/release-finish.yml`,
+run on `main`) completes such a release: it checks the published installer
+against the release's checksums, signs and publishes the feed, and starts the
+Android workflow on the tag.
 
 Previous update: **[`0.4.0-beta.2`](https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.4.0-beta.2)**
 ("Beta 4", first update), published on 2026-11-22 as a GitHub **pre-release**:
