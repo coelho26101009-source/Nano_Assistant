@@ -106,6 +106,7 @@
     island.dataset.state = pick(view.state, 'idle');
     island.dataset.tone = pick(view.tone, 'neutral');
     island.dataset.icon = pick(view.icon, 'mark');
+    island.dataset.wake = view.wake ? 'true' : 'false';
     if (view.lang) document.documentElement.lang = view.lang === 'en' ? 'en' : 'pt';
     layout(view);
 
@@ -119,7 +120,8 @@
     const idleHint = $('idle-hint');
     idleHint.textContent = '';
     if (view.size === 'idle' && view.hint) {
-      idleHint.append(document.createTextNode(view.hint + ' '));
+      // Listening for its name: 'Diz "Ei Nano" ou' before the shortcut.
+      idleHint.append(document.createTextNode((view.wake ? view.wake : view.hint) + ' '));
       for (const key of ['Ctrl', 'Shift', view.lang === 'en' ? 'Space' : 'Espaço']) {
         const kbd = document.createElement('kbd');
         kbd.textContent = key;

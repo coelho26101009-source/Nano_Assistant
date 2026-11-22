@@ -68,7 +68,7 @@ export default function VoiceSetupCard({ compact = false, onWakePhrase }: {
           </p>
           {!setup.wakePhraseEnabled && !wakeAnswered && onWakePhrase && (
             <div className="card" style={{ padding: 12, marginTop: 8 }}>
-              <p style={{ marginBottom: 8 }}>{t("Queres ligar a frase de ativação “{0}”? O NANO fica à escuta no teu PC, sem enviar nada, e gasta um pouco de processador.", { 0: phrase })}</p>
+              <p style={{ marginBottom: 8 }}>{t("Queres chamar o NANO só com a voz, dizendo “{0}”? Fica à escuta apenas no teu PC: nada sai do PC até o chamares, e podes desligar quando quiseres.", { 0: phrase })}</p>
               <div className="inline">
                 <Button size="sm" variant="primary" onClick={() => { onWakePhrase(true); setWakeAnswered(true); void refresh(); }}>{t("Sim, ligar")}</Button>
                 <Button size="sm" variant="ghost" onClick={() => setWakeAnswered(true)}>{t("Agora não")}</Button>

@@ -40,6 +40,9 @@ const TTL = Object.freeze({
   chatDone: 1300,
   volume: 1800,
   track: 5000,
+  // Play / pause pressed (on the keyboard, in Spotify, or by NANO): the
+  // hidden island shows it for a moment and goes away again.
+  mediaBlip: 2600,
   // A paused song stays a little while (press play again), then the island
   // goes back to rest.
   paused: 30000,
@@ -256,6 +259,35 @@ function trackCard(payload) {
   };
 }
 
+/**
+ * The song was paused or played again. With the island hidden at rest, the
+ * small music pill shows for a moment so the person sees it took, then goes.
+ */
+function mediaBlip(payload) {
+  const next = fromMedia(payload);
+  if (!next) return null;
+  return { view: next.view, ttl: TTL.mediaBlip };
+}
+
+/* ── Calling the island with the mouse ───────────────────────────────────── */
+
+/**
+ * Where the pointer calls the hidden island: the top edge of a screen, around
+ * its centre, where the island lives. Only the very top rows count, so moving
+ * across the screen or reaching for a tab does not call it; the pointer has to
+ * be pushed up against the edge (see PEEK in main.js for the short wait).
+ */
+const PEEK_ZONE = Object.freeze({ halfWidth: 260, depth: 3 });
+
+function inPeekZone(cursor, bounds, zone = PEEK_ZONE) {
+  if (!cursor || !bounds) return false;
+  const { x, y } = cursor;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  const centre = bounds.x + bounds.width / 2;
+  return y >= bounds.y && y < bounds.y + zone.depth
+    && Math.abs(x - centre) <= zone.halfWidth;
+}
+
 /** The system volume changed: a level bar, briefly. */
 function fromVolume(payload) {
   const data = payload && typeof payload === 'object' ? payload : {};
@@ -376,18 +408,26 @@ class IslandStack {
    * only keeps showing a voice turn (as the voice capsule always did) and
    * otherwise steps aside instead of covering NANO's own title bar.
    * `context.alwaysVisible`: the resting pill stays on screen when nothing is
-   * happening ("Modo ambiente"); off, the island appears only for activity.
+   * happening. Off (the default since Simão asked for it), the island is
+   * HIDDEN at rest and only comes out for a moment that matters: a voice turn,
+   * an approval, a reminder or alert, a tool at work, the volume or the song
+   * changing. A song that simply keeps playing is not such a moment, so the
+   * music pill waits underneath until the island is called.
+   * `context.peek`: the person called the island (the pointer at the top of
+   * the screen). It shows what is underneath: the song, or the resting pill.
    */
   current(context = {}) {
     this.prune();
+    const resting = Boolean(context.alwaysVisible || context.peek);
     for (const layer of LAYERS) {
       if (context.mainFocused && layer !== 'voice') continue;
+      if (layer === 'media' && !resting) continue;
       const entry = this.layers.get(layer);
       if (entry) {
         return { visible: true, layer, ...entry.view, since: entry.view.clock ? entry.since : 0 };
       }
     }
-    if (context.alwaysVisible && !context.mainFocused) return { ...IDLE };
+    if (resting && !context.mainFocused) return { ...IDLE };
     return null;
   }
 }
@@ -402,6 +442,7 @@ class IslandStack {
 const EN = Object.freeze({
   'NANO': 'NANO',
   'Para falar': 'To talk',
+  'Diz "{0}" ou': 'Say "{0}" or',
   'Clica para decidir no NANO': 'Click to decide in NANO',
   'A pensar…': 'Thinking…',
   'A executar…': 'Working…',
@@ -489,6 +530,8 @@ function translate(view, language) {
     label: line(label, 80),
     detail: line(detail, 160),
     hint: view.hint ? say(view.hint, lang) : '',
+    // Listening for its name: the resting pill says what to say.
+    wake: view.wake ? fill(say('Diz "{0}" ou', lang), [line(view.wake, 40)]) : '',
     since: view.since || 0,
     media: view.media || null,
     expanded: view.expanded === true,
@@ -503,7 +546,8 @@ function languageOf(tag) {
 }
 
 module.exports = {
-  EN, IDLE, LAYERS, MEDIA_ACTIONS, TOOL_LABELS, TTL,
+  EN, IDLE, LAYERS, MEDIA_ACTIONS, PEEK_ZONE, TOOL_LABELS, TTL,
   IslandStack, fromApproval, fromChatActivity, fromMedia, fromNotice, fromReminder,
-  fromVoiceView, fromVolume, humaniseTool, languageOf, say, trackCard, translate,
+  fromVoiceView, fromVolume, humaniseTool, inPeekZone, languageOf, mediaBlip, say, trackCard,
+  translate,
 };

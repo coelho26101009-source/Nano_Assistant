@@ -186,8 +186,26 @@ transparent, always-on-top (above full-screen apps), `skipTaskbar`,
 `focusable: false`, click-through except over the pill, placed on the display
 under the cursor when it appears.
 
-Shapes: a small resting pill (shown while NANO is idle when "Modo ambiente" is
-on, the default; hover shows the shortcut), a compact pill (listening with a
+**Hidden at rest (2026-11-22, Simão's request).** By default the island is
+not on screen when nothing is happening. It comes out for a voice turn, an
+approval, a reminder or alert, a tool at work while NANO is not in front, the
+volume changing (1.8 s), a new song (5 s card) or play/pause (2.6 s pill), and
+when it is **called with the mouse**: main.js reads the pointer every 110 ms
+(`screen.getCursorScreenPoint`, no window catches the mouse) and, when it has
+been against the top edge of a display within 260 px of its centre for 220 ms
+(`island.inPeekZone`), shows what is underneath (the song, or the resting
+pill) until the pointer has been away from both the edge and the pill for
+1.1 s. It slides down from behind the top edge and back up (`ISLAND_EXIT_MS`
+380 ms). A song that simply keeps playing no longer keeps the island on
+screen. `desktop-state.json` stores `islandMode: 'hidden' | 'always'`; the old
+`islandAlwaysVisible` key is ignored on purpose (it was true for everyone).
+"Ilha sempre no ecrã" (Settings → Geral, tray) brings the old resting pill back.
+When the backend says it is listening for its name (`wake_state` event), the
+resting pill's hover text says `Diz "Ei Nano" ou Ctrl Shift Espaço`, and the
+tray shows and switches "Ouvir "Ei Nano"" (control op `set_wake_phrase`).
+
+Shapes: a small resting pill (shown at rest only when "Ilha sempre no ecrã" is
+on, or when called; hover shows the shortcut), a compact pill (listening with a
 real elapsed clock, thinking, speaking, done), a wide pill (a tool step, a
 choice, an error), a card (approval, reminder, PC alert, download, briefing),
 the volume bar, and the music player (cover, title, artist, progress,

@@ -135,7 +135,7 @@ e o que aconteceu.
 ### A ilha do NANO (Modo ambiente)
 Antes, na pasta do NANO, instala as bibliotecas novas uma vez:
 `python -m pip install --require-hashes --no-build-isolation -r requirements\runtime.lock`
-- [ ] 36. Com o NANO aberto e a janela minimizada, aparece uma pílula preta pequena em cima, ao centro. Passa o rato por cima: cresce e mostra `Ctrl Shift Espaço`. Clicar abre o NANO.
+- [ ] 36. (Mudou a 2026-11-22, ver itens 53 a 55.) Com **Ilha sempre no ecrã** ligado, aparece uma pílula preta pequena em cima, ao centro. Passa o rato por cima: cresce e mostra `Ctrl Shift Espaço`. Clicar abre o NANO.
 - [ ] 37. Com a janela do NANO à frente, a ilha esconde-se; minimiza o NANO e ela volta.
 - [ ] 38. `Ctrl+Shift+Espaço`: a ilha passa a "A ouvir…" com o tempo a contar e barras a mexer, depois "A processar…", "A falar…" e "Pronto".
 - [ ] 39. Escreve no telemóvel (ou no NANO e minimiza logo) "pesquisa na web o tempo em Lisboa": a ilha mostra "A pensar…" e depois "A pesquisar na web…".
@@ -143,7 +143,7 @@ Antes, na pasta do NANO, instala as bibliotecas novas uma vez:
 - [ ] 41. Cria um lembrete para daqui a 1 minuto e minimiza o NANO: quando chega, a ilha abre um cartão com o sino a tocar.
 - [ ] 42. Abre o **Spotify** e põe uma música: a ilha abre o leitor com a capa e o nome durante uns segundos e depois fica pequena com a capa e barras a mexer. Passa o rato por cima: aparecem a barra de tempo e os botões anterior / pausa / seguinte. Experimenta os três.
 - [ ] 43. Muda o volume (teclas do teclado ou o ícone do som do Windows): a ilha mostra "Volume" com a barra a acompanhar. Tira o som: mostra "Sem som".
-- [ ] 44. No ícone do NANO no tabuleiro: "Ilha sempre no ecrã (modo ambiente)" desligado esconde a pílula quando não há nada a mostrar; "Ilha do NANO" desligado esconde-a por completo. As mesmas opções estão em **Definições → Geral**.
+- [ ] 44. No ícone do NANO no tabuleiro: "Ilha sempre no ecrã" ligado deixa a pílula sempre lá; desligado (o normal) esconde-a quando não há nada a mostrar; "Ilha do NANO" desligado esconde-a por completo. As mesmas opções estão em **Definições → Geral**.
 
 ### Investigação profunda com fontes (P2)
 - [ ] 45. Escreve no chat `investiga a fundo se vale a pena trocar a GTX 1660 Ti por uma RTX 4060`. Enquanto trabalha aparece "A investigar a fundo: várias pesquisas e sítios…" (e na ilha "A investigar a fundo…"). Demora uns 15 a 40 segundos.
@@ -156,6 +156,21 @@ Antes, na pasta do NANO, instala as bibliotecas novas uma vez:
 - [ ] 50. Em **Conversas antigas**, carrega em **Editar**, muda a decisão para `Ficou a RTX 4070` e guarda. Pergunta outra vez numa conversa nova: o NANO usa a tua versão.
 - [ ] 51. Carrega em **Esquecer** nessa conversa: passa para **Esquecidas** e o NANO deixa de a lembrar (a conversa continua na barra lateral). **Voltar a lembrar** trá-la de volta.
 - [ ] 52. **Definições → Memória → Lembrar conversas antigas** desligado: o NANO deixa de lembrar outras conversas.
+
+### Ilha escondida, "Ei Nano" e ouvir até acabares (2026-11-22)
+Antes: atualiza a pasta do NANO e corre `NANO_DESKTOP.bat` como sempre. A voz
+tem de estar preparada (item 31).
+- [ ] 53. **Ilha escondida.** Com o NANO minimizado e nada a acontecer, não se vê ilha nenhuma. Encosta o rato ao **topo do ecrã, ao centro**, e espera meio segundo: a ilha desce a deslizar. Afasta o rato: passado um segundo sobe e desaparece.
+- [ ] 54. Com o rato em cima da ilha chamada, ela não foge. Se a voz por nome estiver ligada (item 56), mostra `Diz "Ei Nano" ou Ctrl Shift Espaço`. Clicar abre o NANO.
+- [ ] 55. Com música no Spotify: a ilha **não** fica sempre à vista. Muda de música: o cartão aparece uns segundos e some. Pausa / continua (teclas do teclado): a pílula da música aparece uns 2 segundos. Muda o volume: aparece a barra e some. Encosta o rato ao topo: aparece a música com os botões.
+- [ ] 56. **Definições → Voz → Chamar o NANO por voz**: liga "Ouvir “ei nano”". O Windows mostra o ícone do microfone na barra de tarefas. No ícone do NANO no tabuleiro aparece "Ouvir "Ei Nano"" com visto, e ao passar o rato no ícone diz "A ouvir...".
+- [ ] 57. Com o NANO minimizado diz **"Ei Nano"** e pára: ouves o som de confirmação, a ilha mostra "A ouvir…", e depois dizes o pedido (ex.: "que horas são?"). Repara que o NANO **pára de gravar logo que acabas de falar**, não espera 7 segundos.
+- [ ] 58. Diz tudo de uma vez: **"Ei Nano, abre o Bloco de Notas"**. O NANO não pergunta outra vez: faz logo (ou pede autorização, se for preciso).
+- [ ] 59. **Enganos:** conversa normalmente perto do PC (ou põe um vídeo do YouTube a falar) durante 2 minutos, incluindo frases como "o nano é fixe". O NANO **não** deve acordar. Anota se acordar sozinho e com que frase.
+- [ ] 60. Desliga "Ouvir "Ei Nano"" no tabuleiro: o visto sai, o ícone do microfone do Windows desaparece, e "Ei Nano" deixa de funcionar. O atalho `Ctrl+Shift+Espaço` continua a funcionar.
+- [ ] 61. Com o atalho, diz uma frase comprida (uns 10 segundos, com uma pausa pequena a meio para respirar). O NANO não te corta a meio. Se cortar, em **Definições → Voz → Como o NANO te ouve** aumenta "Pausa que termina o pedido" e repete.
+- [ ] 62. (Opcional, ~1,6 GB) **Qualidade do reconhecimento → Melhor**: descarrega o modelo maior. Depois experimenta frases difíceis (nomes, barulho de fundo). Anota se percebe melhor e quanto tempo a mais demora. Volta a **Rápida** se ficar lento demais.
+- [ ] 63. Muda a língua para inglês (**Definições → Geral → Idioma**): a frase passa a "Hey Nano" e funciona da mesma maneira.
 
 ---
 

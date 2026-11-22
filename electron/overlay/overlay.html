@@ -48,6 +48,7 @@
     /* A spring with a small overshoot: the shape settles like a liquid. */
     --spring: cubic-bezier(0.3, 1.32, 0.45, 1);
     --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --ease-in: cubic-bezier(0.55, 0, 0.7, 0.25);
     --morph: 520ms;
   }
 
@@ -83,18 +84,24 @@
       box-shadow 300ms ease;
     cursor: pointer;
   }
+  /* Hidden: tucked up behind the top edge of the screen. It slides down
+     from there when it is called (the spring above gives the small settle)
+     and slides back up when it goes, shrinking as it leaves. main.js waits
+     for this exit (ISLAND_EXIT_MS) before it hides the window. */
   #island[data-visible="false"] {
-    --w: 34px; --h: 34px; --r: 17px;
+    --w: 96px; --h: 30px; --r: 15px;
     opacity: 0;
-    transform: translateX(-50%) translateY(-10px) scale(.55);
+    transform: translateX(-50%) translateY(-60px) scale(.7);
     pointer-events: none;
     transition:
-      width 260ms var(--ease-out), height 260ms var(--ease-out),
-      border-radius 260ms var(--ease-out), transform 300ms var(--ease-out), opacity 220ms ease;
+      width 300ms var(--ease-in), height 300ms var(--ease-in),
+      border-radius 300ms var(--ease-in), transform 360ms var(--ease-in),
+      opacity 240ms ease 110ms;
   }
 
   #island[data-size="idle"]    { --w: 128px; --h: 34px; --r: 17px; }
   #island[data-size="idle"][data-hover="true"] { --w: 336px; --h: 40px; --r: 20px; }
+  #island[data-size="idle"][data-hover="true"][data-wake="true"] { --w: 420px; }
   #island[data-size="compact"] { --w: 300px; --h: 42px; --r: 21px; }
   #island[data-size="wide"]    { --w: 380px; --h: 62px; --r: 27px; }
   #island[data-size="card"]    { --w: 432px; --h: 108px; --r: 34px; }

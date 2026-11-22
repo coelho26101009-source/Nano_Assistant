@@ -243,6 +243,9 @@ export type SettingsPayload = {
     enabled: boolean; ttsEnabled: boolean; wakePhrase: string;
     wakePhraseEnabled: boolean; allowNanoOnly: boolean;
     cooldownSeconds: number; commandTimeoutSeconds: number; state: string;
+    // Listening ends after this pause; recognition quality (model) choice.
+    endSilenceSeconds?: number; quality?: "fast" | "best"; sttModel?: string;
+    wakeMode?: string | null; wakeDetector?: string | null;
     // Typing and talking are separate conversations.
     typedChatTts: boolean; voiceReplyTts: boolean;
     // Continuous conversation: listen again after answering; barge-in.

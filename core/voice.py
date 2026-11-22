@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Iterable
 
-from core import speech_filter
+from core import listening, speech_filter
 from core.wake_word import WakeWordEngine
 from core.wake_phrase import WakePhraseEngine, WakePhraseState
 
@@ -178,6 +178,16 @@ class LocalWakeWordProvider(WakeWordProvider):
     name = "local_wake_word"
 
 
+def _accepts_keyword(func: Callable[..., Any], name: str) -> bool:
+    import inspect
+
+    try:
+        params = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
 class WakePhraseProvider(BaseProvider):
     """Wraps WakePhraseEngine ("Hey Nano") the same way WakeWordProvider wraps
     the ONNX/Porcupine engine: this is a second, independent local wake path
@@ -197,6 +207,12 @@ class WakePhraseProvider(BaseProvider):
 
     def _dispatch_wake(self, transcript: str) -> None:
         if self._callback is None:
+            return
+        # "Ei Nano, abre o Spotify": the request heard with the phrase goes
+        # along, so the turn does not ask for it again.
+        command = self._engine.take_command()
+        if command and _accepts_keyword(self._callback, "command"):
+            self._callback(transcript, command=command)
             return
         self._callback(transcript)
 
@@ -293,6 +309,12 @@ class LocalSTTProvider(SpeechToTextProvider):
     def __init__(self, config: dict | None = None):
         super().__init__(config)
         self._model = None
+        # The model the cached instance was built as: "Melhor qualidade"
+        # changes stt.model at run time, and the next pass must notice.
+        self._model_built: str | None = None
+        # With the big model chosen, the quick wake check keeps using small:
+        # the big one's encoder would cost seconds on every utterance heard.
+        self._quick = None
         self.online = importlib.util.find_spec("faster_whisper") is not None
 
     @property
@@ -350,7 +372,7 @@ class LocalSTTProvider(SpeechToTextProvider):
         somebody noticed the transcripts had got worse again. It contains no
         audio, no transcript and no secret.
         """
-        if self._model is not None:
+        if self._model is not None and self._model_built in (None, self.model_name):
             return self._model
 
         from faster_whisper import WhisperModel
@@ -361,6 +383,7 @@ class LocalSTTProvider(SpeechToTextProvider):
             device=self.device,
             compute_type=self.compute_type,
         )
+        self._model_built = self.model_name
         hint = self.vocabulary_hint
         logger.info(
             "STT model loaded: model=%s device=%s compute_type=%s language=%s "
@@ -370,7 +393,36 @@ class LocalSTTProvider(SpeechToTextProvider):
         )
         return self._model
 
-    def transcribe(self, audio_bytes: bytes) -> VoiceResult:
+    def _ensure_quick_model(self):
+        """The model for the quick pass: small when the big one is chosen."""
+        if not self.model_name.startswith("large"):
+            return self._ensure_model()
+        if self._quick is not None:
+            return self._quick
+        try:
+            from core import voice_setup
+
+            if not voice_setup.model_cached("small"):
+                return self._ensure_model()
+            from faster_whisper import WhisperModel
+
+            self._quick = WhisperModel("small", device=self.device, compute_type=self.compute_type)
+            logger.info("STT quick model loaded: small (wake check)")
+            return self._quick
+        except Exception:
+            logger.debug("quick model unavailable; using the main one", exc_info=True)
+            return self._ensure_model()
+
+    def transcribe_quick(self, audio_bytes: bytes) -> VoiceResult:
+        """A fast pass for a short clip (the wake phrase check).
+
+        Greedy decoding on audio the voice detector already cut to speech: a
+        fraction of a full pass on a two-second clip, with the same model, so
+        nothing extra is loaded into memory.
+        """
+        return self.transcribe(audio_bytes, quick=True)
+
+    def transcribe(self, audio_bytes: bytes, *, quick: bool = False) -> VoiceResult:
         if not self.online:
             return VoiceResult(
                 text="",
@@ -380,12 +432,19 @@ class LocalSTTProvider(SpeechToTextProvider):
                 error="STT not available locally",
             )
         try:
-            model = self._ensure_model()
+            model = self._ensure_quick_model() if quick else self._ensure_model()
 
             options: dict[str, Any] = {
                 "language": self.decode_language,
                 "vad_filter": True,
             }
+            if quick:
+                options.update({
+                    "beam_size": 1,
+                    "vad_filter": False,
+                    "condition_on_previous_text": False,
+                    "without_timestamps": True,
+                })
             hint = self.vocabulary_hint
             if hint:
                 options["initial_prompt"] = hint
@@ -771,6 +830,83 @@ class AudioInputProvider(BaseProvider):
             wav.setframerate(rate)
             wav.writeframes(raw)
         return buffer.getvalue()
+
+    def read_block(self) -> bytes | None:
+        """One raw block (1024 samples of 16-bit PCM) from the open stream."""
+        stream = self._stream
+        if stream is None:
+            return None
+        try:
+            return stream.read(self._FRAMES_PER_BUFFER, exception_on_overflow=False)
+        except Exception as exc:
+            logger.warning("[Mic] stream read failed: %s", exc)
+            return None
+
+    def capture_utterance(self, config: "listening.EndpointConfig | None" = None, *,
+                          detector: Any = None) -> "tuple[bytes | None, listening.Utterance | None]":
+        """Record ONE utterance: from when the person starts talking until they stop.
+
+        Replaces the fixed window for a voice turn: the recording ends after a
+        short pause instead of always running for seven seconds, and a longer
+        request is no longer cut off. Returns (wav, utterance); wav is None
+        when the microphone gave no audio, and empty when nobody spoke.
+        """
+        if not self._available:
+            raise ProviderError("microphone unavailable")
+
+        def finish(utterance: "listening.Utterance | None", rate: int):
+            if utterance is None:
+                return None, None
+            return (self._to_wav(utterance.pcm, rate) if utterance.pcm else b""), utterance
+
+        if self._stream is not None:
+            rate = self._stream_rate or self.sample_rate
+            chosen = detector or listening.make_detector(self.gate, prefer_silero=rate == listening.SAMPLE_RATE)
+            return finish(listening.record_utterance(self.read_block, chosen, config, sample_rate=rate), rate)
+
+        with _PORTAUDIO_LOCK:
+            audio = None
+            stream = None
+            rate = self.sample_rate
+            try:
+                import pyaudio
+
+                audio = pyaudio.PyAudio()
+                stream = audio.open(
+                    format=pyaudio.paInt16,
+                    channels=self.channels,
+                    rate=rate,
+                    input=True,
+                    input_device_index=self.device_index,
+                    frames_per_buffer=self._FRAMES_PER_BUFFER,
+                )
+                one_shot = stream
+
+                def read_block() -> bytes | None:
+                    try:
+                        return one_shot.read(self._FRAMES_PER_BUFFER, exception_on_overflow=False)
+                    except Exception as exc:
+                        logger.warning("[Mic] read failed: %s", exc)
+                        return None
+
+                chosen = detector or listening.make_detector(self.gate, prefer_silero=rate == listening.SAMPLE_RATE)
+                utterance = listening.record_utterance(read_block, chosen, config, sample_rate=rate)
+            except Exception as exc:  # pragma: no cover - depends on host environment
+                logger.warning("microphone capture failed: %s", exc)
+                raise ProviderError(str(exc)) from exc
+            finally:
+                if stream is not None:
+                    try:
+                        stream.stop_stream()
+                        stream.close()
+                    except Exception:
+                        pass
+                if audio is not None:
+                    try:
+                        audio.terminate()
+                    except Exception:
+                        pass
+        return finish(utterance, rate)
 
     def capture(self, duration_seconds: int = 5, sample_rate: int | None = None) -> bytes | None:
         """Record one bounded chunk.
@@ -1353,8 +1489,29 @@ class VoiceRuntime:
         finally:
             self.session.cancel()
 
+    #: Listening ends after this pause (Settings > Voz), unless configured.
+    DEFAULT_END_SILENCE = 0.8
+    #: The longest request one turn records.
+    MAX_UTTERANCE_SECONDS = 15.0
+
+    def endpointing(self) -> bool:
+        """Stop recording when the person stops talking. On by default."""
+        return bool(self._voice_cfg().get("voice_endpointing", True))
+
+    def endpoint_config(self, start_timeout: float) -> "listening.EndpointConfig":
+        cfg = self._voice_cfg()
+        try:
+            end_silence = float(cfg.get("voice_end_silence_seconds", self.DEFAULT_END_SILENCE))
+        except (TypeError, ValueError):
+            end_silence = self.DEFAULT_END_SILENCE
+        return listening.EndpointConfig(
+            start_timeout=float(start_timeout),
+            end_silence=end_silence,
+            max_seconds=self.MAX_UTTERANCE_SECONDS,
+        ).bounded()
+
     async def process_wake_word_turn(self, *, duration_seconds: int | None = None,
-                                     follow_up: bool = False) -> dict:
+                                     follow_up: bool = False, command: str = "") -> dict:
         """One wake turn: listen for a command, or cancel cleanly if none comes.
 
         The critical rule here is that silence must never become a request.
@@ -1370,14 +1527,29 @@ class VoiceRuntime:
             self._publish("VoiceError", {"session_id": self.session.session_id, "error": "voice_disabled"})
             return {"ok": False, "error": "voice_disabled"}
 
+        if command and command.strip():
+            # "Ei Nano, abre o Spotify": the request came in the same breath as
+            # the wake phrase, already transcribed. Nothing more to record.
+            return await self._process_spoken_command(command.strip(), follow_up=follow_up)
+
         window = duration_seconds or self.command_timeout_seconds
         self.session.start_listening()
         self._publish("VoiceCommandListening", {"session_id": self.session.session_id, "timeout": window})
 
+        provider = self.voice.input_provider
+        capture_utterance = getattr(provider, "capture_utterance", None)
+        utterance = None
         try:
-            audio = await asyncio.get_running_loop().run_in_executor(
-                None, lambda: self.voice.input_provider.capture(window)
-            )
+            if self.endpointing() and callable(capture_utterance) and getattr(provider, "_available", True):
+                # Listen until the person stops talking (core/listening.py):
+                # `window` is now how long NANO waits for them to START.
+                config = self.endpoint_config(window)
+                audio, utterance = await asyncio.get_running_loop().run_in_executor(
+                    None, lambda: capture_utterance(config))
+            else:
+                audio = await asyncio.get_running_loop().run_in_executor(
+                    None, lambda: provider.capture(window)
+                )
         except ProviderError as exc:
             self.session.error(str(exc))
             self._publish("VoiceError", {"session_id": self.session.session_id, "error": "microphone_failed"})
@@ -1390,7 +1562,7 @@ class VoiceRuntime:
         # then rejected. The log said the same sentence either way, so the one
         # number that would have identified the bug -- the measured energy next
         # to the threshold it was compared against -- was never written down.
-        if not audio:
+        if not audio and utterance is None:
             self.session.cancel()
             self._publish("VoiceWakeCancelled", {"session_id": self.session.session_id,
                                                  "reason": "no_audio"})
@@ -1400,7 +1572,14 @@ class VoiceRuntime:
                     "detail": "O microfone nao devolveu audio nenhum."}
 
         gate = self.voice.input_provider.gate
-        if not self._command_has_speech(audio):
+        heard = utterance is not None and utterance.heard_speech
+        if utterance is not None:
+            logger.info("Voice turn: utterance %s after %.1fs (speech %.1fs, detector=%s)",
+                        utterance.reason, utterance.seconds, utterance.speech_seconds, utterance.detector)
+        # Silero heard a voice: trust it, it is the better judge in a noisy
+        # room. Otherwise the calibrated energy gate decides, as before.
+        trusted = heard and utterance.detector == "silero"
+        if (utterance is not None and not heard) or (not trusted and not self._command_has_speech(audio)):
             self.session.cancel()
             self._publish("VoiceWakeCancelled", {"session_id": self.session.session_id,
                                                  "reason": "no_speech"})
@@ -1418,8 +1597,13 @@ class VoiceRuntime:
 
         self.session.transcribing()
         self._phase("TRANSCRIBING", "A transcrever…")
-        result = self.voice.stt_provider.transcribe(audio)
+        result = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: self.voice.stt_provider.transcribe(audio))
         transcript = (result.text or "").strip() if result.ok else ""
+        return await self._process_spoken_command(transcript, follow_up=follow_up)
+
+    async def _process_spoken_command(self, transcript: str, *, follow_up: bool) -> dict:
+        """A transcribed request: check it is real, then hand it to the Brain."""
 
         if not transcript or not speech_filter.is_usable_command(transcript):
             self.session.cancel()
@@ -1563,8 +1747,12 @@ class VoiceRuntime:
         duration_seconds: int | None = None,
         chime: bool = True,
         speak: bool = True,
+        command: str = "",
     ) -> dict:
         """One complete spoken turn, from acknowledgement to silence.
+
+        ``command``: a request already heard together with the wake phrase
+        ("Ei Nano, abre o Spotify"). The first exchange then skips recording.
 
         THIS IS THE ONLY PLACE THE CHOREOGRAPHY LIVES. It used to be inlined in
         main._on_wake_phrase, which meant any second trigger -- the global
@@ -1634,7 +1822,8 @@ class VoiceRuntime:
                 result = await self._one_exchange(
                     source, transcript=transcript if first is None else "",
                     duration_seconds=duration_seconds if first is None else self.follow_up_seconds(),
-                    speak=speak, follow_up=first is not None)
+                    speak=speak, follow_up=first is not None,
+                    command=command if first is None else "")
                 if first is None:
                     first = result
                 else:
@@ -1687,7 +1876,7 @@ class VoiceRuntime:
                                                          self.DEFAULT_FOLLOW_UP_SECONDS))))
 
     async def _one_exchange(self, source: str, *, transcript: str, duration_seconds: int | None,
-                            speak: bool, follow_up: bool) -> dict:
+                            speak: bool, follow_up: bool, command: str = "") -> dict:
         """Listen, answer, speak: one question and its answer inside a turn."""
         self._mark("mark_command_listening")
         self._phase("COMMAND_LISTENING", "A ouvir comando…")
@@ -1706,7 +1895,7 @@ class VoiceRuntime:
             self._live_speaker = speaker
         try:
             result = await self.process_wake_word_turn(duration_seconds=duration_seconds,
-                                                       follow_up=follow_up)
+                                                       follow_up=follow_up, command=command)
         except BaseException:
             if speaker is not None:
                 speaker.cancel()

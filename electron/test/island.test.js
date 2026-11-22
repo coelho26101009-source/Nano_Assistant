@@ -95,7 +95,8 @@ test('the most important layer wins, and the others come back after it', () => {
   stack.approvalResolved('r1');
   assert.strictEqual(stack.current().layer, 'chat');
   clock.t += 10001;
-  assert.strictEqual(stack.current().layer, 'media', 'thinking expired; the song is still playing');
+  assert.strictEqual(stack.current(), null, 'thinking expired; a playing song alone keeps the island hidden');
+  assert.strictEqual(stack.current({ peek: true }).layer, 'media', 'called: the song is still playing');
 });
 
 test('two approvals are counted, and one answered leaves the other', () => {
@@ -108,10 +109,46 @@ test('two approvals are counted, and one answered leaves the other', () => {
   assert.strictEqual(island.translate(stack.current(), 'pt').label, 'O NANO precisa da tua aprovação');
 });
 
-test('at rest: the small pill in ambient mode, nothing otherwise', () => {
+test('at rest: hidden, unless set to stay on screen or called', () => {
   const { stack } = stackWithClock();
   assert.strictEqual(stack.current({ alwaysVisible: true }).layer, 'idle');
   assert.strictEqual(stack.current({ alwaysVisible: false }), null);
+  assert.strictEqual(stack.current({ peek: true }).layer, 'idle', 'called: the resting pill comes out');
+  assert.strictEqual(stack.current({ peek: true, mainFocused: true }), null, 'NANO in front: it stays aside');
+});
+
+test('a song that keeps playing waits until the island is called', () => {
+  const { stack } = stackWithClock();
+  const playing = { status: 'playing', title: 'Entropy', artist: 'Beach Bunny', key: 'k' };
+  stack.set('media', island.fromMedia(playing).view, 0);
+  assert.strictEqual(stack.current(), null, 'hidden at rest, even with music on');
+  assert.strictEqual(stack.current({ peek: true }).state, 'media', 'called: the music pill');
+  assert.strictEqual(stack.current({ alwaysVisible: true }).state, 'media');
+  // Something that matters still comes out on its own.
+  stack.set('hud', island.fromVolume({ level: 40 }).view, 1800);
+  assert.strictEqual(stack.current().state, 'volume');
+});
+
+test('pausing or playing again shows the music pill for a moment', () => {
+  const blip = island.mediaBlip({ status: 'paused', title: 'Entropy', key: 'k' });
+  assert.strictEqual(blip.view.state, 'media');
+  assert.strictEqual(blip.view.label, 'Em pausa');
+  assert.strictEqual(blip.ttl, island.TTL.mediaBlip);
+  assert.strictEqual(island.mediaBlip({ status: 'none' }), null);
+});
+
+test('the pointer calls the island only at the top edge, near the centre', () => {
+  const screenBounds = { x: 0, y: 0, width: 1920, height: 1080 };
+  assert.strictEqual(island.inPeekZone({ x: 960, y: 0 }, screenBounds), true);
+  assert.strictEqual(island.inPeekZone({ x: 960 + 250, y: 1 }, screenBounds), true);
+  assert.strictEqual(island.inPeekZone({ x: 960, y: 40 }, screenBounds), false, 'a tab, not the edge');
+  assert.strictEqual(island.inPeekZone({ x: 100, y: 0 }, screenBounds), false, 'the corner is not the island');
+  // A second screen to the right, a little higher.
+  const second = { x: 1920, y: -200, width: 2560, height: 1440 };
+  assert.strictEqual(island.inPeekZone({ x: 1920 + 1280, y: -200 }, second), true);
+  assert.strictEqual(island.inPeekZone({ x: 1920 + 1280, y: 0 }, second), false);
+  assert.strictEqual(island.inPeekZone(null, screenBounds), false);
+  assert.strictEqual(island.inPeekZone({ x: NaN, y: 0 }, screenBounds), false);
 });
 
 test('with NANO in front, only a voice turn stays on the island', () => {
@@ -176,39 +213,113 @@ function bootedShell({ ready = true } = {}) {
   const overlay = api.state().overlayWindow;
   overlay.finishLoad();
   if (ready) { api.setIslandReady(true); api.renderIsland(); }
-  return { api, overlay, main: api.state().mainWindow, record: stub.record };
+  return { api, overlay, main: api.state().mainWindow, record: stub.record, stub };
 }
 
 const lastState = (overlay) => overlay.sent.filter((m) => m.channel === 'nano:overlay-state').at(-1).payload;
 
 suite('island in the shell');
 
-test('ambient mode: once NANO is up the resting pill is on screen', () => {
-  const { overlay, main } = bootedShell();
-  main.hide();
-  assert.strictEqual(overlay.isVisible(), true);
-  assert.strictEqual(lastState(overlay).size, 'idle');
-});
+const waitForExit = () => new Promise((resolve) => setTimeout(resolve, 420));
 
-test('ambient mode off: nothing at rest, the island appears for activity', async () => {
+test('by default the island is hidden at rest and appears for activity', async () => {
   const { api, overlay, main } = bootedShell();
   main.hide();
-  api.setIslandAlwaysVisible(false);
-  await new Promise((resolve) => setTimeout(resolve, 220));
+  api.renderIsland();
+  await waitForExit();
   assert.strictEqual(overlay.isVisible(), false);
   api.onBackendEvent('chat_activity', { phase: 'thinking' });
   assert.strictEqual(overlay.isVisible(), true);
   assert.strictEqual(lastState(overlay).state, 'thinking');
 });
 
+test('"Ilha sempre no ecrã": the resting pill stays on screen', () => {
+  const { api, overlay, main } = bootedShell();
+  main.hide();
+  api.setIslandAlwaysVisible(true);
+  assert.strictEqual(overlay.isVisible(), true);
+  assert.strictEqual(lastState(overlay).size, 'idle');
+  assert.strictEqual(api.state().shellState.islandMode, 'always');
+});
+
+test('the pointer held at the top calls the island, and leaving sends it back', async () => {
+  const { api, overlay, main, stub } = bootedShell();
+  main.hide();
+  let cursor = { x: 960, y: 0 };
+  stub.electron.screen.getCursorScreenPoint = () => cursor;
+  stub.electron.screen.getDisplayNearestPoint = () => ({ bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+    workArea: { x: 0, y: 0, width: 1920, height: 1040 } });
+  api.peekTick(1000);
+  assert.strictEqual(api.state().peekActive, false, 'a pass across the edge is not a call');
+  api.peekTick(1300);
+  assert.strictEqual(api.state().peekActive, true);
+  assert.strictEqual(overlay.isVisible(), true);
+  assert.strictEqual(lastState(overlay).size, 'idle');
+  cursor = { x: 960, y: 500 };
+  api.peekTick(1400);
+  assert.strictEqual(api.state().peekActive, true, 'it lingers a moment');
+  api.peekTick(2700);
+  assert.strictEqual(api.state().peekActive, false);
+  assert.strictEqual(lastState(overlay).visible, false, 'it slides away on its own');
+  api.syncPeekWatcher();
+});
+
+test('a pointer resting on the called island keeps it out', () => {
+  const { api, overlay, main, stub } = bootedShell();
+  main.hide();
+  let cursor = { x: 960, y: 0 };
+  stub.electron.screen.getCursorScreenPoint = () => cursor;
+  stub.electron.screen.getDisplayNearestPoint = () => ({ bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+    workArea: { x: 0, y: 0, width: 1920, height: 1040 } });
+  api.peekTick(1000);
+  api.peekTick(1300);
+  api.onIslandPointer({ sender: overlay.webContents }, true);
+  cursor = { x: 960, y: 30 };
+  api.peekTick(1500);
+  api.peekTick(5000);
+  assert.strictEqual(api.state().peekActive, true);
+  api.onIslandPointer({ sender: overlay.webContents }, false);
+  api.peekTick(5100);
+  api.peekTick(6300);
+  assert.strictEqual(api.state().peekActive, false);
+});
+
+test('listening for its name: the tray can switch it, the resting pill says it', () => {
+  const { api, overlay, main } = bootedShell();
+  main.hide();
+  const requests = [];
+  api.setBackend({ running: true, request: (op, args) => { requests.push([op, args]); return Promise.resolve({}); } });
+  api.onBackendEvent('ui_language', { lang: 'pt-PT' });
+  api.onBackendEvent('wake_state', { enabled: true, listening: true, phrase: 'ei nano' });
+  assert.deepStrictEqual(api.state().wakeState, { enabled: true, listening: true, phrase: 'ei nano' });
+  api.setIslandAlwaysVisible(true);
+  assert.strictEqual(lastState(overlay).wake, 'Diz "Ei Nano" ou');
+  api.onBackendEvent('ui_language', { lang: 'en' });
+  assert.strictEqual(lastState(overlay).wake, 'Say "Ei Nano" or');
+  api.onBackendEvent('wake_state', { enabled: false, listening: false, phrase: 'ei nano' });
+  assert.strictEqual(lastState(overlay).wake, '');
+  api.setWakePhrase(true);
+  assert.deepStrictEqual(requests.at(-1), ['set_wake_phrase', { enabled: true }]);
+});
+
+test('with the island set to stay on screen, the pointer is not watched', () => {
+  const { api, main } = bootedShell();
+  main.hide();
+  api.setIslandAlwaysVisible(true);
+  api.peekTick(1000);
+  api.peekTick(2000);
+  assert.strictEqual(api.state().peekActive, false);
+});
+
 test('the island steps aside while NANO is in front, and comes back', () => {
   const { api, overlay, main } = bootedShell();
+  api.onBackendEvent('chat_activity', { phase: 'thinking' });
   main.show();                         // the stub focuses it
   api.renderIsland();
   assert.strictEqual(lastState(overlay).visible, false, 'NANO already shows all of it');
   main.hide();
   main.emit('hide');
-  assert.strictEqual(lastState(overlay).size, 'idle');
+  assert.strictEqual(lastState(overlay).state, 'thinking');
 });
 
 test('an approval shows until it is resolved, and never restores NANO', () => {
@@ -220,7 +331,7 @@ test('an approval shows until it is resolved, and never restores NANO', () => {
   assert.strictEqual(view.detail, 'APAGAR FICHEIRO — a.txt');
   assert.strictEqual(main.isVisible(), false);
   api.onBackendEvent('approval', { phase: 'resolved', id: 'r1' });
-  assert.strictEqual(lastState(overlay).size, 'idle');
+  assert.strictEqual(lastState(overlay).visible, false, 'answered: the island hides again');
 });
 
 test('a reminder, a PC alert and a download each show on the island', () => {
@@ -248,7 +359,7 @@ test('a new song opens the player briefly; volume shows its level', () => {
   api.onBackendEvent('media', { status: 'none' });
   api.state().islandStack.clear('hud');
   api.renderIsland();
-  assert.strictEqual(lastState(overlay).size, 'idle', 'the song stopped: back to rest');
+  assert.strictEqual(lastState(overlay).visible, false, 'the song stopped: hidden again');
 });
 
 test('the island\'s signals are only accepted from the island window', () => {
@@ -286,5 +397,5 @@ test('switching the island off hides even an approval, and says so in the log', 
   main.hide();
   api.setOverlayEnabled(false);
   api.onBackendEvent('approval', { phase: 'request', id: 'r', action: 'X' });
-  assert.strictEqual(lastState(overlay).visible, false);
+  assert.strictEqual(overlay.isVisible(), false);
 });

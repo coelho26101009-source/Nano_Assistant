@@ -95,6 +95,8 @@ if ((process.env.NANO_DISABLE_GPU === '1' || process.argv.includes('--disable-gp
 // player), a slight grow on hover and its shadow. Transparent and
 // click-through outside the pill, so the empty corners never get in the way.
 const OVERLAY_SIZE = { width: 540, height: 210 };
+/** How long the island takes to slide back up before its window hides. */
+const ISLAND_EXIT_MS = 380;
 
 /* ── Process state ──────────────────────────────────────────────────────── */
 
@@ -152,7 +154,28 @@ function recordFailure(code) {
 const shortcutState = { accelerator: ACTIVATION_ACCELERATOR, registered: false, error: null };
 
 /** Persisted desktop-shell preferences. Not user data — that lives in DATA_DIR. */
-let shellState = { bounds: null, overlayEnabled: true, islandAlwaysVisible: true, autoUpdate: true };
+let shellState = { bounds: null, overlayEnabled: true, islandMode: 'hidden', autoUpdate: true };
+
+/**
+ * Calling the hidden island with the mouse: push the pointer against the top
+ * edge of a screen, near the centre, and hold it there for a moment. The
+ * position is read a few times a second (one cheap call, no window catching
+ * the mouse); nothing is polled while the island is set to stay on screen.
+ */
+const PEEK = Object.freeze({ pollMs: 110, holdMs: 220, lingerMs: 1100 });
+let peekTimer = null;
+let peekActive = false;
+let peekZoneSince = 0;
+let peekAwaySince = 0;
+/** The pointer is over the pill (the island's own signal). */
+let islandPointerInside = false;
+
+/**
+ * Whether NANO is listening for "Ei Nano" / "Hey Nano" (the backend's
+ * wake_state event). Shown in the tray, where it can also be switched off,
+ * and on the island's resting pill. Never anything that was heard.
+ */
+let wakeState = { enabled: false, listening: false, phrase: '' };
 
 function log(...parts) {
   console.log('[NANO]', ...parts);
@@ -172,8 +195,11 @@ function loadShellState() {
       shellState = {
         bounds: parsed.bounds && typeof parsed.bounds === 'object' ? parsed.bounds : null,
         overlayEnabled: parsed.overlayEnabled !== false,
-        // Modo ambiente: the resting pill stays on screen unless switched off.
-        islandAlwaysVisible: parsed.islandAlwaysVisible !== false,
+        // The island at rest: 'hidden' (the default, also for anyone who had
+        // the old "Modo ambiente" switched on -- Simão asked for the island to
+        // stay out of the way) or 'always'. The old islandAlwaysVisible key is
+        // deliberately not read: it was saved as true for everybody.
+        islandMode: parsed.islandMode === 'always' ? 'always' : 'hidden',
         // On unless the person switched it off in Settings.
         autoUpdate: parsed.autoUpdate !== false,
       };
@@ -364,6 +390,18 @@ function onBackendEvent(event, payload) {
     }
     return;
   }
+  if (event === 'wake_state') {
+    const data = payload && typeof payload === 'object' ? payload : {};
+    wakeState = {
+      enabled: data.enabled === true,
+      listening: data.listening === true,
+      phrase: typeof data.phrase === 'string' ? data.phrase.slice(0, 40) : '',
+    };
+    islandLastSent = '';
+    refreshTrayMenu();
+    renderIsland();
+    return;
+  }
   if (event === 'chat_activity') {
     const next = island.fromChatActivity(payload);
     if (next) { islandStack.set('chat', next.view, next.ttl); renderIsland(); }
@@ -383,7 +421,11 @@ function onBackendEvent(event, payload) {
     else islandStack.clear('media');
     // A new song opens the player for a moment -- unless a reminder or an
     // alert is on screen, which matter more than a track change.
-    const card = payload && payload.changed === 'track' ? island.trackCard(payload) : null;
+    const changed = payload && payload.changed;
+    const card = changed === 'track' ? island.trackCard(payload)
+      // Paused or played again: the small music pill for a moment, so the
+      // hidden island still shows that it took.
+      : changed === 'status' ? island.mediaBlip(payload) : null;
     if (card && !islandStack.has('notice')) islandStack.set('notice', card.view, card.ttl);
     else if (!next && islandStack.peek('notice') && islandStack.peek('notice').state === 'media') islandStack.clear('notice');
     renderIsland();
@@ -904,8 +946,10 @@ function currentIslandView() {
     && mainWindow.isVisible() && mainWindow.isFocused());
   const view = islandStack.current({
     mainFocused,
-    alwaysVisible: shellState.islandAlwaysVisible && islandReady && !isQuitting,
+    alwaysVisible: shellState.islandMode === 'always' && islandReady && !isQuitting,
+    peek: peekActive && islandReady && !isQuitting,
   });
+  if (view && view.layer === 'idle' && wakeState.listening) view.wake = wakeDisplayPhrase();
   return view ? island.translate(view, islandLanguage || systemLanguage()) : null;
 }
 
@@ -1004,13 +1048,70 @@ function hideOverlay(destroy = false) {
   overlayExitTimer = setTimeout(() => {
     if (!exitingWindow.isDestroyed()) exitingWindow.hide();
     overlayExitTimer = null;
-  }, 190);
+  }, ISLAND_EXIT_MS);
 }
 
 /** The pointer entered or left the pill: catch clicks only over the pill. */
 function onIslandPointer(event, inside) {
   if (!overlayWindow || overlayWindow.isDestroyed() || event.sender !== overlayWindow.webContents) return;
+  islandPointerInside = inside === true;
   overlayWindow.setIgnoreMouseEvents(inside !== true, { forward: true });
+}
+
+/* ── Calling the hidden island with the mouse ───────────────────────────── */
+
+function peekWanted() {
+  return shellState.overlayEnabled && shellState.islandMode !== 'always' && islandReady && !isQuitting;
+}
+
+/** Start or stop watching the pointer, to match the settings. */
+function syncPeekWatcher() {
+  if (peekWanted()) {
+    if (!peekTimer) {
+      peekTimer = setInterval(peekTick, PEEK.pollMs);
+      if (typeof peekTimer.unref === 'function') peekTimer.unref();
+    }
+    return;
+  }
+  clearInterval(peekTimer);
+  peekTimer = null;
+  peekZoneSince = 0;
+  peekAwaySince = 0;
+  if (peekActive) { peekActive = false; renderIsland(); }
+}
+
+/**
+ * One look at the pointer. In the zone long enough: the island comes out.
+ * Away from both the zone and the pill for a little while: it goes back.
+ */
+function peekTick(now = Date.now()) {
+  if (!peekWanted()) { syncPeekWatcher(); return; }
+  let cursor = null;
+  let bounds = null;
+  try {
+    cursor = screen.getCursorScreenPoint();
+    const display = screen.getDisplayNearestPoint(cursor);
+    bounds = display.bounds || display.workArea;
+  } catch (_) {
+    return;
+  }
+  const inZone = island.inPeekZone(cursor, bounds);
+  if (!peekActive) {
+    if (!inZone) { peekZoneSince = 0; return; }
+    if (!peekZoneSince) { peekZoneSince = now; return; }
+    if (now - peekZoneSince < PEEK.holdMs) return;
+    peekActive = true;
+    peekAwaySince = 0;
+    renderIsland();
+    return;
+  }
+  if (inZone || islandPointerInside) { peekAwaySince = 0; return; }
+  if (!peekAwaySince) { peekAwaySince = now; return; }
+  if (now - peekAwaySince < PEEK.lingerMs) return;
+  peekActive = false;
+  peekZoneSince = 0;
+  peekAwaySince = 0;
+  renderIsland();
 }
 
 /**
@@ -1032,13 +1133,17 @@ function onIslandOpen(event) {
   showMainWindow();
 }
 
-/** "Modo ambiente": keep the resting pill on screen. */
+/**
+ * Keep the resting pill on screen ('always'), or keep the island hidden until
+ * something happens or it is called ('hidden', the default).
+ */
 function setIslandAlwaysVisible(enabled) {
-  shellState.islandAlwaysVisible = Boolean(enabled);
+  shellState.islandMode = enabled ? 'always' : 'hidden';
   saveShellState();
+  syncPeekWatcher();
   renderIsland();
   refreshTrayMenu();
-  return shellState.islandAlwaysVisible;
+  return shellState.islandMode === 'always';
 }
 
 /* ── Global activation shortcut ─────────────────────────────────────────── */
@@ -1289,7 +1394,9 @@ const TRAY_TEXT = {
     hide: 'Hide NANO',
     island: 'NANO island',
     islandOff: 'NANO island  (off)',
-    ambient: 'Keep the island on screen (ambient mode)',
+    ambient: 'Keep the island on screen',
+    wake: (phrase) => `Listen for "${phrase}"`,
+    tipWake: (phrase) => `\nListening for "${phrase}" (on this PC only)`,
     autoLaunch: 'Start with Windows',
     restart: 'Restart NANO',
     quit: 'Quit NANO',
@@ -1304,7 +1411,9 @@ const TRAY_TEXT = {
     hide: 'Ocultar o NANO',
     island: 'Ilha do NANO',
     islandOff: 'Ilha do NANO  (desligada)',
-    ambient: 'Ilha sempre no ecrã (modo ambiente)',
+    ambient: 'Ilha sempre no ecrã',
+    wake: (phrase) => `Ouvir "${phrase}"`,
+    tipWake: (phrase) => `\nA ouvir "${phrase}" (só neste PC)`,
     autoLaunch: 'Iniciar com o Windows',
     restart: 'Reiniciar o NANO',
     quit: 'Sair do NANO',
@@ -1345,6 +1454,7 @@ function refreshTrayMenu() {
       click: (item) => {
         shellState.overlayEnabled = item.checked;
         saveShellState();
+        syncPeekWatcher();
         renderIsland();
         refreshTrayMenu();
         reportShortcutToBackend();
@@ -1353,9 +1463,17 @@ function refreshTrayMenu() {
     {
       label: text.ambient,
       type: 'checkbox',
-      checked: shellState.islandAlwaysVisible,
+      checked: shellState.islandMode === 'always',
       enabled: shellState.overlayEnabled,
       click: (item) => { setIslandAlwaysVisible(item.checked); },
+    },
+    {
+      // On/off for listening by name. Off is one click away, always.
+      label: text.wake(wakeDisplayPhrase()),
+      type: 'checkbox',
+      checked: wakeState.enabled,
+      enabled: Boolean(backend && backend.running),
+      click: (item) => { setWakePhrase(item.checked); },
     },
     { type: 'separator' },
     {
@@ -1375,9 +1493,24 @@ function refreshTrayMenu() {
   // The island being off is easy to acquire and was previously invisible:
   // it simply never appeared. Say so where it was switched off.
   const panelNote = shellState.overlayEnabled ? '' : text.tipIslandOff;
+  const wakeNote = wakeState.listening ? text.tipWake(wakeDisplayPhrase()) : '';
   tray.setToolTip((shortcutState.registered
     ? text.tip(humanAccelerator())
-    : text.tipUnavailable) + panelNote);
+    : text.tipUnavailable) + panelNote + wakeNote);
+}
+
+/** "ei nano" -> "Ei Nano", for the tray and the island. */
+function wakeDisplayPhrase() {
+  const phrase = String(wakeState.phrase || '').trim()
+    || ((islandLanguage || systemLanguage()) === 'pt' ? 'ei nano' : 'hey nano');
+  return phrase.replace(/\b\p{L}/gu, (letter) => letter.toUpperCase()).slice(0, 40);
+}
+
+/** The tray switch: ask the backend to turn listening by name on or off. */
+function setWakePhrase(enabled) {
+  if (!backend || !backend.running) return;
+  backend.request('set_wake_phrase', { enabled: enabled === true })
+    .catch((err) => log('set_wake_phrase failed:', err.message));
 }
 
 /* ── Restart and quit ───────────────────────────────────────────────────── */
@@ -1483,7 +1616,7 @@ function registerRendererIpc() {
     shortcutRegistered: shortcutState.registered,
     shortcutError: shortcutState.error,
     overlayEnabled: shellState.overlayEnabled,
-    islandAlwaysVisible: shellState.islandAlwaysVisible,
+    islandAlwaysVisible: shellState.islandMode === 'always',
     autoLaunch: autoLaunchInfo(),
     dataDir: canonicalDataDir(process.env),
     packaged: !IS_DEV,
@@ -1492,6 +1625,7 @@ function registerRendererIpc() {
   ipcMain.handle('nano:set-overlay-enabled', (_event, enabled) => {
     shellState.overlayEnabled = Boolean(enabled);
     saveShellState();
+    syncPeekWatcher();
     renderIsland();
     refreshTrayMenu();
     reportShortcutToBackend();
@@ -1595,8 +1729,9 @@ if (!gotLock) {
       createTray();
       createOverlayWindow();
       registerShortcut();
-      // Modo ambiente: the resting pill appears once NANO is really up.
+      // The island (and calling it with the mouse) starts once NANO is up.
       islandReady = true;
+      syncPeekWatcher();
       renderIsland();
       startUpdater();
       log(`Nano Desktop pronto em http://127.0.0.1:${port}`);
@@ -1664,6 +1799,8 @@ module.exports = {
     onIslandOpen,
     onIslandMedia,
     setIslandAlwaysVisible,
+    syncPeekWatcher,
+    peekTick,
     setBackend: (value) => { backend = value; },
     setIslandReady: (value) => { islandReady = Boolean(value); },
     createOverlayWindow,
@@ -1674,7 +1811,9 @@ module.exports = {
     onBackendEvent,
     quitNano,
     desktopDiagnostics,
-    state: () => ({ overlayWindow, mainWindow, overlayReady, shellState, islandStack, islandLanguage }),
+    state: () => ({ overlayWindow, mainWindow, overlayReady, shellState, islandStack, islandLanguage, peekActive,
+      wakeState }),
+    setWakePhrase,
     setOverlayEnabled: (value) => { shellState.overlayEnabled = value; },
     reset: () => {
       clearTimeout(overlayHideTimer); clearTimeout(overlayExitTimer); clearTimeout(islandExpiryTimer);
@@ -1683,7 +1822,10 @@ module.exports = {
       overlayWindow = null; mainWindow = null; overlayReady = false;
       pendingOverlayView = null; isQuitting = false;
       frontendReady = false; lastErrorCode = null;
-      shellState = { bounds: null, overlayEnabled: true, islandAlwaysVisible: true, autoUpdate: true };
+      shellState = { bounds: null, overlayEnabled: true, islandMode: 'hidden', autoUpdate: true };
+      clearInterval(peekTimer); peekTimer = null; peekActive = false; peekZoneSince = 0; peekAwaySince = 0;
+      islandPointerInside = false;
+      wakeState = { enabled: false, listening: false, phrase: '' };
       updater = null; sessionEnding = false; restartForUpdate = false; updateNotifiedFor = null;
     },
   },

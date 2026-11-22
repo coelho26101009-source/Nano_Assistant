@@ -2106,6 +2106,12 @@ def get_settings() -> dict:
             "allowNanoOnly": bool(voice_cfg.get("wake_phrase_allow_nano_only")),
             "cooldownSeconds": float(voice_cfg.get("wake_phrase_cooldown_seconds", 3.0)),
             "commandTimeoutSeconds": int(voice_cfg.get("wake_command_timeout_seconds", 7)),
+            "endSilenceSeconds": float(voice_cfg.get("voice_end_silence_seconds",
+                                                     VoiceRuntime.DEFAULT_END_SILENCE)),
+            "quality": "best" if voice_cfg.get("voice_quality") == "best" else "fast",
+            "sttModel": _stt_model_name(),
+            "wakeMode": wake_status.get("mode"),
+            "wakeDetector": wake_status.get("detector"),
             "state": wake_status.get("readiness"),
             "explain": wake_status.get("explain"),
             # What the transcriber actually heard, matched or not.
@@ -2238,6 +2244,7 @@ def _apply_voice_language() -> dict:
             voice.wake_phrase_provider._engine.set_phrase(changed["wake_phrase"])
         except Exception:
             logger.debug("Não consegui mudar a frase de ativação", exc_info=True)
+        _emit_wake_state()
     if changed:
         logger.info("Voz passou a seguir o idioma %s: %s", i18n.current(), sorted(changed))
     return changed
@@ -2274,6 +2281,15 @@ def update_setting(key: str, value) -> dict:
             _start_wake_phrase()
         elif not value:
             voice.wake_phrase_provider.stop()
+        _emit_wake_state()
+    elif key == "voice_end_silence_seconds":
+        voice_cfg[key] = float(value)
+    elif key == "voice_quality":
+        voice_cfg[key] = str(value)
+        if not _apply_voice_quality() and voice_setup.package_installed():
+            # The big model is not here yet: download it now (the person just
+            # asked for it), and switch when it is in.
+            speech_pack.start(on_ready=_speech_pack_ready)
     elif key == "wake_phrase_allow_nano_only":
         voice_cfg["wake_phrase_allow_nano_only"] = bool(value)
         engine.allow_nano_only = bool(value)
@@ -2999,13 +3015,50 @@ def _stt_model_name() -> str:
     return str(((CONFIG.get("voice") or {}).get("stt") or {}).get("model") or "small")
 
 
-speech_pack = voice_setup.SpeechPack(model=_stt_model_name)
+#: The benchmarked everyday model (settings.yaml), for "Rápida".
+_STT_FAST_MODEL = _stt_model_name()
+
+
+def _wanted_stt_model() -> str:
+    """The model Settings > Voz > "Qualidade do reconhecimento" asks for."""
+    if (CONFIG.get("voice") or {}).get("voice_quality") == "best":
+        return voice_setup.model_for_quality("best")
+    return _STT_FAST_MODEL
+
+
+def _apply_voice_quality() -> bool:
+    """Use the chosen model once it is on disk. False: it still has to download.
+
+    Never switches to a model that is not downloaded yet: faster-whisper would
+    then fetch 1.6 GB in the middle of a voice turn. The pack downloads it
+    first, and _speech_pack_ready switches over when it is done.
+    """
+    wanted = _wanted_stt_model()
+    stt = CONFIG.setdefault("voice", {}).setdefault("stt", {})
+    if stt.get("model") == wanted:
+        return True
+    if wanted != _STT_FAST_MODEL and not voice_setup.model_cached(wanted):
+        return False
+    stt["model"] = wanted
+    voice.stt_provider.config["model"] = wanted
+    logger.info("Reconhecimento de voz: modelo %s", wanted)
+    return True
+
+
+speech_pack = voice_setup.SpeechPack(model=_wanted_stt_model)
 
 
 def _speech_pack_ready() -> None:
     """After the pack is in: the transcriber can be used from now on, live."""
     voice.stt_provider.online = True
+    _apply_voice_quality()
     logger.info("Pacote de voz instalado; reconhecimento de voz disponível.")
+
+
+try:
+    _apply_voice_quality()
+except Exception:  # never let a missing cache stop NANO from starting
+    logger.debug("Qualidade de voz não aplicada no arranque", exc_info=True)
 
 
 @eel.expose
@@ -3992,7 +4045,7 @@ def _start_wake_word() -> None:
         logger.exception("Erro ao iniciar wake-word")
 
 
-def _on_wake_phrase(transcript: str) -> None:
+def _on_wake_phrase(transcript: str, command: str = "") -> None:
     """Fired by the STT-based 'Ei Nano' detector.
 
     This is now a THIN TRIGGER, nothing more. The whole choreography -- chime,
@@ -4007,7 +4060,7 @@ def _on_wake_phrase(transcript: str) -> None:
     logger.info("Wake phrase detected: %r", transcript)
     try:
         result = run_coro(
-            voice_runtime.run_voice_turn("wake_phrase", transcript=transcript),
+            voice_runtime.run_voice_turn("wake_phrase", transcript=transcript, command=command),
             timeout=180,
         )
         if result.get("busy"):
@@ -4330,6 +4383,31 @@ def _ctl_media_control(args: dict) -> dict:
     return now_playing_watcher.control(str((args or {}).get("action") or ""))
 
 
+def _emit_wake_state() -> None:
+    """Tell the desktop shell whether NANO is listening for its name.
+
+    The tray shows it (and switches it), and the island's resting pill says
+    what to say. Only on/off and the phrase: never anything that was heard.
+    """
+    try:
+        status = voice.wake_phrase_provider.status()
+    except Exception:
+        status = {}
+    voice_cfg = CONFIG.get("voice", {}) or {}
+    _desktop_emit("wake_state", {
+        "enabled": bool(voice_cfg.get("wake_phrase_enabled")),
+        "listening": bool(status.get("running")),
+        "phrase": str(status.get("phrase") or voice_cfg.get("wake_phrase") or ""),
+    })
+
+
+def _ctl_set_wake_phrase(args: dict) -> dict:
+    """The tray's "Ouvir 'Ei Nano'" switch. On or off, nothing else."""
+    enabled = (args or {}).get("enabled") is True
+    result = update_setting("wake_phrase_enabled", enabled)
+    return {"ok": bool(result.get("ok")), "enabled": enabled}
+
+
 #: THE COMPLETE SET. Anything not named here is refused by the dispatcher.
 DESKTOP_OPERATIONS = {
     "ping": _ctl_ping,
@@ -4339,6 +4417,7 @@ DESKTOP_OPERATIONS = {
     "data_location": _ctl_data_location,
     "report_shortcut": _ctl_report_shortcut,
     "media_control": _ctl_media_control,
+    "set_wake_phrase": _ctl_set_wake_phrase,
     "shutdown": _ctl_shutdown,
 }
 
@@ -4898,6 +4977,7 @@ def main():
     # readiness claim.
     _desktop_emit("backend_started", {"port": port, "mode": str(args.mode).lower(),
                                       "lang": i18n.current()})
+    _emit_wake_state()
 
     # The control plane carries the whole approval surface -- confirm_action,
     # resolve_permission, set_emergency_stop -- over a WebSocket that eel does

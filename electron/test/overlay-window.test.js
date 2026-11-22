@@ -104,7 +104,7 @@ test('repeated voice turns while the main window is hidden all show it', async (
     api.applyOverlayView(LISTENING);
     assert.strictEqual(overlay.isVisible(), true, `turn ${turn} did not show the overlay`);
     api.applyOverlayView(overlayState.HIDDEN);
-    await new Promise((resolve) => setTimeout(resolve, 220));
+    await new Promise((resolve) => setTimeout(resolve, 420));
     assert.strictEqual(overlay.isVisible(), false, `turn ${turn} did not hide the overlay`);
   }
   assert.strictEqual(main.isVisible(), false);
@@ -150,7 +150,7 @@ test('a turn ending fades and then hides the overlay', async () => {
   api.applyOverlayView(overlayState.HIDDEN);
 
   assert.strictEqual(overlay.isVisible(), true, 'exit should paint before native hide');
-  await new Promise((resolve) => setTimeout(resolve, 220));
+  await new Promise((resolve) => setTimeout(resolve, 420));
   assert.strictEqual(overlay.isVisible(), false);
 });
 
@@ -160,7 +160,7 @@ test('the resting phases hide it through the real event path', async () => {
   assert.strictEqual(overlay.isVisible(), true);
 
   api.onBackendEvent('voice_phase', { phase: 'IDLE' });
-  await new Promise((resolve) => setTimeout(resolve, 220));
+  await new Promise((resolve) => setTimeout(resolve, 420));
   assert.strictEqual(overlay.isVisible(), false);
 });
 
@@ -169,7 +169,7 @@ test('a new phase during the exit keeps the overlay visible', async () => {
   api.applyOverlayView(LISTENING);
   api.applyOverlayView(overlayState.HIDDEN);
   api.applyOverlayView(overlayState.fromPhase('PROCESSING'));
-  await new Promise((resolve) => setTimeout(resolve, 220));
+  await new Promise((resolve) => setTimeout(resolve, 420));
   assert.strictEqual(overlay.isVisible(), true);
   assert.strictEqual(overlay.sent.at(-1).payload.state, 'processing');
 });
@@ -221,7 +221,7 @@ test('disabling during a visible turn still closes the overlay', async () => {
   api.applyOverlayView(LISTENING);
   api.setOverlayEnabled(false);
   api.applyOverlayView(overlayState.fromPhase('PROCESSING'));
-  await new Promise((resolve) => setTimeout(resolve, 220));
+  await new Promise((resolve) => setTimeout(resolve, 420));
   assert.strictEqual(overlay.isVisible(), false);
 });
 

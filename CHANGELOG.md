@@ -20,6 +20,29 @@ versioning policy.
 
 ## [Unreleased]
 
+### Changed — the island stays hidden until it is needed (2026-11-22)
+- The island is no longer always on screen. It comes out for a voice turn, an
+  approval, a reminder or alert, a tool at work, the volume or the song
+  changing, and when the mouse is pushed against the top centre of the screen,
+  then slides back up on its own. "Ilha sempre no ecrã" brings the old resting
+  pill back. A song that keeps playing no longer keeps the island visible.
+
+### Added — call NANO by voice, and it listens until you stop (2026-11-22)
+- A voice turn stops recording when you stop talking (a short pause), instead
+  of always recording 7 seconds. Silero VAD (inside the voice pack, nothing
+  new to download) tells speech from noise; without it, the calibrated energy
+  gate is used. Settings → Voz → "Como o NANO te ouve": the pause length.
+- "Ei Nano" / "Hey Nano" rebuilt: NANO waits for someone to speak, cuts the
+  utterance where they pause and checks only its start with a quick local
+  pass, so nothing is transcribed while nobody talks. The phrase has to open
+  what was said (a conversation about NANO does not wake it), and a request in
+  the same breath ("Ei Nano, abre o Spotify") goes straight to the turn. Still
+  off until the person turns it on; on/off also in the tray, which says when
+  it is listening.
+- "Qualidade do reconhecimento: Melhor" (opt-in): large-v3-turbo (~1.6 GB),
+  downloaded first and used only once it is on disk; the wake check keeps
+  using the small model.
+
 ---
 
 ## [0.4.0-beta.2] - 2026-11-22

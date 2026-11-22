@@ -55,6 +55,8 @@ ALLOWED_KEYS: frozenset[str] = frozenset({
     "voice_reply_tts",         # speak replies to messages the user SPOKE
     "voice_conversation_mode",  # listen again after a spoken answer
     "voice_barge_in",          # stop talking when the person talks over NANO
+    "voice_end_silence_seconds",  # the pause that ends what the person says
+    "voice_quality",           # fast (small) | best (large-v3-turbo, opt-in)
     "input_device_index",
     "output_device_index",
     "theme",                   # system | dark | light
@@ -121,6 +123,12 @@ def _valid_value(key: str, value: Any) -> bool:
             return False
         return (0 <= value <= 60 if key == "wake_phrase_cooldown_seconds"
                 else type(value) is int and 3 <= value <= 15)
+    if key == "voice_end_silence_seconds":
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            return False
+        return 0.4 <= value <= 2.0
+    if key == "voice_quality":
+        return isinstance(value, str) and value in {"fast", "best"}
     if key == "provider_mode":
         return isinstance(value, str) and value in {"AUTO", "CLOUD", "LOCAL"}
     if key == "preferred_cloud":
@@ -262,6 +270,8 @@ def apply_overlay(config: dict[str, Any]) -> dict[str, Any]:
         "voice_reply_tts",
         "voice_conversation_mode",
         "voice_barge_in",
+        "voice_end_silence_seconds",
+        "voice_quality",
     ):
         if key in stored:
             voice[key] = stored[key]

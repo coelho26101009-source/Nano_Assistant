@@ -138,8 +138,8 @@ function DesktopPanel() {
       />
       {status.islandAlwaysVisible !== undefined && (
         <Toggle
-          label={t("Modo ambiente: ilha sempre no ecrã")}
-          hint={t("Quando o NANO não está a fazer nada, a ilha fica pequena no topo do ecrã, pronta. Desligado, só aparece quando há alguma coisa para mostrar.")}
+          label={t("Ilha sempre no ecrã")}
+          hint={t("Desligado (recomendado), a ilha fica escondida e só aparece quando é preciso: quando falas com o NANO, quando ele precisa de ti, quando a música ou o volume mudam, ou quando levas o rato ao topo do ecrã, ao centro. Depois volta a esconder-se sozinha. Ligado, fica sempre uma pílula pequena no topo.")}
           checked={status.islandAlwaysVisible}
           disabled={!status.overlayEnabled || busy}
           onChange={(value) => run(() => setIslandAlwaysVisible(value))}
@@ -916,17 +916,14 @@ export default function SettingsPage({
             <Panel title={t("Voz pronta a usar")}>
               <VoiceSetupCard onWakePhrase={(v) => onUpdate("wake_phrase_enabled", v)} />
             </Panel>
-            <Panel title={t("Ativação por voz (experimental)")}
-                   action={<Badge tone="neutral">{t("Experimental")}</Badge>}>
-              <p className="muted" style={{ fontSize: 13, marginBottom: 10 }}>{tj("A forma normal de falar com o NANO é o atalho global {0}, que é instantâneo e não gasta nada enquanto não é usado.", { 0: <code>Ctrl + Shift + Space</code> })}</p>
-              <p className="dim" style={{ fontSize: 11, marginBottom: 12, lineHeight: 1.6 }}>{tj("Esta alternativa mantém o microfone aberto e passa tudo o que ouve pelo Whisper local. Consome CPU continuamente — e agora mais ainda, porque a transcrição passou para o modelo {0}, que é bastante mais exato mas também mais pesado que o antigo {1}. Por isso vem desligada.", { 0: <code>small</code>, 1: <code>tiny</code> })}
-              </p>
+            <Panel title={t("Chamar o NANO por voz")}>
+              <p className="muted" style={{ fontSize: 13, marginBottom: 8 }}>{t("Diz “{0}” e o NANO responde, sem tocares no teclado. Podes dizer logo o pedido: “{0}, abre o Spotify”.", { 0: voice.wakePhrase })}</p>
+              <p className="dim" style={{ fontSize: 11, marginBottom: 12, lineHeight: 1.6 }}>{t("Tudo acontece no teu PC: um detetor de voz espera que alguém fale e só o início do que foi dito é verificado, localmente. Nada sai do PC até chamares o NANO. Enquanto está ligado, o Windows mostra o ícone do microfone na barra de tarefas. Podes desligar aqui ou no ícone do NANO no tabuleiro.")}</p>
               <MetricRow label={t("Estado")} value={<StatusIndicator state={voice.state} />} />
-              <MetricRow label={t("Frase")} value={`"${voice.wakePhrase}"`} />
               <div style={{ height: 8 }} />
               <Toggle
-                label={t("Ativar \"{0}\"", { 0: voice.wakePhrase })}
-                hint={t("O NANO ouve continuamente à espera da frase, localmente.")}
+                label={t("Ouvir “{0}”", { 0: voice.wakePhrase })}
+                hint={t("Desligado até o ligares. O atalho {0} continua a funcionar sempre.", { 0: "Ctrl + Shift + Space" })}
                 checked={voice.wakePhraseEnabled}
                 onChange={(v) => onUpdate("wake_phrase_enabled", v)}
               />
@@ -937,18 +934,41 @@ export default function SettingsPage({
                 onChange={(v) => onUpdate("wake_phrase_allow_nano_only", v)}
               />
               <div style={{ height: 12 }} />
-              <Field label={t("Tempo de espera pelo comando: {0}s", { 0: voice.commandTimeoutSeconds })}
-                     hint={t("Depois do chime, quanto tempo o NANO espera por um comando antes de voltar a escutar.")}>
-                <input type="range" min={3} max={15} step={1} value={voice.commandTimeoutSeconds}
-                       onChange={(e) => onUpdate("wake_command_timeout_seconds", Number(e.target.value))}
-                       aria-label={t("Tempo de espera pelo comando")} />
-              </Field>
               <Field label={t("Intervalo entre ativações: {0}s", { 0: voice.cooldownSeconds })}
                      hint={t("Impede que a mesma frase active o NANO várias vezes seguidas.")}>
                 <input type="range" min={1} max={10} step={0.5} value={voice.cooldownSeconds}
                        onChange={(e) => onUpdate("wake_phrase_cooldown_seconds", Number(e.target.value))}
                        aria-label={t("Intervalo entre ativações")} />
               </Field>
+            </Panel>
+
+            <Panel title={t("Como o NANO te ouve")}>
+              <Field label={t("Tempo para começares a falar: {0}s", { 0: voice.commandTimeoutSeconds })}
+                     hint={t("Depois de o chamares, quanto tempo o NANO espera que comeces a falar. Quando acabas, ele percebe sozinho e deixa de gravar.")}>
+                <input type="range" min={3} max={15} step={1} value={voice.commandTimeoutSeconds}
+                       onChange={(e) => onUpdate("wake_command_timeout_seconds", Number(e.target.value))}
+                       aria-label={t("Tempo para começares a falar")} />
+              </Field>
+              <Field label={t("Pausa que termina o pedido: {0}s", { 0: (voice.endSilenceSeconds ?? 0.8).toFixed(1) })}
+                     hint={t("Se o NANO te corta a meio da frase, aumenta. Se demora a responder depois de acabares, diminui.")}>
+                <input type="range" min={0.4} max={2} step={0.1} value={voice.endSilenceSeconds ?? 0.8}
+                       onChange={(e) => onUpdate("voice_end_silence_seconds", Number(e.target.value))}
+                       aria-label={t("Pausa que termina o pedido")} />
+              </Field>
+              <Field label={t("Qualidade do reconhecimento")}
+                     hint={voice.quality === "best"
+                       ? t("Melhor: um modelo maior (cerca de 1,6 GB), que percebe melhor sotaques, ruído e frases longas. É mais lento no processador: conta com 1 a 3 segundos a mais por pedido. Descarrega uma vez, no teu PC.")
+                       : t("Rápida: o modelo que vem com a voz. Responde depressa e chega para o dia a dia.")}>
+                <select className="select" value={voice.quality ?? "fast"}
+                        onChange={(e) => onUpdate("voice_quality", e.target.value)}
+                        aria-label={t("Qualidade do reconhecimento")}>
+                  <option value="fast">{t("Rápida (recomendada)")}</option>
+                  <option value="best">{t("Melhor (mais lenta)")}</option>
+                </select>
+              </Field>
+              {voice.quality === "best" && voice.sttModel && !voice.sttModel.startsWith("large") && (
+                <p className="dim" style={{ fontSize: 11 }}>{t("A descarregar o modelo maior. Até acabar, o NANO continua a usar o rápido.")}</p>
+              )}
             </Panel>
 
             <Panel title={t("Dispositivos")}>

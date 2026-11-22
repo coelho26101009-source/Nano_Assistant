@@ -53,9 +53,17 @@ OPTIONAL_LOCK = ROOT / "requirements" / "optional.lock"
 SPEECH_PACKAGE = "faster-whisper"
 #: The models this pack may download (faster-whisper's own names).
 ALLOWED_MODELS = {"tiny": "Systran/faster-whisper-tiny", "base": "Systran/faster-whisper-base",
-                  "small": "Systran/faster-whisper-small"}
+                  "small": "Systran/faster-whisper-small",
+                  # "Melhor qualidade" in Settings > Voz: opt-in, much bigger.
+                  "large-v3-turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo"}
 #: Approximate download size, for the progress bar only.
-MODEL_MB = {"tiny": 75, "base": 145, "small": 484}
+MODEL_MB = {"tiny": 75, "base": 145, "small": 484, "large-v3-turbo": 1620}
+#: Settings > Voz > "Qualidade do reconhecimento": which model each choice is.
+QUALITY_MODELS = {"fast": "small", "best": "large-v3-turbo"}
+
+
+def model_for_quality(quality: str | None) -> str:
+    return QUALITY_MODELS.get(str(quality or "fast"), "small")
 #: pip can take a while on a slow line; a hung pip must not hold the pack forever.
 PIP_TIMEOUT_SECONDS = 20 * 60
 
