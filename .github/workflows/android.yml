@@ -136,6 +136,11 @@ jobs:
         with:
           node-version: '24'
 
+      # The download URL keeps the account's OLD name on purpose: installed
+      # apps only accept /coelho26101009-source/Nano_Assistant/releases/
+      # (mobile/src/lib/updates.ts REPO_PATH), and GitHub redirects it to the
+      # renamed account (coelho97sc). github.repository was refused by the
+      # signer (feed_bad_url) on 2026-11-22.
       - name: Sign the update feed
         env:
           NANO_UPDATE_SIGNING_KEY: ${{ secrets.NANO_UPDATE_SIGNING_KEY }}
@@ -144,7 +149,7 @@ jobs:
           set +e
           node src/scripts/update_feed.mjs sign --product nano-android --channel test \
             --version "$version" --version-code "${{ github.run_number }}" --commit "${{ github.sha }}" \
-            --url "https://github.com/${{ github.repository }}/releases/download/android-test/NANO-android-test.apk" \
+            --url "https://github.com/coelho26101009-source/Nano_Assistant/releases/download/android-test/NANO-android-test.apk" \
             --file out/NANO-android-test.apk --out out/nano-update.json
           code=$?
           set -e
