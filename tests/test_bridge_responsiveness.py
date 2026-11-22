@@ -56,6 +56,12 @@ _FAKE_KEYS = {"GROQ_API_KEY": "gsk_" + "0" * 48,
 #: without being sensitive to a busy CI runner.
 CHEAP_LIMIT = 0.5
 
+#: For a test whose real guard is a COUNT, not a clock: still far below a wait
+#: on a hung endpoint (seconds, up to the 10 s timeout), but loose enough that a
+#: stalled Windows runner does not fail it. CI on windows-latest once measured
+#: 1.33 s here for a call that takes 0.001 s on every other run.
+SLOW_RUNNER_LIMIT = 2.5
+
 
 # ---------------------------------------------------------------------------
 #  Stand-ins
@@ -469,7 +475,9 @@ def test_a_key_change_parses_no_ca_bundle_on_the_hub(bridge, main_module, monkey
     (_slow_s, value), (cheap_s, _) = dispatch((name, args), ("get_voice_diagnostics", []))
     assert value["ok"] is True, value
     assert sum(parses) == 0, f"{sum(parses)} CA-bundle parse(s) on eel's hub during {name}"
-    assert cheap_s < CHEAP_LIMIT, f"get_voice_diagnostics waited {cheap_s:.2f}s behind {name}"
+    # The parse count above is this test's guard, and it needs no clock. The
+    # clock only backs it up against a real hang, so it gets the slow-runner limit.
+    assert cheap_s < SLOW_RUNNER_LIMIT, f"get_voice_diagnostics waited {cheap_s:.2f}s behind {name}"
 
 
 def test_choosing_a_cloud_model_waits_for_the_account_off_the_hub(bridge, main_module,
