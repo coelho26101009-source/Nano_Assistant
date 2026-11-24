@@ -728,6 +728,39 @@ read a plan (`work_mode_plan`, capability `pc.mode.read`, autonomous and
 low-risk) and must call the narrow tools itself. Focus Assist is not toggled:
 the mode opens the Notifications page and the person decides.
 
+## Chained tasks and routines
+
+Several steps from one request ("abre o Notion e o Chrome, põe o Chrome à
+esquerda e o volume a 30", "prepara o meu setup de estudo") go through ONE
+runner, `core/task_runner.py`, whoever wrote the list:
+
+* a **plan** the model proposed with `task_plan` (`plugins/task_plan.py`).
+  When every step carries its `args`, NANO runs the plan itself
+  (`core/brain_tasks.py`); otherwise the model runs the steps and NANO says at
+  the end which planned steps never happened;
+* a **routine** (a protocol with `actions`, `core/protocols.py`), started by
+  its phrase, by `routine_run`, or from PC → Modos; made by voice with
+  `routine_save` (`plugins/routines.py`), including "guarda isto como rotina",
+  which saves the previous request's successful actions;
+* a **work mode** (`core/work_modes.py`).
+
+The runner checks every step against the real result (a launch waits for its
+window when a later step needs it; the volume must read back as asked),
+retries only steps that are safe to do twice (`RETRYABLE_TOOLS`, never a tool
+the executor marks `NOT_SAFE_TO_RETRY`, never a refusal or an ambiguous
+target), skips the steps on the window of an app that failed to open, and
+stops at the emergency stop. "Tenta outra vez" right after a run re-runs only
+the steps that did not work, without a model.
+
+Each step still goes through `Brain._run_tool` (guardrails, policy,
+permission, the duplicate ledger, the executor) or, from the Modos page,
+through `ToolExecutor`. A plan asks the person once only when a step is one
+the guardrails always ask about or when the turn read outside content; a plan
+of safe steps just runs, and closing apps or locking still ask on their own.
+A routine can only hold the tools in `protocols.ROUTINE_TOOLS`, each with its
+own argument check: no typing, clipboard, file changes or power off/restart.
+Saving or running a routine after outside content was read asks first.
+
 ## Future expansion points
 
 * **Media session state.** `pc_media_control` sends the transport key and says

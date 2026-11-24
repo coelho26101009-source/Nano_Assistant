@@ -181,6 +181,13 @@ class PolicyEngine:
         # Showing a plan executes nothing; the person approves it through the
         # guardrail question, and every step is its own gated tool call.
         "task_plan": "nano.plan.show",
+        # Routines (core/protocols.py, plugins/routines.py): NANO's own data.
+        # routine_run only RETURNS the steps; the Brain runs each one through
+        # its own gate. Deleting one asks (guardrails).
+        "routine_list": "nano.data.read",
+        "routine_run": "nano.data.read",
+        "routine_save": "nano.routine.write",
+        "routine_delete": "nano.routine.write",
         "cancel_reminder": "external.send",
         "organize_downloads": "filesystem.write",
         "clean_windows_cache": "filesystem.delete",
@@ -388,6 +395,7 @@ class PolicyEngine:
             "phone.camera.look": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.MEDIUM, "current_workspace", "Only asks the paired phone; the person opens the camera there, each time."),
             "nano.data.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Reading NANO's own agenda, facts and history changes nothing."),
             "nano.plan.show": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "A plan is shown to the person; it runs nothing by itself."),
+            "nano.routine.write": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Saving or removing one of the person's routines runs nothing; every step is gated when it runs."),
             "nano.reminder.create": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "A reminder only shows a notification on this PC and is cancelled in one click."),
             "nano.documents.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Searching documents the user indexed changes nothing; the text is untrusted."),
             "pc.window.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Listing open windows is read-only."),

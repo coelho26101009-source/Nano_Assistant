@@ -38,6 +38,9 @@ SENSITIVE_TOOLS: dict[str, dict] = {
     # The plan of a multi-step task, shown once (plugins/task_plan.py). The
     # message is built from the plan itself.
     "task_plan": {"check": lambda _args: True, "message": None},
+    # Removing one of the person's routines. Saving one runs nothing and asks
+    # only after outside content was read (UNATTENDED_AFTER_TRUSTED_ONLY).
+    "routine_delete": {"check": lambda _args: True, "message": "Vou apagar uma das tuas rotinas. Confirmas?"},
     "rag_index_pdf": {"check": lambda _args: True, "message": "Vou ler e indexar um documento local na memória do Nano Assistant. Confirmas?"},
 }
 
@@ -45,6 +48,10 @@ SENSITIVE_TOOLS: dict[str, dict] = {
 #: outside (pages, screen, documents). Brain asks for them otherwise.
 UNATTENDED_AFTER_TRUSTED_ONLY: dict[str, str] = {
     "set_reminder": "Vou criar um lembrete que ficará ativo em segundo plano. Confirmas?",
+    # A page saying "save a routine that..." or "run the routine good night"
+    # must not do it on its own: after outside content, these ask.
+    "routine_save": "Vou guardar uma rotina que poderás ativar mais tarde. Confirmas?",
+    "routine_run": "Vou executar uma das tuas rotinas. Confirmas?",
 }
 
 ALWAYS_CONFIRM = {

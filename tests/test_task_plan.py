@@ -1,8 +1,10 @@
-"""Tasks of several steps: the plan is shown once, then the steps run.
+"""Tasks of several steps: the plan, and when the person is asked about it.
 
-The plan executes nothing itself; approving it spares the person the
-guardrail question for the listed steps only, while the executor's own
-approvals (closing apps, power, deleting, sending) still apply.
+The plan executes nothing itself. It asks once only when a step is one the
+guardrails always ask about (then approving it spares that question for the
+listed steps) or when the turn read outside content; a plan of safe steps
+just runs. The executor's own approvals (closing apps, power, deleting,
+sending) still apply. Running a plan with arguments: tests/test_task_chains.py.
 """
 from __future__ import annotations
 
@@ -86,11 +88,12 @@ async def test_an_approved_plan_is_asked_once_and_its_steps_are_not_asked_again(
 
 
 @pytest.mark.asyncio
-async def test_a_step_outside_the_plan_still_asks():
+async def test_a_plan_of_safe_steps_is_not_asked_but_a_step_outside_it_still_asks():
     brain, seen, _ = _brain(approve=True)
     await brain._run_tool(_call("task_plan", {"goal": "x", "steps": [{"label": "volume", "tool": "pc_volume_set"}]}))
+    assert seen == []           # nothing risky in it: no "Avanço?"
     await brain._run_tool(_call("calendar_add_event", {"title": "Ensaio", "start": "2026-11-20T10:00"}))
-    assert len(seen) == 2
+    assert len(seen) == 1
 
 
 @pytest.mark.asyncio

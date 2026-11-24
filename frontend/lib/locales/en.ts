@@ -1329,4 +1329,9 @@ export const EN: Record<string, string> = {
   "Melhor (mais lenta)": "Best (slower)",
   "A descarregar o modelo maior. Até acabar, o NANO continua a usar o rápido.": "Downloading the bigger model. Until it finishes, NANO keeps using the fast one.",
   "Queres chamar o NANO só com a voz, dizendo “{0}”? Fica à escuta apenas no teu PC: nada sai do PC até o chamares, e podes desligar quando quiseres.": "Want to call NANO with your voice alone, by saying “{0}”? It listens only on your PC: nothing leaves the PC until you call it, and you can turn it off whenever you like.",
+  "Outros passos": "Other steps",
+  "Criados a falar com o NANO. Para mudar um, pede-lhe ou apaga-o aqui.": "Made by talking to NANO. To change one, ask NANO or remove it here.",
+  "Tirar o passo {0}": "Remove the step {0}",
+  "Tirar": "Remove",
+  "Também os crias a falar: pede “abre o Notion e o Spotify e encosta o Chrome à esquerda” e depois diz “guarda isto como rotina setup de estudo”. O NANO verifica cada passo e, se algo falhar, diz o quê; “tenta outra vez” repete só isso.": "You can also make them by talking: ask “open Notion and Spotify and put Chrome on the left”, then say “save this as a routine called study setup”. NANO checks every step and, if something fails, says what; “try again” redoes just that.",
 };

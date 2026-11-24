@@ -160,19 +160,6 @@ def list_modes(modes_dir: Path | None = None) -> list[dict]:
     return modes
 
 
-def _step_outcome(step: dict, result: Any) -> dict:
-    output = result.get("output") if isinstance(result, dict) else None
-    message = ""
-    if isinstance(output, dict):
-        message = _clip(output.get("message"), 200)
-    if not message and isinstance(result, dict):
-        message = _clip(result.get("message") or result.get("error"), 200)
-    ok = bool(isinstance(result, dict) and result.get("success"))
-    denied = isinstance(result, dict) and result.get("status") in {"permission_denied", "denied", "user_denied"}
-    return {"label": step["label"], "tool": step["tool"], "ok": ok,
-            "status": "ok" if ok else ("denied" if denied else "failed"), "message": message}
-
-
 async def run(mode_id: Any, executor: Any, modes_dir: Path | None = None) -> dict:
     """Run a mode's plan, one narrow tool at a time, through the executor.
 
@@ -188,26 +175,37 @@ async def run(mode_id: Any, executor: Any, modes_dir: Path | None = None) -> dic
     return await run_plan(mode, executor)
 
 
-async def run_plan(mode: dict, executor: Any) -> dict:
-    """Run an already compiled plan (a mode, or a protocol: core/protocols.py)."""
+async def run_plan(mode: dict, executor: Any, *, call: Any = None, status: Any = None) -> dict:
+    """Run an already compiled plan (a mode, or a protocol: core/protocols.py).
+
+    The steps run through core/task_runner.py: each one is checked against
+    what really happened, a launch waits for its window, a hiccup is retried
+    once, and a step that depended on an app that failed to open is skipped.
+    ``call`` defaults to the executor; the Brain passes its own gate.
+    """
+    from core import task_runner
+
+    run_call = call or executor.execute_tool_async
     running = await _running_processes(executor) if any(
         step["tool"] == "pc_window_batch_close" for step in mode["steps"]) else None
-    outcomes = []
+    steps = []
     for step in mode["steps"]:
         if step["tool"] == "pc_window_batch_close" and running is not None \
                 and _process_key(step["args"]["app"]) not in running:
             # Not open: nothing to close, and no confirmation to sit through.
-            outcomes.append({"label": step["label"], "tool": step["tool"], "ok": True,
-                             "status": "skipped", "message": tr("Não estava aberto.")})
-            continue
-        try:
-            result = await executor.execute_tool_async(step["tool"], dict(step["args"]))
-        except Exception:
-            logger.exception("Modo %s: passo %s falhou", mode["id"], step["tool"])
-            result = {"success": False, "error": "tool_exception"}
-        outcomes.append(_step_outcome(step, result))
-    done = sum(1 for o in outcomes if o["ok"] and o["status"] != "skipped")
-    skipped = sum(1 for o in outcomes if o["status"] == "skipped")
+            steps.append({**step, "skip": tr("Não estava aberto.")})
+        else:
+            steps.append(step)
+    permission = getattr(executor, "permission_manager", None)
+    stopped = getattr(permission, "is_emergency_stopped", None)
+    policy = getattr(executor, "get_retry_policy", None)
+    run = await task_runner.run_steps(
+        steps, run_call, probe=_probe_for(executor), status=status,
+        should_stop=(lambda: bool(stopped())) if callable(stopped) else None,
+        retry_allowed=(lambda tool: str(policy(tool)) != "NOT_SAFE_TO_RETRY") if callable(policy) else None)
+    outcomes = run["steps"]
+    done = run["done"]
+    skipped = run["skipped"]
     counted = len(outcomes) - skipped
     message = tr("{mode}: {done} de {total} passos feitos.", mode=mode["name"], done=done, total=counted)
     if done and mode.get("message"):
@@ -216,6 +214,20 @@ async def run_plan(mode: dict, executor: Any) -> dict:
     return {"ok": done > 0 or skipped == len(outcomes), "id": mode["id"], "name": mode["name"],
             "message": message, "done": done, "skipped": skipped, "total": len(outcomes),
             "steps": outcomes}
+
+
+def _probe_for(executor: Any):
+    """The read-only window listing, used to see a launched app's window."""
+    execute = getattr(executor, "execute_tool_async", None)
+    if execute is None:
+        return None
+
+    async def probe(name: str, args: dict) -> Any:
+        if name != "pc_window_list":   # read-only, and nothing else
+            return {"success": False, "status": "refused"}
+        return await execute(name, args)
+
+    return probe
 
 
 def _process_key(name: str) -> str:

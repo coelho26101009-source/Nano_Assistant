@@ -40,6 +40,7 @@ from typing import AsyncIterator, Any, NamedTuple
 import httpx
 from groq import AsyncGroq, DefaultAsyncHttpxClient
 from core import clarification
+from core.brain_tasks import TaskChains
 from core import reminder_intent
 from core.i18n import tr
 from core import i18n
@@ -377,7 +378,7 @@ def _simulated_groq_failure() -> None:
     raise SimulatedGroqFailure(status, headers)
 
 
-class Brain:
+class Brain(TaskChains):
     def __init__(self, api_key: str, guardrails: GuardrailsEngine, memory: MemoryEngine, config: dict | None = None, permission_manager: Any | None = None, tool_executor: Any | None = None, memory_stack: Any | None = None):
         cfg = config if config is not None else load_config()
         mem_cfg, local_cfg = cfg.get("memory") or {}, cfg.get("local") or {}
@@ -1437,6 +1438,11 @@ class Brain:
                 if note:
                     yield note
                     text += note
+                # What a plan or routine did NOT do, said by NANO itself.
+                plan_note = self._plan_report_note()
+                if plan_note:
+                    yield plan_note
+                    text += plan_note
                 # A research report ends with the sources NANO really read.
                 sources = self._research_sources_note()
                 if sources:
@@ -1459,8 +1465,11 @@ class Brain:
 
             shaped = [{"function": {"name": c["name"], "arguments": c["args"] or "{}"}}
                       for c in calls]
-            results = await asyncio.gather(*(self._run_tool(c) for c in shaped),
-                                           return_exceptions=True)
+            # A plan or routine NANO runs itself shows each step as it goes.
+            ran: dict = {}
+            async for status in self._run_calls(shaped, ran):
+                yield status
+            results = ran["results"]
             for index, (call, result) in enumerate(zip(calls, results)):
                 if isinstance(result, Exception):
                     logger.error("Tool %s falhou", call["name"], exc_info=result)
@@ -1518,6 +1527,8 @@ class Brain:
         self._turn_tool_inflight = {}
         # Tools the person approved as steps of this turn's plan.
         self._turn_plan_tools = set()
+        # Plans, routines and "guarda isto como rotina" (core/brain_tasks.py).
+        self._begin_task_turn()
         # The question an AMBIGUOUS PC target leaves for the user, if any.
         self.turn_clarification = None
         self.conversation.append({"role": "user", "content": user_message})
@@ -1529,6 +1540,14 @@ class Brain:
         # See core/reminder_intent.py.
         # A PROTOCOL PHRASE ("modo estudo", "boa noite") runs the person's own
         # routine directly, without a model. See core/protocols.py.
+        # "TENTA OUTRA VEZ" right after a plan or routine with steps that did
+        # not work runs only those steps again (core/brain_tasks.py).
+        retry = self._retry_candidate(user_message)
+        if retry is not None:
+            async for token in self._direct_retry(retry):
+                yield token
+            return
+
         protocol = self._protocol_for(user_message)
         if protocol is not None:
             async for token in self._direct_protocol(protocol):
@@ -1772,13 +1791,29 @@ class Brain:
         if self.tool_executor is None:
             answer = tr("Execução indisponível: falta a autoridade central.")
         else:
+            # Each step goes through the same gate as a model's call, and is
+            # checked and retried by core/task_runner.py; the person sees
+            # each one as it runs.
+            async def start(status):
+                return await protocols.run(protocol, self.tool_executor,
+                                           call=self._call_tool, status=status)
+
+            holder: dict = {}
             try:
-                result = await protocols.run(protocol, self.tool_executor)
+                async for line in self._stream_task(start, holder):
+                    yield line
+                result = holder["result"]
             except Exception:
                 logger.exception("Protocol %s failed", protocol.get("id"))
                 result = {"ok": False, "message": tr("O protocolo “{name}” falhou.",
                                                     name=protocol.get("name", "")), "steps": []}
+            if result.get("plan_steps") and result.get("steps"):
+                self._remember_run(str(protocol.get("name") or ""), result["plan_steps"],
+                                   {**result, "ok": all(o.get("ok") for o in result["steps"])},
+                                   "routine")
             answer = protocols.spoken_summary(result)
+            if any(not o.get("ok") for o in result.get("steps") or []):
+                answer += "\n" + tr("Diz “tenta outra vez” para eu repetir só isso.")
             listener = getattr(self, "on_protocol_done", None)
             if callable(listener):
                 try:
@@ -2201,16 +2236,29 @@ class Brain:
         # A multi-step plan (plugins/task_plan.py) is checked BEFORE it is shown:
         # an invalid plan, or one naming a tool NANO does not have, goes back
         # to the model as an error to fix, never to the person as a question.
+        plan_asked = False
         if name == "task_plan":
             refusal = self._plan_refusal(args)
             if refusal is not None:
                 return refusal
+        # "Guarda isto como rotina": the steps come from what NANO just did.
+        prepared = self._prepare_task_call(name, args)
+        if prepared is not None:
+            return prepared
 
         # Guardrails stay as the human-readable layer in front of the policy
         # pipeline; the executor below re-checks everything independently.
         # A step the person already approved as part of this turn's plan is
         # not asked again HERE; the executor's own approvals still apply.
-        if (self.guardrails.requires_confirmation(name, args) and name not in self._turn_plan_tools
+        # A plan itself asks only when it matters (core/brain_tasks.py): a
+        # plan of safe steps just runs, and its risky steps ask on their own.
+        if name == "task_plan":
+            if self._plan_needs_question(args):
+                if not await self.guardrails.ask_confirmation(name, args):
+                    return {"ok": False, "cancelled": True,
+                            "message": tr("Operação cancelada pelo utilizador.")}
+                plan_asked = True
+        elif (self.guardrails.requires_confirmation(name, args) and name not in self._turn_plan_tools
                 and not await self.guardrails.ask_confirmation(name, args)):
             return {"ok": False, "cancelled": True, "message": tr("Operação cancelada pelo utilizador.")}
 
@@ -2292,7 +2340,8 @@ class Brain:
         # error must be retryable -- the user may approve on a second ask.
         if result.get("success"):
             self._turn_tool_results[fingerprint] = result
-            if name == "task_plan":
+            self._note_action(name, args, result)
+            if name == "task_plan" and plan_asked:
                 self._turn_plan_tools = {str(step.get("tool")) for step in (args.get("steps") or [])
                                          if isinstance(step, dict)}
             # The model resolved it itself later in the turn: nothing to ask.
@@ -2326,7 +2375,9 @@ class Brain:
             return {"ok": False, "success": False, "status": "unknown_tool",
                     "error": tr("O plano usa ferramentas que o NANO não tem: {tools}.",
                                 tools=", ".join(unknown + unsupported))}
-        return None
+        # A step whose arguments its own tool would refuse goes back to the
+        # model now, before anything runs or anyone is asked.
+        return self._plan_step_refusal(plan)
 
     def _turn_saw_untrusted(self) -> bool:
         """Whether a tool result fenced as external content arrived this turn."""
@@ -2538,6 +2589,9 @@ class Brain:
                         sources = self._research_sources_note()
                         if sources:
                             text += sources
+                        plan_note = self._plan_report_note()
+                        if plan_note:
+                            text += plan_note
                         self.conversation.append({"role": "assistant", "content": text})
                         local_attempt["outcome"] = "ok"
                         if text:
@@ -2550,7 +2604,10 @@ class Brain:
                     local_messages.append(msg)
                     self.conversation.append(msg)
 
-                    results = await asyncio.gather(*(self._run_tool(tc) for tc in tool_calls), return_exceptions=True)
+                    ran: dict = {}
+                    async for status in self._run_calls(tool_calls, ran):
+                        yield status
+                    results = ran["results"]
                     for tc, result in zip(tool_calls, results):
                         if isinstance(result, Exception):
                             logger.error("Tool local falhou", exc_info=result)

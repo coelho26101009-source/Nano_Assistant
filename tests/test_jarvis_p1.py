@@ -262,6 +262,9 @@ class _Executor:
     def __init__(self, deny=()):
         self.calls: list[tuple[str, dict]] = []
         self.deny = set(deny)
+        # A protocol said in the chat goes through Brain._run_tool, which
+        # reads the registry; every name counts as registered here.
+        self.registry = _Everything()
 
     async def execute_tool_async(self, name, args=None, **_kw):
         self.calls.append((name, dict(args or {})))
@@ -270,6 +273,11 @@ class _Executor:
         if name in self.deny:
             return {"success": False, "status": "permission_denied", "error": "Recusado"}
         return {"success": True, "status": "completed", "output": {"ok": True}}
+
+
+class _Everything(dict):
+    def __contains__(self, _name):
+        return True
 
 
 def _store(tmp_path) -> protocols.ProtocolStore:
@@ -348,7 +356,9 @@ async def test_the_brain_runs_a_protocol_without_asking_a_model(tmp_path, monkey
     store = _store(tmp_path)
     store.save(STUDY)
     monkeypatch.setattr(protocols, "STORE", store)
-    brain = Brain("", MagicMock(), MemoryEngine(), {"ollama_enabled": False})
+    from core.guardrails import GuardrailsEngine
+
+    brain = Brain("", GuardrailsEngine(), MemoryEngine(), {"ollama_enabled": False})
     brain.route_for_async = AsyncMock(side_effect=AssertionError("the model was consulted"))
     brain.tool_executor = _Executor()
     done = MagicMock()

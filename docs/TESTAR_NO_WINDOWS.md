@@ -172,6 +172,15 @@ tem de estar preparada (item 31).
 - [ ] 62. (Opcional, ~1,6 GB) **Qualidade do reconhecimento → Melhor**: descarrega o modelo maior. Depois experimenta frases difíceis (nomes, barulho de fundo). Anota se percebe melhor e quanto tempo a mais demora. Volta a **Rápida** se ficar lento demais.
 - [ ] 63. Muda a língua para inglês (**Definições → Geral → Idioma**): a frase passa a "Hey Nano" e funciona da mesma maneira.
 
+### Tarefas encadeadas e rotinas por voz (2026-11-24)
+Precisa de um modelo com ferramentas (Groq/Gemini/Mistral, ou o local).
+- [ ] 64. Escreve `abre o Notion e o Chrome, põe o Chrome à esquerda e o volume a 30`. O NANO **não pergunta "Avanço?"** (são tudo coisas seguras): por baixo vês "1/4 · Abrir Notion", "2/4 · Abrir Chrome"... e o Chrome fica mesmo encostado à esquerda **depois** de a janela aparecer. No fim responde curto.
+- [ ] 65. Logo a seguir diz `guarda isto como rotina setup de estudo`. Abre **PC → Modos**: aparece "Setup de estudo" com os 4 passos em "Outros passos". Fecha o Notion e o Chrome e escreve (ou diz) `prepara o meu setup de estudo`: faz tudo outra vez, sem modelo.
+- [ ] 66. Faz uma rotina com uma app que não tens (ex.: `cria uma rotina teste que abre o Photoshop e põe o Photoshop à direita`) e corre-a: o NANO diz "Não fiz: Abrir Photoshop (...); Pôr Photoshop à direita (Dependia de abrir...)" e "Diz “tenta outra vez”". Diz `tenta outra vez`: repete **só** esses dois passos.
+- [ ] 67. Um plano com algo sensível, ex.: `fecha o Discord, abre o Spotify e põe o volume a 20`: só o "Fechar Discord" pede confirmação; o resto faz sozinho.
+- [ ] 68. Carrega na **paragem de emergência** a meio de uma rotina comprida: os passos que faltavam aparecem como "não cheguei lá", nada mais corre.
+- [ ] 69. `que rotinas tenho?` lista as tuas rotinas; `apaga a rotina teste` pede confirmação antes de apagar.
+
 ---
 
 ## O que já sabemos que ainda não está perfeito
