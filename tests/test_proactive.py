@@ -169,9 +169,13 @@ def test_main_sends_notices_to_the_desktop_shell_and_the_ui(monkeypatch):
     monkeypatch.setattr(main, "_desktop_emit", lambda event, payload=None: emitted.append((event, payload)))
     monkeypatch.setattr(main, "_notify_ui", lambda name, *args: ui.append((name, args)))
     monkeypatch.setattr(main, "_DESKTOP_BRIDGE", object())
-    main._on_proactive_notice({"kind": "briefing", "title": "Resumo", "text": "x" * 3000, "extra": 1})
+    main._deliver_notice({"kind": "briefing", "title": "Resumo", "text": "x" * 3000, "extra": 1,
+                          "id": "n-1", "offer": {"label": "Sim", "send": "modo estudo"}})
     event, payload = emitted[0]
-    assert event == "nano_notice" and set(payload) == {"kind", "title", "text"}
+    # Only plain, bounded fields cross: never the offer's sentence or extras.
+    assert event == "nano_notice" and set(payload) == {
+        "kind", "title", "text", "id", "priority", "silent", "mutable", "offer"}
+    assert payload["offer"] == "Sim"
     assert len(payload["text"]) == 1500
     assert ui == [("on_proactive_notice", (payload,))]
 

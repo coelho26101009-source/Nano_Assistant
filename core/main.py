@@ -59,6 +59,7 @@ from core import wake_phrase as wake_phrase_mod
 from core import voice_language
 from core import pc_alerts, personality, protocols, voice_setup
 from core import screen_watch
+from core import notice_gate, presence, suggestions, weather as weather_mod
 from core.wake_word import WakeWordEngine
 from core.events import EventBus
 from core import confirmation as confirmation_text
@@ -2167,11 +2168,24 @@ def get_settings() -> dict:
             "eventAlerts": user_settings.get("proactive_event_alerts", True) is not False,
             "leadMinutes": user_settings.get("proactive_event_lead_minutes", proactive.DEFAULT_LEAD_MINUTES),
             "prep": user_settings.get("proactive_prep", True) is not False,
+            **{key: user_settings.get(f"proactive_{key}", default) for key, default in (
+                ("level", notice_gate.DEFAULT_LEVEL), ("speak", notice_gate.DEFAULT_SPEAK),
+                ("quiet_start", notice_gate.DEFAULT_QUIET_START),
+                ("quiet_end", notice_gate.DEFAULT_QUIET_END))},
+            "quietEnabled": user_settings.get("proactive_quiet_enabled", True) is not False,
+            "respectFullscreen": user_settings.get("proactive_respect_fullscreen", True) is not False,
+            "holdWhenAway": user_settings.get("proactive_hold_when_away", True) is not False,
+            "suggestions": user_settings.get("proactive_suggestions", True) is not False,
+            "habits": user_settings.get("proactive_habits", True) is not False,
+            "bedtime": user_settings.get("proactive_bedtime", True) is not False,
+            "breaks": user_settings.get("proactive_breaks", False) is True,
+            "weather": user_settings.get("proactive_weather", True) is not False,
+            "weatherCity": str(user_settings.get("weather_city", "") or ""),
         },
         "personality": {**personality.settings(),
                         "voices": personality.voice_options(i18n.current())},
         "pcAlerts": {key: user_settings.get(f"pc_alerts_{key}", True) is not False
-                     for key in ("battery", "disk", "network", "downloads")},
+                     for key in pc_alerts.ALERT_KEYS},
         "stored": user_settings.all_settings(),
         "runtime": get_runtime_info(),
         "language": i18n.describe(),
@@ -2985,7 +2999,17 @@ async def _run_protocol(protocol: dict) -> None:
         result = {"ok": False, "id": protocol.get("id"), "name": protocol.get("name"),
                   "message": tr("O protocolo “{name}” falhou.", name=protocol.get("name", "")),
                   "steps": []}
+    _protocol_finished(result)
+
+
+def _protocol_finished(result: dict) -> None:
+    """A protocol ran (window, chat, voice or a routine): show the outcome on
+    Modos and remember the day and time for the habit suggestions."""
     _notify_ui("on_work_mode_done", result)
+    try:
+        suggestion_engine.record_protocol(result.get("id"))
+    except Exception:
+        logger.debug("Não consegui registar o protocolo", exc_info=True)
 
 
 @eel.expose
@@ -3004,7 +3028,7 @@ def run_protocol(protocol_id: str) -> dict:
 
 
 # A protocol said in the chat or by voice also shows its result on Modos.
-brain.on_protocol_done = lambda result: _notify_ui("on_work_mode_done", result)
+brain.on_protocol_done = lambda result: _protocol_finished(result)
 
 
 # ── Speech pack: NANO ready to listen, in one click ────────────────────────
@@ -3165,6 +3189,11 @@ def erase_all_data(confirmation: str = "") -> dict:
 
     # What the briefing already said, and which events it announced.
     proactive_scheduler.forget()
+    # Silence, muted kinds and the notice history; routines and habit times;
+    # the weather cache (it holds the city's coordinates).
+    notice_gate_instance.forget()
+    suggestion_engine.forget()
+    weather_service.forget()
     # The person's protocols are their own data too.
     protocols.STORE.forget()
     screen_watch.WATCHER.stop()
@@ -4306,23 +4335,76 @@ def _on_reminder_due(reminder: dict) -> None:
     _notify_ui("on_reminder_due", payload)
 
 
-def _on_proactive_notice(notice: dict) -> None:
-    """NANO speaks first: a briefing or a heads-up, shown on this PC.
+def _deliver_notice(notice: dict, speak: bool = False) -> None:
+    """Show a notice the gate let through (core/notice_gate.py).
 
-    The same two channels as a due reminder: a native notification (from the
-    desktop shell, or from here in browser mode) and the open window.
+    The same channels as a due reminder: a native notification (from the
+    desktop shell, or from here in browser mode), the island, the open window
+    and the paired phone. A ``silent`` notice (quiet hours, a game in full
+    screen, a low-priority suggestion) skips the Windows notification sound
+    and toast; the island and the window still show it.
     """
+    offer = notice.get("offer") if isinstance(notice.get("offer"), dict) else None
     payload = {"kind": str(notice.get("kind") or "")[:16],
                "title": str(notice.get("title") or "")[:64],
-               "text": str(notice.get("text") or "")[:1500]}
+               "text": str(notice.get("text") or "")[:1500],
+               "id": str(notice.get("id") or "")[:40],
+               "priority": str(notice.get("priority") or "")[:10],
+               "silent": bool(notice.get("silent")),
+               "mutable": bool(notice.get("mutable")),
+               "offer": str(offer.get("label") or "")[:40] if offer else ""}
     if _DESKTOP_BRIDGE is not None:
         _desktop_emit("nano_notice", payload)
-    else:
+    elif not payload["silent"]:
         from core import windows_toast
 
         threading.Thread(target=windows_toast.show, args=(payload["title"], payload["text"]),
                          name="nano-proactive-toast", daemon=True).start()
     _notify_ui("on_proactive_notice", payload)
+    if speak:
+        _speak_notice(payload["id"], str(notice.get("speech") or "").strip()
+                      or f"{payload['title']}. {payload['text'].split(chr(10))[0]}")
+
+
+def _speak_notice(notice_id: str, text: str) -> None:
+    """Say a notice out loud, like JARVIS, but never over something else.
+
+    Same voice and the same privacy rule as "Ler em voz alta" (only while
+    spoken replies are on). Skipped while a voice turn runs or an answer is
+    being read, so a notice never talks over the person or over NANO.
+    """
+    try:
+        voice_cfg = CONFIG.get("voice", {})
+        if not voice.enabled or not voice_cfg.get("tts_enabled", True):
+            return
+        if not getattr(voice.tts_provider, "online", False):
+            return
+        if voice_runtime.turn_status().get("active") or _reading_id is not None:
+            return
+        read_aloud(notice_id or f"notice-{time.time_ns()}", text[:400])
+    except Exception:
+        logger.debug("Não consegui dizer o aviso", exc_info=True)
+
+
+def _on_proactive_notice(notice: dict) -> None:
+    """Everything NANO says by itself goes through the gate first."""
+    try:
+        notice_gate_instance.submit(notice)
+    except Exception:
+        logger.exception("O filtro de avisos falhou; aviso não mostrado")
+
+
+notice_gate_instance = notice_gate.NoticeGate(
+    deliver=_deliver_notice, state_path=DATA_DIR / "proactive_gate.json")
+weather_service = weather_mod.Weather(cache_path=DATA_DIR / "weather_cache.json")
+
+
+def _weather_today() -> dict | None:
+    """Today's weather for the briefing, only when the person typed a city."""
+    if user_settings.get("proactive_weather", True) is False:
+        return None
+    city = str(user_settings.get("weather_city", "") or "").strip()
+    return weather_service.today(city) if city else None
 
 
 def _remembered_facts() -> list[str]:
@@ -4338,11 +4420,105 @@ def _remembered_facts() -> list[str]:
 
 proactive_scheduler = proactive.ProactiveScheduler(
     overview=lambda: agenda.overview(days=2), emit=_on_proactive_notice,
-    state_path=DATA_DIR / "proactive_state.json", facts=_remembered_facts)
+    state_path=DATA_DIR / "proactive_state.json", facts=_remembered_facts,
+    weather=_weather_today, present=notice_gate_instance.present)
 # Screen watches ("avisa-me quando o download acabar") speak the same way.
 screen_watch.WATCHER.configure(emit=_on_proactive_notice)
 # And so do the warnings about the PC itself (core/pc_alerts.py).
 pc_alert_watcher = pc_alerts.PcAlerts(emit=_on_proactive_notice)
+# Routines at their time, habits, bedtime and breaks (core/suggestions.py).
+routine_store = suggestions.RoutineStore(DATA_DIR / "routines.json")
+suggestion_engine = suggestions.SuggestionEngine(
+    emit=_on_proactive_notice, state_path=DATA_DIR / "suggestions_state.json",
+    routines=routine_store, protocols=lambda: protocols.STORE.list(),
+    run_protocol=lambda protocol_id: run_protocol(protocol_id),
+    overview=lambda: agenda.overview(days=1), idle=presence.idle_seconds)
+# The Brain answers "não me incomodes durante uma hora" and a plain "sim" to
+# NANO's last offer without asking a model.
+brain.notice_gate = notice_gate_instance
+
+
+@eel.expose
+def proactive_action(notice_id: str, action: str) -> dict:
+    """A button on a notice: "accept" (do what it offered), "dismiss", or
+    "snooze" (one hour of silence). "Não me avises disto" is mute_notice_kind.
+
+    Accepting never acts from here: it returns the sentence to send as the
+    person's own message ("Fecha o Chrome", "modo estudo"), so it goes through
+    the chat, the protocol matcher and every approval like anything typed.
+    """
+    notice_id = str(notice_id or "")[:40]
+    action = str(action or "")
+    if action == "accept":
+        offer = notice_gate_instance.offer(notice_id)
+        notice_gate_instance.close_offer(notice_id)
+        if not offer:
+            return {"ok": False, "error": "expired",
+                    "detail": tr("Esta sugestão já não está ativa.")}
+        return {"ok": True, "send": str(offer.get("send") or "")[:200]}
+    if action == "dismiss":
+        notice_gate_instance.close_offer(notice_id)
+        return {"ok": True}
+    if action == "snooze":
+        return {"ok": True, "snooze": notice_gate_instance.snooze(60)}
+    return {"ok": False, "error": "unknown_action"}
+
+
+@eel.expose
+def mute_notice_kind(kind: str) -> dict:
+    """"Não me avises disto" on a notice: turn that kind off."""
+    kind = str(kind or "")[:16]
+    if kind not in notice_gate.MUTABLE_KINDS:
+        return {"ok": False, "error": "unknown_kind"}
+    notice_gate_instance.mute(kind)
+    return {"ok": True, "muted": notice_gate_instance.muted()}
+
+
+@eel.expose
+def unmute_notice_kind(kind: str) -> dict:
+    notice_gate_instance.unmute(str(kind or "")[:16])
+    return {"ok": True, "muted": notice_gate_instance.muted()}
+
+
+@eel.expose
+def set_proactive_snooze(minutes: object) -> dict:
+    """Silence: minutes (15-240), -1 until the morning, 0 to end it."""
+    if minutes == 0:
+        return {"ok": True, "snooze": notice_gate_instance.resume()}
+    if minutes == -1:
+        return {"ok": True, "snooze": notice_gate_instance.snooze(until_morning=True)}
+    if type(minutes) is not int or minutes not in notice_gate.SNOOZE_CHOICES:
+        return {"ok": False, "error": "invalid_minutes"}
+    return {"ok": True, "snooze": notice_gate_instance.snooze(minutes)}
+
+
+@eel.expose
+def get_proactive_status() -> dict:
+    """Definições: silence, muted kinds, held notices and the last decisions."""
+    return {"ok": True, **notice_gate_instance.status()}
+
+
+@eel.expose
+def list_routines() -> dict:
+    return {"ok": True, "routines": routine_store.list(),
+            "protocols": [{"id": p["id"], "name": p["name"]} for p in protocols.STORE.list()]}
+
+
+@eel.expose
+def save_routine(data: dict) -> dict:
+    try:
+        routine = routine_store.save(data, known_protocols={p["id"] for p in protocols.STORE.list()})
+    except suggestions.RoutineError as exc:
+        return {"ok": False, "error": "invalid", "detail": str(exc)}
+    except Exception:
+        logger.exception("Não consegui guardar a rotina")
+        return {"ok": False, "error": "save_failed", "detail": tr("Não consegui guardar a rotina.")}
+    return {"ok": True, "routine": routine, "routines": routine_store.list()}
+
+
+@eel.expose
+def delete_routine(routine_id: str) -> dict:
+    return {"ok": routine_store.delete(str(routine_id or "")[:40]), "routines": routine_store.list()}
 
 
 @eel.expose
@@ -4783,6 +4959,8 @@ def shutdown() -> None:
         control.cancel()
     proactive_scheduler.stop()
     pc_alert_watcher.stop()
+    suggestion_engine.stop()
+    notice_gate_instance.stop()
     now_playing_watcher.stop()
     screen_watch.WATCHER.shutdown()
     if _MOBILE_SERVER is not None:
@@ -4909,6 +5087,8 @@ def main():
     started_services = start_plugin_services()
     proactive_scheduler.start()
     pc_alert_watcher.start()
+    suggestion_engine.start()
+    notice_gate_instance.start()
     _report("Plugins", "OK", f"{len(list_plugins())} loaded")
     if started_services:
         logger.info("Serviços de plugin activos: %s", ", ".join(started_services))

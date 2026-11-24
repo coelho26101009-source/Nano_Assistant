@@ -8,7 +8,7 @@
  */
 import React, { useState } from "react";
 import type {
-  CloudProviderKey, ProviderInfo, ProviderPayload, SettingsPayload, VoiceDiagnostics,
+  CloudProviderKey, ProactiveStatus, ProviderInfo, ProviderPayload, SettingsPayload, VoiceDiagnostics,
 } from "../lib/backend";
 import { call } from "../lib/backend";
 import {
@@ -560,9 +560,31 @@ function LocalSetupPanel() {
   );
 }
 
+/** What each kind of notice is called where the person can turn it back on. */
+const NOTICE_KIND_LABEL: Record<string, string> = {
+  event: t("Avisos antes dos eventos"), network: t("Rede em baixo"), battery: t("Bateria fraca"),
+  briefing: t("Resumo da manhã"), prep: t("Preparar o dia seguinte"), download: t("Download terminado"),
+  disk: t("Disco quase cheio"), memory: t("Memória quase cheia"), weather: t("Tempo"),
+  suggestion: t("Sugestões"), bedtime: t("Hora de dormir"), break: t("Pausas"),
+  habit: t("Sugestões de hábitos"), uptime: t("Reiniciar o PC"), battery_full: t("Bateria carregada"),
+  overdue: t("Lembretes em atraso"), welcome: t("Bem-vindo de volta"),
+};
+
+const DECISION_LABEL: Record<string, string> = {
+  deliver: t("mostrado"), hold: t("guardado para depois"), drop: t("não mostrado"),
+};
+const REASON_LABEL: Record<string, string> = {
+  level: t("nível escolhido"), muted: t("desligaste este tipo"), repeat: t("repetido"),
+  snoozed: t("silêncio"), quiet: t("horas de silêncio"), busy: t("jogo ou ecrã inteiro"),
+  away: t("não estavas ao PC"), rate: t("muitos avisos seguidos"), daily: t("limite diário de sugestões"),
+  later: t("dado mais tarde"),
+};
+
 /**
- * NANO speaks first (core/proactive.py): a morning briefing and a heads-up
- * before events. Built locally from the agenda; no model, nothing sent.
+ * NANO speaks first (core/proactive.py, core/suggestions.py): how much, out
+ * loud or not, the morning briefing with the weather, events, the evening
+ * offer to prepare, and suggestions by context. Everything goes through the
+ * notice gate (core/notice_gate.py), configured in the next panel.
  */
 function ProactivePanel({ proactive, onUpdate, onShowBriefing }: {
   proactive?: SettingsPayload["proactive"];
@@ -571,19 +593,57 @@ function ProactivePanel({ proactive, onUpdate, onShowBriefing }: {
 }) {
   const briefing = proactive?.briefing ?? true;
   const alerts = proactive?.eventAlerts ?? true;
+  const level = proactive?.level ?? "balanced";
+  const suggestionsOn = proactive?.suggestions ?? true;
+  const [city, setCity] = useState(proactive?.weatherCity ?? "");
+  React.useEffect(() => { setCity(proactive?.weatherCity ?? ""); }, [proactive?.weatherCity]);
   return (
     <Panel title={t("O NANO fala primeiro")}>
+      <Field label={t("Quanto o NANO fala sozinho")}
+             hint={level === "off" ? t("Só avisos críticos, como a bateria a acabar ou algo que lhe pediste para vigiar.")
+               : level === "essential" ? t("Só o importante: um evento a começar, bateria fraca, a rede caiu.")
+               : level === "balanced" ? t("O importante e o útil (resumo, downloads, disco, memória) e poucas sugestões por dia.")
+               : t("Tudo, com limites mais largos.")}>
+        <SegmentedControl<"off" | "essential" | "balanced" | "all">
+          label={t("Quanto o NANO fala sozinho")} value={level}
+          onChange={(value) => onUpdate("proactive_level", value)}
+          options={[
+            { value: "off", label: t("Desligado") },
+            { value: "essential", label: t("Essencial") },
+            { value: "balanced", label: t("Equilibrado") },
+            { value: "all", label: t("Tudo") },
+          ]}
+        />
+      </Field>
+      <Field label={t("Dizer os avisos em voz alta")}
+             hint={t("Com a voz do NANO, como o JARVIS. Nunca durante as horas de silêncio, um jogo em ecrã inteiro ou uma conversa por voz.")}>
+        <select className="select" value={proactive?.speak ?? "important"}
+                onChange={(e) => onUpdate("proactive_speak", e.target.value)}>
+          <option value="off">{t("Não, só mostrar")}</option>
+          <option value="important">{t("Só o resumo e os importantes")}</option>
+          <option value="all">{t("Todos")}</option>
+        </select>
+      </Field>
       <Toggle
         label={t("Resumo da manhã")}
-        hint={t("Uma vez por dia, à hora escolhida (ou quando ligas o PC depois dela), o NANO diz bom dia e mostra a agenda e os lembretes de hoje. É feito no teu PC, sem IA na nuvem.")}
+        hint={t("Uma vez por dia, depois da hora escolhida e quando estás ao PC, o NANO diz bom dia, a agenda e os lembretes de hoje e o tempo. É feito no teu PC, sem IA na nuvem.")}
         checked={briefing}
         onChange={(value) => onUpdate("proactive_briefing", value)}
       />
       {briefing && (
-        <Field label={t("Hora do resumo")}>
-          <input className="input" type="time" value={proactive?.briefingTime ?? "08:00"}
-                 onChange={(e) => { if (/^\d{2}:\d{2}$/.test(e.target.value)) onUpdate("proactive_briefing_time", e.target.value); }} />
-        </Field>
+        <>
+          <Field label={t("Hora do resumo")}>
+            <input className="input" type="time" value={proactive?.briefingTime ?? "08:00"}
+                   onChange={(e) => { if (/^\d{2}:\d{2}$/.test(e.target.value)) onUpdate("proactive_briefing_time", e.target.value); }} />
+          </Field>
+          <Field label={t("Cidade para o tempo")}
+                 hint={t("Opcional. Só o nome da cidade vai para o Open-Meteo (grátis, sem conta) para saber o tempo. Vazio: o resumo não fala do tempo.")}>
+            <input className="input" value={city} maxLength={60} placeholder={t("Ex.: Porto")}
+                   onChange={(e) => setCity(e.target.value)}
+                   onBlur={() => { if (city.trim() !== (proactive?.weatherCity ?? "")) onUpdate("weather_city", city.trim()); }}
+                   onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); (e.target as HTMLInputElement).blur(); } }} />
+          </Field>
+        </>
       )}
       <Toggle
         label={t("Avisar antes dos eventos")}
@@ -607,9 +667,143 @@ function ProactivePanel({ proactive, onUpdate, onShowBriefing }: {
         checked={proactive?.prep ?? true}
         onChange={(value) => onUpdate("proactive_prep", value)}
       />
+      <Toggle
+        label={t("Sugestões pelo contexto")}
+        hint={t("O NANO repara no momento e sugere. Cada sugestão tem “Não me avises disto”.")}
+        checked={suggestionsOn}
+        onChange={(value) => onUpdate("proactive_suggestions", value)}
+      />
+      {suggestionsOn && (
+        <>
+          <Toggle
+            label={t("Os teus hábitos")}
+            hint={t("Se costumas ativar um protocolo a esta hora, o NANO oferece-se para o ativar. Guarda só o dia e a hora em que o usaste.")}
+            checked={proactive?.habits ?? true}
+            onChange={(value) => onUpdate("proactive_habits", value)}
+          />
+          <Toggle
+            label={t("Hora de dormir")}
+            hint={t("Depois da meia-noite, se ainda estás ao PC, lembra as horas e o que tens de manhã. Uma vez por noite, sem falar alto.")}
+            checked={proactive?.bedtime ?? true}
+            onChange={(value) => onUpdate("proactive_bedtime", value)}
+          />
+          <Toggle
+            label={t("Lembrar pausas")}
+            hint={t("Depois de 2 horas seguidas ao PC, sugere uma pausa de 5 minutos.")}
+            checked={proactive?.breaks ?? false}
+            onChange={(value) => onUpdate("proactive_breaks", value)}
+          />
+        </>
+      )}
       <div style={{ marginTop: 8 }}>
         <Button size="sm" onClick={onShowBriefing}>{t("Mostrar o resumo agora")}</Button>
       </div>
+    </Panel>
+  );
+}
+
+/**
+ * The anti-annoyance filter (core/notice_gate.py): silence now, quiet hours,
+ * games in full screen, being away, the kinds the person turned off, and what
+ * happened to the last notices, so "why didn't NANO tell me?" has an answer.
+ */
+function QuietPanel({ proactive, onUpdate }: {
+  proactive?: SettingsPayload["proactive"];
+  onUpdate: (key: string, value: any) => void;
+}) {
+  const [status, setStatus] = useState<ProactiveStatus | null>(null);
+  const refresh = React.useCallback(async () => {
+    const value = await call<ProactiveStatus>("get_proactive_status");
+    if (value?.ok) setStatus(value);
+  }, []);
+  React.useEffect(() => { void refresh(); }, [refresh]);
+  const snooze = async (minutes: number) => {
+    await call("set_proactive_snooze", minutes);
+    void refresh();
+  };
+  const unmute = async (kind: string) => {
+    await call("unmute_notice_kind", kind);
+    void refresh();
+  };
+  const quiet = proactive?.quietEnabled ?? true;
+  const active = status?.snooze.active ?? false;
+  return (
+    <Panel title={t("Não incomodar")}>
+      <div className="quiet-now" role="status">
+        <span className={active ? "" : "muted"}>
+          {active ? t("Em silêncio até às {0}. Só passam avisos críticos.", { 0: status?.snooze.until ?? "" })
+            : t("O NANO pode falar contigo agora.")}
+        </span>
+        <div className="inline" style={{ gap: 8, flexWrap: "wrap" }}>
+          {active ? (
+            <Button size="sm" onClick={() => { void snooze(0); }}>{t("Acabar o silêncio")}</Button>
+          ) : (
+            <>
+              <Button size="sm" onClick={() => { void snooze(60); }}>{t("Silêncio 1 hora")}</Button>
+              <Button size="sm" variant="ghost" onClick={() => { void snooze(-1); }}>{t("Até amanhã")}</Button>
+            </>
+          )}
+        </div>
+      </div>
+      <p className="dim" style={{ fontSize: 12, margin: "4px 0 12px" }}>
+        {t("Também podes dizer “Ei Nano, não me incomodes durante uma hora” e “podes voltar a falar”.")}
+      </p>
+      <Toggle
+        label={t("Horas de silêncio")}
+        hint={t("Nestas horas o NANO não fala nem faz som. O importante aparece sem som; o resto fica para de manhã, num resumo curto.")}
+        checked={quiet}
+        onChange={(value) => onUpdate("proactive_quiet_enabled", value)}
+      />
+      {quiet && (
+        <div className="routine-form">
+          <Field label={t("Das")}>
+            <input className="input" type="time" value={proactive?.quiet_start ?? "23:00"}
+                   onChange={(e) => { if (/^\d{2}:\d{2}$/.test(e.target.value)) onUpdate("proactive_quiet_start", e.target.value); }} />
+          </Field>
+          <Field label={t("Às")}>
+            <input className="input" type="time" value={proactive?.quiet_end ?? "07:30"}
+                   onChange={(e) => { if (/^\d{2}:\d{2}$/.test(e.target.value)) onUpdate("proactive_quiet_end", e.target.value); }} />
+          </Field>
+        </div>
+      )}
+      <Toggle
+        label={t("Respeitar jogos e ecrã inteiro")}
+        hint={t("Quando o Windows diz que estás num jogo, num filme em ecrã inteiro ou numa apresentação, o NANO guarda os avisos para depois.")}
+        checked={proactive?.respectFullscreen ?? true}
+        onChange={(value) => onUpdate("proactive_respect_fullscreen", value)}
+      />
+      <Toggle
+        label={t("Guardar avisos quando não estou ao PC")}
+        hint={t("Sem teclado nem rato há 10 minutos, o NANO guarda o que não é urgente e diz-te tudo quando voltas.")}
+        checked={proactive?.holdWhenAway ?? true}
+        onChange={(value) => onUpdate("proactive_hold_when_away", value)}
+      />
+      {status && status.muted.length > 0 && (
+        <Field label={t("Avisos que desligaste")}>
+          <div className="msg__choices" style={{ marginTop: 0 }}>
+            {status.muted.map((kind) => (
+              <button key={kind} type="button" className="choice-chip" onClick={() => { void unmute(kind); }}
+                      title={t("Voltar a avisar")} aria-label={t("Voltar a avisar: {0}", { 0: NOTICE_KIND_LABEL[kind] ?? kind })}>
+                {NOTICE_KIND_LABEL[kind] ?? kind} ✕
+              </button>
+            ))}
+          </div>
+        </Field>
+      )}
+      {status && status.history.length > 0 && (
+        <details className="quiet-history">
+          <summary>{t("Últimos avisos")}</summary>
+          <ul>
+            {status.history.slice(0, 10).map((item, index) => (
+              <li key={`${item.at}-${index}`}>
+                <span className="dim">{item.at.slice(11)}</span> {item.title || NOTICE_KIND_LABEL[item.kind] || item.kind}
+                <span className="dim"> · {DECISION_LABEL[item.decision] ?? item.decision}
+                  {item.reason ? ` (${REASON_LABEL[item.reason] ?? item.reason})` : ""}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </Panel>
   );
 }
@@ -698,6 +892,15 @@ function PcAlertsPanel({ alerts, onUpdate }: {
       <Toggle label={t("Download terminado")}
               hint={t("Avisa quando um ficheiro novo acaba de chegar à pasta Transferências. Só lê o nome do ficheiro.")}
               checked={alerts?.downloads ?? true} onChange={(v) => onUpdate("pc_alerts_downloads", v)} />
+      <Toggle label={t("Memória quase cheia")}
+              hint={t("Avisa quando a memória passa dos 90% durante 2 minutos, diz que app gasta mais e oferece-se para a fechar (fechar pede sempre confirmação).")}
+              checked={alerts?.memory ?? true} onChange={(v) => onUpdate("pc_alerts_memory", v)} />
+      <Toggle label={t("Bateria carregada")}
+              hint={t("Diz quando a bateria chega aos 100% com o carregador ligado, uma vez por carga.")}
+              checked={alerts?.battery_full ?? true} onChange={(v) => onUpdate("pc_alerts_battery_full", v)} />
+      <Toggle label={t("Reiniciar o PC")}
+              hint={t("Sugere reiniciar quando o PC está ligado há uma semana ou mais, no máximo uma vez por semana.")}
+              checked={alerts?.uptime ?? true} onChange={(v) => onUpdate("pc_alerts_uptime", v)} />
     </Panel>
   );
 }
@@ -1110,6 +1313,7 @@ export default function SettingsPage({
             <PhonePanel />
             <ProactivePanel proactive={settings.proactive} onUpdate={onUpdate}
                             onShowBriefing={() => { void call("get_briefing_now"); }} />
+            <QuietPanel proactive={settings.proactive} onUpdate={onUpdate} />
             <PcAlertsPanel alerts={settings.pcAlerts} onUpdate={onUpdate} />
             <DesktopPanel />
             {advancedMode && (

@@ -36,6 +36,10 @@ function fromBackendEvent(event, payload) {
     // heads-up before an event. Title and text come from the backend.
     const text = cleanText(payload && payload.text, MAX_BODY);
     if (!text) return null;
+    // A notice the gate marked silent (quiet hours, a full-screen game, a
+    // low-priority suggestion) shows on the island and in the window only:
+    // no Windows toast, no sound.
+    if (payload && payload.silent === true) return null;
     return {
       title: cleanText(payload && payload.title, MAX_TITLE) || 'NANO',
       body: text,

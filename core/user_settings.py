@@ -97,6 +97,16 @@ ALLOWED_KEYS: frozenset[str] = frozenset({
     "personality_instructions", "tts_voice",
     # Warnings about this PC itself (core/pc_alerts.py). On by default.
     "pc_alerts_battery", "pc_alerts_disk", "pc_alerts_network", "pc_alerts_downloads",
+    "pc_alerts_memory", "pc_alerts_battery_full", "pc_alerts_uptime",
+    # The filter that keeps proactivity from being annoying (core/notice_gate.py):
+    # how much NANO says by itself, quiet hours, full screen, away, voice.
+    "proactive_level", "proactive_speak", "proactive_quiet_enabled",
+    "proactive_quiet_start", "proactive_quiet_end", "proactive_respect_fullscreen",
+    "proactive_hold_when_away",
+    # Suggestions by context (core/suggestions.py) and the briefing's weather
+    # (core/weather.py, Open-Meteo, only with a city typed in).
+    "proactive_suggestions", "proactive_habits", "proactive_bedtime", "proactive_breaks",
+    "proactive_weather", "weather_city",
 })
 
 _BOOLEAN_KEYS = frozenset({
@@ -107,7 +117,10 @@ _BOOLEAN_KEYS = frozenset({
     "advanced_mode", "screen_text_enabled",
     "screen_vision_enabled", "proactive_briefing", "proactive_event_alerts", "proactive_prep",
     "mobile_access_enabled", "mobile_relay_enabled", "pc_alerts_battery", "pc_alerts_disk", "pc_alerts_network",
-    "pc_alerts_downloads",
+    "pc_alerts_downloads", "pc_alerts_memory", "pc_alerts_battery_full", "pc_alerts_uptime",
+    "proactive_quiet_enabled", "proactive_respect_fullscreen", "proactive_hold_when_away",
+    "proactive_suggestions", "proactive_habits", "proactive_bedtime", "proactive_breaks",
+    "proactive_weather",
 })
 
 
@@ -143,11 +156,17 @@ def _valid_value(key: str, value: Any) -> bool:
     if key == "proactive_briefing_time":
         return isinstance(value, str) and len(value) == 5 and value[2] == ":" and \
             value[:2].isdigit() and value[3:].isdigit() and int(value[:2]) < 24 and int(value[3:]) < 60
-    from core import personality
+    from core import notice_gate, personality
 
     verdict = personality.valid_setting(key, value)
     if verdict is not None:
         return verdict
+    verdict = notice_gate.valid_setting(key, value)
+    if verdict is not None:
+        return verdict
+    if key == "weather_city":
+        return isinstance(value, str) and len(value.strip()) <= 60 and \
+            not any(ord(ch) < 32 for ch in value)
     if key == "proactive_event_lead_minutes":
         return type(value) is int and value in {5, 10, 15, 30, 60}
     # Model IDs are bounded plain strings, never arbitrary JSON containers.

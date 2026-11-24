@@ -158,6 +158,49 @@ export interface Message {
    * "Tentar de novo" sends it again as a new message: rewinding "the last
    * turn" would have deleted the PREVIOUS exchange, the last one on disk. */
   unsent?: boolean;
+  /** Something NANO said by itself (core/notice_gate.py): what its buttons
+   *  need. The offer is only a label; accepting asks the backend for the
+   *  sentence to send, so a button never acts by itself. */
+  notice?: NoticeInfo;
+}
+
+export type NoticeInfo = { id: string; kind: string; offer?: string; mutable?: boolean };
+export type NoticeAction = "accept" | "dismiss" | "mute";
+
+/** The buttons under a notice. Null where there are none (the voice overlay). */
+const NoticeContext = React.createContext<((notice: NoticeInfo, action: NoticeAction) => void) | null>(null);
+
+/**
+ * "Sim" / "Agora não" under an offer, and "Não me avises disto" under any
+ * notice whose kind the person can turn off. Pressed once, the row settles.
+ */
+function NoticeActions({ notice }: { notice: NoticeInfo }) {
+  const onAction = React.useContext(NoticeContext);
+  const [done, setDone] = useState<NoticeAction | null>(null);
+  if (!onAction || (!notice.offer && !notice.mutable)) return null;
+  const press = (action: NoticeAction) => { setDone(action); onAction(notice, action); };
+  return (
+    <div className="msg__choices notice-actions" role="group" aria-label={t("Responder ao aviso")}>
+      {notice.offer ? (
+        <>
+          <button type="button" className="choice-chip" disabled={done !== null}
+                  aria-pressed={done === "accept"} onClick={() => press("accept")}>
+            {notice.offer}
+          </button>
+          <button type="button" className="choice-chip" disabled={done !== null}
+                  aria-pressed={done === "dismiss"} onClick={() => press("dismiss")}>
+            {t("Agora não")}
+          </button>
+        </>
+      ) : null}
+      {notice.mutable ? (
+        <button type="button" className="notice-actions__mute" disabled={done === "mute"}
+                onClick={() => press("mute")}>
+          {done === "mute" ? t("Não volto a avisar disto") : t("Não me avises disto")}
+        </button>
+      ) : null}
+    </div>
+  );
 }
 
 /** The files on a sent message, or waiting in the composer. */
@@ -873,6 +916,8 @@ function MessageBubble({
         <RecallChips recalled={message.meta.recalled} />
       ) : null}
 
+      {!isUser && message.notice ? <NoticeActions notice={message.notice} /> : null}
+
       {onChoose && !isUser && !message.streaming && message.clarification?.options?.length ? (
         <ClarificationChoices clarification={message.clarification} onChoose={onChoose} />
       ) : null}
@@ -932,9 +977,11 @@ export function greeting(name?: string | null, now: Date = new Date()): string {
 
 export function Conversation({
   messages, status, thinking, userName, connecting = false, onRetry, onEdit, onChoose, advanced = false,
-  onOpenPanel, readAloud = null, onOpenConversation,
+  onOpenPanel, readAloud = null, onOpenConversation, onNotice,
 }: {
   messages: Message[];
+  /** A button under something NANO said by itself. */
+  onNotice?: (notice: NoticeInfo, action: NoticeAction) => void;
   /** Open an older conversation from a "Lembrei-me de" chip (Memory M3). */
   onOpenConversation?: (id: string) => void;
   /** Read an answer aloud; null when NANO's voice can't speak. */
@@ -1033,6 +1080,7 @@ export function Conversation({
     <PanelContext.Provider value={onOpenPanel ?? null}>
     <RecallContext.Provider value={onOpenConversation ?? null}>
     <ReadAloudContext.Provider value={readAloud}>
+    <NoticeContext.Provider value={onNotice ?? null}>
     <div className="conversation" role="log" aria-live="polite" aria-label={t("Conversa")}
          ref={scrollRef} onScroll={onScroll}>
       <div className="conversation__inner">
@@ -1069,6 +1117,7 @@ export function Conversation({
         </button>
       )}
     </div>
+    </NoticeContext.Provider>
     </ReadAloudContext.Provider>
     </RecallContext.Provider>
     </PanelContext.Provider>

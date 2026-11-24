@@ -24,6 +24,11 @@ test('a proactive notice becomes a notification with its own title', () => {
   assert.strictEqual(notifications.fromBackendEvent('nano_notice', { text: 'olá' }).title, 'NANO');
 });
 
+test('a silent notice (quiet hours, a game, a suggestion) makes no Windows toast', () => {
+  assert.strictEqual(notifications.fromBackendEvent('nano_notice', { title: 'Já é tarde', text: '01:10', silent: true }), null);
+  assert.ok(notifications.fromBackendEvent('nano_notice', { title: 'x', text: 'y', silent: false }));
+});
+
 test('other backend events never produce a notification', () => {
   assert.strictEqual(notifications.fromBackendEvent('voice_phase', { text: 'x' }), null);
   assert.strictEqual(notifications.fromBackendEvent('something_new', { text: 'x' }), null);

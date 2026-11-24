@@ -160,7 +160,7 @@ def build_prep_notice(title: str, start: datetime, facts: list[str], *,
     if related:
         lines.append(tr("O que me lembro sobre isto:"))
         lines += [f"• {fact}" for fact in related]
-    return {"kind": "prep", "title": tr("Para amanhã"), "text": "\n".join(lines)}
+    return {"kind": "prep", "title": tr("Para amanhã"), "text": "\n".join(lines), "speech": first}
 
 
 def _hhmm(moment: datetime) -> str:
@@ -225,8 +225,12 @@ def _items_on(day: datetime, overview: dict) -> tuple[list[tuple[datetime, str]]
 
 
 def build_briefing(overview: dict, now: datetime, *, name: str = "",
-                   facts: list[str] | None = None) -> dict:
-    """The morning briefing as ``{"title", "text"}``. Pure; no I/O."""
+                   facts: list[str] | None = None, weather: dict | None = None) -> dict:
+    """The morning briefing as ``{"title", "text", "speech"}``. Pure; no I/O.
+
+    ``speech`` is the short version said out loud: the greeting, how many
+    things today and the first one, and the weather in one sentence.
+    """
     events, reminders = _items_on(now, overview)
     # An all-day event (a birthday, a holiday, an exam day) started at 00:00,
     # so the "still ahead" filter used to drop every one of them from the
@@ -257,7 +261,30 @@ def build_briefing(overview: dict, now: datetime, *, name: str = "",
     tomorrow = len(tomorrow_events) + len(tomorrow_reminders)
     if tomorrow:
         lines.append(tr("Amanhã tens {count} coisa(s) marcada(s).", count=tomorrow))
-    return {"kind": "briefing", "title": tr("Resumo do dia"), "text": "\n".join(lines)}
+    if weather and weather.get("line"):
+        lines.append(tr("Tempo") + " · " + str(weather["line"]))
+    return {"kind": "briefing", "title": tr("Resumo do dia"), "text": "\n".join(lines),
+            "speech": _briefing_speech(now, name, later_events, reminders, weather)}
+
+
+def _briefing_speech(now: datetime, name: str, events: list[tuple[datetime, str]],
+                     reminders: list[tuple[datetime, str]], weather: dict | None) -> str:
+    """The briefing in two or three short spoken sentences."""
+    parts = [_greeting(now, name)]
+    total = len(events) + len(reminders)
+    if not total:
+        parts.append(tr("Hoje tens a agenda livre."))
+    else:
+        first_time, first_title = sorted(events + reminders)[0]
+        if first_title.startswith(_ALL_DAY):
+            first = tr("{title}, todo o dia", title=first_title[len(_ALL_DAY):])
+        else:
+            first = tr("{title} às {time}", title=first_title, time=_hhmm(first_time))
+        parts.append(tr("Hoje tens uma coisa: {first}.", first=first) if total == 1 else
+                     tr("Hoje tens {count} coisas; a primeira é {first}.", count=total, first=first))
+    if weather and weather.get("speech"):
+        parts.append(str(weather["speech"]))
+    return " ".join(parts)
 
 
 def build_event_alert(title: str, start: datetime, now: datetime) -> dict:
@@ -265,7 +292,13 @@ def build_event_alert(title: str, start: datetime, now: datetime) -> dict:
     text = (tr("{title} começa agora ({time}).", title=title, time=_hhmm(start)) if minutes <= 1
             else tr("{title} começa daqui a {minutes} min ({time}).",
                     title=title, minutes=minutes, time=_hhmm(start)))
-    return {"kind": "event", "title": tr("Daqui a pouco"), "text": text}
+    # Held while the person is away, it is useless once the event started.
+    try:
+        expires = start.timestamp()
+    except (OverflowError, OSError, ValueError):
+        expires = None
+    return {"kind": "event", "title": tr("Daqui a pouco"), "text": text, "speech": text,
+            "expires_at": expires}
 
 
 class ProactiveScheduler:
@@ -275,8 +308,15 @@ class ProactiveScheduler:
     def __init__(self, *, overview: Callable[[], dict], emit: Callable[[dict], None],
                  state_path: Path | None, settings: Callable[[], dict] = _settings,
                  now: Callable[[], datetime] = datetime.now,
-                 facts: Callable[[], list[str]] | None = None):
+                 facts: Callable[[], list[str]] | None = None,
+                 weather: Callable[[], dict | None] | None = None,
+                 present: Callable[[], bool] | None = None):
         self._overview = overview
+        self._weather = weather
+        # The briefing waits until the person is actually at the PC: said to
+        # an empty room at 08:00 it is lost; said when they sit down at 08:40
+        # it is JARVIS greeting them.
+        self._present = present
         self._facts = facts
         self._emit = emit
         self._settings = settings
@@ -338,9 +378,9 @@ class ProactiveScheduler:
             due = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
             today = now.date().isoformat()
             if (now >= due and now.hour < max(LATEST_BRIEFING_HOUR, hour + 1)
-                    and self._state["last_briefing"] != today):
+                    and self._state["last_briefing"] != today and self._is_present()):
                 out.append(build_briefing(overview, now, name=settings.get("name", ""),
-                                          facts=self._read_facts()))
+                                          facts=self._read_facts(), weather=self._read_weather()))
                 self._state["last_briefing"] = today
                 changed = True
 
@@ -385,6 +425,23 @@ class ProactiveScheduler:
                 logger.debug("Falha a mostrar um aviso proativo", exc_info=True)
         return out
 
+    def _is_present(self) -> bool:
+        if self._present is None:
+            return True
+        try:
+            return bool(self._present())
+        except Exception:
+            return True
+
+    def _read_weather(self) -> dict | None:
+        if self._weather is None:
+            return None
+        try:
+            return self._weather()
+        except Exception:
+            logger.debug("Tempo indisponível para o resumo", exc_info=True)
+            return None
+
     def _read_facts(self) -> list[str]:
         if self._facts is None:
             return []
@@ -410,7 +467,7 @@ class ProactiveScheduler:
         except Exception:
             overview = {}
         return build_briefing(overview, self._now(), name=settings.get("name", ""),
-                              facts=self._read_facts())
+                              facts=self._read_facts(), weather=self._read_weather())
 
     # ── the thread ───────────────────────────────────────────────────────
     def start(self) -> None:
