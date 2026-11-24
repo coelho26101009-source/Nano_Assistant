@@ -191,6 +191,19 @@ Precisa de um modelo com ferramentas (Groq/Gemini/Mistral, ou o local).
 - [ ] 76. Carrega na **paragem de emergência** a meio de uma rotina comprida: os passos que faltavam aparecem como "não cheguei lá", nada mais corre.
 - [ ] 77. `que rotinas tenho?` lista as tuas rotinas; `apaga a rotina teste` pede confirmação antes de apagar.
 
+### NANO proativo, sem ser chato (2026-11-24)
+- [ ] 78. **Definições → Geral → O NANO fala primeiro**: escreve a tua cidade em "Cidade para o tempo" (ex.: `Porto`) e carrega em **Mostrar o resumo agora**. O resumo traz uma linha **Tempo** com a temperatura e, se for chover, "leva guarda-chuva".
+- [ ] 79. Com "Dizer os avisos em voz alta" em **Só o resumo e os importantes** e a voz ligada: muda a hora do resumo para daqui a 2 minutos e espera ao PC. O NANO diz bom dia **em voz alta** (curto) e mostra o resumo completo no chat.
+- [ ] 80. Muda a hora do resumo para daqui a 2 minutos e **afasta-te do PC 12 minutos** (sem mexer no rato). Quando voltas e mexes no rato, o resumo aparece nessa altura, não antes.
+- [ ] 81. Escreve `não me incomodes durante uma hora`. O NANO responde "fico calado até às …". Em **Definições → Geral → Não incomodar** aparece "Em silêncio até às …". Escreve `podes voltar a falar`: o silêncio acaba.
+- [ ] 82. Abre um jogo em **ecrã inteiro** e descarrega um ficheiro durante o jogo. Não aparece nada por cima do jogo. Quando sais do jogo, aparece o aviso do download.
+- [ ] 83. Abre muitas abas no Chrome até a memória passar dos 90% (ou um jogo pesado) e espera 2 minutos: aparece "Memória quase cheia" com o nome da app e o botão **Fechar o …**. Carrega: o NANO pede autorização antes de fechar. Experimenta também responder só `sim` no chat.
+- [ ] 84. Por baixo de um aviso carrega em **Não me avises disto**. Em **Não incomodar → Avisos que desligaste** aparece esse tipo; carrega nele para voltar a ligar.
+- [ ] 85. **PC → Modos → Rotinas com hora**: cria uma rotina com o teu "Modo estudo" para daqui a 2 minutos, no dia de hoje. À hora, o NANO pergunta "São …: começo o Modo estudo?". Responde `sim` (por voz ou escrito): o protocolo corre.
+- [ ] 86. Ativa o mesmo protocolo à mesma hora em 3 dias diferentes. No 4.º dia, a essa hora, o NANO pergunta se o quer ativar ("Costumas ativar…").
+- [ ] 87. Depois da meia-noite, ainda ao PC: aparece "Já é tarde" (sem som e sem voz), com o que tens de manhã se houver algo na agenda antes das 11h.
+- [ ] 88. **Definições → Geral → Não incomodar → Últimos avisos**: vês o que o NANO mostrou, guardou para depois ou não mostrou, e porquê.
+
 ---
 
 ## O que já sabemos que ainda não está perfeito

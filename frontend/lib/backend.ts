@@ -296,13 +296,23 @@ export type SettingsPayload = {
   /** Privacidade -> Ler texto do ecrã (local OCR). Off by default. */
   screenText?: { enabled: boolean; available: boolean; reason: string; message: string };
   screenVision?: { enabled: boolean };
-  proactive?: { briefing: boolean; briefingTime: string; eventAlerts: boolean; leadMinutes: number; prep?: boolean };
+  proactive?: {
+    briefing: boolean; briefingTime: string; eventAlerts: boolean; leadMinutes: number; prep?: boolean;
+    /** The notice gate (core/notice_gate.py). */
+    level?: "off" | "essential" | "balanced" | "all"; speak?: "off" | "important" | "all";
+    quiet_start?: string; quiet_end?: string; quietEnabled?: boolean;
+    respectFullscreen?: boolean; holdWhenAway?: boolean;
+    /** Suggestions by context (core/suggestions.py) and the briefing's weather. */
+    suggestions?: boolean; habits?: boolean; bedtime?: boolean; breaks?: boolean;
+    weather?: boolean; weatherCity?: string;
+  };
   personality?: {
     tone: "jarvis" | "friendly" | "formal" | "neutral"; length: "short" | "balanced" | "detailed";
     address: string; instructions: string; voice: string; name: string;
     voices: { id: string; label: string }[];
   };
-  pcAlerts?: { battery: boolean; disk: boolean; network: boolean; downloads: boolean };
+  pcAlerts?: { battery: boolean; disk: boolean; network: boolean; downloads: boolean;
+    memory?: boolean; battery_full?: boolean; uptime?: boolean };
 };
 
 /* ── Bridge ───────────────────────────────────────────────────────────── */
@@ -457,3 +467,13 @@ export function useFetch<T>(name: string, enabled: boolean, deps: any[] = [], ..
 
   return { data, loading, refresh };
 }
+
+/** Definições → "O NANO fala primeiro": silence, muted kinds and recent decisions. */
+export type ProactiveStatus = {
+  ok: boolean;
+  snooze: { active: boolean; until: string | null; minutesLeft: number };
+  muted: string[];
+  held: number;
+  history: { at: string; kind: string; title: string; decision: "deliver" | "hold" | "drop"; reason: string }[];
+  now: { quiet: boolean; busy: string; away: boolean };
+};

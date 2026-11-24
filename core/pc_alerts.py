@@ -10,6 +10,12 @@ WHAT IT WATCHES (every 30 seconds, all local)
   hiccup says nothing), and that it came back.
 * **Downloads** — a new file in the Downloads folder that has stopped growing
   and is not a browser's partial file (.crdownload, .part, .tmp…).
+* **Memory** — RAM at or above 90 % for two minutes in a row: names the app
+  using most and offers to close it (closing still asks, like any request).
+* **Battery full** — the charger is in and the battery reached 100 %, once
+  per charge (a suggestion: unplug to spare the battery).
+* **Restart** — the PC has been on for 7 days or more, once a week (a
+  suggestion: a restart finishes Windows updates and frees memory).
 
 WHAT IT DOES NOT DO
 -------------------
@@ -47,6 +53,19 @@ NETWORK_CONFIRM_TICKS = 2
 PARTIAL_SUFFIXES = (".crdownload", ".part", ".partial", ".tmp", ".download", ".opdownload",
                     ".!ut", ".aria2", ".dtapart")
 MAX_DOWNLOADS_PER_TICK = 3
+MEMORY_HIGH_PERCENT = 90.0
+#: Readings in a row above the limit (30 s apart) before it is said.
+MEMORY_CONFIRM_TICKS = 4
+MEMORY_REPEAT_SECONDS = 2 * 3600
+UPTIME_DAYS = 7
+UPTIME_REPEAT_SECONDS = 7 * 24 * 3600
+#: Processes never named as "the one using memory": Windows itself.
+_SYSTEM_PROCESSES = frozenset({
+    "system", "registry", "memory compression", "svchost.exe", "csrss.exe", "wininit.exe",
+    "smss.exe", "lsass.exe", "services.exe", "dwm.exe", "explorer.exe", "system idle process",
+    "msmpeng.exe", "searchindexer.exe", "fontdrvhost.exe", "winlogon.exe", "vmmem",
+})
+ALERT_KEYS = ("battery", "disk", "network", "downloads", "memory", "battery_full", "uptime")
 
 
 def _settings() -> dict[str, bool]:
@@ -56,8 +75,7 @@ def _settings() -> dict[str, bool]:
     except Exception:  # pragma: no cover
         def get(_key, default=None):
             return default
-    return {key: get(f"pc_alerts_{key}", True) is not False
-            for key in ("battery", "disk", "network", "downloads")}
+    return {key: get(f"pc_alerts_{key}", True) is not False for key in ALERT_KEYS}
 
 
 # ── readings (each one replaceable in tests) ─────────────────────────────
@@ -71,6 +89,54 @@ def read_battery() -> dict | None:
     if battery is None:
         return None
     return {"percent": round(float(battery.percent)), "plugged": bool(battery.power_plugged)}
+
+
+def read_memory() -> dict | None:
+    """``{"percent", "top": (name, gb) | None}``: RAM in use and the app using most."""
+    try:
+        import psutil
+
+        percent = float(psutil.virtual_memory().percent)
+    except Exception:
+        return None
+    return {"percent": percent, "top": None}
+
+
+def top_memory_app() -> tuple[str, float] | None:
+    """The user app using the most memory, summed over its processes."""
+    try:
+        import psutil
+    except Exception:
+        return None
+    totals: dict[str, float] = {}
+    try:
+        for proc in psutil.process_iter(["name", "memory_info"]):
+            name = str(proc.info.get("name") or "")
+            info = proc.info.get("memory_info")
+            if not name or info is None or name.casefold() in _SYSTEM_PROCESSES:
+                continue
+            totals[name] = totals.get(name, 0.0) + float(getattr(info, "rss", 0) or 0)
+    except Exception:
+        return None
+    if not totals:
+        return None
+    name, size = max(totals.items(), key=lambda item: item[1])
+    return name, size / 1024 ** 3
+
+
+def read_uptime_days() -> float | None:
+    try:
+        import psutil
+
+        return (time.time() - float(psutil.boot_time())) / 86400.0
+    except Exception:
+        return None
+
+
+def _app_label(process_name: str) -> str:
+    """"chrome.exe" -> "Chrome"; what the person calls the app."""
+    base = process_name.rsplit(".", 1)[0] if process_name.casefold().endswith(".exe") else process_name
+    return base[:1].upper() + base[1:] if base else process_name
 
 
 def _system_drive() -> str:
@@ -133,8 +199,8 @@ def _partial(name: str) -> bool:
     return lower.endswith(PARTIAL_SUFFIXES) or lower.startswith((".", "~$"))
 
 
-def notice(kind: str, title: str, text: str) -> dict:
-    return {"kind": kind, "title": title, "text": text}
+def notice(kind: str, title: str, text: str, **extra: Any) -> dict:
+    return {"kind": kind, "title": title, "text": text, **extra}
 
 
 class PcAlerts:
@@ -146,6 +212,9 @@ class PcAlerts:
                  disk: Callable[[], dict | None] = read_disk,
                  network: Callable[[], bool | None] = read_network,
                  downloads: Callable[[], dict[str, tuple[int, float]] | None] = read_downloads,
+                 memory: Callable[[], dict | None] = read_memory,
+                 top_app: Callable[[], tuple[str, float] | None] = top_memory_app,
+                 uptime_days: Callable[[], float | None] = read_uptime_days,
                  clock: Callable[[], float] = time.time) -> None:
         self._emit = emit
         self._settings = settings
@@ -153,7 +222,14 @@ class PcAlerts:
         self._disk = disk
         self._network = network
         self._downloads = downloads
+        self._memory = memory
+        self._top_app = top_app
+        self._uptime_days = uptime_days
         self._clock = clock
+        self._memory_ticks = 0
+        self._memory_said_at: float | None = None
+        self._full_said = False
+        self._uptime_said_at: float | None = None
         self._battery_level_said: int | None = None
         self._disk_said_at: float | None = None
         self._online: bool | None = None
@@ -169,7 +245,9 @@ class PcAlerts:
         settings = self._settings()
         out: list[dict] = []
         for key, check in (("battery", self._check_battery), ("disk", self._check_disk),
-                           ("network", self._check_network), ("downloads", self._check_downloads)):
+                           ("network", self._check_network), ("downloads", self._check_downloads),
+                           ("memory", self._check_memory), ("battery_full", self._check_battery_full),
+                           ("uptime", self._check_uptime)):
             if not settings.get(key, True):
                 if key == "downloads":
                     self._seen = None          # start fresh when switched back on
@@ -201,9 +279,67 @@ class PcAlerts:
         if level == BATTERY_CRITICAL:
             text = tr("A bateria está em {percent}%. Liga o carregador já, ou guarda o que "
                       "estás a fazer.", percent=percent)
-        else:
-            text = tr("A bateria está em {percent}%. Convém ligar o carregador.", percent=percent)
+            return [notice("battery", tr("Bateria fraca"), text, priority="critical")]
+        text = tr("A bateria está em {percent}%. Convém ligar o carregador.", percent=percent)
         return [notice("battery", tr("Bateria fraca"), text)]
+
+    def _check_battery_full(self) -> list[dict]:
+        reading = self._battery()
+        if reading is None:
+            return []
+        if not reading["plugged"] or int(reading["percent"]) < 100:
+            if not reading["plugged"]:
+                self._full_said = False     # next charge may say it again
+            return []
+        if self._full_said:
+            return []
+        self._full_said = True
+        return [notice("battery_full", tr("Bateria carregada"),
+                       tr("A bateria chegou aos 100%. Se quiseres, já podes tirar o carregador."))]
+
+    def _check_memory(self) -> list[dict]:
+        reading = self._memory()
+        if reading is None:
+            return []
+        if float(reading["percent"]) < MEMORY_HIGH_PERCENT:
+            self._memory_ticks = 0
+            return []
+        self._memory_ticks += 1
+        now = self._clock()
+        if self._memory_ticks < MEMORY_CONFIRM_TICKS or (
+                self._memory_said_at is not None and now - self._memory_said_at < MEMORY_REPEAT_SECONDS):
+            return []
+        self._memory_said_at = now
+        top = self._top_app()
+        percent = round(float(reading["percent"]))
+        if top:
+            label = _app_label(top[0])
+            text = tr("A memória do PC está a {percent}%. O que mais gasta é o {app} ({size} GB). "
+                      "Queres que o feche?", percent=percent, app=label, size=f"{top[1]:.1f}")
+            return [notice("memory", tr("Memória quase cheia"), text,
+                           offer={"label": tr("Fechar o {app}", app=label),
+                                  "send": tr("Fecha o {app}", app=label)})]
+        return [notice("memory", tr("Memória quase cheia"),
+                       tr("A memória do PC está a {percent}%. Fechar programas que não usas "
+                          "deixa o PC mais rápido.", percent=percent))]
+
+    def _check_uptime(self) -> list[dict]:
+        days = self._uptime_days()
+        if days is None or days < UPTIME_DAYS:
+            return []
+        now = self._clock()
+        if self._uptime_said_at is not None and now - self._uptime_said_at < UPTIME_REPEAT_SECONDS:
+            return []
+        self._uptime_said_at = now
+        from datetime import date, timedelta as _delta
+
+        booted = (date.today() - _delta(days=int(days))).isoformat()
+        return [notice("uptime", tr("Reiniciar o PC"),
+                       tr("O PC está ligado há {days} dias sem reiniciar. Quando der jeito, um "
+                          "reinício acaba as atualizações do Windows e liberta memória.",
+                          days=int(days)),
+                       # Once per boot and week, even across NANO restarts.
+                       once=f"uptime:{booted}:{int(days) // 7}")]
 
     def _check_disk(self) -> list[dict]:
         reading = self._disk()

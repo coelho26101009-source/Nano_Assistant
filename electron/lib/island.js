@@ -177,6 +177,10 @@ const NOTICE_KIND = Object.freeze({
   disk: { icon: 'disk', tone: 'warning', state: 'alert', ttl: TTL.alert },
   network: { icon: 'wifi', tone: 'info', state: 'alert', ttl: TTL.alert },
   download: { icon: 'download', tone: 'success', state: 'download', ttl: TTL.download },
+  memory: { icon: 'alert', tone: 'warning', state: 'alert', ttl: TTL.alert },
+  battery_full: { icon: 'battery', tone: 'success', state: 'alert', ttl: TTL.alert },
+  event: { icon: 'bell', tone: 'accent', state: 'notice', ttl: TTL.reminder },
+  routine: { icon: 'bell', tone: 'accent', state: 'notice', ttl: TTL.reminder },
 });
 
 /**

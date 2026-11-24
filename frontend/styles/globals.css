@@ -2153,6 +2153,15 @@ kbd {
 .choice-chip:disabled { cursor: default; opacity: 0.55; }
 .choice-chip[aria-pressed="true"] { opacity: 1; border-color: var(--accent); }
 .msg__choices-more { align-self: center; font-size: var(--fs-sm); }
+/* Buttons under a notice NANO said by itself (core/notice_gate.py). */
+.notice-actions { align-items: center; }
+.notice-actions__mute {
+  background: none; border: 0; padding: var(--sp-1) var(--sp-2); border-radius: var(--r-sm);
+  color: var(--text-muted); font: inherit; font-size: var(--fs-sm); cursor: pointer;
+  text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--text-dim);
+}
+.notice-actions__mute:hover:not(:disabled) { color: var(--text-primary); background: var(--surface-hover); }
+.notice-actions__mute:disabled { cursor: default; text-decoration: none; }
 
 /* ── Work modes (PC -> Modos) ─────────────────────────────────────────── */
 .work-mode__steps { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 4px;
@@ -2348,3 +2357,21 @@ kbd {
    offers the existing names as chips. */
 .rail-group__head[data-kind="project"] { display: flex; align-items: center; gap: 6px; }
 .rail-projects { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+
+/* PC -> Modos -> Rotinas (core/suggestions.py). */
+.routine-form { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: var(--sp-3); }
+@media (max-width: 640px) { .routine-form { grid-template-columns: minmax(0, 1fr); } }
+.routine-list { list-style: none; margin: var(--sp-3) 0 0; padding: 0; display: grid; gap: var(--sp-2); }
+.routine-list__item {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); min-width: 0;
+  padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-md);
+}
+.routine-list__item > span:first-child { flex: 1 1 220px; min-width: 0; }
+
+/* Definições -> Não incomodar (core/notice_gate.py). */
+.quiet-now { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2) var(--sp-3); min-width: 0; }
+.quiet-now > span { min-width: 0; flex: 1 1 220px; }
+.quiet-history { margin-top: var(--sp-3); font-size: var(--fs-sm); }
+.quiet-history summary { cursor: pointer; color: var(--text-secondary); }
+.quiet-history ul { list-style: none; margin: var(--sp-2) 0 0; padding: 0; display: grid; gap: 4px; }
+.quiet-history li { overflow-wrap: anywhere; }

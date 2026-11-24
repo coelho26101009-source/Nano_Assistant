@@ -1540,6 +1540,25 @@ class Brain(TaskChains):
         # See core/reminder_intent.py.
         # A PROTOCOL PHRASE ("modo estudo", "boa noite") runs the person's own
         # routine directly, without a model. See core/protocols.py.
+        # "NÃO ME INCOMODES DURANTE UMA HORA" and a plain "SIM" to what NANO
+        # just offered by itself (core/notice_gate.py) never need a model.
+        proactive = self._proactive_reply(user_message)
+        if proactive is not None and proactive.get("answer"):
+            self.last_provider_used = None
+            self.last_metadata = {
+                "task": "proactive", "tier": None, "mode": getattr(self, "provider_mode", "AUTO"),
+                "provider": None, "model": None, "fallback_used": False,
+                "tools_offered": 0, "direct_action": "proactive", "provider_attempts": [],
+            }
+            self.conversation.append({"role": "assistant", "content": proactive["answer"]})
+            yield proactive["answer"]
+            return
+        if proactive is not None and proactive.get("send"):
+            # The person said "sim" to "queres que feche o Chrome?": the turn
+            # is that request, and goes on exactly as if they had typed it.
+            user_message = proactive["send"]
+            self.conversation[-1] = {"role": "user", "content": user_message}
+
         # "TENTA OUTRA VEZ" right after a plan or routine with steps that did
         # not work runs only those steps again (core/brain_tasks.py).
         retry = self._retry_candidate(user_message)
@@ -1762,6 +1781,46 @@ class Brain(TaskChains):
             if block:
                 blocks.append(block)
         return "\n\n" + "\n\n".join(blocks) if blocks else None
+
+    def _proactive_reply(self, user_message: str) -> dict | None:
+        """A silence command or an answer to NANO's last offer, or None.
+
+        ``{"answer": text}`` when the turn is fully handled here, or
+        ``{"send": text}`` when "sim" accepted an offer and the turn becomes
+        the offered request (still subject to every approval).
+        """
+        gate = getattr(self, "notice_gate", None)
+        if gate is None:
+            return None
+        try:
+            from core import notice_gate
+
+            command = notice_gate.parse_silence(user_message)
+            if command is not None:
+                if command.get("resume"):
+                    gate.resume()
+                    return {"answer": tr("Combinado, volto a avisar-te quando for preciso.")}
+                if command.get("until") == "morning":
+                    status = gate.snooze(until_morning=True)
+                else:
+                    status = gate.snooze(command.get("minutes") or 60)
+                return {"answer": tr("Combinado: fico calado até às {time}. Só aviso se for urgente, "
+                                     "como a bateria a acabar.", time=status.get("until") or "")}
+            answer = notice_gate.answer_kind(user_message)
+            if answer is None:
+                return None
+            latest = gate.latest_offer()
+            if latest is None:
+                return None
+            notice_id, offer = latest
+            gate.close_offer(notice_id)
+            if answer == "no":
+                return {"answer": tr("Está bem, fica para outra altura.")}
+            send = str(offer.get("send") or "").strip()
+            return {"send": send} if send else None
+        except Exception:
+            logger.debug("Proactive reply failed", exc_info=True)
+            return None
 
     def _protocol_for(self, user_message: str) -> dict | None:
         try:

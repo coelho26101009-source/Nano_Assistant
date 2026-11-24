@@ -37,6 +37,7 @@ import FirstRunGuide from "../components/FirstRunGuide";
 import DiagnosticsPanel from "../components/DiagnosticsPanel";
 import {
   Composer, Conversation, Message, SidePanel, ToolEvent, cleanAssistantText, type PanelDoc,
+  type NoticeAction, type NoticeInfo,
 } from "../components/Conversation";
 import {
   ActivityPage, AgentsPage, IntegrationsPage,
@@ -657,16 +658,24 @@ export default function Home() {
     // NANO speaks first (core/proactive.py): the morning briefing or a heads-up
     // before an event. It lands in the conversation as NANO's own message, so
     // it reads like JARVIS talking, and is not stored: it is about today.
-    expose((notice: { kind?: string; title?: string; text?: string }) => {
+    expose((notice: { kind?: string; title?: string; text?: string; id?: string;
+                      offer?: string; mutable?: boolean; silent?: boolean }) => {
       const text = String(notice?.text ?? "").trim();
       if (!text) return;
       const title = String(notice?.title ?? "").trim();
+      const id = String(notice?.id ?? "");
+      const offer = String(notice?.offer ?? "").trim();
       setMessages((prev) => [
         ...prev,
         { id: `notice-${crypto.randomUUID()}`, role: "assistant",
-          content: title ? `**${title}**\n\n${text}` : text, timestamp: new Date() },
+          content: title ? `**${title}**\n\n${text}` : text, timestamp: new Date(),
+          // Buttons only for a notice the gate gave an id (a briefing shown
+          // on demand has none and needs none).
+          notice: id && (offer || notice?.mutable)
+            ? { id, kind: String(notice?.kind ?? ""), offer: offer || undefined, mutable: !!notice?.mutable }
+            : undefined },
       ]);
-      if (!isDesktopRef.current) notify(title || text.split("\n")[0], "default");
+      if (!isDesktopRef.current && !notice?.silent) notify(title || text.split("\n")[0], "default");
     }, "on_proactive_notice");
 
     // A work mode finished. Each step went through the permission pipeline;
@@ -763,6 +772,21 @@ export default function Home() {
         : m.id === userMessageId(msgId) ? { ...m, unsent: true } : m));
     });
   }, [input, pendingFiles, thinking, ready, notify]);
+
+  /** A button under something NANO said by itself (core/notice_gate.py).
+   *  Accepting asks the backend for the sentence to send and sends it as the
+   *  person's own message, so it meets every approval like anything typed. */
+  const answerNotice = useCallback(async (notice: NoticeInfo, action: NoticeAction) => {
+    if (action === "mute") {
+      const res = await call<{ ok?: boolean }>("mute_notice_kind", notice.kind);
+      if (res?.ok) notify(t("Não volto a avisar disto. Podes voltar a ligar em Definições → Geral."), "success");
+      return;
+    }
+    const res = await call<{ ok?: boolean; send?: string; detail?: string }>("proactive_action", notice.id, action);
+    if (action !== "accept") return;
+    if (res?.ok && res.send) sendMessage(res.send);
+    else notify(res?.detail ?? t("Esta sugestão já não está ativa."), "default");
+  }, [notify, sendMessage]);
 
   /**
    * Ask the last question again, as it was or with new text.
@@ -1620,6 +1644,7 @@ export default function Home() {
                       onOpenPanel={setPanelDoc}
                       readAloud={readAloud}
                       onOpenConversation={openThreadById}
+                      onNotice={answerNotice}
                     />
                   )}
                   {/* The provider's own wait, counted down, until it is over. It

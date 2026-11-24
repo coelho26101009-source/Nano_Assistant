@@ -20,6 +20,37 @@ versioning policy.
 
 ## [Unreleased]
 
+### Added — NANO speaks first, without being annoying (2026-11-24)
+- **The anti-annoyance filter** (`core/notice_gate.py`). Everything NANO says by
+  itself passes one gate: a level (Desligado / Essencial / Equilibrado / Tudo),
+  kinds you turned off ("Não me avises disto" under each notice), repeats,
+  silence on request ("Ei Nano, não me incomodes durante uma hora", "fica
+  calado até amanhã", "podes voltar a falar"), quiet hours (23:00-07:30 by
+  default), games/films/presentations in full screen (as Windows reports
+  them), being away from the PC (10 minutes without keyboard or mouse), and
+  hourly/daily limits. What is held comes back as one short summary when you
+  are back ("Bem-vindo de volta. Enquanto estavas fora: …"). Definições →
+  Geral → **Não incomodar** shows the silence, the kinds you turned off and
+  what happened to the last notices.
+- **NANO says notices out loud** in its own voice (the briefing, an event about
+  to start, a critical alert), never in quiet hours, over a game or over a
+  voice conversation. Choice in Definições → Geral.
+- **Morning briefing**: the weather from Open-Meteo (free, no key; only with a
+  city typed in), with "leva guarda-chuva" when rain is likely; a short spoken
+  version; and it waits until you are at the PC instead of talking to an empty
+  room at 08:00.
+- **New PC alerts**: memory almost full (names the app using most and offers
+  to close it; closing still asks), battery charged, restart after a week on.
+- **Suggestions by context** (`core/suggestions.py`): your habits ("costumas
+  ativar o Modo estudo por esta hora, queres?"), bedtime after midnight with
+  the first thing on your agenda, optional break reminders.
+- **Routines**: PC → Modos → Rotinas gives a protocol a time and days; NANO asks
+  first (button or "sim" by voice) or runs it by itself. Every step still goes
+  through the normal permissions.
+- Offers can be answered with a plain **"sim"** / "agora não" in the chat or by
+  voice for three minutes, or with the buttons under the notice.
+- Silent notices (quiet hours, full screen, small suggestions) show on the
+  island and in the window without a Windows toast or a phone buzz.
 ### Added — NANO's voice: offline natural voice, ElevenLabs, never mute (2026-11-24)
 - **Voice engines** (`core/speech_engines.py`): Microsoft neural (default),
   a natural **offline voice** that runs on the processor (Piper "dii" for

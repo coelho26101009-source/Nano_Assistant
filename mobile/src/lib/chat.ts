@@ -182,13 +182,15 @@ export function useChat(link: NanoLink, hooks: ChatHooks) {
         if (b !== "phone") void loadHistory();
         break;
       case "on_proactive_notice": {
-        const notice = (a ?? {}) as { title?: string; text?: string };
+        const notice = (a ?? {}) as { title?: string; text?: string; silent?: boolean };
         const text = String(notice.text ?? "").trim();
         if (!text) break;
         const title = String(notice.title ?? "").trim();
         setMessages((prev) => [...prev, { id: `notice:${randomId()}`, role: "assistant", notice: true,
           content: title ? `**${title}**\n\n${text}` : text }]);
-        hooksRef.current.onNotice?.(title || "NANO", text);
+        // Quiet hours, a game in full screen or a small suggestion: shown in
+        // the chat, without buzzing the phone (core/notice_gate.py).
+        if (!notice.silent) hooksRef.current.onNotice?.(title || "NANO", text);
         break;
       }
       case "on_reminder_due": {
