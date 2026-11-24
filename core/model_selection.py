@@ -181,6 +181,8 @@ class ToolCategory(str, Enum):
     SCHEDULE = "SCHEDULE"
     IOT = "IOT"
     PHONE_CAMERA = "PHONE_CAMERA"
+    # The person's own routines / protocols (plugins/routines.py).
+    ROUTINES = "ROUTINES"
 
 
 # Which registered tool names belong to which category. Matching is by prefix
@@ -261,6 +263,9 @@ _CATEGORY_TOOLS: dict[ToolCategory, tuple[str, ...]] = {
     ),
     ToolCategory.IOT: ("iot_command", "phone_notify"),
     ToolCategory.PHONE_CAMERA: ("phone_camera_look",),
+    # Making a routine needs the step tools only as NAMES inside routine_save
+    # (its schema lists them), so this stays small.
+    ToolCategory.ROUTINES: ("routine_save", "routine_list", "routine_run", "routine_delete"),
 }
 
 # Keyword evidence for each category, Portuguese first.
@@ -406,6 +411,12 @@ _CATEGORY_KEYWORDS: dict[ToolCategory, tuple[str, ...]] = {
         "olha isto", "ve isto", "ves isto", "o que estou a segurar",
         "o que tenho na mao", "look at this", "through my phone", "through the phone",
         "what am i holding", "what s in my hand",
+    ),
+    ToolCategory.ROUTINES: (
+        "rotina", "rotinas", "protocolo", "protocolos", "setup", "o meu modo",
+        "guarda isto", "guarda isso", "grava isto", "guarda como", "guarda o que fizeste",
+        "routine", "routines", "protocol", "protocols", "save this as", "save that as",
+        "save this", "my setup",
     ),
 }
 
@@ -612,8 +623,13 @@ def select_tools(text: str, all_tools: list[dict] | None, *, task: TaskClass | N
     # A request that spans several areas, or chains actions ("e depois",
     # "and then"), is offered task_plan: the plan is shown once before the
     # steps run (plugins/task_plan.py).
-    if wanted and (len(categories) >= 2 or _has_any(normalized, _MULTI_STEP_MARKERS)):
+    multi_step = _has_any(normalized, _MULTI_STEP_MARKERS)
+    if wanted and (len(categories) >= 2 or multi_step):
         wanted.add("task_plan")
+    # "Prepara-me para estudar" may be one of the person's routines under a
+    # slightly different name: let the model look for it and run it.
+    if multi_step or ToolCategory.ROUTINES in categories:
+        wanted.update(("routine_list", "routine_run"))
 
     selected = [tool for tool in tools if _tool_name(tool) in wanted]
     # Never silently return nothing for a real action request: fall back to the

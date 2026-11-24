@@ -27,6 +27,20 @@ verb ("ativa", "liga", "protocolo", "start", "run"…). "boa noite" starts the
 "Boa noite" protocol; "boa noite, amanhã acordo às 7" is an ordinary message.
 The Brain runs a matched protocol directly, without asking a model, the same
 way a clear reminder request is handled (core/reminder_intent.py).
+
+ROUTINES MADE BY VOICE (``actions``)
+------------------------------------
+Besides the fixed fields the window edits, a protocol can carry ``actions``:
+an ordered list of steps ``{tool, args, label}`` -- "abre o Notion, encosta o
+Chrome à esquerda, põe o volume a 30 e lembra-me daqui a 50 minutos de fazer
+pausa". The person makes these by talking to NANO ("guarda isto como rotina
+setup de estudo", plugins/routines.py). Only the tools in ``ROUTINE_TOOLS``
+can be steps, and each one has its own argument check here (app NAMES, never
+paths; http/https only; allow-listed Settings pages; bounded numbers). Typing,
+the clipboard, moving or deleting files and power off/restart are not on the
+list: a routine replays without anyone reading it first, so it only holds
+actions that are safe to repeat. Running it goes through core/task_runner.py,
+which checks every step and retries what is worth retrying.
 """
 from __future__ import annotations
 
@@ -49,18 +63,26 @@ MAX_PHRASES = 5
 MAX_PHRASE = 60
 PROTOCOL_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
 MEDIA_ACTIONS = ("play_pause", "stop", "next", "previous")
+MAX_ACTIONS = 12
 
 #: Words in front of a phrase that only say "do it".
 _LEADING = (
     "ei nano", "hey nano", "ola nano", "ok nano", "okay nano", "hi nano", "nano",
     "ativa o protocolo", "ativar o protocolo", "ativa protocolo", "inicia o protocolo",
+    "ativa a rotina", "corre a rotina", "faz a rotina", "inicia a rotina", "rotina",
+    "prepara me o meu", "prepara me a minha", "prepara me o", "prepara me a", "prepara me",
+    "prepara o meu", "prepara a minha", "prepara o", "prepara a", "prepara",
+    "poe me o meu", "poe o meu", "poe a minha", "o meu", "a minha",
     "protocolo", "ativa o", "ativa a", "ativa", "ativar", "liga o", "liga a", "liga",
     "inicia o", "inicia a", "inicia", "comeca o", "comeca", "poe o", "poe", "entra em",
     "activate the protocol", "activate protocol", "start the protocol", "run the protocol",
+    "run the routine", "start the routine", "routine", "set up my", "setup my",
+    "prepare my", "get my", "prepare", "my",
     "protocol", "activate", "start", "run", "begin", "switch to", "go to",
     "por favor", "please",
 )
-_TRAILING = ("por favor", "please", "nano", "agora", "now", "protocol", "protocolo")
+_TRAILING = ("por favor", "please", "nano", "agora", "now", "protocol", "protocolo",
+             "rotina", "routine", "ready", "pronto", "pronta")
 
 
 def _plain(text: Any) -> str:
@@ -112,6 +134,254 @@ def _phrases(raw: Any, name: str) -> list[str]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Steps a routine may hold (``actions``)
+# ---------------------------------------------------------------------------
+
+def _text(args: dict, key: str, limit: int, *, required: bool = True) -> str:
+    value = _clip(args.get(key), limit)
+    if required and not value:
+        raise ProtocolError(tr("Falta '{key}' num passo da rotina.", key=key))
+    return value
+
+
+def _level(args: dict, key: str = "level") -> int:
+    value = args.get(key)
+    if isinstance(value, str) and value.strip().isdigit():
+        value = int(value.strip())
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
+        raise ProtocolError(tr("'{key}' tem de ser um número inteiro entre 0 e 100.", key=key))
+    return value
+
+
+def _monitor(args: dict, *, required: bool) -> dict:
+    value = args.get("monitor")
+    if value in (None, ""):
+        if required:
+            raise ProtocolError(tr("Falta o número do monitor."))
+        return {}
+    if isinstance(value, str) and value.strip().isdigit():
+        value = int(value.strip())
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 16:
+        raise ProtocolError(tr("O monitor tem de ser um número entre 1 e 16."))
+    return {"monitor": value}
+
+
+def _app(args: dict, key: str) -> str:
+    try:
+        return work_modes._app_name(args.get(key))
+    except work_modes.ModeError as exc:
+        raise ProtocolError(str(exc)) from exc
+
+
+def _window_query(args: dict) -> str:
+    # A window_id from pc_window_list is only valid until that window closes,
+    # so a saved routine names the window by its app or title instead.
+    return _text(args, "query", 60) or _text(args, "app", 60)
+
+
+def _a_launch(args):
+    name = _app(args, "name")
+    return {"name": name}, tr("Abrir {name}", name=name)
+
+
+def _a_switch(args):
+    name = _app(args, "name")
+    return {"name": name}, tr("Mudar para {name}", name=name)
+
+
+def _a_close(args):
+    name = _app(args, "app")
+    return {"app": name}, tr("Fechar {name}", name=name)
+
+
+def _a_batch_state(args):
+    name = _app(args, "app")
+    state = str(args.get("state") or "").strip()
+    if state not in ("minimize", "restore"):
+        raise ProtocolError(tr("'state' tem de ser 'minimize' ou 'restore'."))
+    label = tr("Minimizar {name}", name=name) if state == "minimize" else tr("Restaurar {name}", name=name)
+    return {"app": name, "state": state}, label
+
+
+_SNAP_LABELS = {
+    "left": "à esquerda", "right": "à direita", "top": "em cima", "bottom": "em baixo",
+    "top_left": "no canto de cima à esquerda", "top_right": "no canto de cima à direita",
+    "bottom_left": "no canto de baixo à esquerda", "bottom_right": "no canto de baixo à direita",
+}
+
+
+def _a_snap(args):
+    from core.pc_control import geometry
+
+    query = _window_query(args)
+    position = str(args.get("position") or "").strip()
+    if position not in geometry.SNAP_MODES:
+        raise ProtocolError(tr("Posição de janela desconhecida."))
+    return ({"query": query, "position": position, **_monitor(args, required=False)},
+            tr("Pôr {name} {where}", name=query, where=tr(_SNAP_LABELS.get(position, position))))
+
+
+def _window_simple(verb: str):
+    def check(args):
+        query = _window_query(args)
+        return {"query": query}, tr(verb, name=query)
+    return check
+
+
+def _a_move_monitor(args):
+    query = _window_query(args)
+    monitor = _monitor(args, required=True)
+    return ({"query": query, **monitor},
+            tr("Mover {name} para o monitor {number}", name=query, number=monitor["monitor"]))
+
+
+def _a_volume(args):
+    level = _level(args)
+    return {"level": level}, tr("Volume a {level}%", level=level)
+
+
+def _a_media(args):
+    action = str(args.get("action") or "").strip()
+    if action not in MEDIA_ACTIONS:
+        raise ProtocolError(tr("Ação de música desconhecida."))
+    label = {"play_pause": tr("Pausar ou retomar a música"), "stop": tr("Parar a música"),
+             "next": tr("Faixa seguinte"), "previous": tr("Faixa anterior")}[action]
+    return {"action": action}, label
+
+
+def _a_url(args):
+    from core.pc_control import web as pc_web
+    from core.pc_control.results import PCControlError
+
+    try:
+        url = pc_web.normalise_url(args.get("url"))
+    except PCControlError as exc:
+        raise ProtocolError(tr("Endereço recusado: {reason}", reason=exc.message)) from exc
+    return {"url": url}, tr("Abrir {name}", name=url)
+
+
+def _a_search(args):
+    query = _text(args, "query", 200)
+    return {"query": query}, tr("Pesquisar “{query}”", query=query)
+
+
+def _a_settings(args):
+    from core.pc_control import settings as pc_settings
+    from core.pc_control.results import PCControlError
+
+    try:
+        key, _uri, label = pc_settings.resolve_section(args.get("section"))
+    except PCControlError as exc:
+        raise ProtocolError(exc.message) from exc
+    return {"section": key}, tr("Abrir as definições de {section}", section=label)
+
+
+def _a_folder(args):
+    folder = _text(args, "folder", 60, required=False)
+    if folder:
+        return {"folder": folder}, tr("Abrir a pasta {name}", name=folder)
+    path = _text(args, "path", 260)
+    return {"path": path}, tr("Abrir a pasta {name}", name=path)
+
+
+def _a_file(args):
+    path = _text(args, "path", 260)
+    return {"path": path}, tr("Abrir {name}", name=path.replace("\\", "/").rsplit("/", 1)[-1])
+
+
+def _a_brightness(args):
+    level = _level(args)
+    return {"level": level, **_monitor(args, required=False)}, tr("Brilho a {level}%", level=level)
+
+
+def _a_lock(_args):
+    return {}, tr("Bloquear o PC")
+
+
+def _a_mute(_args):
+    return {}, tr("Tirar o som")
+
+
+def _a_unmute(_args):
+    return {}, tr("Voltar a pôr o som")
+
+
+def _a_reminder(args):
+    text = _text(args, "text", 120)
+    when = _text(args, "when", 60)
+    out = {"text": text, "when": when}
+    repeat = str(args.get("repeat") or "").strip()
+    if repeat:
+        if repeat not in ("daily", "weekdays", "weekly", "monthly"):
+            raise ProtocolError(tr("Repetição desconhecida."))
+        out["repeat"] = repeat
+    return out, tr("Lembrete: {text} ({when})", text=text, when=when)
+
+
+#: tool -> argument check. A closed list: anything else cannot be a step.
+ROUTINE_TOOLS: dict[str, Any] = {
+    "pc_app_launch": _a_launch,
+    "pc_app_switch": _a_switch,
+    "pc_window_batch_close": _a_close,
+    "pc_window_batch_state": _a_batch_state,
+    "pc_window_snap": _a_snap,
+    "pc_window_maximize": _window_simple("Maximizar {name}"),
+    "pc_window_minimize": _window_simple("Minimizar {name}"),
+    "pc_window_restore": _window_simple("Restaurar {name}"),
+    "pc_window_focus": _window_simple("Trazer {name} para a frente"),
+    "pc_window_center": _window_simple("Centrar {name}"),
+    "pc_window_move_monitor": _a_move_monitor,
+    "pc_volume_set": _a_volume,
+    "pc_volume_mute": _a_mute,
+    "pc_volume_unmute": _a_unmute,
+    "pc_media_control": _a_media,
+    "pc_web_open_url": _a_url,
+    "pc_web_search": _a_search,
+    "pc_settings_open": _a_settings,
+    "pc_folder_open": _a_folder,
+    "pc_file_open": _a_file,
+    "pc_display_set_brightness": _a_brightness,
+    "pc_session_lock": _a_lock,
+    "set_reminder": _a_reminder,
+}
+#: Steps that always ask before they run (the executor asks; this is for the window).
+ASKING_TOOLS = frozenset({"pc_window_batch_close", "pc_session_lock"})
+
+
+def validate_action(raw: Any) -> dict:
+    """One clean step ``{tool, args, label[, asks]}``. Raises ProtocolError."""
+    if not isinstance(raw, dict):
+        raise ProtocolError(tr("Cada passo da rotina precisa de 'tool' e 'args'."))
+    tool = str(raw.get("tool") or "").strip()
+    check = ROUTINE_TOOLS.get(tool)
+    if check is None:
+        raise ProtocolError(tr("“{tool}” não pode ser um passo de uma rotina.", tool=_clip(tool, 40)))
+    args = raw.get("args") if raw.get("args") is not None else raw.get("arguments")
+    if args is None:
+        args = {}
+    if not isinstance(args, dict):
+        raise ProtocolError(tr("Os argumentos de um passo têm de ser um objeto."))
+    clean, default_label = check(args)
+    label = _clip(raw.get("label"), 120) or default_label
+    step = {"tool": tool, "args": clean, "label": label}
+    if tool in ASKING_TOOLS:
+        step["asks"] = True
+    return step
+
+
+def validate_actions(raw: Any) -> list[dict]:
+    if raw in (None, ""):
+        return []
+    if not isinstance(raw, list):
+        raise ProtocolError(tr("'{key}' tem de ser uma lista.", key="actions"))
+    if len(raw) > MAX_ACTIONS:
+        raise ProtocolError(tr("Uma rotina pode ter no máximo {count} passos.", count=MAX_ACTIONS))
+    return [validate_action(item) for item in raw]
+
+
 def validate(raw: Any) -> dict:
     """A clean, storable protocol from what the window sent. Raises ProtocolError."""
     if not isinstance(raw, dict):
@@ -141,6 +411,7 @@ def validate(raw: Any) -> dict:
         "settings_section": _clip(raw.get("settings_section"), 40),
         "lock": raw.get("lock") is True,
         "message": _clip(raw.get("message"), 160),
+        "actions": validate_actions(raw.get("actions")),
     }
     for key in ("close_apps", "open_apps", "open_urls"):
         if not isinstance(raw.get(key) or [], list):
@@ -165,6 +436,8 @@ def compile_protocol(protocol: dict) -> dict:
         label = {"play_pause": tr("Pausar ou retomar a música"), "stop": tr("Parar a música"),
                  "next": tr("Faixa seguinte"), "previous": tr("Faixa anterior")}[media]
         steps.append({"tool": "pc_media_control", "args": {"action": media}, "label": label})
+    for action in protocol.get("actions") or []:
+        steps.append(validate_action(action))
     if protocol.get("lock"):
         steps.append({"tool": "pc_session_lock", "args": {}, "label": tr("Bloquear o PC"),
                       "asks": True})
@@ -317,25 +590,31 @@ class ProtocolStore:
         return None
 
 
-async def run(protocol: dict, executor: Any) -> dict:
-    """Run one protocol's plan through the executor. Same result shape as a work mode."""
+async def run(protocol: dict, executor: Any, *, call: Any = None, status: Any = None) -> dict:
+    """Run one protocol's plan. Same result shape as a work mode.
+
+    ``call`` is the gate each step goes through: the executor by default (the
+    Modos page), ``Brain._run_tool`` when the person said the phrase.
+    """
     plan = compile_protocol(protocol)
     if not plan["steps"]:
         message = plan["message"] or tr("{name}: feito.", name=plan["name"])
         return {"ok": True, "id": plan["id"], "name": plan["name"], "message": message,
                 "done": 0, "skipped": 0, "total": 0, "steps": [], "protocol": True}
-    result = await work_modes.run_plan(plan, executor)
+    result = await work_modes.run_plan(plan, executor, call=call, status=status)
     result["protocol"] = True
+    result["plan_steps"] = plan["steps"]
     return result
 
 
 def spoken_summary(result: dict) -> str:
     """What NANO answers after running a protocol: its sentence, and what failed."""
     lines = [str(result.get("message") or "")]
-    failed = [step["label"] for step in result.get("steps") or []
-              if step.get("status") in {"failed", "denied"}]
-    if failed:
-        lines.append(tr("Não fiz: {steps}.", steps=", ".join(failed)))
+    from core import task_runner
+
+    report = task_runner.short_report(result)
+    if report:
+        lines.append(report)
     return "\n".join(line for line in lines if line)
 
 
@@ -352,5 +631,6 @@ def _default_store() -> ProtocolStore:
 STORE = _default_store()
 
 
-__all__ = ["STORE", "ProtocolError", "ProtocolStore", "TEMPLATES", "compile_protocol",
-           "normalise_phrase", "run", "spoken_summary", "templates", "validate"]
+__all__ = ["ASKING_TOOLS", "MAX_ACTIONS", "ROUTINE_TOOLS", "STORE", "ProtocolError",
+           "ProtocolStore", "TEMPLATES", "compile_protocol", "normalise_phrase", "run",
+           "spoken_summary", "templates", "validate", "validate_action", "validate_actions"]

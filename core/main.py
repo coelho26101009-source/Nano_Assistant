@@ -57,7 +57,7 @@ from core.local_runtime import choose_model
 from core.voice import VoiceEngine, VoiceRuntime, VoiceSessionState, speech_text
 from core import wake_phrase as wake_phrase_mod
 from core import voice_language
-from core import pc_alerts, personality, protocols, voice_setup
+from core import pc_alerts, personality, protocols, speech_engines, voice_local_pack, voice_setup
 from core import screen_watch
 from core import notice_gate, presence, suggestions, weather as weather_mod
 from core.wake_word import WakeWordEngine
@@ -122,17 +122,37 @@ voice_language.apply(CONFIG.setdefault("voice", {}), i18n.current())
 
 def _apply_tts_voice() -> str:
     """The speaking voice the person chose (core/personality.py), when it
-    speaks the interface language; otherwise the language's own voice."""
+    speaks the interface language; otherwise the language's own voice.
+
+    Also copies the speech engine choices (core/speech_engines.py) into the
+    live ``voice.tts`` config the provider reads on every answer: the engine,
+    the offline voice, the ElevenLabs voice and model, the speed and the
+    language."""
     tts = CONFIG.setdefault("voice", {}).setdefault("tts", {})
     chosen = personality.voice_for(i18n.current(), str(user_settings.get("tts_voice", "") or ""))
     target = chosen or voice_language.profile(i18n.current()).tts_voice
     if tts.get("voice") in personality.ALL_VOICES or not tts.get("voice") or chosen:
         tts["voice"] = target
+    tts["language"] = i18n.current()
+    tts["engine"] = str(user_settings.get("tts_engine", "") or tts.get("engine") or "auto")
+    if tts["engine"] not in speech_engines.ENGINES:
+        tts["engine"] = "auto"
+    tts["local_voice"] = str(user_settings.get("tts_local_voice", "") or "")
+    tts["elevenlabs_voice"] = str(user_settings.get("tts_elevenlabs_voice", "") or "")
+    tts["elevenlabs_model"] = str(user_settings.get("tts_elevenlabs_model", "")
+                                  or speech_engines.DEFAULT_ELEVENLABS_MODEL)
+    stored_speed = user_settings.get("tts_speed", None)
+    if stored_speed is not None:
+        tts["speed"] = f"{speech_engines.parse_speed(stored_speed):+d}%"
     return str(tts.get("voice") or "")
 
 
 _apply_tts_voice()
 voice = VoiceEngine(CONFIG.get("voice", {}))
+# In LOCAL mode the model runs on this PC; "auto" then prefers the offline
+# voice too, when it is installed (core/speech_engines.py). Read live: brain
+# is created further down.
+voice.tts_provider.local_mode = lambda: getattr(globals().get("brain"), "provider_mode", "AUTO") == "LOCAL"
 # The key the user saved in Settings wins over anything in the environment.
 # secret_store.get_secret() already implements exactly this precedence (the
 # encrypted store first, then NANO_API_KEY / GROQ_API_KEY),
@@ -2357,8 +2377,13 @@ def update_setting(key: str, value) -> dict:
         if value:
             # Conversations that happened while it was off get their recaps now.
             memory_stack._defer(memory_stack.backfill_recaps)  # noqa: SLF001
-    elif key == "tts_voice":
+    elif key == "tts_voice" or key in speech_engines.KEYS:
         _apply_tts_voice()
+        # A new choice gets a fresh start: no engine stays skipped because of
+        # a failure that happened under the old one.
+        voice.tts_provider.chain.reset()
+        voice.tts_provider.refresh()
+        _warm_local_voice()
 
     return {"ok": True, "key": key, "value": value, "settings": get_settings()}
 
@@ -3110,6 +3135,223 @@ def get_voice_setup() -> dict:
 def start_voice_setup() -> dict:
     """The "Preparar a voz" button. Progress: get_voice_setup()["install"]."""
     return speech_pack.start(on_ready=_speech_pack_ready)
+
+
+# ── NANO's speaking voice: engines, offline voice, ElevenLabs ──────────────
+# Settings → Voz → "Voz do NANO". See core/speech_engines.py and
+# core/voice_local_pack.py. None of this is a tool: the model only ever gives
+# the text that is read.
+
+local_voice_pack = voice_local_pack.LocalVoicePack(language=i18n.current)
+
+#: What "Ouvir" reads, per language.
+VOICE_PREVIEW_TEXT = {
+    "pt-PT": "Olá, eu sou o NANO. Está tudo pronto: diz-me o que precisas e eu trato disso.",
+    "en": "Hello, I'm NANO. Everything is ready: tell me what you need and I'll take care of it.",
+}
+_ENGINE_LABELS = {
+    "auto": "Automática (recomendado)",
+    "edge": "Microsoft neural (online, grátis)",
+    "local": "Voz offline natural (no teu PC)",
+    "elevenlabs": "ElevenLabs (premium, a tua chave)",
+    "windows": "Voz do Windows (básica)",
+}
+_ELEVENLABS_SECRET = "elevenlabs_api_key"
+
+
+def _local_voice_ready(_model: str = "") -> None:
+    voice.tts_provider.chain.reset("local")
+    voice.tts_provider.refresh()
+    logger.info("Voz offline instalada e disponível.")
+    _warm_local_voice()
+
+
+def _warm_local_voice() -> None:
+    """Load the offline voice in the background when it will be used first
+    (chosen, or "auto" in LOCAL mode), so the first answer does not wait."""
+    provider = voice.tts_provider
+    try:
+        request = provider.request()
+    except Exception:
+        return
+    if request.engine != "local" and not (request.engine == "auto" and request.local_mode):
+        return
+    engine = provider.chain.engines.get("local")
+    if isinstance(engine, speech_engines.LocalEngine):
+        threading.Thread(target=engine.warm, args=(request.language,),
+                         name="nano-voice-warm", daemon=True).start()
+
+
+try:
+    _warm_local_voice()
+except Exception:  # never let the voice stop NANO from starting
+    logger.debug("Voz offline não pré-carregada", exc_info=True)
+
+
+@eel.expose
+def get_speech_settings() -> dict:
+    """Everything the "Voz do NANO" card shows. Keys are described, never sent."""
+    provider = voice.tts_provider
+    try:
+        request = provider.request()
+        language = request.language
+        chain = provider.chain.status(request)
+        pack = local_voice_pack.status()
+    except Exception:
+        logger.exception("Estado da voz indisponível")
+        return {"ok": False, "error": "status_failed"}
+    return {
+        "ok": True,
+        "language": language,
+        "engine": request.engine,
+        "engines": [{"id": engine, "label": tr(_ENGINE_LABELS[engine]),
+                     "available": engine == "auto" or bool(chain["engines"].get(engine, {}).get("available"))}
+                    for engine in speech_engines.ENGINES],
+        "edgeVoice": str(user_settings.get("tts_voice", "") or ""),
+        "edgeVoices": personality.voice_options(language),
+        "localVoice": speech_engines.local_voice_for(request),
+        "localVoices": speech_engines.local_voice_options(language),
+        "elevenlabs": {"key": secret_store.describe(_ELEVENLABS_SECRET),
+                       "voice": request.elevenlabs_voice,
+                       "model": request.elevenlabs_model,
+                       "models": list(speech_engines.ELEVENLABS_MODELS)},
+        "speed": request.speed,
+        "localMode": request.local_mode,
+        "localPack": pack,
+        "status": chain,
+    }
+
+
+def _run_on_voice_loop(coro, timeout: float):
+    future = asyncio.run_coroutine_threadsafe(coro, _get_or_create_loop())
+    try:
+        return future.result(timeout)
+    except Exception:
+        future.cancel()
+        raise
+
+
+@eel.expose
+def preview_voice(engine: str = "") -> dict:
+    """The "Ouvir" button: read a sample with the chosen engine, and say which spoke."""
+    if engine and engine not in speech_engines.ENGINES:
+        return {"ok": False, "error": "invalid_engine"}
+    if voice_runtime.turn_status().get("active"):
+        return {"ok": False, "error": "voice_busy",
+                "detail": tr("O NANO está a meio de uma conversa por voz.")}
+    provider = voice.tts_provider
+    provider.refresh()
+    if not provider.online:
+        return {"ok": False, "error": "tts_unavailable",
+                "detail": tr("A voz do NANO não está disponível neste PC.")}
+    request = provider.request()
+    if engine:
+        request.engine = engine
+        provider.chain.reset(None if engine == "auto" else engine)
+    text = VOICE_PREVIEW_TEXT.get(request.language, VOICE_PREVIEW_TEXT["en"])
+
+    def _speak() -> bool:
+        return bool(_run_on_voice_loop(provider.speak(text, request=request), timeout=40.0))
+
+    voice.stop_playback()
+    try:
+        spoke = _off_hub(_speak, timeout=45.0)
+    except Exception as exc:
+        logger.warning("Exemplo de voz falhou: %s", type(exc).__name__)
+        spoke = False
+    used = provider.chain.last_engine
+    wanted = request.engine
+    return {
+        "ok": spoke,
+        "engine": used,
+        "voice": provider.chain.last_voice,
+        "fellBack": bool(spoke and wanted != "auto" and used and used != wanted),
+        "detail": "" if spoke else tr("Nenhuma voz conseguiu falar. Verifica a ligação à internet ou instala a voz offline."),
+        "status": provider.chain.status(request),
+    }
+
+
+@eel.expose
+def get_local_voice_setup() -> dict:
+    try:
+        status = local_voice_pack.status()
+    except Exception:
+        logger.exception("Estado da voz offline indisponível")
+        return {"ok": False, "error": "status_failed"}
+    if status.get("ready") and not voice.tts_provider.chain.engines["local"].available():
+        _local_voice_ready()
+    return {"ok": True, **status}
+
+
+@eel.expose
+def start_local_voice_setup() -> dict:
+    """The "Instalar voz offline" button. Progress: get_local_voice_setup()["install"]."""
+    return local_voice_pack.start(on_ready=_local_voice_ready)
+
+
+def _clean_voice_key(api_key: str) -> str | None:
+    key = str(api_key or "").strip()
+    if not 16 <= len(key) <= 200 or any(ch.isspace() or ord(ch) < 33 or ord(ch) > 126 for ch in key):
+        return None
+    return key
+
+
+@eel.expose
+def set_elevenlabs_api_key(api_key: str) -> dict:
+    """Save the person's ElevenLabs key (encrypted), then check it by listing voices."""
+    key = _clean_voice_key(api_key)
+    if key is None:
+        return {"ok": False, "error": "invalid_key", "detail": tr("A chave não parece válida.")}
+    previous = secret_store.get_secret(_ELEVENLABS_SECRET)
+    if not secret_store.set_secret(_ELEVENLABS_SECRET, key):
+        return {"ok": False, "error": "store_failed", "detail": tr("Não consegui guardar a chave.")}
+    engine = voice.tts_provider.chain.engines["elevenlabs"]
+    voice.tts_provider.chain.reset("elevenlabs")
+    voice.tts_provider.refresh()
+    try:
+        voices = _off_hub(lambda: _run_on_voice_loop(engine.list_voices(), timeout=15.0), timeout=20.0)
+    except speech_engines.SynthesisError as exc:
+        if exc.reason == "auth":
+            if previous:
+                secret_store.set_secret(_ELEVENLABS_SECRET, previous)
+            else:
+                secret_store.delete_secret(_ELEVENLABS_SECRET)
+            voice.tts_provider.refresh()
+            return {"ok": False, "error": "auth", "detail": tr("A ElevenLabs recusou esta chave.")}
+        return {"ok": True, "verified": False, "voices": [], "key": secret_store.describe(_ELEVENLABS_SECRET),
+                "detail": tr("Chave guardada, mas não consegui falar com a ElevenLabs agora.")}
+    except Exception:
+        return {"ok": True, "verified": False, "voices": [], "key": secret_store.describe(_ELEVENLABS_SECRET),
+                "detail": tr("Chave guardada, mas não consegui falar com a ElevenLabs agora.")}
+    return {"ok": True, "verified": True, "voices": voices, "key": secret_store.describe(_ELEVENLABS_SECRET)}
+
+
+@eel.expose
+def remove_elevenlabs_api_key() -> dict:
+    secret_store.delete_secret(_ELEVENLABS_SECRET)
+    voice.tts_provider.chain.reset("elevenlabs")
+    voice.tts_provider.refresh()
+    if str(user_settings.get("tts_engine", "") or "") == "elevenlabs":
+        user_settings.set_value("tts_engine", "auto")
+        _apply_tts_voice()
+    return {"ok": True, "key": secret_store.describe(_ELEVENLABS_SECRET)}
+
+
+@eel.expose
+def list_elevenlabs_voices() -> dict:
+    engine = voice.tts_provider.chain.engines["elevenlabs"]
+    if not engine.available():
+        return {"ok": False, "error": "no_key", "voices": []}
+    try:
+        voices = _off_hub(lambda: _run_on_voice_loop(engine.list_voices(), timeout=15.0), timeout=20.0)
+    except speech_engines.SynthesisError as exc:
+        detail = (tr("A ElevenLabs recusou esta chave.") if exc.reason == "auth"
+                  else tr("Não consegui falar com a ElevenLabs agora."))
+        return {"ok": False, "error": exc.reason, "voices": [], "detail": detail}
+    except Exception:
+        return {"ok": False, "error": "network", "voices": [],
+                "detail": tr("Não consegui falar com a ElevenLabs agora.")}
+    return {"ok": True, "voices": voices}
 
 
 # ── Agenda page: reminders and calendar events ─────────────────────────────

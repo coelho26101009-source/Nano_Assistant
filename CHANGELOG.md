@@ -51,6 +51,22 @@ versioning policy.
   voice for three minutes, or with the buttons under the notice.
 - Silent notices (quiet hours, full screen, small suggestions) show on the
   island and in the window without a Windows toast or a phone buzz.
+### Added — NANO's voice: offline natural voice, ElevenLabs, never mute (2026-11-24)
+- **Voice engines** (`core/speech_engines.py`): Microsoft neural (default),
+  a natural **offline voice** that runs on the processor (Piper "dii" for
+  European Portuguese, Kokoro for English, through sherpa-onnx), **ElevenLabs**
+  with your own key, and the Windows voice as the last resort. If one fails,
+  the next one speaks: NANO is never silent offline any more.
+- **Settings → Voz → Voz do NANO**: engine, voice, speed, "Ouvir" (reads a
+  sample and says which engine spoke), one-click "Instalar voz offline" with
+  progress (`core/voice_local_pack.py`: hashed packages, SHA-256-pinned voices,
+  safe extraction).
+- **No gaps between sentences**: the next piece is synthesised while the
+  current one plays.
+- LOCAL mode reads with the offline voice first when it is installed.
+- English default voice is now `en-GB-RyanNeural` (British, calm); installs
+  still on the old `en-US-GuyNeural` default move with it.
+- "NANO" in capitals is no longer spelled out letter by letter.
 
 ---
 

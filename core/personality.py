@@ -42,8 +42,11 @@ VOICES: dict[str, tuple[tuple[str, str], ...]] = {
     "pt-PT": (("pt-PT-DuarteNeural", "Duarte"), ("pt-PT-RaquelNeural", "Raquel"),
               ("pt-BR-AntonioNeural", "António (Brasil)"),
               ("pt-BR-FranciscaNeural", "Francisca (Brasil)")),
-    "en": (("en-US-GuyNeural", "Guy (US)"), ("en-GB-RyanNeural", "Ryan (UK)"),
-           ("en-US-JennyNeural", "Jenny (US)"), ("en-GB-SoniaNeural", "Sonia (UK)")),
+    "en": (("en-GB-RyanNeural", "Ryan (UK)"), ("en-GB-ThomasNeural", "Thomas (UK)"),
+           ("en-US-AndrewMultilingualNeural", "Andrew (US)"),
+           ("en-US-BrianMultilingualNeural", "Brian (US)"),
+           ("en-US-GuyNeural", "Guy (US)"), ("en-GB-SoniaNeural", "Sonia (UK)"),
+           ("en-US-AvaMultilingualNeural", "Ava (US)"), ("en-US-JennyNeural", "Jenny (US)")),
 }
 ALL_VOICES = frozenset(name for options in VOICES.values() for name, _ in options)
 

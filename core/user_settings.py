@@ -95,6 +95,10 @@ ALLOWED_KEYS: frozenset[str] = frozenset({
     # personal instructions and the speaking voice.
     "personality_tone", "personality_length", "personality_address",
     "personality_instructions", "tts_voice",
+    # NANO's speaking voice (core/speech_engines.py): engine, offline voice,
+    # ElevenLabs voice and model, and speed. The ElevenLabs KEY is a secret
+    # (core/secret_store.py), never a setting.
+    "tts_engine", "tts_local_voice", "tts_elevenlabs_voice", "tts_elevenlabs_model", "tts_speed",
     # Warnings about this PC itself (core/pc_alerts.py). On by default.
     "pc_alerts_battery", "pc_alerts_disk", "pc_alerts_network", "pc_alerts_downloads",
     "pc_alerts_memory", "pc_alerts_battery_full", "pc_alerts_uptime",
@@ -156,9 +160,12 @@ def _valid_value(key: str, value: Any) -> bool:
     if key == "proactive_briefing_time":
         return isinstance(value, str) and len(value) == 5 and value[2] == ":" and \
             value[:2].isdigit() and value[3:].isdigit() and int(value[:2]) < 24 and int(value[3:]) < 60
-    from core import notice_gate, personality
+    from core import notice_gate, personality, speech_engines
 
     verdict = personality.valid_setting(key, value)
+    if verdict is not None:
+        return verdict
+    verdict = speech_engines.valid_setting(key, value)
     if verdict is not None:
         return verdict
     verdict = notice_gate.valid_setting(key, value)

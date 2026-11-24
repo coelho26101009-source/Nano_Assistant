@@ -60,7 +60,7 @@ provider goes first. The two settings are independent.
 | --- | --- | --- |
 | Message text and context | **No** | Stays in `127.0.0.1:11434` (Ollama on your machine) |
 | Groq, Mistral, Google | **Never contacted** | Not even for a status probe |
-| Spoken replies (if on) | **Yes** | Microsoft — `speech.platform.bing.com` |
+| Spoken replies (if on) | **Yes**, with the default voice; **No** with the offline voice installed | Microsoft — `speech.platform.bing.com`. With the offline voice installed, "Automática" reads on the PC in LOCAL mode |
 | Voice recording / transcription | **No** | faster-whisper runs locally |
 | Web search / page fetch, if you ask for one | **Yes** | The site you asked for |
 
@@ -70,8 +70,9 @@ locally instead of probing it, and is covered by a test that asserts the
 credentials are never read.
 
 LOCAL means **the language model is local**. It does not mean absolute network
-silence: spoken replies still reach Microsoft, and a web tool you explicitly
-asked for still reaches the site.
+silence: spoken replies reach Microsoft unless the offline voice is installed
+(Definições → Voz → Voz do NANO), and a web tool you explicitly asked for
+still reaches the site.
 
 ### CLOUD — your preferred cloud provider only
 
@@ -395,7 +396,9 @@ model can neither see nor trigger it.
 | **Groq** (`api.groq.com`) | AUTO and CLOUD, when it is asked | Message text and assembled context; separately, a model-list probe |
 | **Mistral** (`api.mistral.ai`) | AUTO and CLOUD, when it is asked | The same |
 | **Google / Gemini** (`generativelanguage.googleapis.com`) | AUTO and CLOUD, when it is asked | The same |
-| **Microsoft** (`speech.platform.bing.com`) | Spoken replies, **any mode** | The text to be read aloud — including a notice NANO says by itself (the briefing's short spoken version, "Daqui a pouco: …"), unless Definições → Geral → "Dizer os avisos em voz alta" is "Não, só mostrar" |
+| **Microsoft** (`speech.platform.bing.com`) | Spoken replies with the default voice, **any mode** (in LOCAL mode only when the offline voice is not installed or fails) | The text to be read aloud — including a notice NANO says by itself (the briefing's short spoken version, "Daqui a pouco: …"), unless Definições → Geral → "Dizer os avisos em voz alta" is "Não, só mostrar" |
+| **ElevenLabs** (`api.elevenlabs.io`) | Spoken replies, **only** when you chose ElevenLabs and saved your own key | The text to be read aloud, with your key |
+| **GitHub** (`github.com`, release downloads) | Once, when you press "Instalar voz offline" | A normal download of the voice files (checked against a fixed SHA-256) |
 | **Open-Meteo** (`geocoding-api.open-meteo.com`, `api.open-meteo.com`) | Only with a city typed in Definições → Geral → "Cidade para o tempo", **any mode** | The city name (once), then its coordinates rounded to ~1 km, at most every 30 minutes. No key, no account, nothing about you. `core/weather.py` |
 | **Ollama** | LOCAL, and the AUTO fallback | Message text — but it runs on your machine |
 | **Websites** | Only when you ask Nano to open, search or read one | A normal web request |

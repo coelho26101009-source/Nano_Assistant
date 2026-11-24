@@ -6,6 +6,10 @@ Pillow>=13,<14
 playwright>=1.45,<2
 openwakeword>=0.6,<1
 onnxruntime>=1.18,<2
+# NANO's natural offline voice (core/voice_local_pack.py): Piper pt-PT and
+# Kokoro English on the processor. Pinned below 2.0: 2.x dropped the espeak-ng
+# frontend that Piper and Kokoro voices read their text with.
+sherpa-onnx>=1.13.8,<1.14
 # Google Calendar reading in plugins/calendar.py (calendar.google_enabled).
 google-api-python-client>=2.100,<3
 google-auth-oauthlib>=1.2,<2

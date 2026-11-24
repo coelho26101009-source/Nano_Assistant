@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Iterable
 
-from core import listening, speech_filter
+from core import listening, speech_engines, speech_filter
 from core.wake_word import WakeWordEngine
 from core.wake_phrase import WakePhraseEngine, WakePhraseState
 
@@ -566,34 +566,101 @@ def _discard_scratch_audio(path: str) -> None:
         logger.warning("Ficheiro de audio temporario nao removido (%s): %s", path, exc)
 
 
+def _discard_unused_piece(task: "asyncio.Future") -> None:
+    if task.cancelled() or task.exception() is not None:
+        return
+    path, _engine = task.result()
+    _discard_scratch_audio(path)
+
+
 class LocalTTSProvider(TextToSpeechProvider):
+    """NANO's voice: the engine chain of core/speech_engines.py, played here.
+
+    The name is historical (it was edge-tts only). It now asks a
+    :class:`~core.speech_engines.SpeechChain` for audio -- Edge, the offline
+    voice, ElevenLabs or Windows, in the order the person chose, falling back
+    when one fails -- and plays it.
+
+    A reply is cut into pieces (:func:`speech_engines.split_for_speech`): the
+    first piece is synthesised, and while it PLAYS the next one is already
+    being synthesised. The voice starts after one short sentence, and there is
+    no silent gap between sentences while the next one is fetched.
+    """
+
     name = "local_tts"
 
-    def __init__(self, config: dict | None = None):
+    def __init__(self, config: dict | None = None, *, chain: "speech_engines.SpeechChain | None" = None,
+                 local_mode: Callable[[], bool] | None = None):
         super().__init__(config)
-        self.online = importlib.util.find_spec("edge_tts") is not None
+        self.chain = chain or speech_engines.SpeechChain()
+        #: Whether the AI mode is LOCAL (set by core/main.py). In LOCAL mode
+        #: "auto" prefers the offline voice when it is installed.
+        self.local_mode = local_mode or (lambda: False)
+        self._generation = 0
+        self.refresh()
 
-    async def speak(self, text: str) -> bool:
+    def refresh(self) -> bool:
+        """Recompute ``online`` (after an install, a new key or a language change)."""
+        self.online = self.chain.available()
+        return self.online
+
+    def request(self) -> "speech_engines.SpeechRequest":
+        try:
+            local = bool(self.local_mode())
+        except Exception:
+            local = False
+        return speech_engines.SpeechRequest.from_config(self.config, local_mode=local)
+
+    def status(self) -> dict:
+        payload = super().status()
+        try:
+            payload["speech"] = self.chain.status(self.request())
+        except Exception:
+            logger.debug("speech status unavailable", exc_info=True)
+        return payload
+
+    async def speak(self, text: str, *, request: "speech_engines.SpeechRequest | None" = None) -> bool:
         if not text or not text.strip():
             return False
         if not self.online:
             raise ProviderError("local TTS provider unavailable")
+        request = request or self.request()
+        pieces = speech_engines.split_for_speech(text) or [text.strip()]
+        generation = self._generation
+        spoke = False
+        pending: asyncio.Task | None = asyncio.ensure_future(self.chain.synthesize(pieces[0], request))
         try:
-            import edge_tts
-
-            communicate = edge_tts.Communicate(text, self.voice_name, rate=self.speed, volume=self.config.get("volume", "+0%"))
-            temp_fp = _new_scratch_audio_path(".mp3")
-            try:
-                await communicate.save(temp_fp)
-                await _play_audio_file(temp_fp)
-            finally:
-                _discard_scratch_audio(temp_fp)
-            return True
-        except Exception as exc:  # pragma: no cover - required for graceful fallback
-            logger.warning("local TTS failed: %s", exc)
-            raise ProviderError(str(exc)) from exc
+            for index in range(len(pieces)):
+                try:
+                    path, _engine = await pending
+                except speech_engines.SynthesisError as exc:
+                    pending = None
+                    logger.warning("local TTS failed: %s", exc)
+                    if spoke:
+                        return True  # what was said stays said; the rest is lost
+                    raise ProviderError(str(exc)) from exc
+                pending = None
+                if index + 1 < len(pieces) and generation == self._generation:
+                    pending = asyncio.ensure_future(self.chain.synthesize(pieces[index + 1], request))
+                try:
+                    if generation != self._generation:
+                        break  # stopped while this piece was being made
+                    await _play_audio_file(path)
+                    spoke = True
+                finally:
+                    _discard_scratch_audio(path)
+                if generation != self._generation:
+                    break
+            return spoke
+        finally:
+            if pending is not None:
+                # A piece made for nothing (stopped, or playback failed): its
+                # file is deleted whenever the synthesis ends.
+                pending.add_done_callback(_discard_unused_piece)
+                pending.cancel()
 
     def stop(self) -> None:
+        self._generation += 1
         try:
             import pygame
 
@@ -1110,7 +1177,7 @@ class VoiceEngine:
         if not self.stt_provider.online:
             blockers.append("speech-to-text runtime (faster-whisper) not installed")
         if not self.tts_provider.online:
-            blockers.append("text-to-speech runtime (edge-tts) not installed")
+            blockers.append("no text-to-speech engine available (edge-tts, local voice or Windows)")
         if blockers:
             return VoiceReadiness.SETUP_REQUIRED, blockers
 
@@ -2239,6 +2306,8 @@ _TABLE_RULE = re.compile(r"^\s*\|?\s*:?-{3,}[-|: ]*$", re.M)
 _LINE_MARK = re.compile(r"^\s{0,3}(?:#{1,6}|>|[-*+•]|\d{1,2}[.)])\s+", re.M)
 _EMPHASIS = re.compile(r"(\*{1,3}|_{2,3}|~~)")
 _EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]")
+#: The name in capitals is read letter by letter by some voices ("N-A-N-O").
+_NAME_CAPS = re.compile(r"\bNANO\b")
 #: Longest stretch spoken in one go. A spoken answer should be short anyway
 #: (VOICE_STYLE_RULES); this only stops a long one becoming minutes of audio.
 SPEECH_LIMIT = 700
@@ -2263,6 +2332,7 @@ def speech_text(text: str, limit: int = SPEECH_LIMIT) -> str:
     clean = clean.replace("|", ", ")
     clean = _EMPHASIS.sub("", clean)
     clean = _EMOJI.sub("", clean)
+    clean = _NAME_CAPS.sub("Nano", clean)
     # Each line ends in a pause: list items and headings run together otherwise.
     lines = [" ".join(line.split()).strip(" ,") for line in clean.splitlines()]
     clean = " ".join(line if line[-1] in ".!?:;," else f"{line}." for line in lines if line)

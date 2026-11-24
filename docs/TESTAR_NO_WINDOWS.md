@@ -172,18 +172,37 @@ tem de estar preparada (item 31).
 - [ ] 62. (Opcional, ~1,6 GB) **Qualidade do reconhecimento → Melhor**: descarrega o modelo maior. Depois experimenta frases difíceis (nomes, barulho de fundo). Anota se percebe melhor e quanto tempo a mais demora. Volta a **Rápida** se ficar lento demais.
 - [ ] 63. Muda a língua para inglês (**Definições → Geral → Idioma**): a frase passa a "Hey Nano" e funciona da mesma maneira.
 
+### Voz do NANO: voz offline, ElevenLabs e nunca calado (2026-11-24)
+- [ ] 64. **Definições → Voz → Voz do NANO**: carrega em **Ouvir**. Ouves a voz e aparece "Ouviste: Microsoft · Duarte".
+- [ ] 65. Carrega em **Instalar voz offline**: aparece a barra de progresso (cerca de 90 MB em português) e no fim a escolha "Voz offline". Muda o motor para **Voz offline natural** e carrega em **Ouvir**: fala sem internet. Anota quanto tempo demorou a começar.
+- [ ] 66. **Sem internet** (desliga o Wi-Fi), com o motor em **Automática**: faz uma pergunta por voz. O NANO responde com a voz offline (ou a do Windows, se não instalaste a offline). Antes ficava calado.
+- [ ] 67. Mexe na **Velocidade** (+15%) e carrega em **Ouvir**: fala mais depressa.
+- [ ] 68. Pede uma resposta comprida por voz (ex.: "explica-me a fotossíntese"). Repara se há pausas entre as frases: devia falar seguido.
+- [ ] 69. (Opcional, precisa de conta) Motor **ElevenLabs**: cola a tua chave, escolhe uma voz e carrega em **Ouvir**. Anota se soa melhor que o Duarte.
+- [ ] 70. Põe a língua em inglês e carrega em **Ouvir**: a voz passa a "Ryan (UK)". Com a voz offline em inglês, descarrega o Kokoro (350 MB) e experimenta "George (UK)".
+- [ ] 71. **Ei Nano + voz offline juntos:** com "Ouvir “ei nano”" ligado e o motor em **Voz offline natural**, diz "Ei Nano, que horas são?". O NANO responde com a voz offline e **não fecha** (as duas partes usam o mesmo motor de IA por baixo, o onnxruntime; no Linux funcionam juntas, no Windows ainda não foi visto).
+
+### Tarefas encadeadas e rotinas por voz (2026-11-24)
+Precisa de um modelo com ferramentas (Groq/Gemini/Mistral, ou o local).
+- [ ] 72. Escreve `abre o Notion e o Chrome, põe o Chrome à esquerda e o volume a 30`. O NANO **não pergunta "Avanço?"** (são tudo coisas seguras): por baixo vês "1/4 · Abrir Notion", "2/4 · Abrir Chrome"... e o Chrome fica mesmo encostado à esquerda **depois** de a janela aparecer. No fim responde curto.
+- [ ] 73. Logo a seguir diz `guarda isto como rotina setup de estudo`. Abre **PC → Modos**: aparece "Setup de estudo" com os 4 passos em "Outros passos". Fecha o Notion e o Chrome e escreve (ou diz) `prepara o meu setup de estudo`: faz tudo outra vez, sem modelo.
+- [ ] 74. Faz uma rotina com uma app que não tens (ex.: `cria uma rotina teste que abre o Photoshop e põe o Photoshop à direita`) e corre-a: o NANO diz "Não fiz: Abrir Photoshop (...); Pôr Photoshop à direita (Dependia de abrir...)" e "Diz “tenta outra vez”". Diz `tenta outra vez`: repete **só** esses dois passos.
+- [ ] 75. Um plano com algo sensível, ex.: `fecha o Discord, abre o Spotify e põe o volume a 20`: só o "Fechar Discord" pede confirmação; o resto faz sozinho.
+- [ ] 76. Carrega na **paragem de emergência** a meio de uma rotina comprida: os passos que faltavam aparecem como "não cheguei lá", nada mais corre.
+- [ ] 77. `que rotinas tenho?` lista as tuas rotinas; `apaga a rotina teste` pede confirmação antes de apagar.
+
 ### NANO proativo, sem ser chato (2026-11-24)
-- [ ] 64. **Definições → Geral → O NANO fala primeiro**: escreve a tua cidade em "Cidade para o tempo" (ex.: `Porto`) e carrega em **Mostrar o resumo agora**. O resumo traz uma linha **Tempo** com a temperatura e, se for chover, "leva guarda-chuva".
-- [ ] 65. Com "Dizer os avisos em voz alta" em **Só o resumo e os importantes** e a voz ligada: muda a hora do resumo para daqui a 2 minutos e espera ao PC. O NANO diz bom dia **em voz alta** (curto) e mostra o resumo completo no chat.
-- [ ] 66. Muda a hora do resumo para daqui a 2 minutos e **afasta-te do PC 12 minutos** (sem mexer no rato). Quando voltas e mexes no rato, o resumo aparece nessa altura, não antes.
-- [ ] 67. Escreve `não me incomodes durante uma hora`. O NANO responde "fico calado até às …". Em **Definições → Geral → Não incomodar** aparece "Em silêncio até às …". Escreve `podes voltar a falar`: o silêncio acaba.
-- [ ] 68. Abre um jogo em **ecrã inteiro** e descarrega um ficheiro durante o jogo. Não aparece nada por cima do jogo. Quando sais do jogo, aparece o aviso do download.
-- [ ] 69. Abre muitas abas no Chrome até a memória passar dos 90% (ou um jogo pesado) e espera 2 minutos: aparece "Memória quase cheia" com o nome da app e o botão **Fechar o …**. Carrega: o NANO pede autorização antes de fechar. Experimenta também responder só `sim` no chat.
-- [ ] 70. Por baixo de um aviso carrega em **Não me avises disto**. Em **Não incomodar → Avisos que desligaste** aparece esse tipo; carrega nele para voltar a ligar.
-- [ ] 71. **PC → Modos → Rotinas**: cria uma rotina com o teu "Modo estudo" para daqui a 2 minutos, no dia de hoje. À hora, o NANO pergunta "São …: começo o Modo estudo?". Responde `sim` (por voz ou escrito): o protocolo corre.
-- [ ] 72. Ativa o mesmo protocolo à mesma hora em 3 dias diferentes. No 4.º dia, a essa hora, o NANO pergunta se o quer ativar ("Costumas ativar…").
-- [ ] 73. Depois da meia-noite, ainda ao PC: aparece "Já é tarde" (sem som e sem voz), com o que tens de manhã se houver algo na agenda antes das 11h.
-- [ ] 74. **Definições → Geral → Não incomodar → Últimos avisos**: vês o que o NANO mostrou, guardou para depois ou não mostrou, e porquê.
+- [ ] 78. **Definições → Geral → O NANO fala primeiro**: escreve a tua cidade em "Cidade para o tempo" (ex.: `Porto`) e carrega em **Mostrar o resumo agora**. O resumo traz uma linha **Tempo** com a temperatura e, se for chover, "leva guarda-chuva".
+- [ ] 79. Com "Dizer os avisos em voz alta" em **Só o resumo e os importantes** e a voz ligada: muda a hora do resumo para daqui a 2 minutos e espera ao PC. O NANO diz bom dia **em voz alta** (curto) e mostra o resumo completo no chat.
+- [ ] 80. Muda a hora do resumo para daqui a 2 minutos e **afasta-te do PC 12 minutos** (sem mexer no rato). Quando voltas e mexes no rato, o resumo aparece nessa altura, não antes.
+- [ ] 81. Escreve `não me incomodes durante uma hora`. O NANO responde "fico calado até às …". Em **Definições → Geral → Não incomodar** aparece "Em silêncio até às …". Escreve `podes voltar a falar`: o silêncio acaba.
+- [ ] 82. Abre um jogo em **ecrã inteiro** e descarrega um ficheiro durante o jogo. Não aparece nada por cima do jogo. Quando sais do jogo, aparece o aviso do download.
+- [ ] 83. Abre muitas abas no Chrome até a memória passar dos 90% (ou um jogo pesado) e espera 2 minutos: aparece "Memória quase cheia" com o nome da app e o botão **Fechar o …**. Carrega: o NANO pede autorização antes de fechar. Experimenta também responder só `sim` no chat.
+- [ ] 84. Por baixo de um aviso carrega em **Não me avises disto**. Em **Não incomodar → Avisos que desligaste** aparece esse tipo; carrega nele para voltar a ligar.
+- [ ] 85. **PC → Modos → Rotinas com hora**: cria uma rotina com o teu "Modo estudo" para daqui a 2 minutos, no dia de hoje. À hora, o NANO pergunta "São …: começo o Modo estudo?". Responde `sim` (por voz ou escrito): o protocolo corre.
+- [ ] 86. Ativa o mesmo protocolo à mesma hora em 3 dias diferentes. No 4.º dia, a essa hora, o NANO pergunta se o quer ativar ("Costumas ativar…").
+- [ ] 87. Depois da meia-noite, ainda ao PC: aparece "Já é tarde" (sem som e sem voz), com o que tens de manhã se houver algo na agenda antes das 11h.
+- [ ] 88. **Definições → Geral → Não incomodar → Últimos avisos**: vês o que o NANO mostrou, guardou para depois ou não mostrou, e porquê.
 
 ---
 

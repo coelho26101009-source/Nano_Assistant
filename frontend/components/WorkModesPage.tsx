@@ -31,16 +31,20 @@ const OUTCOME_LABEL: Record<WorkModeOutcome["status"], string> = {
 
 /* ── Protocols (core/protocols.py) ───────────────────────────────────── */
 
+/** A step made by voice ("guarda isto como rotina"): any safe, repeatable PC action. */
+export type ProtocolAction = { tool: string; args: Record<string, unknown>; label: string; asks?: boolean };
+
 export type Protocol = {
   id?: string; key?: string; name: string; phrases: string[];
   close_apps: string[]; open_apps: string[]; open_urls: string[];
   volume: number | null; media: string; settings_section: string; lock: boolean; message: string;
+  actions?: ProtocolAction[];
   steps?: WorkModeStep[];
 };
 
 const EMPTY_PROTOCOL: Protocol = {
   name: "", phrases: [], close_apps: [], open_apps: [], open_urls: [], volume: null,
-  media: "", settings_section: "", lock: false, message: "",
+  media: "", settings_section: "", lock: false, message: "", actions: [],
 };
 
 const list = (value: string) => value.split(",").map((item) => item.trim()).filter(Boolean);
@@ -54,6 +58,7 @@ function ProtocolEditor({ initial, onSaved, onCancel }: {
     phrasesText: joined(initial.phrases), openText: joined(initial.open_apps),
     closeText: joined(initial.close_apps), urlsText: joined(initial.open_urls),
     volumeText: initial.volume === null || initial.volume === undefined ? "" : String(initial.volume),
+    actions: initial.actions ?? [],
   }));
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -68,6 +73,7 @@ function ProtocolEditor({ initial, onSaved, onCancel }: {
       open_apps: list(draft.openText), close_apps: list(draft.closeText), open_urls: list(draft.urlsText),
       volume: volume !== null && Number.isFinite(volume) ? Math.round(volume) : null,
       media: draft.media, settings_section: draft.settings_section, lock: draft.lock, message: draft.message,
+      actions: draft.actions,
     };
     const result = await call<{ ok: boolean; detail?: string }>("save_protocol", payload);
     setSaving(false);
@@ -116,6 +122,21 @@ function ProtocolEditor({ initial, onSaved, onCancel }: {
                onChange={(e) => set({ settings_section: e.target.checked ? "notifications" : "" })} />
         {t("Abrir as definições de notificações (Não incomodar)")}
       </label>
+      {draft.actions.length > 0 && (
+        <Field label={t("Outros passos")} hint={t("Criados a falar com o NANO. Para mudar um, pede-lhe ou apaga-o aqui.")}>
+          <ol className="work-mode__steps">
+            {draft.actions.map((action, index) => (
+              <li key={`${action.tool}-${index}`} className="inline" style={{ gap: 8 }}>
+                <span>{action.label}{action.asks && <span className="dim"> · {t("pede confirmação")}</span>}</span>
+                <Button size="sm" variant="ghost" aria-label={t("Tirar o passo {0}", { 0: action.label })}
+                        onClick={() => set({ actions: draft.actions.filter((_, i) => i !== index) })}>
+                  {t("Tirar")}
+                </Button>
+              </li>
+            ))}
+          </ol>
+        </Field>
+      )}
       <label className="inline" style={{ gap: 8, margin: "6px 0" }}>
         <input type="checkbox" checked={draft.lock} onChange={(e) => set({ lock: e.target.checked })} />
         {t("Bloquear o PC no fim (pede confirmação)")}
@@ -163,6 +184,9 @@ function ProtocolsSection({ enabled, busy, onRun, onChanged }: {
       </div>
       <p className="dim" style={{ marginBottom: 12, maxWidth: "72ch" }}>
         {t("Um protocolo é uma rotina tua que o NANO faz quando dizes uma frase, como o JARVIS: “modo estudo”, “boa noite”, “modo jogo”. Funciona a escrever, por voz e no telemóvel. Cada passo passa pelas permissões normais.")}
+      </p>
+      <p className="dim" style={{ marginTop: -6, marginBottom: 12, maxWidth: "72ch" }}>
+        {t("Também os crias a falar: pede “abre o Notion e o Spotify e encosta o Chrome à esquerda” e depois diz “guarda isto como rotina setup de estudo”. O NANO verifica cada passo e, se algo falhar, diz o quê; “tenta outra vez” repete só isso.")}
       </p>
       {editing && (
         <ProtocolEditor initial={editing} onCancel={() => setEditing(null)}
@@ -268,7 +292,7 @@ function RoutinesSection({ enabled, version }: { enabled: boolean; version: numb
 
   return (
     <section style={{ marginBottom: 28 }}>
-      <h3 style={{ margin: "0 0 8px" }}>{t("Rotinas")}</h3>
+      <h3 style={{ margin: "0 0 8px" }}>{t("Rotinas com hora")}</h3>
       <p className="dim" style={{ marginBottom: 12, maxWidth: "72ch" }}>
         {t("Um protocolo a uma hora certa, como o JARVIS a preparar o dia: “dias úteis às 08:00, Modo estudo”. O NANO pergunta primeiro (respondes com um botão ou “sim” por voz), ou faz sozinho se escolheres. Cada passo passa pelas permissões normais.")}
       </p>
