@@ -11,6 +11,7 @@ The installer is bigger than before (~200 MB; the speech pack adds about
 | File | SHA-256 |
 | --- | --- |
 | `Nano-Setup-0.4.0-beta.3-x64.exe` | `07226bc4e5e4108ff43de32a20b5e0fe17edffae5e865c4ef7dc0719b16e06be` |
+| `NANO-Android-0.4.0-beta.3.apk` | `0ba9922f1f04cf90d57d56b19f35337ec071b7741820fa28ee069717e727158c` |
 
 **The account was renamed.** GitHub now calls the repository
 `coelho97sc/Nano_Assistant`; the old `coelho26101009-source` URLs redirect.
@@ -20,7 +21,8 @@ signers use that path explicitly, never `github.repository`. The first
 publish of 0.4.0-beta.3 used `github.repository`, the signer refused it
 (`feed_bad_url`), and the release came out without its update feed or APK.
 **Finish a release (update feed + Android)** (`.github/workflows/release-finish.yml`,
-run on `main`) completes such a release: it checks the published installer
+run on `main`) completes such a release (it finished 0.4.0-beta.3 on 2026-11-22: signed
+feed on `desktop-update`, APK attached): it checks the published installer
 against the release's checksums, signs and publishes the feed, and starts the
 Android workflow on the tag.
 
