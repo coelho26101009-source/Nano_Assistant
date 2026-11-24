@@ -120,6 +120,10 @@ elif memory_stack.migration.get("applied"):
 voice_language.apply(CONFIG.setdefault("voice", {}), i18n.current())
 
 
+#: The speech engine settings.yaml set, read once by _apply_tts_voice.
+_CONFIGURED_TTS_ENGINE: str | None = None
+
+
 def _apply_tts_voice() -> str:
     """The speaking voice the person chose (core/personality.py), when it
     speaks the interface language; otherwise the language's own voice.
@@ -134,7 +138,12 @@ def _apply_tts_voice() -> str:
     if tts.get("voice") in personality.ALL_VOICES or not tts.get("voice") or chosen:
         tts["voice"] = target
     tts["language"] = i18n.current()
-    tts["engine"] = str(user_settings.get("tts_engine", "") or tts.get("engine") or "auto")
+    # Fallback: the engine settings.yaml configured, never the live value. That
+    # one may be a choice since reset, which then stuck until NANO restarted.
+    global _CONFIGURED_TTS_ENGINE
+    if _CONFIGURED_TTS_ENGINE is None:
+        _CONFIGURED_TTS_ENGINE = str(tts.get("engine") or "auto")
+    tts["engine"] = str(user_settings.get("tts_engine", "") or _CONFIGURED_TTS_ENGINE or "auto")
     if tts["engine"] not in speech_engines.ENGINES:
         tts["engine"] = "auto"
     tts["local_voice"] = str(user_settings.get("tts_local_voice", "") or "")
