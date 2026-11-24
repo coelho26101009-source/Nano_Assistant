@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from core import notice_gate, pc_alerts, proactive, suggestions, weather
+from core import notice_gate, pc_alerts, presence, proactive, suggestions, weather
 
 
 # ── helpers ───────────────────────────────────────────────────────────────
@@ -504,3 +504,19 @@ def test_main_accept_returns_the_sentence_to_send(monkeypatch):
     assert main.proactive_action(notice_id, "accept")["ok"] is False
     assert main.mute_notice_kind("watch")["ok"] is False
     assert main.set_proactive_snooze(7)["ok"] is False
+
+
+def test_idle_time_survives_the_49_day_tick_wrap():
+    """GetTickCount wraps to 0 every 49.7 days and ctypes may return it as a
+    negative int: idle time must stay small and positive across both."""
+    assert presence.elapsed_seconds(10_000, 4_000) == 6.0
+    # Last input just before the wrap, now just after it.
+    assert presence.elapsed_seconds(1_500, 0xFFFFFFFF - 499) == 2.0
+    # The same "now" handed back as a signed 32-bit value.
+    assert presence.elapsed_seconds(-1, 0xFFFFFFFF - 1000) == 1.0
+
+
+def test_presence_is_unknown_off_windows(monkeypatch):
+    monkeypatch.setattr(presence.sys, "platform", "linux")
+    assert presence.idle_seconds() is None
+    assert presence.busy_state() is None

@@ -38,6 +38,14 @@ _BUSY = {
 }
 
 
+def elapsed_seconds(now_ms: int, last_ms: int) -> float:
+    """Seconds between two 32-bit millisecond tick counts, across a wrap.
+
+    ``GetTickCount`` and ``LASTINPUTINFO.dwTime`` both wrap to 0 every 49.7
+    days, and ctypes may hand ``GetTickCount`` back as a negative ``int``."""
+    return ((int(now_ms) - int(last_ms)) & 0xFFFFFFFF) / 1000.0
+
+
 def idle_seconds() -> float | None:
     """Seconds since the last keyboard or mouse input, or None."""
     if sys.platform != "win32":
@@ -53,9 +61,7 @@ def idle_seconds() -> float | None:
         info.cbSize = ctypes.sizeof(LASTINPUTINFO)
         if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
             return None
-        now = ctypes.windll.kernel32.GetTickCount() & 0xFFFFFFFF
-        # Both are 32-bit millisecond counters that wrap every 49.7 days.
-        return ((now - info.dwTime) & 0xFFFFFFFF) / 1000.0
+        return elapsed_seconds(ctypes.windll.kernel32.GetTickCount(), info.dwTime)
     except Exception:
         logger.debug("GetLastInputInfo failed", exc_info=True)
         return None
@@ -78,4 +84,4 @@ def busy_state() -> str | None:
         return None
 
 
-__all__ = ["busy_state", "idle_seconds"]
+__all__ = ["busy_state", "elapsed_seconds", "idle_seconds"]
