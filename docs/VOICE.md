@@ -65,11 +65,13 @@ matters more than the slogan:
 | Microphone capture | Local |
 | Wake-phrase detection | Local |
 | **Speech-to-text** | **Local.** `faster-whisper`, on this machine. There is no cloud STT path in the code: the runtime constructs `LocalSTTProvider` unconditionally. |
-| **Text-to-speech** | **Not local.** `edge-tts` sends the text to be spoken to **Microsoft's Edge voice service** and plays back the audio it returns. |
+| **Text-to-speech** | **Depends on the engine** (Settings → Voz → Voz do NANO). The default, `edge-tts`, sends the text to be spoken to **Microsoft's Edge voice service**. The **offline voice** (sherpa-onnx: Piper "dii" pt-PT, Kokoro English) and the **Windows voice** run on this PC and send nothing. **ElevenLabs**, only when chosen and with the person's own key, sends the text to ElevenLabs. |
 
-**This applies in every mode, including LOCAL.** "Local mode" refers to the
-language model. If spoken replies are on, the sentence Nano is about to read is
-sent to Microsoft even when the model itself never touches the network. Turn
+**With the default engine this applies in every mode, including LOCAL,** unless
+the offline voice is installed: in LOCAL mode, "Automática" then reads with the
+offline voice first and only falls back to Microsoft if it fails. "Local mode"
+refers to the language model. To keep speech on the PC always, choose
+"Voz offline natural" as the engine. Turn
 spoken replies off in Definições → Voz if you need silence on the wire. See
 [`../PRIVACY.md`](../PRIVACY.md).
 
@@ -175,7 +177,28 @@ It intentionally fails gracefully when the local runtime does not have a speech 
 ## TTS
 
 `LocalTTSProvider` fails closed and never blocks the rest of the system when
-speech is unavailable.
+speech is unavailable. Since 2026-11-24 it reads through the engine chain in
+`core/speech_engines.py`:
+
+| Engine | Where | Cost | Notes |
+|---|---|---|---|
+| `edge` | Microsoft, online | free | default; `pt-PT-DuarteNeural`, `en-GB-RyanNeural` |
+| `local` | this PC, processor only | free | Settings → Voz → "Instalar voz offline": sherpa-onnx 1.13 (from `requirements/optional.lock`, hashed) + Piper `pt_PT-dii-high` (67 MB, CC BY-NC-SA 4.0) or Kokoro v1.0 (350 MB, Apache-2.0), SHA-256 pinned in `core/voice_local_pack.py` |
+| `elevenlabs` | ElevenLabs, online | the person's account | only when chosen; never an automatic fallback |
+| `windows` | this PC | free | System.Speech through a fixed PowerShell script; the last resort |
+
+"Automática" tries `edge`, then `local`, then `windows` (in LOCAL mode `local`
+first, when its voice for the language is on disk). A chosen engine goes first
+and the automatic order follows it. An engine that fails is skipped for 45 s
+(network), 15 min (quota) or 1 h (refused key), so offline sentences do not each
+wait for a time-out. A reply is spoken in pieces: the next piece is synthesised
+while the current one plays.
+
+Measured in the cloud (4 slow cores, 2026-11-24): Piper "dii" 14 s of audio in
+0.5 s, Kokoro 14 s in 3.5 s; a Whisper transcription of the samples got 10 % and
+5 % of words wrong (mostly numbers written as digits). Piper "tugão" (the other
+pt-PT voice) got 43 % wrong and is not offered. Kokoro has no European
+Portuguese voice (pt-BR only), so it is used for English only.
 
 **The class name is misleading and is kept for compatibility.** It is "local" in
 the sense that it runs in this process without a configured cloud account; the

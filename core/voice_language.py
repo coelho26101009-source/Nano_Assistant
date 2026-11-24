@@ -38,7 +38,9 @@ class VoiceProfile:
 PROFILES: dict[str, VoiceProfile] = {
     "en": VoiceProfile(
         stt_language="en",
-        tts_voice="en-US-GuyNeural",
+        # British and calm, the JARVIS manner. Was en-US-GuyNeural, an older
+        # and flatter voice; an install still on it moves (_LEGACY_DEFAULTS).
+        tts_voice="en-GB-RyanNeural",
         wake_phrase="hey nano",
         vocabulary_hint=("Vocabulary: Nano, Spotify, Discord, GitHub, Visual Studio Code, "
                          "VS Code, Windows, Groq, Ollama, Claude."),
@@ -54,7 +56,8 @@ PROFILES: dict[str, VoiceProfile] = {
 }
 
 #: Older spellings that also count as "never changed by the person".
-_LEGACY_DEFAULTS = {"stt_language": {"pt-PT", "en-US", "en-GB"}}
+_LEGACY_DEFAULTS = {"stt_language": {"pt-PT", "en-US", "en-GB"},
+                    "tts_voice": {"en-US-GuyNeural"}}
 
 
 def profile(language: str | None) -> VoiceProfile:

@@ -51,6 +51,14 @@ similar-frozen Windows build before the first public installer.
 | `PyYAML` | 6.0.3 | MIT |
 | `psutil` | 6.1.1 | BSD-3-Clause |
 | `edge-tts` | 7.2.8 | **LGPL-3.0** — see above |
+
+### Optional: the offline voice (installed on request, `requirements/optional.lock`)
+
+| Component | Version | Licence |
+| --- | --- | --- |
+| `sherpa-onnx`, `sherpa-onnx-core` | 1.13.8 | Apache-2.0 (bundles espeak-ng data, GPL-3.0, used as a separate data/library component) |
+| Piper voice `pt_PT-dii-high` (downloaded at runtime, not shipped) | sherpa-onnx `tts-models` release | **CC BY-NC-SA 4.0** — free for personal, non-commercial use; never redistributed by NANO |
+| Kokoro-82M v1.0 (downloaded at runtime, not shipped) | sherpa-onnx `tts-models` release | Apache-2.0 |
 | `pygame` | 2.6.1 | **LGPL-2.1** — see above |
 | `PyAudio` | 0.2.14 | MIT |
 

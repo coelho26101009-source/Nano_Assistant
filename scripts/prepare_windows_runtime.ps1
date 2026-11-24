@@ -141,6 +141,27 @@ finally {
     --require-hashes -r $speechRequirements
 if ($LASTEXITCODE -ne 0) { throw 'Failed to install the speech pack (faster-whisper).' }
 
+# THE OFFLINE VOICE'S ENGINE SHIPS TOO (core/voice_local_pack.py), for the same
+# two reasons: optional.lock is not packaged, and an automatic update would wipe
+# anything pip put into resources\app. Only sherpa-onnx (about 20 MB) goes in;
+# the voices themselves are downloaded into the data folder when the person
+# presses "Instalar voz offline", so they survive updates.
+$localVoiceRequirements = Join-Path $work 'local-voice-requirements.txt'
+$env:NANO_APP_ROOT = $root
+$env:NANO_DATA_DIR = $speechProbeData
+try {
+    & $python -c "import os, sys; sys.path.insert(0, os.environ['NANO_APP_ROOT']); from core import voice_setup; text = voice_setup.requirements_text(voice_setup.OPTIONAL_LOCK.read_text(encoding='utf-8'), root='sherpa-onnx'); assert 'sherpa-onnx==' in text, 'offline voice missing from optional.lock'; open(sys.argv[1], 'w', encoding='utf-8').write(text)" $localVoiceRequirements
+    if ($LASTEXITCODE -ne 0) { throw 'Could not compute the offline voice requirements.' }
+}
+finally {
+    $env:NANO_APP_ROOT = $previousAppRootForSpeech
+    $env:NANO_DATA_DIR = $previousDataDirForSpeech
+}
+& $python -m pip install --disable-pip-version-check --no-warn-script-location `
+    --no-cache-dir --no-build-isolation --only-binary=:all: --index-url https://pypi.org/simple `
+    --require-hashes -r $localVoiceRequirements
+if ($LASTEXITCODE -ne 0) { throw 'Failed to install the offline voice engine (sherpa-onnx).' }
+
 # ONE C++ RUNTIME FOR THE WHOLE PROCESS. The winrt wheels (island music,
 # local OCR) carry their own msvcp140.dll, version 14.29. Windows loads a DLL
 # name only once per process, so once winrt was imported, onnxruntime (the
@@ -259,6 +280,11 @@ try {
     # sequence that crashed with 0xC0000005 when winrt's old msvcp140.dll won.
     & $python -c "import winrt.windows.media.control; from faster_whisper.vad import get_vad_model; get_vad_model(); print('Nano winrt + voice detector in one process OK')"
     if ($LASTEXITCODE -ne 0) { throw 'winrt and the voice detector cannot load in one process (C++ runtime clash).' }
+
+    # The offline voice in the order the backend uses: the voice detector's
+    # onnxruntime first, then sherpa-onnx with its own onnxruntime.dll.
+    & $python -c "import winrt.windows.media.control; import onnxruntime; import sherpa_onnx; print('Nano offline voice engine OK', sherpa_onnx.__version__)"
+    if ($LASTEXITCODE -ne 0) { throw 'The offline voice engine (sherpa-onnx) does not load next to onnxruntime and winrt.' }
 
     # Exactly how the shipped application reaches its own code: the app root
     # arrives through NANO_APP_ROOT, never through the ._pth.

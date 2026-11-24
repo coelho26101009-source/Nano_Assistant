@@ -172,14 +172,24 @@ tem de estar preparada (item 31).
 - [ ] 62. (Opcional, ~1,6 GB) **Qualidade do reconhecimento → Melhor**: descarrega o modelo maior. Depois experimenta frases difíceis (nomes, barulho de fundo). Anota se percebe melhor e quanto tempo a mais demora. Volta a **Rápida** se ficar lento demais.
 - [ ] 63. Muda a língua para inglês (**Definições → Geral → Idioma**): a frase passa a "Hey Nano" e funciona da mesma maneira.
 
+### Voz do NANO: voz offline, ElevenLabs e nunca calado (2026-11-24)
+- [ ] 64. **Definições → Voz → Voz do NANO**: carrega em **Ouvir**. Ouves a voz e aparece "Ouviste: Microsoft · Duarte".
+- [ ] 65. Carrega em **Instalar voz offline**: aparece a barra de progresso (cerca de 90 MB em português) e no fim a escolha "Voz offline". Muda o motor para **Voz offline natural** e carrega em **Ouvir**: fala sem internet. Anota quanto tempo demorou a começar.
+- [ ] 66. **Sem internet** (desliga o Wi-Fi), com o motor em **Automática**: faz uma pergunta por voz. O NANO responde com a voz offline (ou a do Windows, se não instalaste a offline). Antes ficava calado.
+- [ ] 67. Mexe na **Velocidade** (+15%) e carrega em **Ouvir**: fala mais depressa.
+- [ ] 68. Pede uma resposta comprida por voz (ex.: "explica-me a fotossíntese"). Repara se há pausas entre as frases: devia falar seguido.
+- [ ] 69. (Opcional, precisa de conta) Motor **ElevenLabs**: cola a tua chave, escolhe uma voz e carrega em **Ouvir**. Anota se soa melhor que o Duarte.
+- [ ] 70. Põe a língua em inglês e carrega em **Ouvir**: a voz passa a "Ryan (UK)". Com a voz offline em inglês, descarrega o Kokoro (350 MB) e experimenta "George (UK)".
+- [ ] 71. **Ei Nano + voz offline juntos:** com "Ouvir “ei nano”" ligado e o motor em **Voz offline natural**, diz "Ei Nano, que horas são?". O NANO responde com a voz offline e **não fecha** (as duas partes usam o mesmo motor de IA por baixo, o onnxruntime; no Linux funcionam juntas, no Windows ainda não foi visto).
+
 ### Tarefas encadeadas e rotinas por voz (2026-11-24)
 Precisa de um modelo com ferramentas (Groq/Gemini/Mistral, ou o local).
-- [ ] 64. Escreve `abre o Notion e o Chrome, põe o Chrome à esquerda e o volume a 30`. O NANO **não pergunta "Avanço?"** (são tudo coisas seguras): por baixo vês "1/4 · Abrir Notion", "2/4 · Abrir Chrome"... e o Chrome fica mesmo encostado à esquerda **depois** de a janela aparecer. No fim responde curto.
-- [ ] 65. Logo a seguir diz `guarda isto como rotina setup de estudo`. Abre **PC → Modos**: aparece "Setup de estudo" com os 4 passos em "Outros passos". Fecha o Notion e o Chrome e escreve (ou diz) `prepara o meu setup de estudo`: faz tudo outra vez, sem modelo.
-- [ ] 66. Faz uma rotina com uma app que não tens (ex.: `cria uma rotina teste que abre o Photoshop e põe o Photoshop à direita`) e corre-a: o NANO diz "Não fiz: Abrir Photoshop (...); Pôr Photoshop à direita (Dependia de abrir...)" e "Diz “tenta outra vez”". Diz `tenta outra vez`: repete **só** esses dois passos.
-- [ ] 67. Um plano com algo sensível, ex.: `fecha o Discord, abre o Spotify e põe o volume a 20`: só o "Fechar Discord" pede confirmação; o resto faz sozinho.
-- [ ] 68. Carrega na **paragem de emergência** a meio de uma rotina comprida: os passos que faltavam aparecem como "não cheguei lá", nada mais corre.
-- [ ] 69. `que rotinas tenho?` lista as tuas rotinas; `apaga a rotina teste` pede confirmação antes de apagar.
+- [ ] 72. Escreve `abre o Notion e o Chrome, põe o Chrome à esquerda e o volume a 30`. O NANO **não pergunta "Avanço?"** (são tudo coisas seguras): por baixo vês "1/4 · Abrir Notion", "2/4 · Abrir Chrome"... e o Chrome fica mesmo encostado à esquerda **depois** de a janela aparecer. No fim responde curto.
+- [ ] 73. Logo a seguir diz `guarda isto como rotina setup de estudo`. Abre **PC → Modos**: aparece "Setup de estudo" com os 4 passos em "Outros passos". Fecha o Notion e o Chrome e escreve (ou diz) `prepara o meu setup de estudo`: faz tudo outra vez, sem modelo.
+- [ ] 74. Faz uma rotina com uma app que não tens (ex.: `cria uma rotina teste que abre o Photoshop e põe o Photoshop à direita`) e corre-a: o NANO diz "Não fiz: Abrir Photoshop (...); Pôr Photoshop à direita (Dependia de abrir...)" e "Diz “tenta outra vez”". Diz `tenta outra vez`: repete **só** esses dois passos.
+- [ ] 75. Um plano com algo sensível, ex.: `fecha o Discord, abre o Spotify e põe o volume a 20`: só o "Fechar Discord" pede confirmação; o resto faz sozinho.
+- [ ] 76. Carrega na **paragem de emergência** a meio de uma rotina comprida: os passos que faltavam aparecem como "não cheguei lá", nada mais corre.
+- [ ] 77. `que rotinas tenho?` lista as tuas rotinas; `apaga a rotina teste` pede confirmação antes de apagar.
 
 ---
 
