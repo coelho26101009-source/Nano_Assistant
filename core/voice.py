@@ -449,19 +449,27 @@ class LocalSTTProvider(SpeechToTextProvider):
             if hint:
                 options["initial_prompt"] = hint
 
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fp:
-                fp.write(audio_bytes)
-                tmp_path = fp.name
+            # Samples, not a file path: the path route goes through PyAV, and
+            # faster-whisper 1.2.1 + av 19 fail there (see core/whisper_audio).
+            from core.whisper_audio import wav_samples
+
+            samples = wav_samples(audio_bytes)
+            tmp_path: str | None = None
+            if samples is None:
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fp:
+                    fp.write(audio_bytes)
+                    tmp_path = fp.name
             try:
                 started = time.perf_counter()
-                segments, _info = model.transcribe(tmp_path, **options)
+                segments, _info = model.transcribe(samples if samples is not None else tmp_path, **options)
                 text = " ".join(part.text.strip() for part in segments if part.text and part.text.strip()).strip()
                 elapsed = time.perf_counter() - started
             finally:
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
+                if tmp_path is not None:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
             # Lengths and timings only -- never the transcript itself, which is
             # the user's private speech.
             logger.info("STT transcribe: model=%s %.2fs -> %d chars",
