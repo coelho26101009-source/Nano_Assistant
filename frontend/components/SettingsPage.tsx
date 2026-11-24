@@ -716,7 +716,13 @@ function QuietPanel({ proactive, onUpdate }: {
     const value = await call<ProactiveStatus>("get_proactive_status");
     if (value?.ok) setStatus(value);
   }, []);
-  React.useEffect(() => { void refresh(); }, [refresh]);
+  // Silence ends and notices arrive while the page is open: read it again
+  // now and then (a cheap local call, no network).
+  React.useEffect(() => {
+    void refresh();
+    const timer = window.setInterval(() => { void refresh(); }, 15000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
   const snooze = async (minutes: number) => {
     await call("set_proactive_snooze", minutes);
     void refresh();

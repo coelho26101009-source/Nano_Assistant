@@ -300,6 +300,7 @@ function RoutinesSection({ enabled, version }: { enabled: boolean; version: numb
           {error && <p className="dim" role="alert" style={{ fontSize: 12, marginTop: 8 }}>{error}</p>}
           <div style={{ marginTop: 12 }}>
             <Button size="sm" variant="primary" disabled={!protocol || days.length === 0}
+                    title={days.length === 0 ? t("Escolhe pelo menos um dia.") : undefined}
                     onClick={() => { void save(); }}>{t("Guardar rotina")}</Button>
           </div>
         </Panel>

@@ -249,6 +249,9 @@ first start).
 | Spoken audio | Temporary file, deleted after playback | Seconds | Automatic |
 | Clipboard | **Never stored** | — | — |
 | Typed-input text (PC Control) | **Never stored** — only a digest reaches the audit trail | — | — |
+| What NANO said by itself (proactivity) | `proactive_gate.json`: silence end, the kinds you turned off, the last 40 decisions (kind, title, shown/kept/not shown, reason, time) — **never the notice text** | Rolling 40 entries | **Yes** — "Apagar todos os dados" |
+| Routines and habit times | `routines.json` (your routines); `suggestions_state.json` (the day and time each protocol was started, last 4 weeks; never what was said) | Rolling | **Yes** — PC → Modos → Rotinas, or "Apagar todos os dados" |
+| Weather cache | `weather_cache.json`: the city you typed, its rounded coordinates and the last forecast | Forecast refreshed every 30 minutes | **Yes** — empty the city, or "Apagar todos os dados" |
 
 ### Notes on specific items
 
@@ -392,7 +395,8 @@ model can neither see nor trigger it.
 | **Groq** (`api.groq.com`) | AUTO and CLOUD, when it is asked | Message text and assembled context; separately, a model-list probe |
 | **Mistral** (`api.mistral.ai`) | AUTO and CLOUD, when it is asked | The same |
 | **Google / Gemini** (`generativelanguage.googleapis.com`) | AUTO and CLOUD, when it is asked | The same |
-| **Microsoft** (`speech.platform.bing.com`) | Spoken replies, **any mode** | The text to be read aloud |
+| **Microsoft** (`speech.platform.bing.com`) | Spoken replies, **any mode** | The text to be read aloud — including a notice NANO says by itself (the briefing's short spoken version, "Daqui a pouco: …"), unless Definições → Geral → "Dizer os avisos em voz alta" is "Não, só mostrar" |
+| **Open-Meteo** (`geocoding-api.open-meteo.com`, `api.open-meteo.com`) | Only with a city typed in Definições → Geral → "Cidade para o tempo", **any mode** | The city name (once), then its coordinates rounded to ~1 km, at most every 30 minutes. No key, no account, nothing about you. `core/weather.py` |
 | **Ollama** | LOCAL, and the AUTO fallback | Message text — but it runs on your machine |
 | **Websites** | Only when you ask Nano to open, search or read one | A normal web request |
 | **NANO's relay** (Cloudflare Workers) | Phone access on, "Away from home" on, and a phone paired or a pairing code on screen | The phone's messages **sealed with AES-256-GCM** with a key only the phone and the PC hold; it cannot read them. It sees the PC's and the phone's IP addresses, message sizes and times. `core/mobile_relay.py`, `relay/` |

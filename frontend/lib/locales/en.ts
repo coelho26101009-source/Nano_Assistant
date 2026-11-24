@@ -1343,6 +1343,7 @@ export const EN: Record<string, string> = {
   "Um protocolo a uma hora certa, como o JARVIS a preparar o dia: “dias úteis às 08:00, Modo estudo”. O NANO pergunta primeiro (respondes com um botão ou “sim” por voz), ou faz sozinho se escolheres. Cada passo passa pelas permissões normais.": "A protocol at a set time, like JARVIS getting the day ready: “weekdays at 08:00, Study mode”. NANO asks first (answer with a button or “yes” by voice), or does it by itself if you choose. Every step goes through the normal permissions.",
   "Cria primeiro um protocolo; depois podes dar-lhe uma hora.": "Create a protocol first; then you can give it a time.",
   "Nova rotina": "New routine",
+  "Escolhe pelo menos um dia.": "Pick at least one day.",
   "Protocolo": "Protocol",
   "Hora": "Time",
   "Dias": "Days",

@@ -183,11 +183,11 @@ function NoticeActions({ notice }: { notice: NoticeInfo }) {
     <div className="msg__choices notice-actions" role="group" aria-label={t("Responder ao aviso")}>
       {notice.offer ? (
         <>
-          <button type="button" className="choice-chip" disabled={done !== null}
+          <button type="button" className="choice-chip" disabled={done !== null} title={notice.offer}
                   aria-pressed={done === "accept"} onClick={() => press("accept")}>
             {notice.offer}
           </button>
-          <button type="button" className="choice-chip" disabled={done !== null}
+          <button type="button" className="choice-chip" disabled={done !== null} title={t("Agora não")}
                   aria-pressed={done === "dismiss"} onClick={() => press("dismiss")}>
             {t("Agora não")}
           </button>
@@ -195,7 +195,7 @@ function NoticeActions({ notice }: { notice: NoticeInfo }) {
       ) : null}
       {notice.mutable ? (
         <button type="button" className="notice-actions__mute" disabled={done === "mute"}
-                onClick={() => press("mute")}>
+                title={t("Não me avises disto")} onClick={() => press("mute")}>
           {done === "mute" ? t("Não volto a avisar disto") : t("Não me avises disto")}
         </button>
       ) : null}
