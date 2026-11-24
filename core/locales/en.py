@@ -374,6 +374,9 @@ EN: dict[str, str] = {
     # "Ei Nano" listening to a muted microphone (core/main.py).
     "Microfone sem som": "Microphone muted",
     "O NANO não te consegue ouvir: o microfone está em mute no Windows ou no headset.": "NANO can't hear you: the microphone is muted in Windows or on your headset.",
+    # Settings -> Test microphone (core/main.py test_microphone).
+    "O microfone escolhido não está a gravar de verdade: o NANO passou a usar o microfone predefinido do Windows. Em Microfone escolhe \"Predefinido do sistema\".": "The chosen microphone is not really recording: NANO switched to the Windows default microphone. Under Microphone, choose \"System default\".",
+    "O microfone está em silêncio no Windows ou no headset. Tira o silêncio (botão do headset ou Definições de Som do Windows) e testa outra vez.": "The microphone is muted in Windows or on the headset. Unmute it (headset button or Windows Sound settings) and test again.",
     # Proactivity: the notice gate, weather, suggestions, routines, PC alerts
     # (core/notice_gate.py, core/weather.py, core/suggestions.py, core/pc_alerts.py).
     "A bateria chegou aos 100%. Se quiseres, já podes tirar o carregador.": "The battery is at 100%. You can unplug the charger if you like.",

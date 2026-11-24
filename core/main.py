@@ -2344,6 +2344,16 @@ def update_setting(key: str, value) -> dict:
         index = None if value in (None, "", -1) else int(value)
         voice_cfg.setdefault("microphone", {})["device_index"] = index
         voice.input_provider.device_index = index
+        voice.input_provider.device_problem = None
+        # "Ei Nano" keeps ONE open stream: without a restart it went on
+        # recording from the old microphone until NANO was closed.
+        if engine.running:
+            voice.wake_phrase_provider.stop()
+            thread = getattr(engine, "_thread", None)
+            if thread is not None:
+                thread.join(timeout=5.0)
+            _start_wake_phrase()
+            _emit_wake_state()
     elif key in ("groq_fast_model", "groq_complex_model",
                  "google_fast_model", "google_complex_model",
                  "mistral_fast_model", "mistral_complex_model"):
@@ -2518,7 +2528,17 @@ def test_microphone(seconds: int = 3) -> dict:
     detected = rms >= threshold and speech_filter.voiced_ratio(
         audio, silence_rms=threshold) >= gate.min_voiced_ratio
 
-    if detected:
+    muted = _wake_phrase.microphone_muted() is True
+    if voice.input_provider.device_problem == "not_recording":
+        # The chosen microphone hands back junk (a DirectSound copy of the
+        # headset on Simão's PC): its "level" looked like a loud voice.
+        detail = tr("O microfone escolhido não está a gravar de verdade: o NANO passou a usar o "
+                    "microfone predefinido do Windows. Em Microfone escolhe \"Predefinido do sistema\".")
+        detected = False
+    elif muted and not detected:
+        detail = tr("O microfone está em silêncio no Windows ou no headset. Tira o silêncio "
+                    "(botão do headset ou Definições de Som do Windows) e testa outra vez.")
+    elif detected:
         detail = tr("Voz detetada (nível {p0:.0f}, limiar {p1:.0f}).", p0=rms, p1=threshold)
     elif rms < max(2.0, gate.noise_floor):
         detail = (tr("O microfone não está a receber áudio nenhum. Verifica o dispositivo de entrada e o nível de captura no Windows."))
@@ -2532,6 +2552,8 @@ def test_microphone(seconds: int = 3) -> dict:
         "voicedRatio": round(ratio, 3),
         "threshold": round(threshold, 1),
         "noiseFloor": round(gate.noise_floor, 1),
+        "microphoneMuted": muted,
+        "deviceProblem": voice.input_provider.device_problem,
         "detail": detail,
     }
 
@@ -4956,12 +4978,10 @@ def get_audio_devices():
         # Goes through AudioInputProvider so it shares the PortAudio lock and
         # the device cache. Opening PyAudio independently here raced the
         # wake-phrase capture thread and crashed the process.
-        devices = voice.input_provider.list_devices()
-        inputs = [
-            {"id": d["index"], "name": d["name"]}
-            for d in devices
-            if int(d.get("maxInputChannels") or 0) > 0
-        ]
+        # One entry per microphone (the default Windows audio system), not the
+        # same headset four times: see AudioInputProvider.input_devices.
+        inputs = [{"id": d["index"], "name": d["name"]}
+                  for d in voice.input_provider.input_devices()]
         outputs = audio_feedback.output_device_report().get("devices", [])
         return {
             "inputs": inputs,
