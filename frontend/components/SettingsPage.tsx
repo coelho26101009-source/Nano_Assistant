@@ -26,6 +26,7 @@ import type { Locale } from "../lib/i18n";
 import { tj } from "../lib/tj";
 import PhonePanel from "./PhonePanel";
 import VoiceSetupCard from "./VoiceSetupCard";
+import VoiceEngineCard from "./VoiceEngineCard";
 
 /**
  * The seven Settings categories.
@@ -663,15 +664,7 @@ function PersonalityPanel({ personality, onUpdate }: {
                   onChange={(e) => setNotes(e.target.value)}
                   onBlur={() => { if (notes !== (personality?.instructions ?? "")) onUpdate("personality_instructions", notes); }} />
       </Field>
-      {personality?.voices && personality.voices.length > 0 && (
-        <Field label={t("Voz")} hint={t("A voz que lê as respostas, entre as vozes naturais da língua da interface.")}>
-          <select className="select" value={personality.voice ?? ""}
-                  onChange={(e) => onUpdate("tts_voice", e.target.value)}>
-            <option value="">{t("Automática (segue a língua)")}</option>
-            {personality.voices.map((voice) => <option key={voice.id} value={voice.id}>{voice.label}</option>)}
-          </select>
-        </Field>
-      )}
+      <p className="dim" style={{ fontSize: 12 }}>{t("A voz que lê as respostas escolhe-se em Voz → Voz do NANO.")}</p>
     </Panel>
   );
 }
@@ -991,6 +984,8 @@ export default function SettingsPage({
                 <Button size="sm" onClick={onTestSpeaker}>{t("Testar som")}</Button>
               </div>
             </Panel>
+
+            <VoiceEngineCard />
 
             <Panel title={t("Resposta falada")}>
               <Toggle

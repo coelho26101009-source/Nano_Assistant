@@ -172,6 +172,16 @@ tem de estar preparada (item 31).
 - [ ] 62. (Opcional, ~1,6 GB) **Qualidade do reconhecimento → Melhor**: descarrega o modelo maior. Depois experimenta frases difíceis (nomes, barulho de fundo). Anota se percebe melhor e quanto tempo a mais demora. Volta a **Rápida** se ficar lento demais.
 - [ ] 63. Muda a língua para inglês (**Definições → Geral → Idioma**): a frase passa a "Hey Nano" e funciona da mesma maneira.
 
+### Voz do NANO: voz offline, ElevenLabs e nunca calado (2026-11-24)
+- [ ] 64. **Definições → Voz → Voz do NANO**: carrega em **Ouvir**. Ouves a voz e aparece "Ouviste: Microsoft · Duarte".
+- [ ] 65. Carrega em **Instalar voz offline**: aparece a barra de progresso (cerca de 90 MB em português) e no fim a escolha "Voz offline". Muda o motor para **Voz offline natural** e carrega em **Ouvir**: fala sem internet. Anota quanto tempo demorou a começar.
+- [ ] 66. **Sem internet** (desliga o Wi-Fi), com o motor em **Automática**: faz uma pergunta por voz. O NANO responde com a voz offline (ou a do Windows, se não instalaste a offline). Antes ficava calado.
+- [ ] 67. Mexe na **Velocidade** (+15%) e carrega em **Ouvir**: fala mais depressa.
+- [ ] 68. Pede uma resposta comprida por voz (ex.: "explica-me a fotossíntese"). Repara se há pausas entre as frases: devia falar seguido.
+- [ ] 69. (Opcional, precisa de conta) Motor **ElevenLabs**: cola a tua chave, escolhe uma voz e carrega em **Ouvir**. Anota se soa melhor que o Duarte.
+- [ ] 70. Põe a língua em inglês e carrega em **Ouvir**: a voz passa a "Ryan (UK)". Com a voz offline em inglês, descarrega o Kokoro (350 MB) e experimenta "George (UK)".
+- [ ] 71. **Ei Nano + voz offline juntos:** com "Ouvir “ei nano”" ligado e o motor em **Voz offline natural**, diz "Ei Nano, que horas são?". O NANO responde com a voz offline e **não fecha** (as duas partes usam o mesmo motor de IA por baixo, o onnxruntime; no Linux funcionam juntas, no Windows ainda não foi visto).
+
 ---
 
 ## O que já sabemos que ainda não está perfeito

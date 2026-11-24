@@ -44,6 +44,9 @@ _ENV_FALLBACK: dict[str, tuple[str, ...]] = {
     # Same rule as above: its OWN entry, so it can never satisfy or be satisfied
     # by another provider's credential.
     "mistral_api_key": ("NANO_MISTRAL_API_KEY", "MISTRAL_API_KEY"),
+    # ElevenLabs, for the premium speaking voice (core/speech_engines.py).
+    # Not a chat provider: it only ever receives the text to be read aloud.
+    "elevenlabs_api_key": ("NANO_ELEVENLABS_API_KEY", "ELEVENLABS_API_KEY"),
 }
 
 

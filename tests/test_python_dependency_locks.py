@@ -249,7 +249,14 @@ def test_the_packaged_runtime_installs_only_from_hashed_locks():
     assert "--require-hashes" in speech[0] and "--no-build-isolation" in speech[0]
     assert "--only-binary=:all:" in speech[0], "the speech pack must never build from source"
     assert "voice_setup.requirements_text(voice_setup.OPTIONAL_LOCK" in text
-    installed = [_assert_locked_install(command, script.name) for command in commands if command not in speech]
+    # The offline voice's engine (since 2026-11-24): the same kind of file,
+    # with sherpa-onnx's closure only (core/voice_local_pack.py installs that).
+    voice = [command for command in commands if "$localVoiceRequirements" in command]
+    assert len(voice) == 1, f"the offline voice engine is installed {len(voice)} times"
+    assert "--require-hashes" in voice[0] and "--only-binary=:all:" in voice[0]
+    assert "root='sherpa-onnx'" in text
+    installed = [_assert_locked_install(command, script.name) for command in commands
+                 if command not in speech and command not in voice]
     assert installed == ["build", "runtime"], f"the embedded runtime installs {installed}"
 
 

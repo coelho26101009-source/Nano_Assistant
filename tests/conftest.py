@@ -166,6 +166,20 @@ def _pin_interface_language() -> None:
 
 
 _pin_interface_language()
+
+
+def _no_system_voice() -> None:
+    """Keep the real Windows voice out of the suite (core/speech_engines.py).
+
+    It is NANO's last-resort voice, and on a Windows runner it is really
+    there: a test simulating "every voice failed" would be rescued by it and
+    start PowerShell. Tests that cover it build a WindowsEngine with a fake
+    runner instead.
+    """
+    os.environ["NANO_TTS_SYSTEM_VOICE"] = "0"
+
+
+_no_system_voice()
 NANO_TEST_PROFILE, _PROFILE_CREATED = _isolate_nano_profile()
 
 
