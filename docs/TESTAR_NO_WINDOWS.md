@@ -32,7 +32,7 @@ Enter) e escreve `python --version` e depois `node --version`. Tem de aparecer
 
 ### 2. Descarregar o NANO
 
-1. Abre <https://github.com/coelho26101009-source/Nano_Assistant>.
+1. Abre <https://github.com/coelho97sc/Nano_Assistant>.
 2. Botão verde **Code → Download ZIP**.
 3. Extrai o ZIP para uma pasta simples, por exemplo `C:\NANO`
    (evita a pasta Transferências e pastas com OneDrive).
@@ -192,7 +192,7 @@ Precisa de um modelo com ferramentas (Groq/Gemini/Mistral, ou o local).
 - [ ] 77. `que rotinas tenho?` lista as tuas rotinas; `apaga a rotina teste` pede confirmação antes de apagar.
 
 ### NANO proativo, sem ser chato (2026-11-24)
-- [ ] 78. **Definições → Geral → O NANO fala primeiro**: escreve a tua cidade em "Cidade para o tempo" (ex.: `Porto`) e carrega em **Mostrar o resumo agora**. O resumo traz uma linha **Tempo** com a temperatura e, se for chover, "leva guarda-chuva".
+- [ ] 78. **Definições → Geral → O NANO fala primeiro**: escreve a tua cidade em "Cidade para o tempo" (ex.: `Porto`) e carrega em **Mostrar o resumo agora**. O resumo traz uma linha **Tempo** com a temperatura e, se for chover, "leva guarda-chuva". A linha acaba em "Dados: Open-Meteo.com." (o crédito que a licença dos dados pede), mas essa parte não é dita em voz alta.
 - [ ] 79. Com "Dizer os avisos em voz alta" em **Só o resumo e os importantes** e a voz ligada: muda a hora do resumo para daqui a 2 minutos e espera ao PC. O NANO diz bom dia **em voz alta** (curto) e mostra o resumo completo no chat.
 - [ ] 80. Muda a hora do resumo para daqui a 2 minutos e **afasta-te do PC 12 minutos** (sem mexer no rato). Quando voltas e mexes no rato, o resumo aparece nessa altura, não antes.
 - [ ] 81. Escreve `não me incomodes durante uma hora`. O NANO responde "fico calado até às …". Em **Definições → Geral → Não incomodar** aparece "Em silêncio até às …". Escreve `podes voltar a falar`: o silêncio acaba.
@@ -210,6 +210,14 @@ Precisa de um modelo com ferramentas (Groq/Gemini/Mistral, ou o local).
 - [ ] 91. Escreve `esquece que a minha cor favorita é azul` (depois de lhe teres dito isso). Aparece o pedido de autorização; ao aceitar, o facto desaparece de **Memória**. Antes era sempre bloqueado.
 - [ ] 92. Pede um plano que feche duas janelas da mesma app (ex.: `fecha o Bloco de notas "a" e o Bloco de notas "b"`). Aceitar o plano conta para esses dois fechos, não para outros que o NANO tente a seguir.
 - [ ] 93. Pede uma resposta em voz alta comprida e carrega em **parar** logo na primeira frase. Não se ouve mais nenhuma frase depois de parar.
+
+### Melhorias da revisão total (2026-11-25)
+- [ ] 94. Escreve `limpa a cache do Windows` e aceita. A resposta diz quantos MB apagou e quantos ficheiros ficaram por serem **recentes (menos de 24 h)**, **estarem em uso** ou **sem permissão para apagar**. Os programas abertos continuam a funcionar.
+- [ ] 95. Pede ao assistente de código `cria um ficheiro teste.bat no Ambiente de trabalho com echo ola`. O NANO recusa **sem perguntar** (é um script fora do projeto). Pede `cria notas.txt no Ambiente de trabalho com ola`: pede autorização e, ao aceitar, o ficheiro aparece.
+- [ ] 96. Com dois fornecedores ligados (ex.: Groq e Google) e o modo **AUTO**, desliga a internet do preferido (ou põe uma chave errada nele) e pergunta algo. A resposta chega e, por baixo, aparece uma nota como **"Groq: … Respondeu Google."** com o outro fornecedor.
+- [ ] 97. Com o Ollama instalado, corre `ollama pull qwen3:1.7b`. Em **Definições → IA → Modelo rápido para respostas curtas** escolhe `qwen3:1.7b` e põe o modo **LOCAL**. `olá` responde depressa; `abre o bloco de notas` continua a funcionar (usa o modelo principal).
+- [ ] 98. Pede `pesquisa na web o preço do Raspberry Pi 5` e depois `lê esta página: https://www.wikipedia.org`. As duas funcionam como antes (a verificação de endereços não pode estragar a pesquisa normal).
+- [ ] 99. Pede `lê esta página: http://192.168.1.1` (o teu router). O NANO recusa: "endereço privado".
 
 ---
 

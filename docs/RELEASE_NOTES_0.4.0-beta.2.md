@@ -11,7 +11,7 @@ NANO 0.4.0-beta.2 is an update to "Beta 4": same Beta, a calmer island. Still a 
   without the island shouting. The "ready" dot is a pale blue.
 
 Everything else in Beta 4 is unchanged: see the
-[Beta 4 notes](https://github.com/coelho26101009-source/Nano_Assistant/blob/main/docs/RELEASE_NOTES_0.4.0-beta.1.md)
+[Beta 4 notes](https://github.com/coelho97sc/Nano_Assistant/blob/main/docs/RELEASE_NOTES_0.4.0-beta.1.md)
 for the full list (the island, the 3D Second Brain, deep research, Memory M3,
 the phone's camera, the phone away from home, automatic updates and more).
 
@@ -46,7 +46,7 @@ anyway**. Do not turn off SmartScreen or Defender to install NANO.
 ## What leaves your computer
 
 Nothing new. This update only changes colours. Everything is as described in
-the Beta 4 notes and in [PRIVACY.md](https://github.com/coelho26101009-source/Nano_Assistant/blob/main/PRIVACY.md).
+the Beta 4 notes and in [PRIVACY.md](https://github.com/coelho97sc/Nano_Assistant/blob/main/PRIVACY.md).
 
 ## Known limitations
 
@@ -70,7 +70,7 @@ mais calma. Continua a ser uma pré-versão.
   distingui-los sem a ilha gritar. O ponto de "pronto" é azul-claro.
 
 O resto da Beta 4 fica igual: vê as
-[notas da Beta 4](https://github.com/coelho26101009-source/Nano_Assistant/blob/main/docs/RELEASE_NOTES_0.4.0-beta.1.md)
+[notas da Beta 4](https://github.com/coelho97sc/Nano_Assistant/blob/main/docs/RELEASE_NOTES_0.4.0-beta.1.md)
 para a lista completa (a ilha, o Segundo Cérebro em 3D, a investigação
 profunda, a Memória M3, a câmara do telemóvel, o telemóvel fora de casa, as
 atualizações automáticas e mais).
@@ -104,7 +104,7 @@ nem o Defender para instalar o NANO.
 ### O que sai do teu computador
 
 Nada de novo. Esta atualização só muda cores. Tudo continua como descrito nas
-notas da Beta 4 e em [PRIVACY.md](https://github.com/coelho26101009-source/Nano_Assistant/blob/main/PRIVACY.md).
+notas da Beta 4 e em [PRIVACY.md](https://github.com/coelho97sc/Nano_Assistant/blob/main/PRIVACY.md).
 
 ### Limitações conhecidas
 

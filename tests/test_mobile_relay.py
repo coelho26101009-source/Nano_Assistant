@@ -20,7 +20,7 @@ import pytest
 aiohttp = pytest.importorskip("aiohttp")
 from aiohttp import web  # noqa: E402
 
-from core import mobile_relay, secret_store  # noqa: E402
+from core import mobile_link, mobile_relay, secret_store  # noqa: E402
 from core.mobile_link import DeviceStore, MobileLink, b64d, b64e, open_sealed, seal  # noqa: E402
 from core.mobile_relay import (RelayClient, RelayToken, clean_relay_url, room_for_token,  # noqa: E402
                                websocket_url)
@@ -271,16 +271,22 @@ def test_pair_and_talk_through_the_relay(link, secrets, relay_url):
         assert _wait(lambda: client.state == "connected"), client.info()
         phone = _Phone(relay_url, room)
 
+        nonce = os.urandom(32)
+
         def pair_call(op: str) -> dict:
             request_id = os.urandom(8).hex()
-            body = seal(secret, {"op": op, "id": request_id, "ts": int(time.time() * 1000),
-                                 "pk": phone.pk, "name": "Pixel", "platform": "android"},
+            if op == "commit":
+                payload = {"cm": b64e(mobile_link.pairing_commitment(session_id, b64d(phone.pk), nonce))}
+            else:
+                payload = {"pk": phone.pk, "nn": b64e(nonce), "name": "Pixel", "platform": "android"}
+            body = seal(secret, {"op": op, "id": request_id, "ts": int(time.time() * 1000), **payload},
                         "nano-pair-v1|" + session_id)
             body["i"] = session_id
             status, reply = asyncio.run(phone.send("pair", body))
             assert status == 200, reply
             return open_sealed(secret, reply, f"nano-pair-reply-v1|{session_id}|{request_id}")
 
+        assert pair_call("commit")["state"] == "committed"
         assert pair_call("request")["state"] == "pending"
         # Nothing is issued until the person says yes on the PC.
         assert pair_call("status")["state"] == "pending"

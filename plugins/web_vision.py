@@ -36,13 +36,86 @@ async def _get_page(headless: bool = True):
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
             ),
             locale="pt-PT",
+            # A service worker's own requests do not reliably pass through
+            # context.route, so a page could reach the router through one.
+            service_workers="block",
         )
         await _context.route(
             "**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,otf}",
             lambda r: r.abort() if _is_tracker(r.request.url) else r.continue_(),
         )
+        # Registered last, so it runs first for every request the page makes:
+        # the page itself, each redirect, every script, image and fetch.
+        await _context.route("**/*", _guard_request)
+        # WebSockets never pass through context.route: they get their own door.
+        await _context.route_web_socket("**/*", _guard_web_socket)
         _page = await _context.new_page()
     return _page
+
+
+#: host -> (allowed, checked at). A page loads dozens of things from the same
+#: few hosts; one lookup per host per half-minute is enough.
+_HOST_VERDICTS: dict[str, tuple[bool, float]] = {}
+_HOST_VERDICT_SECONDS = 30.0
+
+
+async def _request_allowed(url: str) -> bool:
+    import asyncio
+    import time
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False
+    key = f"{parsed.scheme}://{parsed.hostname}:{parsed.port or ''}"
+    now = time.monotonic()
+    cached = _HOST_VERDICTS.get(key)
+    if cached and now - cached[1] < _HOST_VERDICT_SECONDS:
+        return cached[0]
+    ok, _error = await asyncio.to_thread(validate_public_http_url, url)
+    if len(_HOST_VERDICTS) > 500:
+        _HOST_VERDICTS.clear()
+    _HOST_VERDICTS[key] = (ok, now)
+    return ok
+
+
+async def _guard_request(route) -> None:
+    """Refuse any request from the page to a non-public address.
+
+    Checking only the address NANO was asked to open left the page free to
+    load from the router or the PC itself (or to redirect there), and a host
+    that answered "public" for the first check could answer "192.168.1.1" a
+    second later (DNS rebinding). Every request is now checked on its way out.
+    Chromium does its own lookup after this, so this narrows the window
+    rather than closing it the way core/safe_http.py does for NANO's own
+    reads; Chromium's Private Network Access rules cover the rest.
+    """
+    try:
+        allowed = await _request_allowed(route.request.url)
+    except Exception:
+        allowed = False
+    if allowed:
+        await route.fallback()
+    else:
+        await route.abort("blockedbyclient")
+
+
+async def _guard_web_socket(ws) -> None:
+    """The same check for a WebSocket a page opens (ws:// is http://, wss:// https://)."""
+    import inspect
+    url = str(getattr(ws, "url", ""))
+    if url.startswith("wss://"):
+        url = "https://" + url[len("wss://"):]
+    elif url.startswith("ws://"):
+        url = "http://" + url[len("ws://"):]
+    try:
+        allowed = await _request_allowed(url)
+    except Exception:
+        allowed = False
+    if allowed:
+        result = ws.connect_to_server()
+    else:
+        result = ws.close(code=1008, reason="blocked")
+    if inspect.isawaitable(result):
+        await result
 
 
 def _is_tracker(url: str) -> bool:

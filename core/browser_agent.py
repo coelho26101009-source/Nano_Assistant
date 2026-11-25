@@ -1,12 +1,11 @@
 """Browser agent primitives for public web navigation and research."""
 from __future__ import annotations
 
-import ipaddress
 import socket
 from urllib.parse import quote_plus
 from urllib.parse import urlparse
 
-import httpx
+from core.safe_http import public_client
 
 
 def validate_public_http_url(url: str) -> tuple[bool, str]:
@@ -38,25 +37,12 @@ def validate_public_http_url(url: str) -> tuple[bool, str]:
     if not resolved_hosts:
         return False, "unresolvable_host"
 
+    from core.safe_http import is_public_ip
     for resolved in resolved_hosts:
-        try:
-            ip = ipaddress.ip_address(resolved)
-        except ValueError:
-            return False, "invalid_ip"
-        if ip.version == 6 and ip.ipv4_mapped is not None:
-            ip = ip.ipv4_mapped           # ::ffff:127.0.0.1 is 127.0.0.1
-        # ``is_global`` also refuses what ``is_private`` lets through: the
-        # 100.64.0.0/10 shared range, where Tailscale puts the person's own
-        # devices (and 100.100.100.100, its DNS).
-        if (
-            ip.is_loopback
-            or ip.is_private
-            or ip.is_link_local
-            or ip.is_reserved
-            or ip.is_multicast
-            or ip.is_unspecified
-            or not ip.is_global
-        ):
+        # The same rule the pinned clients in core.safe_http apply when they
+        # connect: those are what stop a second, different answer (DNS
+        # rebinding); this up-front check gives the model a clear refusal.
+        if not is_public_ip(resolved):
             return False, "private_or_reserved_destination"
     return True, ""
 
@@ -106,7 +92,8 @@ def search_web(query: str, engine: str = "duckduckgo") -> dict:
     }
     url = urls.get(engine.lower(), urls["duckduckgo"])
     try:
-        response = httpx.get(url, timeout=20)
+        with public_client(timeout=20) as client:
+            response = client.get(url)
         response.raise_for_status()
         snippet = response.text[:8000]
         return {"success": True, "engine": engine, "url": url, "content": snippet}
@@ -119,7 +106,8 @@ def fetch_url(url: str) -> dict:
     if not ok:
         return {"success": False, "error": error}
     try:
-        response = httpx.get(url, timeout=20)
+        with public_client(timeout=20) as client:
+            response = client.get(url)
         response.raise_for_status()
         return {"success": True, "url": url, "status_code": response.status_code, "content": response.text[:12000]}
     except Exception as exc:

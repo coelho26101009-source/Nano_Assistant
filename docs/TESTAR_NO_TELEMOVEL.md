@@ -17,7 +17,7 @@ telemóvel Android 7 ou mais recente, e os dois no **mesmo Wi-Fi**.
 
 1. **Atualiza o NANO no PC** para a Beta 4 (0.4.0-beta.1 ou mais recente). O
    mais simples é o instalador `Nano-Setup-0.4.0-beta.3-x64.exe` da
-   [página da versão](https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.4.0-beta.3),
+   [página da versão](https://github.com/coelho97sc/Nano_Assistant/releases/tag/v0.4.0-beta.3),
    que já traz tudo o que é preciso (salta o passo 2). Se usas o código-fonte,
    descarrega outra vez o ZIP do `main` ou faz `git pull`.
 2. **Só com o código-fonte: instala as duas bibliotecas novas** (cifra e código
@@ -39,10 +39,10 @@ telemóvel Android 7 ou mais recente, e os dois no **mesmo Wi-Fi**.
 ## Parte 2: instalar a app no telemóvel
 
 1. No telemóvel, abre este endereço no Chrome:
-   <https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.4.0-beta.3>
+   <https://github.com/coelho97sc/Nano_Assistant/releases/tag/v0.4.0-beta.3>
 2. Em **Assets**, toca em **NANO-Android-0.4.0-beta.3.apk** para descarregar.
    (Quem quiser a versão de teste mais recente, feita a cada alteração, encontra-a
-   em <https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/android-test>.)
+   em <https://github.com/coelho97sc/Nano_Assistant/releases/tag/android-test>.)
 3. Abre o ficheiro descarregado. O Android vai dizer que não permite instalar
    apps desta origem: toca em **Definições**, liga **Permitir desta origem**
    e volta atrás. Toca em **Instalar**.
@@ -64,7 +64,12 @@ telemóvel Android 7 ou mais recente, e os dois no **mesmo Wi-Fi**.
 
 > Se o telemóvel disser que **a app tem de ser atualizada**, instala a versão
 > de teste mais recente: um NANO atualizado no PC já não liga telemóveis com a
-> app antiga (os que já estavam ligados continuam a funcionar).
+> app antiga (os que já estavam ligados continuam a funcionar). Desde
+> 2026-11-25 o emparelhamento usa o protocolo 3: o telemóvel compromete-se com
+> a sua chave antes de o PC escolher um número à sorte, e o código depende dos
+> dois. Para experimentar: liga um telemóvel **novo** com a app de teste mais
+> recente (tem de funcionar como acima) e confirma que um telemóvel com a app
+> antiga recebe "atualiza a app" em vez de um código.
 
 ## O que experimentar
 

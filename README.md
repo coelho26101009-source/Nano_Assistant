@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.4.0-beta.3"><img alt="Beta publica" src="https://img.shields.io/badge/Beta%20p%C3%BAblica-v0.4.0--beta.3-2F6FED?style=for-the-badge" /></a>
+  <a href="https://github.com/coelho97sc/Nano_Assistant/releases/tag/v0.4.0-beta.3"><img alt="Beta publica" src="https://img.shields.io/badge/Beta%20p%C3%BAblica-v0.4.0--beta.3-2F6FED?style=for-the-badge" /></a>
   <img alt="Licenca" src="https://img.shields.io/badge/Licen%C3%A7a-Apache%202.0-111111?style=for-the-badge" />
 </p>
 
@@ -52,7 +52,7 @@
 ## Descarregar
 
 <p align="center">
-  <a href="https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.4.0-beta.3"><strong>Descarregar o Nano 0.4.0-beta.3 para Windows</strong></a>
+  <a href="https://github.com/coelho97sc/Nano_Assistant/releases/tag/v0.4.0-beta.3"><strong>Descarregar o Nano 0.4.0-beta.3 para Windows</strong></a>
 </p>
 
 | | |
@@ -62,7 +62,7 @@
 | **Verificação** | `SHA256SUMS.txt`, na mesma página de release |
 | **Assinatura** | não assinado — ver o aviso acima |
 | **Telemóvel (Android)** | `NANO-Android-0.4.0-beta.3.apk`, na mesma página — ver [guia do telemóvel](docs/TESTAR_NO_TELEMOVEL.md) |
-| **Todas as versões** | [página de releases](https://github.com/coelho26101009-source/Nano_Assistant/releases) |
+| **Todas as versões** | [página de releases](https://github.com/coelho97sc/Nano_Assistant/releases) |
 
 ### Instalar
 
@@ -179,9 +179,14 @@ conversas fica à esquerda, e a cápsula de voz funciona fora da janela principa
 | **Modos** | AUTO / CLOUD / LOCAL, com uma única autoridade de routing |
 | **Failover** | Em AUTO: cloud preferida → restantes clouds → Ollama, sempre visível |
 | **Conversas** | Threads reais: criar, abrir, renomear, apagar uma ou várias |
-| **Memória** | Memória de longo prazo com extração determinística e recuperação (RAG) |
-| **Second Brain** | Nós e relações derivados das memórias ativas |
-| **Voz** | Hotkey global, STT local com faster-whisper, TTS através do Edge |
+| **Memória** | Memória de longo prazo com extração determinística e recuperação (RAG), e lembrança de conversas antigas (M3) |
+| **Second Brain** | Nós e relações derivados das memórias ativas, num grafo 3D |
+| **Voz** | Hotkey global e "Ei Nano", STT local com faster-whisper, voz Microsoft, voz offline (Piper/Kokoro) ou ElevenLabs, nunca calado |
+| **Ilha do NANO** | Modo ambiente no topo do ecrã: estado da voz, música, volume, lembretes e aprovações |
+| **Proativo** | Resumo da manhã com o tempo, avisos do PC, sugestões e rotinas com hora, com um filtro anti-incómodo |
+| **Tarefas** | Planos de vários passos, protocolos e rotinas por voz, com paragem de emergência |
+| **Investigação** | Investigação profunda com relatório, citações e fontes |
+| **Telemóvel** | App Android ligada ao PC, cifrada de ponta a ponta, em casa e fora de casa, com câmara a pedido |
 | **PC Control** | 60 ferramentas estreitas: apps, janelas, áudio, teclado, ficheiros, web, ecrã, sistema, energia e capturas |
 | **Segurança** | Validação de esquema + PolicyEngine + PermissionManager + ToolExecutor + target binding |
 | **Extensibilidade** | Sistema de plugins/tools com autorização centralizada |
@@ -197,7 +202,10 @@ conversas fica à esquerda, e a cápsula de voz funciona fora da janela principa
 - **Node.js 22.12 ou superior + npm** para Electron/frontend na primeira execução
 - dependências Python instaladas a partir dos locks com hashes em `requirements/`
 - **Ollama** apenas se quiseres usar os modos AUTO/LOCAL
-- uma chave de API de pelo menos um provedor cloud, para AUTO/CLOUD
+- uma chave de API de pelo menos um provedor cloud, para AUTO/CLOUD. A chave é tua e
+  segue as regras desse provedor: a Groq e a API do Gemini pedem 18 anos ou mais, e
+  no escalão grátis do Gemini a Google pode usar o que envias para melhorar os
+  produtos dela. O modo LOCAL (Ollama) não precisa de conta nenhuma.
 
 ```bat
 python -m pip install --require-hashes -r requirements\build.lock
@@ -355,7 +363,13 @@ sub-medido por limites de utilização. Não é uma afirmação de que um fornec
 é objetivamente melhor do que outro.
 
 Em AUTO, o Nano respeita o `Retry-After` real de um 429 e mantém um cooldown por
-fornecedor, para não insistir num provedor que sabe estar limitado. O fallback
+fornecedor, para não insistir num provedor que sabe estar limitado. Quando a
+resposta vem de outro fornecedor que não o escolhido, aparece por baixo dela
+quem respondeu e porquê (por exemplo "Groq: limite atingido. Respondeu Mistral.").
+
+Com Ollama, podes escolher um **modelo local rápido** (Definições → IA →
+"Modelo rápido para respostas curtas", por exemplo `qwen3:1.7b`): cumprimentos e perguntas curtas usam-no; tools, trabalho
+longo e o meio de um turno com tools continuam no modelo principal. O fallback
 preserva o mesmo turno, os resultados de tools e as permissões — o
 **Execution Ledger** garante que uma ação já executada não é repetida quando o
 turno muda de fornecedor.
@@ -526,6 +540,14 @@ A autorização é centralizada e inclui, conforme a ação:
 Uma permissão para fechar uma janela específica não se transforma numa
 autorização genérica para fechar qualquer outra janela.
 
+Tudo o que o NANO lê da web (pesquisa, "lê esta página", investigação
+profunda, o tempo) passa por `core/safe_http.py`: o nome é procurado uma só
+vez, no momento de ligar, é recusado se der um endereço privado (o router, o
+próprio PC, um aparelho Tailscale) e a ligação vai para o endereço que foi
+verificado. O navegador sem janela verifica cada pedido e cada WebSocket que
+uma página abre. Escrever um ficheiro que corre ao abrir (`.bat`, `.ps1`, `.lnk`,
+`.exe`, …) fora da pasta do projeto é recusado sem perguntar.
+
 Os handlers de plugin nunca são invocados diretamente: o `plugin_loader` recusa
 executar um handler a menos que quem chama apresente o ToolExecutor como
 autoridade de execução, por isso contornar o pipeline falha fechado.
@@ -664,7 +686,6 @@ aplicação real. Ver [`docs/RELEASING.md`](docs/RELEASING.md).
   Windows limpo de raiz
 - o fallback local é mais lento que a cloud (≈19 s por turno contra ≈0,45 s)
 - os provedores cloud continuam sujeitos aos respetivos rate limits
-- a validação numa máquina Windows limpa continua a ser trabalho em aberto
 
 ---
 
@@ -676,7 +697,7 @@ Sem ordem rígida, e sem prometer datas:
 - **Code signing** — a Beta não está assinada e pode mostrar um aviso SmartScreen
 - **Modelo automático** — escolher sozinho o modelo e o provedor certos para cada pedido
 - **Coding / GitHub** — workflows de desenvolvimento assistido
-- **Produtividade** — calendário, email e integrações externas
+- **Produtividade** — email, Home Assistant e outras integrações externas (a Agenda local já existe)
 
 ---
 

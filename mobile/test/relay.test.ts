@@ -101,7 +101,7 @@ describe("RelayChannel after close()", () => {
 
 describe("pairing QR with a relay", async () => {
   const { parsePairLink } = await import("../src/lib/link");
-  const base = "nano://pair?v=2&p=47821&i=0123456789abcdef&s=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8&n=PC";
+  const base = "nano://pair?v=3&p=47821&i=0123456789abcdef&s=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8&n=PC";
   it("reads the relay, and a code with only the relay is enough", () => {
     const link = parsePairLink(`${base}&h=&r=${encodeURIComponent("https://r.example")}&rr=${ROOM}`);
     expect(link.relay).toEqual({ url: "https://r.example", room: ROOM });
@@ -110,5 +110,8 @@ describe("pairing QR with a relay", async () => {
   it("still reads codes from a PC without a relay", () => {
     expect(parsePairLink(`${base}&h=192.168.1.20`).relay).toBeNull();
     expect(() => parsePairLink(`${base}&h=`)).toThrow("not_a_nano_code");
+  });
+  it("refuses a code from a PC that still speaks protocol 2", () => {
+    expect(() => parsePairLink(`${base.replace("v=3", "v=2")}&h=192.168.1.20`)).toThrow("old_pc");
   });
 });

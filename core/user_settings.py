@@ -45,6 +45,9 @@ ALLOWED_KEYS: frozenset[str] = frozenset({
     "mistral_fast_model",
     "mistral_complex_model",
     "local_model",
+    # A smaller installed model for short answers (greetings, quick
+    # questions); "" means off. Validated against Ollama by main.py.
+    "local_fast_model",
     "wake_phrase_enabled",
     "wake_phrase_allow_nano_only",
     "wake_phrase_cooldown_seconds",
@@ -144,6 +147,9 @@ def _valid_value(key: str, value: Any) -> bool:
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
             return False
         return 0.4 <= value <= 2.0
+    if key == "local_fast_model":
+        return (isinstance(value, str) and len(value) <= 120
+                and not any(ord(ch) < 32 for ch in value))
     if key == "voice_quality":
         return isinstance(value, str) and value in {"fast", "best"}
     if key == "provider_mode":
@@ -267,6 +273,8 @@ def apply_overlay(config: dict[str, Any]) -> dict[str, Any]:
         config["groq_complex_model"] = stored["groq_complex_model"]
     if "local_model" in stored:
         local["model"] = stored["local_model"]
+    if "local_fast_model" in stored:
+        local["fast_model"] = stored["local_fast_model"]
     if "google_fast_model" in stored:
         config["google_fast_model"] = stored["google_fast_model"]
     if "mistral_fast_model" in stored:

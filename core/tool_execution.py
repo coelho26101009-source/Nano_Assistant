@@ -22,9 +22,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote_plus
 
-import httpx
-
-from core import capabilities, plugin_loader
+from core import capabilities, plugin_loader, safe_http
 from core.browser_agent import validate_public_http_url
 from core.execution_scope import (
     PathValidationError,
@@ -54,6 +52,9 @@ class RetryPolicy(str):
 # that pc_control.files resolves itself, through the same network-path check.
 _PATH_ARGUMENT_KEYS = ("path", "file_path", "destination", "dest", "src", "source", "cwd",
                        "target_path")
+# Tools that write new CONTENT to a path the model chose. Renaming or moving
+# an existing installer is a different action, gated on its own.
+_CONTENT_WRITING_TOOLS = frozenset({"filesystem.write_file"})
 # Argument keys that always carry a network target.
 _URL_ARGUMENT_KEYS = ("url", "webhook_url", "endpoint")
 
@@ -512,6 +513,15 @@ class ToolExecutor:
             scopes.append(target.scope)
             protected = protected or target.protected
             context.setdefault("targets", []).append(target.as_dict())
+            if (name in _CONTENT_WRITING_TOOLS
+                    and target.scope != Scope.CURRENT_WORKSPACE
+                    and _windows_suffix(target.path.name) in _executable_extensions()):
+                # A script or program type OUTSIDE the project folder. Inside
+                # it, the coding helper may write a .py or a .ps1 (with the
+                # usual confirmation); anywhere else such a file is one
+                # double-click away from running, so writing it is refused
+                # before anybody is asked (see PolicyEngine.evaluate).
+                context["executable_outside_workspace"] = True
 
         for key in _URL_ARGUMENT_KEYS:
             value = prepared.get(key)
@@ -979,7 +989,8 @@ class ToolExecutor:
         ok, error = validate_public_http_url(url)
         if not ok:
             raise ToolExecutionError(error)
-        response = httpx.get(url, timeout=20)
+        with safe_http.public_client(timeout=20) as client:
+            response = client.get(url)
         response.raise_for_status()
         text = response.text[:8000]
         return {"engine": engine, "query": query, "url": url, "content": text, "success": True}
@@ -991,9 +1002,28 @@ class ToolExecutor:
         ok, error = validate_public_http_url(url)
         if not ok:
             raise ToolExecutionError(error)
-        response = httpx.get(url, timeout=20)
+        with safe_http.public_client(timeout=20) as client:
+            response = client.get(url)
         response.raise_for_status()
         return {"url": url, "status_code": response.status_code, "text": response.text[:12000], "success": True}
+
+def _windows_suffix(name: str) -> str:
+    """The extension Windows will really give a file called ``name``.
+
+    Windows drops trailing dots and spaces (``run.bat.`` and ``run.bat `` both
+    become ``run.bat``) and ``run.bat::$DATA`` writes ``run.bat``'s own
+    content, so ``Path.suffix`` alone would let a script through.
+    """
+    stem = str(name).split(":", 1)[0].rstrip(". ")
+    dot = stem.rfind(".")
+    return stem[dot:].lower() if dot > 0 else ""
+
+
+def _executable_extensions() -> frozenset[str]:
+    """The extensions Windows runs on open: core.pc_control.files' list."""
+    from core.pc_control.files import EXECUTABLE_EXTENSIONS
+    return EXECUTABLE_EXTENSIONS
+
 
 def _is_link(entry: os.DirEntry) -> bool:
     """A symlink or an NTFS junction. Either one points somewhere else."""

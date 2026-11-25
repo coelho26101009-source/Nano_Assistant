@@ -239,6 +239,9 @@ def test_weather_summary_mentions_rain_and_umbrella():
     assert summary["rain"] is True
     assert "Porto: 13° agora, nublado, entre 9° e 17°." in summary["line"]
     assert "à tarde" in summary["line"] and "guarda-chuva" in summary["speech"]
+    # CC BY 4.0: the shown line credits Open-Meteo; the spoken one does not.
+    assert summary["line"].endswith("Dados: Open-Meteo.com.")
+    assert "Open-Meteo" not in summary["speech"]
 
 
 def test_weather_geocodes_once_and_caches(tmp_path):

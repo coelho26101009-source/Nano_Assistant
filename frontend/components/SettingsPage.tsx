@@ -469,7 +469,7 @@ type LocalSetup = {
   hardware?: { ram_gb: number; cpu_cores: number; gpu: { name: string; vram_gb: number } | null; free_disk_gb: number };
   recommended?: { model: string; sizeGb: number; label: string; why: string; warnings: string[] };
   choices?: { model: string; sizeGb: number; label: string; installed: boolean }[];
-  ollama?: { state: string; up: boolean; installed: string[]; currentModel: string; downloadUrl: string };
+  ollama?: { state: string; up: boolean; installed: string[]; currentModel: string; fastModel?: string; downloadUrl: string };
   download?: { state: string; model?: string; percent?: number; completedGb?: number; totalGb?: number; message?: string };
 };
 
@@ -555,9 +555,40 @@ function LocalSetupPanel() {
           {setup.download?.state === "done" && <p className="dim" style={{ fontSize: 12, marginTop: 6 }}>✓ {setup.download.message}</p>}
           {setup.download?.state === "error" && <p className="dim" role="alert" style={{ fontSize: 12, marginTop: 6 }}>{setup.download.message}</p>}
           {error && <p className="dim" role="alert" style={{ fontSize: 12, marginTop: 6 }}>{error}</p>}
+          <FastLocalModel setup={setup} onChanged={refresh} />
         </>
       )}
     </Panel>
+  );
+}
+
+/**
+ * A second, smaller installed model for short answers (core/brain.py
+ * _local_model_for). Only installed models are offered, and "Desligado"
+ * keeps every local answer on the main model.
+ */
+function FastLocalModel({ setup, onChanged }: { setup: LocalSetup; onChanged: () => void }) {
+  const [error, setError] = useState("");
+  const installed = (setup.ollama?.installed ?? []).filter((m) => m !== setup.ollama?.currentModel);
+  const current = setup.ollama?.fastModel ?? "";
+  if (!setup.ollama?.up || (installed.length === 0 && !current)) return null;
+  const choose = async (model: string) => {
+    setError("");
+    const result = await call<{ ok: boolean; error?: string; detail?: string }>("set_local_fast_model", model);
+    if (!result?.ok) setError(result?.detail || t("Não foi possível escolher esse modelo."));
+    onChanged();
+  };
+  return (
+    <Field label={t("Modelo rápido para respostas curtas")}
+           hint={t("Um modelo mais pequeno responde a cumprimentos e perguntas simples em poucos segundos. Tudo o que usa ferramentas continua no modelo principal.")}>
+      <select className="select" value={current} onChange={(e) => { void choose(e.target.value); }}>
+        <option value="">{t("Desligado")}</option>
+        {Array.from(new Set([current, ...installed].filter(Boolean))).map((model) => (
+          <option key={model} value={model}>{model}</option>
+        ))}
+      </select>
+      {error && <p className="dim" role="alert" style={{ fontSize: 12, marginTop: 6 }}>{error}</p>}
+    </Field>
   );
 }
 

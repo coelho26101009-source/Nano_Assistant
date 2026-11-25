@@ -80,4 +80,4 @@ The app is not directed at children under 13.
 ## Contact
 
 Questions or requests: open an issue at
-https://github.com/coelho26101009-source/Nano_Assistant/issues
+https://github.com/coelho97sc/Nano_Assistant/issues

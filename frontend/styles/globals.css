@@ -1216,6 +1216,15 @@ kbd {
   background: var(--warning-soft); color: var(--warning);
 }
 .msg__meta-panel { margin-top: var(--sp-2); }
+/* Another AI answered because the usual one failed: warning, filled (state
+   "waiting / fallback"), said in words, quiet enough to sit under any answer. */
+.msg__fallback {
+  display: flex; align-items: center; gap: 6px; margin: var(--sp-2) 0 0;
+  font-size: var(--fs-xs); color: var(--text-muted); min-width: 0;
+}
+.msg__fallback-dot {
+  flex: none; width: 7px; height: 7px; border-radius: var(--r-full); background: var(--warning);
+}
 .msg__meta .kv {
   padding: var(--sp-3);
   background: var(--surface-raised); border: 1px solid var(--border);

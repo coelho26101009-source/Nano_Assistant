@@ -76,12 +76,10 @@ def _part_of_day(hour: int) -> str:
 
 
 def _http_get_json(url: str, params: dict) -> dict:
-    import httpx
+    from core import safe_http
 
-    from core import http_tls
-
-    with httpx.Client(timeout=TIMEOUT_SECONDS, verify=http_tls.shared_context(),
-                      headers={"User-Agent": "NANO-assistant"}, follow_redirects=False) as client:
+    with safe_http.public_client(timeout=TIMEOUT_SECONDS, headers={"User-Agent": "NANO-assistant"},
+                                 follow_redirects=False) as client:
         response = client.get(f"{url}?{urlencode(params)}")
         response.raise_for_status()
         data = response.json()
@@ -126,6 +124,9 @@ def summarise(forecast: dict, now: datetime, city: str) -> dict | None:
         when = _part_of_day(rain_hour)
         line += " " + tr("Chuva provável {when} ({chance}%): leva guarda-chuva.", when=when, chance=rain_chance)
         speech += " " + tr("Deve chover {when}, leva guarda-chuva.", when=when)
+    # Open-Meteo's data is CC BY 4.0: every place that shows it credits the
+    # source (https://open-meteo.com/en/licence). The spoken version needn't.
+    line += " " + tr("Dados: Open-Meteo.com.")
     return {"line": line, "speech": speech, "rain": rain_hour is not None}
 
 

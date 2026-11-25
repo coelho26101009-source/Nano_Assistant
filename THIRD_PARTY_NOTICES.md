@@ -152,7 +152,7 @@ Not distributed with Nano.
 
 | Package | Version | Licence |
 | --- | --- | --- |
-| `electron` | 44.2.0 | MIT |
+| `electron` | 45.3.4 | MIT |
 | `electron-builder` | 26.16.1 | MIT (build only) |
 
 **REVIEW — Electron redistribution.** Electron itself is MIT, but a packaged
@@ -169,14 +169,35 @@ notice are included under `resources/app/`.
 
 | Package | Version | Licence |
 | --- | --- | --- |
-| `next` | 14.2.35 | MIT |
-| `react` | 18.3.1 | MIT |
-| `react-dom` | 18.3.1 | MIT |
+| `next` | 16.4.6 | MIT |
+| `react` | 19.3.1 | MIT |
+| `react-dom` | 19.3.1 | MIT |
 | `typescript` | 5.9.3 | Apache-2.0 (dev only) |
 | `@types/*` | various | MIT (DefinitelyTyped, dev only) |
 
 Next.js output is statically exported and served locally; no Vercel service is
 contacted at runtime.
+
+## JavaScript and Android — phone app (`mobile/package.json`)
+
+| Package | Version | Licence |
+| --- | --- | --- |
+| `@capacitor/core`, `@capacitor/android`, `@capacitor/app`, `@capacitor/haptics`, `@capacitor/local-notifications`, `@capacitor/preferences`, `@capacitor/splash-screen`, `@capacitor/status-bar` | 8.x | MIT |
+| `@capacitor-community/speech-recognition` | 7.0.1 | MIT (uses Android's own speech recognition service) |
+| `@capacitor-community/text-to-speech` | 8.0.2 | MIT |
+| `@aparajita/capacitor-secure-storage` | 8.0.1 | MIT |
+| `@capacitor-mlkit/barcode-scanning` | 8.2.2 | Apache-2.0 — **REVIEW:** the plugin is Apache-2.0, but it uses Google's ML Kit / code scanner, which is under Google's own terms (ML Kit Terms of Service), not an open-source licence |
+| `react`, `react-dom` | 19.3.1 | MIT |
+
+Licences as declared in each package's `package.json`; the Android build also
+pulls AndroidX and Google Play services libraries through Gradle, whose notices
+are not reproduced here yet (**REVIEW** before a Play Store release).
+
+## Data services
+
+| Service | Terms | How NANO complies |
+| --- | --- | --- |
+| [Open-Meteo](https://open-meteo.com/) weather and geocoding API (free tier) | Free API for non-commercial use only; data under [CC BY 4.0](https://open-meteo.com/en/licence) | NANO is free and has no ads or subscriptions; the weather line in the briefing ends with "Dados: Open-Meteo.com." If NANO is ever monetised, the free tier no longer applies |
 
 ## Assets
 

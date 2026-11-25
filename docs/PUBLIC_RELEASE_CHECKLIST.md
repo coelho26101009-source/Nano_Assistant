@@ -4,8 +4,9 @@ Reviewed **2026-09-18**, against the local `0.1.0-beta.1` candidate. This is a
 local engineering result, not a clean-machine result. `0.1.0-beta.1` was then
 published the same day as a GitHub pre-release (NSIS only); the unchecked items
 below were still open at publication and carry forward to the next release.
-See [BETA_READINESS_REPORT.md](BETA_READINESS_REPORT.md) for evidence and limits,
-[BETA_GUIDE.md](BETA_GUIDE.md) for user instructions, and
+See [BETA_GUIDE.md](BETA_GUIDE.md) for user instructions,
+[CLEAN_WINDOWS_VALIDATION.md](CLEAN_WINDOWS_VALIDATION.md) for the clean-machine
+check that is still open, and
 [RELEASING.md](RELEASING.md) for the build/publish procedure.
 
 ## Candidate implemented and checked

@@ -20,6 +20,53 @@ versioning policy.
 
 ## [Unreleased]
 
+### Improved — follow-ups from the total review (2026-11-25)
+- **"Limpa a cache do Windows"** only deletes files that have not changed for
+  24 hours (the newest of modified, created and, on Windows, born time), skips
+  links and files in use, and reports what it deleted, what was too recent and
+  what was locked.
+- **The coding helper may not drop scripts outside the project**: writing a
+  file that runs on open (`.bat`, `.ps1`, `.vbs`, `.lnk`, `.py`, `.exe`, …)
+  outside the workspace is refused before anybody is asked; plain text outside
+  still works with approval, and scripts inside the project still work.
+- **Pinned addresses for every web read** (`core/safe_http.py`): web search,
+  "lê esta página", deep research, the smart-life plugin and the weather now
+  look a name up once, at connect time, refuse it when any address is private,
+  and connect to the address they checked. A site can no longer pass the check
+  with a public address and then hand over the router's (DNS rebinding). The
+  headless browser checks every request and WebSocket a page opens and blocks
+  service workers; Chromium still does its own lookup there, so for that one
+  the window is narrowed, not closed. Pinning is off when a system proxy is
+  set (the proxy does the lookup), as before.
+- **"Limpa a cache"** tells files in use apart from files it has no permission
+  to delete.
+- **Pairing a phone** survives a lost answer: the phone asks again with the
+  same key on every route instead of failing and needing a new QR.
+- **Phone pairing, protocol 3**: the phone commits to its key before the PC
+  answers with a random number of its own, and the 6-digit code depends on
+  both. An attacker on the same Wi-Fi can no longer try keys until one gives
+  the same code. Phones on the older app are told to update.
+- **Which provider answered**: an answer that came from another provider than
+  the one you picked (AUTO fallback) says so under the answer, for example
+  "Groq: limite atingido. Respondeu Mistral."
+- **A fast local model for short answers** (Definições → IA → "Modelo rápido
+  para respostas curtas", e.g. `qwen3:1.7b`): greetings and short questions use it; tools,
+  long work and the middle of a tool turn keep the main model.
+- **CI** runs the Electron tests and the Chromium interface harness on Windows
+  too, not only on Linux.
+- **Process**: `CLAUDE.md` and `CONTRIBUTING.md` require a failing test first,
+  a second review of the whole diff and the touched suites before `main`.
+  The phone link's backend moved from `core/main.py` to `core/main_phone.py`.
+- **Legal and documentation review**: the weather line on screen credits its
+  source ("Dados: Open-Meteo.com.", as the CC BY 4.0 licence asks; not
+  spoken). `PRIVACY.md` covers the phone app (Android's speech recognition is
+  usually Google's), every download you start, that the relay stores nothing,
+  and where to ask about your data. `README.md` says each AI key follows its
+  provider's own rules (Groq and the Gemini API ask for 18+).
+  `THIRD_PARTY_NOTICES.md` has the current versions and the phone app. Links
+  follow the GitHub account's new name (`coelho97sc`), except the update
+  feed's trusted path, which stays as it is until the owner decides.
+
 ### Fixed — total review (2026-11-25)
 - **Notices**: a bare "sim" no longer answers an offer from an older
   conversation; held notices respect "Não me avises disto" and the level

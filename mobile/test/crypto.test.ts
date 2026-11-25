@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AAD, b64d, b64e, importKey, openFromPc, openSealed, pairingCode, seal } from "../src/lib/crypto";
+import { AAD, b64d, b64e, importKey, openFromPc, openSealed, pairingCode, pairingCommitment, seal } from "../src/lib/crypto";
 
 const KEY = Uint8Array.from({ length: 32 }, (_, i) => i);
 const NONCE = Uint8Array.from({ length: 12 }, (_, i) => i);
@@ -25,7 +25,7 @@ describe("crypto", () => {
     expect(Array.from(b64d(text))).toEqual(Array.from(all));
   });
 
-  // Pairing protocol 2. The same vector is produced by core/mobile_link.py
+  // Pairing protocol 2 (kept in 3). The same vector is produced by core/mobile_link.py
   // (seal_to_phone with a fixed ephemeral key and nonce, pairing_code) and
   // checked in tests/test_mobile_link.py.
   const PHONE_JWK = {
@@ -51,7 +51,19 @@ describe("crypto", () => {
     await expect(openFromPc(privateKey, salt, AAD.pairKey("0123456789abcdef", "dev999"), BOX)).rejects.toThrow("bad_reply");
   });
 
+  // Pairing protocol 3: the commitment and the code mix this phone's random
+  // number and the PC's (tests/test_mobile_link.py COMMITMENT_VECTOR, CODE_VECTOR).
+  const PHONE_NONCE = new Uint8Array(32).fill(1);
+  const PC_NONCE = new Uint8Array(32).fill(2);
+
+  it("commits to its key and number exactly as the PC checks it", async () => {
+    const commitment = await pairingCommitment("0123456789abcdef", b64d(PHONE_PUB), PHONE_NONCE);
+    expect(b64e(commitment)).toBe("6Ze6GJqlsSisqLoqD4GlAHN--E3kcJQbmRqxjOheH3w");
+  });
+
   it("derives the same six-digit code as the PC", async () => {
-    expect(await pairingCode("0123456789abcdef", b64d(PHONE_PUB))).toBe("175500");
+    expect(await pairingCode("0123456789abcdef", b64d(PHONE_PUB), PHONE_NONCE, PC_NONCE)).toBe("193468");
+    // The PC's number changes the code: a code cannot be chosen without it.
+    expect(await pairingCode("0123456789abcdef", b64d(PHONE_PUB), PHONE_NONCE, new Uint8Array(32))).not.toBe("193468");
   });
 });

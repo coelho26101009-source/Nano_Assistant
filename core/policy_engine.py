@@ -590,6 +590,18 @@ class PolicyEngine:
                         True, True,
                     ), agent=agent, task_id=task_id)
                 decision = AuthorityDecision.APPROVAL_REQUIRED
+            if (normalized == "filesystem.write" and context
+                    and context.get("executable_outside_workspace")):
+                # A .bat, .ps1, .lnk or .exe written outside the project folder
+                # is a program waiting for a double-click. pc.file.create only
+                # makes inert text files for the same reason; the coding helper
+                # keeps its scripts inside the project.
+                return self._record(PolicyEvaluation(
+                    normalized, AuthorityDecision.BLOCKED, RiskLevel.CRITICAL,
+                    resolved_scope, resolved_target,
+                    "Script and program files are only written inside the project folder.",
+                    True, True,
+                ), agent=agent, task_id=task_id)
             if resolved_scope not in AUTONOMOUS_SCOPES:
                 decision = AuthorityDecision.APPROVAL_REQUIRED
 

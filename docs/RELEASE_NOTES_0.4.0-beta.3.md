@@ -57,7 +57,7 @@ anyway**. Do not turn off SmartScreen or Defender to install NANO.
 Nothing new. "Ei Nano" listens and transcribes **on this PC**: no audio is sent
 anywhere. The voice model is downloaded once from Hugging Face when you turn
 the voice on. Everything else is as described in the Beta 4 notes and in
-[PRIVACY.md](https://github.com/coelho26101009-source/Nano_Assistant/blob/main/PRIVACY.md).
+[PRIVACY.md](https://github.com/coelho97sc/Nano_Assistant/blob/main/PRIVACY.md).
 
 ## Known limitations
 
@@ -126,7 +126,7 @@ nem o Defender para instalar o NANO.
 Nada de novo. O "Ei Nano" ouve e transcreve **neste PC**: nenhum áudio é
 enviado. O modelo de voz é descarregado uma vez do Hugging Face quando ligas a
 voz. O resto continua como descrito nas notas da Beta 4 e em
-[PRIVACY.md](https://github.com/coelho26101009-source/Nano_Assistant/blob/main/PRIVACY.md).
+[PRIVACY.md](https://github.com/coelho97sc/Nano_Assistant/blob/main/PRIVACY.md).
 
 ### Limitações conhecidas
 

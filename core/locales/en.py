@@ -386,6 +386,7 @@ EN: dict[str, str] = {
     "Bateria carregada": "Battery charged",
     "Bem-vindo de volta. Enquanto estavas fora:": "Welcome back. While you were away:",
     "Chuva provável {when} ({chance}%): leva guarda-chuva.": "Rain likely {when} ({chance}%): take an umbrella.",
+    "Dados: Open-Meteo.com.": "Data: Open-Meteo.com.",
     "Combinado, volto a avisar-te quando for preciso.": "Okay, I'll let you know about things again.",
     "Combinado: fico calado até às {time}. Só aviso se for urgente, como a bateria a acabar.": "Okay: I'll stay quiet until {time}. I'll only speak up if it's urgent, like the battery running out.",
     "Comecei o {name}.": "I started {name}.",

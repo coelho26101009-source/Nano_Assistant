@@ -21,6 +21,16 @@ THE SECURITY MODEL, PLAINLY
   the same code, and nothing is issued until the person approves it ON THE PC
   -- the approval is an eel call, which only the local UI can make (see
   local_control_plane).
+  The six digits cannot be steered (protocol 3). The phone first COMMITS to
+  its key and a random number of its own (a hash of both), the PC answers
+  with a random number of ITS own, and only then does the phone reveal what
+  it committed to. The code mixes all three. Before, the code came from the
+  phone's key alone, so somebody with a photo of the QR who could also catch
+  the phone's first packet on the Wi-Fi could try about a million keys of
+  their own until one gave the SAME six digits, and the person would see
+  matching codes. Now neither side can try anything: the phone is bound to
+  its numbers before it sees the PC's, and the PC's number is fixed before it
+  sees the phone's.
   The phone's key is delivered ENCRYPTED TO THAT PUBLIC KEY (ECDH P-256 +
   HKDF + AES-GCM), so only the phone that asked can read it. A photo of the
   QR -- even with a copy of every packet on the Wi-Fi -- is therefore not
@@ -77,8 +87,10 @@ from core.atomic_storage import write_bytes
 logger = logging.getLogger("nano.mobile")
 
 #: 2 since 2026-11-20: the device key is sealed to the phone's own ECDH key
-#: and both screens show a pairing code. Version 1 phones cannot pair.
-PROTOCOL = 2
+#: and both screens show a pairing code. 3 since 2026-11-25: the phone
+#: commits to its key before the PC sends its random number, so the code
+#: cannot be ground (see pairing_code). Version 1 and 2 phones cannot pair.
+PROTOCOL = 3
 DEFAULT_PORT = 47821
 
 #: How long a QR code can be used.
@@ -179,16 +191,30 @@ def phone_public_key(text: Any) -> bytes:
     return raw
 
 
-def pairing_code(session_id: str, phone_key: bytes) -> str:
+#: Length of the random numbers each side adds to the pairing code.
+PAIR_NONCE_BYTES = 32
+
+
+def pairing_commitment(session_id: str, phone_key: bytes, phone_nonce: bytes) -> bytes:
+    """What the phone sends first: a hash that binds it to its key and number."""
+    import hashlib
+    return hashlib.sha256(b"nano-pair-commit-v3|" + session_id.encode("ascii") + b"|"
+                          + phone_key + phone_nonce).digest()
+
+
+def pairing_code(session_id: str, phone_key: bytes, phone_nonce: bytes, pc_nonce: bytes) -> str:
     """Six digits both screens show, so the person can see it is THEIR phone.
 
-    Derived from the session and the phone's public key: a phone that slipped
-    in first with a photo of the QR would show a different code than the
-    person's own phone, and the PC shows the code of the phone it is asking
-    about.
+    Derived from the session, the phone's public key, the phone's random
+    number (committed to before the PC answered) and the PC's random number
+    (chosen before the phone revealed anything). A phone that slipped in
+    first with a photo of the QR shows a different code than the person's own
+    phone, and because of the commitment nobody can search for a key that
+    gives the same code: six digits are one chance in a million, once.
     """
     import hashlib
-    digest = hashlib.sha256(b"nano-pair-code-v2|" + session_id.encode("ascii") + b"|" + phone_key).digest()
+    digest = hashlib.sha256(b"nano-pair-code-v3|" + session_id.encode("ascii") + b"|"
+                            + phone_key + phone_nonce + pc_nonce).digest()
     return f"{int.from_bytes(digest[:4], 'big') % 1_000_000:06d}"
 
 
@@ -266,6 +292,24 @@ def local_addresses() -> list[dict]:
             result.append({"address": address, "kind": kind})
     result.sort(key=lambda row: 0 if row["kind"] == "lan" else 1)
     return result
+
+
+def _nonce(text: Any) -> bytes:
+    """A 32-byte value from the wire (a commitment or a random number)."""
+    if not isinstance(text, str) or len(text) > 64:
+        raise LinkError("bad_request")
+    try:
+        raw = b64d(text)
+    except Exception as exc:
+        raise LinkError("bad_request") from exc
+    if len(raw) != PAIR_NONCE_BYTES:
+        raise LinkError("bad_request")
+    return raw
+
+
+def _same(a: bytes, b: bytes) -> bool:
+    import hmac
+    return hmac.compare_digest(a, b)
 
 
 def pc_name() -> str:
@@ -407,11 +451,14 @@ class PairingSession:
     id: str
     secret: bytes
     created: float
-    state: str = "waiting"          # waiting | pending | approved | denied | connected
+    state: str = "waiting"          # waiting | committed | pending | approved | denied | connected
     device_name: str = ""
     platform: str = ""
     requested_at: float = 0.0
     phone_key: bytes = b""
+    #: The phone's commitment and the PC's random number (protocol 3).
+    commitment: bytes = b""
+    pc_nonce: bytes = b""
     code: str = ""
     device_id: str = ""
     delivered: bool = False
@@ -421,7 +468,7 @@ class PairingSession:
     delivery: dict = field(default_factory=dict)
 
     def expired(self, now: float) -> bool:
-        if self.state == "waiting":
+        if self.state in ("waiting", "committed"):
             return now - self.created > PAIRING_TTL_SECONDS
         if self.state == "pending":
             return now - self.requested_at > APPROVAL_TTL_SECONDS
@@ -580,7 +627,7 @@ class MobileLink:
         """Is a QR code still usable, or a phone waiting for its answer?"""
         with self._lock:
             return any(self._live_session(sid) is not None and
-                       self._sessions[sid].state in ("waiting", "pending", "approved")
+                       self._sessions[sid].state in ("waiting", "committed", "pending", "approved")
                        for sid in list(self._sessions))
 
     def cancel_pairing(self) -> None:
@@ -592,7 +639,10 @@ class MobileLink:
             session = self._live_session(session_id)
             if session is None:
                 return {"ok": True, "state": "expired"}
-            return {"ok": True, "state": session.state, "deviceName": session.device_name,
+            # "committed" is still "waiting for a phone" as far as the PC
+            # screen is concerned: nothing to show or approve yet.
+            state = "waiting" if session.state == "committed" else session.state
+            return {"ok": True, "state": state, "deviceName": session.device_name,
                     "platform": session.platform, "code": session.code}
 
     def decide_pairing(self, session_id: str, approve: bool) -> dict:
@@ -631,26 +681,38 @@ class MobileLink:
             request = open_sealed(session.secret, body, _AAD_PAIR + session.id)
             self._check_fresh(request)
             op = request.get("op")
+            if op == "commit":
+                sealed = seal(session.secret, self._commit(session, request),
+                              _AAD_PAIR_REPLY + session.id + "|" + str(request.get("id")))
+                return sealed
             if op not in ("request", "status"):
                 raise LinkError("bad_request")
-            if "pk" not in request:
-                # A protocol-1 phone: it would take a key sealed with the QR
-                # secret alone, which is exactly what version 2 stopped doing.
+            if "pk" not in request or (session.state == "waiting" and op == "request"):
+                # A protocol-1 phone (no key), or a protocol-2 phone that asks
+                # without committing first: it would get a code that can be
+                # ground, which is exactly what version 3 stopped.
                 raise LinkError("upgrade_required", 426)
             phone_key = phone_public_key(request.get("pk"))
             notify = None
-            if op == "request" and session.state == "waiting":
+            if op == "request" and session.state == "committed":
+                phone_nonce = _nonce(request.get("nn"))
+                import hmac
+                if not hmac.compare_digest(pairing_commitment(session.id, phone_key, phone_nonce),
+                                           session.commitment):
+                    # Not what this session's phone committed to.
+                    raise LinkError("unauthorized", 401)
                 session.state = "pending"
                 session.device_name = _clean_name(request.get("name"))
                 session.platform = str(request.get("platform") or "")[:20]
                 session.requested_at = self.clock()
                 session.phone_key = phone_key
-                session.code = pairing_code(session.id, phone_key)
+                session.code = pairing_code(session.id, phone_key, phone_nonce, session.pc_nonce)
                 notify = {"sessionId": session.id, "deviceName": session.device_name,
                           "platform": session.platform, "code": session.code}
-            elif phone_key != session.phone_key:
-                # Not the phone this session is asking about. Answered with
-                # nothing, and the session is left alone for the real one.
+            elif session.state == "committed" or phone_key != session.phone_key:
+                # Not the phone this session is asking about (or asking for a
+                # status before revealing anything). Answered with nothing,
+                # and the session is left alone for the real one.
                 raise LinkError("unauthorized", 401)
             reply: dict[str, Any] = {"state": session.state, "id": request.get("id"),
                                      "code": session.code}
@@ -676,6 +738,23 @@ class MobileLink:
             except Exception:
                 logger.debug("pair request notification failed", exc_info=True)
         return sealed
+
+    def _commit(self, session: PairingSession, request: dict) -> dict:
+        """Step one of protocol 3: hold the phone's commitment, answer with ours.
+
+        The first commitment wins the session. The same one again (its reply
+        was lost) gets the same answer; any other is refused, so nobody can
+        collect several PC numbers for one QR.
+        """
+        commitment = _nonce(request.get("cm"))
+        if session.state == "waiting":
+            session.state = "committed"
+            session.commitment = commitment
+            session.pc_nonce = os.urandom(PAIR_NONCE_BYTES)
+        elif not session.commitment or not _same(commitment, session.commitment):
+            raise LinkError("unauthorized", 401)
+        return {"state": "committed" if session.state == "committed" else session.state,
+                "id": request.get("id"), "pn": b64e(session.pc_nonce)}
 
     # requests from paired phones
     def _check_fresh(self, request: dict) -> None:
@@ -767,6 +846,6 @@ def new_request_id() -> str:
 __all__ = [
     "DEFAULT_PORT", "DeviceStore", "EventFeed", "FORWARDED_EVENTS", "LinkError",
     "MobileLink", "PROTOCOL", "b64d", "b64e", "classify_address", "local_addresses",
-    "new_request_id", "open_sealed", "pairing_code", "pc_name", "phone_public_key",
-    "seal", "seal_to_phone",
+    "new_request_id", "open_sealed", "pairing_code", "pairing_commitment", "pc_name",
+    "phone_public_key", "seal", "seal_to_phone",
 ]

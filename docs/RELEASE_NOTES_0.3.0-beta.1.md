@@ -62,7 +62,7 @@ Open this page on the phone, tap the `.apk`, and allow installs from your
 browser when Android asks. If Play Protect says the app is unknown, choose
 **More details → Install anyway**: this build is not from the Play Store and is
 signed with NANO's test key, so it installs over earlier test builds. The full
-guide is in [docs/TESTAR_NO_TELEMOVEL.md](https://github.com/coelho26101009-source/Nano_Assistant/blob/main/docs/TESTAR_NO_TELEMOVEL.md).
+guide is in [docs/TESTAR_NO_TELEMOVEL.md](https://github.com/coelho97sc/Nano_Assistant/blob/main/docs/TESTAR_NO_TELEMOVEL.md).
 
 ## What leaves your computer
 
@@ -72,7 +72,7 @@ guide is in [docs/TESTAR_NO_TELEMOVEL.md](https://github.com/coelho26101009-sour
   Privacy, and it asks every time.
 - **Phone:** the phone talks only to your own PC, encrypted end to end. NANO
   opens no port to the internet.
-- Everything else is as described in [PRIVACY.md](https://github.com/coelho26101009-source/Nano_Assistant/blob/main/PRIVACY.md).
+- Everything else is as described in [PRIVACY.md](https://github.com/coelho97sc/Nano_Assistant/blob/main/PRIVACY.md).
 
 ## New things that act on the computer
 
@@ -89,7 +89,7 @@ guide is in [docs/TESTAR_NO_TELEMOVEL.md](https://github.com/coelho26101009-sour
   `%LOCALAPPDATA%\NanoAssistant` is kept.
 - **Speaking to NANO on the PC** needs the optional local speech package
   (faster-whisper), which the installer does not include yet; see
-  [docs/VOICE.md](https://github.com/coelho26101009-source/Nano_Assistant/blob/main/docs/VOICE.md).
+  [docs/VOICE.md](https://github.com/coelho97sc/Nano_Assistant/blob/main/docs/VOICE.md).
   Spoken replies work out of the box, and so does voice in the Android app.
 - **Reading text on screen** (and watching for text) uses optional Windows OCR
   packages that the installer does not include yet. Describing the screen with
@@ -162,7 +162,7 @@ quando o Android perguntar. Se o Play Protect disser que a app é desconhecida,
 escolhe **Mais detalhes → Instalar mesmo assim**: esta versão não vem da Play
 Store e está assinada com a chave de teste do NANO, por isso instala por cima
 das versões de teste anteriores. O guia completo está em
-[docs/TESTAR_NO_TELEMOVEL.md](https://github.com/coelho26101009-source/Nano_Assistant/blob/main/docs/TESTAR_NO_TELEMOVEL.md).
+[docs/TESTAR_NO_TELEMOVEL.md](https://github.com/coelho97sc/Nano_Assistant/blob/main/docs/TESTAR_NO_TELEMOVEL.md).
 
 ### O que sai do teu computador
 
@@ -181,7 +181,7 @@ das versões de teste anteriores. O guia completo está em
   `%LOCALAPPDATA%\NanoAssistant` mantêm-se.
 - **Falar com o NANO no PC** precisa do pacote opcional de fala local
   (faster-whisper), que o instalador ainda não inclui; ver
-  [docs/VOICE.md](https://github.com/coelho26101009-source/Nano_Assistant/blob/main/docs/VOICE.md).
+  [docs/VOICE.md](https://github.com/coelho97sc/Nano_Assistant/blob/main/docs/VOICE.md).
   As respostas faladas funcionam logo, e a voz na app Android também.
 - **Ler o texto do ecrã** (e vigiar texto) usa pacotes opcionais de OCR do
   Windows que o instalador ainda não inclui. Descrever o ecrã com IA funciona
