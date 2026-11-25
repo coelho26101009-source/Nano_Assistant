@@ -21,7 +21,8 @@
  * WHAT A FEED MUST SATISFY BEFORE ANYTHING IS DOWNLOADED
  *   * signed by a key in update-keys.json (unknown key id -> rejected);
  *   * for this product (a phone feed can never update the desktop);
- *   * a download URL on https://github.com under this repository's releases;
+ *   * a download URL on https://github.com under this repository's releases
+ *     (under its current or its former account name, see REPO_PATHS);
  *   * a sha256 of 64 hex characters and a plausible size.
  * Being NEWER than what is installed is checked separately (isNewer), because
  * an older signed feed is valid, just not interesting -- that is what defeats
@@ -33,7 +34,18 @@ const crypto = require('crypto');
 const KEYS = require('./update-keys.json');
 
 const FORMAT = 1;
-const REPO_PATH = '/coelho26101009-source/Nano_Assistant/releases/download/';
+/**
+ * The GitHub account was renamed (coelho26101009-source -> coelho97sc, 2026-11-25).
+ * Apps installed before that accept ONLY the old path, and GitHub redirects it to
+ * the new one, so the release workflows still sign old-path URLs (a test holds
+ * that). This app trusts both, so a later Beta can switch the workflows to the
+ * new name. The mobile app (updates.ts) and its Java plugin must list the same
+ * paths; a test compares all three.
+ */
+const REPO_PATHS = [
+  '/coelho97sc/Nano_Assistant/releases/download/',
+  '/coelho26101009-source/Nano_Assistant/releases/download/',
+];
 /** The installer is ~150 MB; anything past this is not an installer of ours. */
 const MAX_SIZE = { 'nano-desktop': 1024 * 1024 * 1024, 'nano-android': 300 * 1024 * 1024 };
 
@@ -71,7 +83,7 @@ function isAllowedDownloadUrl(value) {
   return url.protocol === 'https:'
     && url.hostname === 'github.com'
     && !url.username && !url.password && !url.port
-    && url.pathname.startsWith(REPO_PATH)
+    && REPO_PATHS.some((repoPath) => url.pathname.startsWith(repoPath))
     && !url.pathname.includes('..')
     && !url.search && !url.hash;
 }
@@ -194,6 +206,6 @@ function isNewer(candidate, current) {
 }
 
 module.exports = {
-  FORMAT, FeedError, verifyFeed, signFeed, keyIdFor, publicKeys,
+  FORMAT, REPO_PATHS, FeedError, verifyFeed, signFeed, keyIdFor, publicKeys,
   isAllowedDownloadUrl, isAllowedRedirect, parseVersion, compareVersions, isNewer,
 };

@@ -11,7 +11,7 @@ import { UpdateSettings } from "../components/Updates";
 export type SpeakMode = "voice" | "always" | "never";
 export type ThemeChoice = "dark" | "light" | "system";
 
-export const APP_VERSION = "0.4.0-beta.3";
+export const APP_VERSION = "0.4.0-beta.4";
 
 function stateText(state: LinkState, pcName: string): string {
   switch (state) {

@@ -95,6 +95,69 @@ test('downloads must come from this repository over HTTPS', () => {
   assert.ok(feed.isAllowedDownloadUrl(DOWNLOAD));
 });
 
+/* The GitHub account was renamed (coelho26101009-source -> coelho97sc). Apps
+ * installed before 2026-11-25 accept ONLY the old path, so the release
+ * workflows keep signing old-path URLs until those are gone; the current app
+ * accepts both and reads its feed from the new path. */
+const OLD_NAME = 'coelho26101009-source';
+const NEW_NAME = 'coelho97sc';
+
+test('downloads from the renamed account are accepted, look-alikes are not', () => {
+  for (const name of [OLD_NAME, NEW_NAME]) {
+    const url = `https://github.com/${name}/Nano_Assistant/releases/download/v1/x.exe`;
+    assert.ok(feed.isAllowedDownloadUrl(url), url);
+    assert.doesNotThrow(() => feed.verifyFeed(signed({ url }), { keys: TEST_KEYS }), url);
+  }
+  for (const url of [
+    `https://github.com/${NEW_NAME}-evil/Nano_Assistant/releases/download/v1/x.exe`,
+    `https://github.com/${NEW_NAME}/Other/releases/download/v1/x.exe`,
+    `https://github.com/${NEW_NAME}/Nano_Assistant/releases/download/../../x.exe`,
+    `http://github.com/${NEW_NAME}/Nano_Assistant/releases/download/v1/x.exe`,
+    `https://github.com/${NEW_NAME}/Nano_Assistant/releases/download/v1/x.exe?x=1`,
+    `https://evil.example/${NEW_NAME}/Nano_Assistant/releases/download/v1/x.exe`,
+  ]) {
+    assert.ok(!feed.isAllowedDownloadUrl(url), url);
+  }
+});
+
+test('the app reads its feed from the new account name', () => {
+  const { FEED_URL, RELEASES_URL } = require('../lib/updater');
+  assert.ok(FEED_URL.startsWith(`https://github.com/${NEW_NAME}/Nano_Assistant/releases/download/`), FEED_URL);
+  assert.ok(RELEASES_URL.startsWith(`https://github.com/${NEW_NAME}/Nano_Assistant/`), RELEASES_URL);
+  assert.ok(feed.isAllowedDownloadUrl(FEED_URL));
+});
+
+test('the phone (TypeScript and Java) trusts the same paths as the desktop', () => {
+  const root = path.join(__dirname, '..', '..');
+  const ts = fs.readFileSync(path.join(root, 'mobile', 'src', 'lib', 'updates.ts'), 'utf8');
+  const java = fs.readFileSync(path.join(
+    root, 'mobile', 'android', 'app', 'src', 'main', 'java', 'app', 'nano', 'assistant', 'NanoUpdaterPlugin.java',
+  ), 'utf8');
+  assert.deepStrictEqual(
+    feed.REPO_PATHS,
+    [`/${NEW_NAME}/Nano_Assistant/releases/download/`, `/${OLD_NAME}/Nano_Assistant/releases/download/`],
+  );
+  for (const repoPath of feed.REPO_PATHS) {
+    assert.ok(ts.includes(`"${repoPath}"`), `updates.ts does not trust ${repoPath}`);
+    assert.ok(java.includes(`"${repoPath}"`), `NanoUpdaterPlugin.java does not trust ${repoPath}`);
+  }
+  assert.ok(ts.includes(`github.com/${NEW_NAME}/Nano_Assistant/releases/download/android-test/nano-update.json`));
+});
+
+test('the release workflows keep signing OLD-path URLs while old installs exist', () => {
+  // 0.4.0-beta.3 and earlier accept only the old path. On 2026-11-22 a feed
+  // signed with github.repository (the new name) was refused (feed_bad_url)
+  // and a release shipped without its feed. Switch these to the new name only
+  // after the Beta that accepts both has been out long enough.
+  const root = path.join(__dirname, '..', '..', '.github', 'workflows');
+  for (const file of ['build-windows.yml', 'release-finish.yml']) {
+    const text = fs.readFileSync(path.join(root, file), 'utf8');
+    assert.ok(text.includes(`NANO_RELEASE_REPO: ${OLD_NAME}/Nano_Assistant`), `${file} must keep the old path`);
+  }
+  const android = fs.readFileSync(path.join(root, 'android.yml'), 'utf8');
+  assert.ok(android.includes(`github.com/${OLD_NAME}/Nano_Assistant/releases/download/android-test/`));
+});
+
 test('malformed hashes, sizes and versions are rejected', () => {
   assert.throws(() => feed.verifyFeed(signed({ sha256: 'abc' }), { keys: TEST_KEYS }), /feed_format/);
   assert.throws(() => feed.verifyFeed(signed({ size: 0 }), { keys: TEST_KEYS }), /feed_format/);

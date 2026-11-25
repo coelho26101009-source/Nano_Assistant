@@ -6,7 +6,7 @@
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
-import { isAllowedDownloadUrl, verifyFeed } from "../src/lib/updates";
+import { FEED_URL, isAllowedDownloadUrl, verifyFeed } from "../src/lib/updates";
 
 const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
 const spkiDer = publicKey.export({ type: "spki", format: "der" });
@@ -50,6 +50,17 @@ describe("update feed on the phone", () => {
     expect(isAllowedDownloadUrl("http://github.com/coelho26101009-source/Nano_Assistant/releases/download/x/a.apk")).toBe(false);
     expect(isAllowedDownloadUrl("https://github.com/other/Nano_Assistant/releases/download/x/a.apk")).toBe(false);
     expect(isAllowedDownloadUrl(APK)).toBe(true);
+  });
+
+  it("trusts the renamed GitHub account as well as the old name", async () => {
+    // Apps installed before 2026-11-25 accept only the old name; this one both.
+    const renamed = "https://github.com/coelho97sc/Nano_Assistant/releases/download/android-test/NANO-android-test.apk";
+    expect(isAllowedDownloadUrl(renamed)).toBe(true);
+    expect((await verifyFeed(feed({ url: renamed }), KEYS)).url).toBe(renamed);
+    expect(isAllowedDownloadUrl("https://github.com/coelho97sc-evil/Nano_Assistant/releases/download/x/a.apk")).toBe(false);
+    expect(isAllowedDownloadUrl("https://github.com/coelho97sc/Other/releases/download/x/a.apk")).toBe(false);
+    expect(isAllowedDownloadUrl("https://github.com/coelho97sc/Nano_Assistant/releases/download/../x/a.apk")).toBe(false);
+    expect(FEED_URL.startsWith("https://github.com/coelho97sc/Nano_Assistant/releases/download/")).toBe(true);
   });
 
   it("rejects malformed numbers and hashes", async () => {

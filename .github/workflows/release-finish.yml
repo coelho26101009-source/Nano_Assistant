@@ -67,8 +67,9 @@ jobs:
       - name: Sign the update feed
         env:
           NANO_UPDATE_SIGNING_KEY: ${{ secrets.NANO_UPDATE_SIGNING_KEY }}
-          # The path every installed NANO accepts (electron/lib/update-feed.js
-          # REPO_PATH); GitHub redirects it to the renamed account.
+          # The path every installed NANO accepts, including 0.4.0-beta.3 and
+          # older (electron/lib/update-feed.js REPO_PATHS); GitHub redirects it
+          # to the renamed account. Switch only after the old installs are gone.
           NANO_RELEASE_REPO: coelho26101009-source/Nano_Assistant
         run: |
           version="${{ steps.release.outputs.version }}"

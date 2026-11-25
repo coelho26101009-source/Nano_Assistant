@@ -218,6 +218,7 @@ Precisa de um modelo com ferramentas (Groq/Gemini/Mistral, ou o local).
 - [ ] 97. Com o Ollama instalado, corre `ollama pull qwen3:1.7b`. Em **Definições → IA → Modelo rápido para respostas curtas** escolhe `qwen3:1.7b` e põe o modo **LOCAL**. `olá` responde depressa; `abre o bloco de notas` continua a funcionar (usa o modelo principal).
 - [ ] 98. Pede `pesquisa na web o preço do Raspberry Pi 5` e depois `lê esta página: https://www.wikipedia.org`. As duas funcionam como antes (a verificação de endereços não pode estragar a pesquisa normal).
 - [ ] 99. Pede `lê esta página: http://192.168.1.1` (o teu router). O NANO recusa: "endereço privado".
+- [ ] 100. **A atualização automática, de ponta a ponta.** Com a **0.4.0-beta.3 instalada** (a do instalador, não a da pasta do projeto) e a 0.4.0-beta.4 já publicada: Definições → Sobre → Atualizações → **Procurar agora**. Deve dizer que há a 0.4.0-beta.4, descarregar, e instalar quando fechas o NANO (**Reiniciar e atualizar**). Depois confirma em Sobre que a versão é a 0.4.0-beta.4. É a primeira vez que isto se experimenta num PC real e, com o nome novo do GitHub, é o teste mais importante da Beta.
 
 ---
 

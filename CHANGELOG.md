@@ -20,6 +20,20 @@ versioning policy.
 
 ## [Unreleased]
 
+## [0.4.0-beta.4] - 2026-11-25
+
+The third update to "Beta 4". The release notes are in
+[docs/RELEASE_NOTES_0.4.0-beta.4.md](docs/RELEASE_NOTES_0.4.0-beta.4.md).
+
+### Changed — the GitHub account has a new name (2026-11-25)
+- The account is now `coelho97sc`. The desktop app, the phone app and its Java
+  updater trust update downloads under **both** names (`REPO_PATHS` in
+  `electron/lib/update-feed.js`, `mobile/src/lib/updates.ts`,
+  `NanoUpdaterPlugin.java`; a test compares the three) and read their feed from
+  the new name. The release workflows still sign old-name URLs on purpose:
+  NANO 0.4.0-beta.3 and older accept only the old name (GitHub redirects it),
+  and a test holds that until those installs are gone.
+
 ### Improved — follow-ups from the total review (2026-11-25)
 - **"Limpa a cache do Windows"** only deletes files that have not changed for
   24 hours (the newest of modified, created and, on Windows, born time), skips

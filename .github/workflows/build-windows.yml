@@ -328,10 +328,11 @@ jobs:
         env:
           NANO_UPDATE_SIGNING_KEY: ${{ secrets.NANO_UPDATE_SIGNING_KEY }}
           # NOT github.repository. The GitHub account was renamed (now
-          # coelho97sc) and every NANO already installed only accepts
+          # coelho97sc) and every NANO up to 0.4.0-beta.3 only accepts
           # downloads under /coelho26101009-source/Nano_Assistant/releases/
-          # (electron/lib/update-feed.js REPO_PATH); GitHub redirects that old
-          # path to the new one. With github.repository the signer refused the
+          # (electron/lib/update-feed.js REPO_PATHS lists both names from
+          # 0.4.0-beta.4 on); GitHub redirects that old path to the new one.
+          # Switch only after the old installs are gone (a test holds this). With github.repository the signer refused the
           # URL (feed_bad_url) and 0.4.0-beta.3 shipped without its feed.
           NANO_RELEASE_REPO: coelho26101009-source/Nano_Assistant
         run: |
