@@ -83,6 +83,7 @@ def test_home_relative_paths_mean_the_users_home(workspace, monkeypatch, tmp_pat
     home = tmp_path / "home"
     (home / "Documentos").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))      # what Windows reads for "~"
     target = resolve_target("~/Documentos")
     assert target.path == (home / "Documentos").resolve()
 
