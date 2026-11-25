@@ -139,10 +139,12 @@ def test_barge_in_stops_nano_when_the_person_talks_over_it(monkeypatch):
         engine.input_provider.captures += 1
         if engine.input_provider.captures == 1:
             return b"AUDIO"                     # the question
+        time.sleep(0.02)
         if engine.spoken:
-            time.sleep(0.02)
             return loud                         # the person talks over NANO
-        return None
+        # A real microphone always hands back audio. Returning nothing here
+        # ended the watch when it started before NANO did (a CI flake).
+        return _wav(0)
 
     engine.input_provider.capture = capture
     monkeypatch.setattr(voice_mod.VoiceRuntime, "MAX_FOLLOW_UPS", 0)
