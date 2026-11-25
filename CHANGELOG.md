@@ -57,6 +57,15 @@ versioning policy.
 - **Process**: `CLAUDE.md` and `CONTRIBUTING.md` require a failing test first,
   a second review of the whole diff and the touched suites before `main`.
   The phone link's backend moved from `core/main.py` to `core/main_phone.py`.
+- **Legal and documentation review**: the weather line on screen credits its
+  source ("Dados: Open-Meteo.com.", as the CC BY 4.0 licence asks; not
+  spoken). `PRIVACY.md` covers the phone app (Android's speech recognition is
+  usually Google's), every download you start, that the relay stores nothing,
+  and where to ask about your data. `README.md` says each AI key follows its
+  provider's own rules (Groq and the Gemini API ask for 18+).
+  `THIRD_PARTY_NOTICES.md` has the current versions and the phone app. Links
+  follow the GitHub account's new name (`coelho97sc`), except the update
+  feed's trusted path, which stays as it is until the owner decides.
 
 ### Fixed — total review (2026-11-25)
 - **Notices**: a bare "sim" no longer answers an offer from an older

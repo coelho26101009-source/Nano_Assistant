@@ -414,7 +414,7 @@ model can neither see nor trigger it.
 | **Open-Meteo** (`geocoding-api.open-meteo.com`, `api.open-meteo.com`) | Only with a city typed in Definições → Geral → "Cidade para o tempo", **any mode** | The city name (once), then its coordinates rounded to ~1 km, at most every 30 minutes. No key, no account, nothing about you. `core/weather.py` |
 | **Ollama** | LOCAL, and the AUTO fallback | Message text — but it runs on your machine |
 | **Websites** | Only when you ask Nano to open, search or read one | A normal web request |
-| **NANO's relay** (Cloudflare Workers) | Phone access on, "Away from home" on, and a phone paired or a pairing code on screen | The phone's messages **sealed with AES-256-GCM** with a key only the phone and the PC hold; it cannot read them. It sees the PC's and the phone's IP addresses, message sizes and times. `core/mobile_relay.py`, `relay/` |
+| **NANO's relay** (Cloudflare Workers) | Phone access on, "Away from home" on, and a phone paired or a pairing code on screen | The phone's messages **sealed with AES-256-GCM** with a key only the phone and the PC hold; it cannot read them. It sees the PC's and the phone's IP addresses, message sizes and times. It **stores nothing**: a message exists only while it passes through, and the relay's own logs are switched off (`observability = false`). Cloudflare, as the network, may keep its own short-lived connection logs. `core/mobile_relay.py`, `relay/` |
 
 A provider you have not configured a key for is never contacted, in any mode:
 its status is reported without a network call.
@@ -439,6 +439,15 @@ its own: it asks the PC, and the PC answers.
 
 If you want nothing to reach Google from the phone, type instead of using the
 microphone.
+
+## Questions about your data
+
+NANO has no accounts and its maker receives none of your conversations, memory
+or files: they stay on your PC. The only thing the maker runs that sees
+anything about you is the relay above (IP addresses, sizes and times, nothing
+stored). For a question or a request about that, use the private channel in
+[SECURITY.md](SECURITY.md) ("Report a vulnerability"); a personal address is
+deliberately not published.
 
 ## Verifying this yourself
 

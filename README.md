@@ -202,7 +202,10 @@ conversas fica à esquerda, e a cápsula de voz funciona fora da janela principa
 - **Node.js 22.12 ou superior + npm** para Electron/frontend na primeira execução
 - dependências Python instaladas a partir dos locks com hashes em `requirements/`
 - **Ollama** apenas se quiseres usar os modos AUTO/LOCAL
-- uma chave de API de pelo menos um provedor cloud, para AUTO/CLOUD
+- uma chave de API de pelo menos um provedor cloud, para AUTO/CLOUD. A chave é tua e
+  segue as regras desse provedor: a Groq e a API do Gemini pedem 18 anos ou mais, e
+  no escalão grátis do Gemini a Google pode usar o que envias para melhorar os
+  produtos dela. O modo LOCAL (Ollama) não precisa de conta nenhuma.
 
 ```bat
 python -m pip install --require-hashes -r requirements\build.lock
