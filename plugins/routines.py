@@ -65,16 +65,60 @@ def routine_save(arguments: dict) -> dict:
     existing = _find(name)
     raw = {"name": name, "phrases": [name, *phrases] if name not in phrases else phrases,
            "actions": steps, "message": args.get("message") or ""}
-    if existing is not None and protocols.normalise_phrase(existing["name"]) == protocols.normalise_phrase(name):
-        raw["id"] = existing["id"]          # same name: this is an update
     try:
+        if existing is not None and protocols.normalise_phrase(existing["name"]) == protocols.normalise_phrase(name):
+            raw = _update(existing, raw)    # same name: this is an update
         saved = protocols.STORE.save(raw)
     except protocols.ProtocolError as exc:
         return {"ok": False, "status": "invalid_routine", "message": str(exc)}
-    return {"ok": True, "status": "updated" if "id" in raw else "saved",
+    return {"ok": True, "status": "updated" if existing is not None and raw.get("id") == existing["id"] else "saved",
             "message": tr("Rotina “{name}” guardada. Diz “{phrase}” para a usar.",
                           name=saved["name"], phrase=saved["phrases"][0]),
             "routine": _summary(saved)}
+
+
+#: The fields a routine gets from the PC → Modos window, which a spoken
+#: routine_save does not carry.
+_WINDOW_FIELDS = {"close_apps": [], "open_apps": [], "open_urls": [], "volume": None,
+                  "media": "", "settings_section": "", "lock": False}
+
+
+def _step_key(step: dict) -> tuple[str, str]:
+    import json
+
+    return step["tool"], json.dumps(step.get("args") or {}, sort_keys=True)
+
+
+def _update(existing: dict, raw: dict) -> dict:
+    """Saving over a routine keeps what the call does not say.
+
+    Measured with a "Boa noite" made in the window (close Discord, volume 10,
+    lock, phrase "vou dormir", a goodbye message): "acrescenta pôr a música em
+    pausa" made the model send only that one step, and the old save replaced
+    the whole routine with it -- no apps closed, no lock, "vou dormir" gone,
+    and nobody asked. Now the phrases are kept (new ones added), the message is
+    kept unless a new one is given, and the window's own steps stay -- unless
+    the new list repeats one of them, which means the model sent the COMPLETE
+    list as asked, and then that list alone is the routine."""
+    merged = {key: value for key, value in existing.items() if key != "steps"}
+    phrases: list[str] = []
+    seen: set[str] = set()
+    for phrase in [*raw["phrases"], *existing.get("phrases", [])]:
+        key = protocols.normalise_phrase(phrase)
+        if key and key not in seen:
+            seen.add(key)
+            phrases.append(phrase)
+    merged["phrases"] = phrases[:protocols.MAX_PHRASES]
+    merged["message"] = raw["message"] or existing.get("message") or ""
+    new_steps = protocols.validate_actions(raw["actions"])
+    window_only = {key: existing.get(key, empty) for key, empty in _WINDOW_FIELDS.items()}
+    window_steps = protocols.compile_protocol({**window_only, "id": existing["id"], "name": existing["name"],
+                                               "message": "-", "actions": []})["steps"]
+    if {_step_key(step) for step in window_steps} & {_step_key(step) for step in new_steps}:
+        merged.update({key: (list(empty) if isinstance(empty, list) else empty)
+                       for key, empty in _WINDOW_FIELDS.items()})
+    merged["actions"] = raw["actions"]
+    return merged
 
 
 def routine_list(_arguments: dict | None = None) -> dict:

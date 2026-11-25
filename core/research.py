@@ -656,12 +656,16 @@ async def run(question: str, angles: Any = None, *, language: str | None = None,
     own_client = client is None
     client = client or _client()
     try:
-        jobs = [_one_search(client, "duckduckgo", q, language) for q in queries]
-        jobs.append(_one_search(client, "wikipedia", question, language))
-        try:
-            searches = await asyncio.wait_for(asyncio.gather(*jobs), timeout=SEARCH_TIMEOUT * 2 + 2)
-        except asyncio.TimeoutError:
-            searches = []
+        jobs = [asyncio.create_task(_one_search(client, "duckduckgo", q, language)) for q in queries]
+        jobs.append(asyncio.create_task(_one_search(client, "wikipedia", question, language)))
+        # What finished in time is kept: one slow search (an empty DuckDuckGo
+        # page, then its Bing fallback) used to throw away every result that
+        # had already arrived, and the answer was "nothing found".
+        finished, late = await asyncio.wait(jobs, timeout=SEARCH_TIMEOUT * 2 + 2)
+        for job in late:
+            job.cancel()
+        searches = [job.result() for job in jobs
+                    if job in finished and not job.cancelled() and job.exception() is None]
         hits = [hit for _engine, _query, found, _error in searches for hit in found]
         failed = sorted({engine for engine, _q, found, error in searches if error and not found})
         engines_used = sorted({engine for engine, _q, found, _e in searches if found})

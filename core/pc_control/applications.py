@@ -34,7 +34,7 @@ import re
 import time
 import unicodedata
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from core.pc_control import winapi
 from core.pc_control.results import MAX_APP_CANDIDATES, PCControlError
@@ -166,6 +166,22 @@ _NOT_AN_APPLICATION_EXACT = frozenset({
     "cscript", "powershell", "pwsh", "bash", "sh", "wsl", "wt",
     "pip", "python", "pythonw", "idle", "winget", "table30", "dfshim",
     "cmmgr32", "fsquirt", "wabmig", "wab", "licensemanagershellext",
+})
+
+
+def _is_command_interpreter(executable: str | None) -> bool:
+    """Whether a resolved executable is a command line or script host."""
+    if not executable:
+        return False
+    # PureWindowsPath: a Windows path read the Windows way on any OS.
+    stem = PureWindowsPath(str(executable)).stem.casefold()
+    return stem in _COMMAND_INTERPRETERS
+
+
+#: What a shortcut may never start, whatever it is called in the Start Menu.
+_COMMAND_INTERPRETERS = frozenset({
+    "cmd", "powershell", "powershell_ise", "pwsh", "bash", "sh", "wsl", "wt",
+    "wscript", "cscript", "mshta", "rundll32", "regedit",
 })
 
 
@@ -483,6 +499,13 @@ def launch(entry: AppEntry) -> dict:
             raise PCControlError("not_found",
                                  f"O atalho de '{entry.name}' já não existe.")
         executable = executable or winapi.resolve_shortcut(entry.launch_target)
+    if _is_command_interpreter(executable):
+        # The Start Menu carries "Windows PowerShell", "Command Prompt" and
+        # the PowerShell ISE as ordinary shortcuts, so the name filter on the
+        # catalogue never sees them. What the shortcut RUNS is what counts.
+        raise PCControlError(
+            "interpreter_refused",
+            f"'{entry.name}' é uma linha de comandos. O Nano não abre linhas de comandos.")
 
     before = running_process_names()
     try:

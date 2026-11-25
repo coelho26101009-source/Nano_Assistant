@@ -3302,7 +3302,10 @@ def set_elevenlabs_api_key(api_key: str) -> dict:
     key = _clean_voice_key(api_key)
     if key is None:
         return {"ok": False, "error": "invalid_key", "detail": tr("A chave não parece válida.")}
-    previous = secret_store.get_secret(_ELEVENLABS_SECRET)
+    # Only the stored key: putting back the ENVIRONMENT's key after a refusal
+    # would copy it into the encrypted store, where removing the variable no
+    # longer removes it.
+    previous = secret_store.get_stored_secret(_ELEVENLABS_SECRET)
     if not secret_store.set_secret(_ELEVENLABS_SECRET, key):
         return {"ok": False, "error": "store_failed", "detail": tr("Não consegui guardar a chave.")}
     engine = voice.tts_provider.chain.engines["elevenlabs"]

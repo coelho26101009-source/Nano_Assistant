@@ -20,6 +20,53 @@ versioning policy.
 
 ## [Unreleased]
 
+### Fixed — total review (2026-11-25)
+- **Notices**: a bare "sim" no longer answers an offer from an older
+  conversation; held notices respect "Não me avises disto" and the level
+  chosen after they were held; the hourly limit holds notices instead of
+  dropping them; an offer is never folded into a summary where its button and
+  "sim" would not work; "uma hora e meia" is understood as a silence; the
+  break reminder restarts after a real pause; "battery charged" only after
+  charging was seen.
+- **Plans and routines**: one approval covers one step (with its exact
+  arguments), not every later call of the same tool; a step that failed is
+  not reported as done; saving a routine again keeps its time, days, window
+  and phrases; a routine name can no longer shadow another routine's phrase;
+  "parado" and "não feito" are shown for stopped and skipped steps.
+- **Voice**: a sentence being made when you press stop is no longer played
+  afterwards, and its audio file is deleted; the "Fontes" list is never read
+  out loud.
+- **Memory M3**: an edited or forgotten recap is not overwritten by a
+  background refresh; "forget all" also covers conversations that had no
+  recap yet; the history tool skips forgotten conversations.
+- **Phone**: a photo taken "only on this PC" is described only by the local
+  model; a message that failed to send keeps its text and photo for "tentar
+  outra vez"; an old relay connection closing late no longer fails the new
+  one's requests.
+- **Away-from-home relay**: the path is read one exact way; phones always
+  reach the newest PC connection; the PC backs off instead of reconnecting in
+  a loop when another copy of NANO takes over.
+- **Research**: a slow search engine no longer holds the whole research;
+  pages on CGNAT/Tailscale addresses (100.64.0.0/10) are refused like other
+  private addresses.
+- **Updates**: a failed install is reported once, not at every start.
+- **Security**: network and device paths (`\\host\share`, `\\?\`, in any mix of
+  `/` and `\`, also inside `%VAR%`) are refused before Windows touches them;
+  writing or deleting a protected file (keys, NANO's databases, the
+  permission store) is blocked instead of asked; a full path in `file_path`
+  goes through the central checks; `~/` means your home folder; more file
+  types that run or install on open are refused (`.ahk`, `.au3`, `.msu`,
+  `.appinstaller`, `.ppkg`, `.theme`, `.search-ms`, disk images); the
+  emergency stop wins over a "yes" given after it; a blocked action is never
+  asked; full supervision asks before anything that changes the PC; "*" is
+  not accepted as the target of a destructive action; a tool that timed out
+  while waiting never runs later; Start Menu shortcuts to PowerShell, the
+  PowerShell ISE or the Command Prompt are not opened; an unreadable key
+  store is kept aside instead of being overwritten with one key; the plugin
+  viewer only reads plugins; the audit log is bounded.
+- **"Esquece que…"** and **"limpa a cache do Windows"** now ask for approval;
+  before, the policy blocked them every time.
+
 ### Added — NANO speaks first, without being annoying (2026-11-24)
 - **The anti-annoyance filter** (`core/notice_gate.py`). Everything NANO says by
   itself passes one gate: a level (Desligado / Essencial / Equilibrado / Tudo),

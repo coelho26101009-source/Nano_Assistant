@@ -441,11 +441,14 @@ def test_break_nudge_after_two_hours_of_use(tmp_path):
     engine, _e, _r, _s, mono = make_engine(tmp_path, clock, settings={"proactive_breaks": True,
                                                                        "proactive_bedtime": False})
     assert engine.tick() == []
-    mono[0] = 2 * 3600 + 5
-    out = engine.tick()
+    out = []
+    while mono[0] < 2 * 3600 + 5 and not out:     # in use: a look every 30 s
+        mono[0] += suggestions.TICK_SECONDS
+        out = engine.tick()
     assert out and out[0]["kind"] == "break"
-    mono[0] += 600
-    assert engine.tick() == []
+    for _ in range(20):
+        mono[0] += suggestions.TICK_SECONDS
+        assert engine.tick() == []
 
 
 # ── the chat: silence commands and "sim" to an offer ──────────────────────

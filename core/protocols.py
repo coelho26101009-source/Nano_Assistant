@@ -179,7 +179,10 @@ def _app(args: dict, key: str) -> str:
 def _window_query(args: dict) -> str:
     # A window_id from pc_window_list is only valid until that window closes,
     # so a saved routine names the window by its app or title instead.
-    return _text(args, "query", 60) or _text(args, "app", 60)
+    query = _text(args, "query", 60, required=False) or _text(args, "app", 60, required=False)
+    if not query:
+        raise ProtocolError(tr("Falta '{key}' num passo da rotina.", key="query"))
+    return query
 
 
 def _a_launch(args):
@@ -539,9 +542,11 @@ class ProtocolStore:
         with self._lock:
             protocol = validate(raw)
             items = self._read()
+            # A protocol's NAME starts it too (match), so names and phrases
+            # share one space: two protocols never answer the same words.
             taken = {normalise_phrase(ph): p["name"] for p in items if p["id"] != protocol["id"]
-                     for ph in p["phrases"]}
-            for phrase in protocol["phrases"]:
+                     for ph in [*p["phrases"], p["name"]]}
+            for phrase in [*protocol["phrases"], protocol["name"]]:
                 owner = taken.get(normalise_phrase(phrase))
                 if owner:
                     raise ProtocolError(tr("A frase “{phrase}” já ativa o protocolo “{name}”.",

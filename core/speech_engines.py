@@ -273,6 +273,9 @@ class EdgeEngine(Engine):
         except asyncio.TimeoutError as exc:
             _discard(path)
             raise SynthesisError("edge-tts timed out", reason="timeout") from exc
+        except asyncio.CancelledError:
+            _discard(path)
+            raise
         except Exception as exc:
             _discard(path)
             raise SynthesisError(f"edge-tts failed: {type(exc).__name__}", reason="network") from exc

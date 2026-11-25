@@ -79,7 +79,7 @@ def test_showing_a_plan_is_autonomous_in_the_policy():
 @pytest.mark.asyncio
 async def test_an_approved_plan_is_asked_once_and_its_steps_are_not_asked_again():
     brain, seen, executor = _brain(approve=True)
-    brain._turn_plan_tools = set()
+    brain._turn_plan_tools = []
     result = await brain._run_tool(_call("task_plan", PLAN))
     assert result["success"] and len(seen) == 1 and "1. Procurar a apresentação" in seen[0]
     # calendar_add_event normally asks "Vou criar um evento... Confirmas?"
@@ -102,7 +102,7 @@ async def test_a_declined_plan_runs_nothing():
     result = await brain._run_tool(_call("task_plan", PLAN))
     assert result.get("cancelled") is True
     executor.execute_tool_async.assert_not_awaited()
-    assert brain._turn_plan_tools == set()
+    assert brain._turn_plan_tools == []
 
 
 @pytest.mark.asyncio

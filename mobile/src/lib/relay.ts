@@ -86,11 +86,16 @@ export class RelayChannel {
       socket.onerror = () => { /* onclose follows */ };
       socket.onclose = () => {
         clearTimeout(timer);
-        if (this.socket === socket) this.socket = null;
-        this.stopKeepalive();
         // A relay that refuses the room (the PC is not there) closes before
         // opening: the same answer as a PC that cannot be reached.
         reject(new HttpError(0, "unreachable"));
+        // Only the socket in use takes the requests down with it. An older
+        // one, closed by close() and only now finishing its goodbye, used to
+        // fail the NEXT socket's requests (unpair away from home never
+        // reached the PC) and stop its keep-alive.
+        if (this.socket !== socket) return;
+        this.socket = null;
+        this.stopKeepalive();
         this.failAll();
       };
     }).finally(() => { this.opening = null; });

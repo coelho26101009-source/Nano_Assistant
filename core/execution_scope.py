@@ -54,7 +54,11 @@ _PROTECTED_NAMES = frozenset({
 
 _PROTECTED_SUFFIXES = (".pem", ".key", ".pfx", ".p12", ".db", ".sqlite3")
 
-_PROTECTED_DIR_PARTS = frozenset({".git", ".ssh", ".aws", ".gnupg", ".config/gcloud"})
+_PROTECTED_DIR_PARTS = frozenset({".git", ".ssh", ".aws", ".gnupg"})
+
+# Pairs of path parts that are only sensitive together (a part never holds a
+# separator, so ".config/gcloud" could never match as one part).
+_PROTECTED_DIR_PAIRS = frozenset({(".config", "gcloud")})
 
 # Directory NAMES that are sensitive wherever they appear in a path.
 _PROTECTED_DIRECTORY_NAMES = frozenset({
@@ -118,7 +122,9 @@ def is_protected_location(resolved: Path) -> bool:
         return True
 
     try:
-        home = Path.home()
+        # Resolved, like the path it is compared with: a profile reached
+        # through a junction or an 8.3 short name must still match.
+        home = Path.home().resolve()
     except (OSError, RuntimeError):
         return False
     for subtree in _PROTECTED_PROFILE_SUBTREES:
@@ -189,8 +195,10 @@ def _is_protected(resolved: Path) -> bool:
         return True
     if any(name.endswith(suffix) for suffix in _PROTECTED_SUFFIXES):
         return True
-    lowered_parts = {part.lower() for part in resolved.parts}
-    if lowered_parts & _PROTECTED_DIR_PARTS:
+    parts = [part.lower() for part in resolved.parts]
+    if set(parts) & _PROTECTED_DIR_PARTS:
+        return True
+    if set(zip(parts, parts[1:])) & _PROTECTED_DIR_PAIRS:
         return True
     return is_protected_location(resolved)
 
@@ -225,6 +233,23 @@ def classify_path(resolved: Path) -> Scope:
     return Scope.SYSTEM
 
 
+def network_or_device_path(raw: str | os.PathLike | None) -> str | None:
+    """Return "device" for \\\\?\\ and \\\\.\\ paths, "unc" for network shares, else None.
+
+    Windows accepts both separators and any mix of them, so "\\/host/share"
+    and "/\\?\\C:\\" are the same as their all-backslash forms. Touching a
+    network path makes Windows connect to that host and offer the user's
+    login (NTLM), so a path the model wrote must never reach one. Pure text
+    work: it never touches the disk, and it answers the same on every OS.
+    """
+    text = str(raw or "").strip().replace("/", "\\")
+    if not text.startswith("\\\\"):
+        return None
+    if text.startswith(("\\\\?\\", "\\\\.\\")) or text in ("\\\\?", "\\\\."):
+        return "device"
+    return "unc"
+
+
 def _reject_dangerous_syntax(raw: str) -> None:
     if "\x00" in raw:
         raise PathValidationError("path_null_byte")
@@ -238,9 +263,10 @@ def _reject_dangerous_syntax(raw: str) -> None:
 
     if sys.platform == "win32":
         # Device paths and UNC shares bypass normal drive semantics entirely.
-        if raw.startswith(("\\\\?\\", "\\\\.\\", "//?/", "//./")):
+        kind = network_or_device_path(raw)
+        if kind == "device":
             raise PathValidationError("device_path_blocked")
-        if raw.startswith(("\\\\", "//")) and not raw.startswith(("///", "\\\\\\")):
+        if kind == "unc":
             raise PathValidationError("unc_path_blocked")
         stem = Path(normalized).name.split(".")[0].lower()
         if stem in _WINDOWS_RESERVED:
@@ -268,13 +294,18 @@ def resolve_target(
 
     _reject_dangerous_syntax(raw)
 
-    candidate = Path(raw)
+    # "~" first: joined to the workspace first, "~/Documentos" would name a
+    # folder called "~" inside it instead of the user's own Documentos.
+    try:
+        candidate = Path(raw).expanduser()
+    except RuntimeError as exc:
+        raise PathValidationError("path_unresolvable", str(exc)) from exc
     root = Path(base).expanduser() if base is not None else workspace_root()
     if not candidate.is_absolute():
         candidate = root / candidate
 
     try:
-        resolved = candidate.expanduser().resolve()
+        resolved = candidate.resolve()
     except (OSError, RuntimeError) as exc:
         raise PathValidationError("path_unresolvable", str(exc)) from exc
 

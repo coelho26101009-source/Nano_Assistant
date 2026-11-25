@@ -128,7 +128,8 @@ class CameraBroker:
             return {"ok": False, "error": "declined"}
         data, mime = pending.data, pending.mime
         pending.data = ""
-        return {"ok": True, "data": data, "mime": mime}
+        # What the card promised: "seen on your PC" binds where it is looked at.
+        return {"ok": True, "data": data, "mime": mime, "local": bool(where.get("local"))}
 
     def respond(self, request_id: str, *, declined: bool, data: Any = "", mime: Any = "") -> dict:
         """The phone's answer: a photo, or no. Only for the request still open."""
@@ -208,8 +209,13 @@ def look(question: str, broker: CameraBroker | None = None) -> dict:
         }
         return {"ok": False, "success": False, "status": error, "error": error,
                 "message": messages.get(error, "Não foi possível ver pela câmara.")}
+    # The phone's card said where the photo would be seen. When it said "no
+    # teu PC", only the local model may look: if it fails, the answer is that
+    # it failed, never a quiet upload to a cloud model the person was not told
+    # about.
     result = vision.describe(shot.pop("data"), shot.get("mime") or "image/jpeg",
-                             question=question or None, prefer_local=True)
+                             question=question or None, prefer_local=True,
+                             local_only=bool(shot.get("local")))
     if not result.get("ok"):
         return {"ok": False, "success": False,
                 "status": "unavailable" if result.get("error") == "no_vision_model" else "failed",

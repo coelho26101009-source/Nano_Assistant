@@ -168,7 +168,10 @@ export type NoticeInfo = { id: string; kind: string; offer?: string; mutable?: b
 export type NoticeAction = "accept" | "dismiss" | "mute";
 
 /** The buttons under a notice. Null where there are none (the voice overlay). */
-const NoticeContext = React.createContext<((notice: NoticeInfo, action: NoticeAction) => void) | null>(null);
+/** Answers a notice's button. Resolves false when nothing happened (NANO was
+ *  still answering), so the button comes back instead of staying pressed. */
+type NoticeHandler = (notice: NoticeInfo, action: NoticeAction) => Promise<boolean | void> | void;
+const NoticeContext = React.createContext<NoticeHandler | null>(null);
 
 /**
  * "Sim" / "Agora não" under an offer, and "Não me avises disto" under any
@@ -178,7 +181,12 @@ function NoticeActions({ notice }: { notice: NoticeInfo }) {
   const onAction = React.useContext(NoticeContext);
   const [done, setDone] = useState<NoticeAction | null>(null);
   if (!onAction || (!notice.offer && !notice.mutable)) return null;
-  const press = (action: NoticeAction) => { setDone(action); onAction(notice, action); };
+  const press = (action: NoticeAction) => {
+    setDone(action);
+    void Promise.resolve(onAction(notice, action)).then((handled) => {
+      if (handled === false) setDone(null);
+    }).catch(() => setDone(null));
+  };
   return (
     <div className="msg__choices notice-actions" role="group" aria-label={t("Responder ao aviso")}>
       {notice.offer ? (
@@ -696,6 +704,17 @@ const RecallContext = React.createContext<((id: string) => void) | null>(null);
 
 /** Titles already looked up, shared by every chip in the window. */
 const recallTitles = new Map<string, string | null>();
+/** Bumped when a conversation is renamed or deleted: every chip asks again
+ *  (and keeps showing what it had until the answer comes). */
+let recallGeneration = 0;
+const recallFetched = new Map<string, number>();
+const recallListeners = new Set<() => void>();
+
+/** Conversations were renamed or deleted: the "Lembrei-me de" chips refresh. */
+export function refreshRecallTitles() {
+  recallGeneration += 1;
+  recallListeners.forEach((listener) => listener());
+}
 
 /** "Fui buscar a: «PC novo» · 12/11" — where an answer's memory came from.
  *
@@ -707,17 +726,29 @@ function RecallChips({ recalled }: { recalled: NonNullable<ResponseMeta["recalle
   const open = React.useContext(RecallContext);
   const ids = recalled.map((item) => item.conversationId);
   const [, setVersion] = useState(0);
+  const [generation, setGeneration] = useState(recallGeneration);
   useEffect(() => {
-    const missing = ids.filter((id) => !recallTitles.has(id));
+    const listener = () => setGeneration(recallGeneration);
+    recallListeners.add(listener);
+    return () => { recallListeners.delete(listener); };
+  }, []);
+  useEffect(() => {
+    const missing = ids.filter((id) => recallFetched.get(id) !== recallGeneration);
     if (!missing.length) return;
     let alive = true;
-    call<{ titles?: Record<string, string> }>("conversation_titles", missing).then((result) => {
-      for (const id of missing) recallTitles.set(id, result?.titles?.[id] ?? null);
+    const asked = recallGeneration;
+    call<{ ok?: boolean; titles?: Record<string, string> }>("conversation_titles", missing).then((result) => {
+      // A failed lookup is not remembered as "deleted": the next render asks again.
+      if (!result || result.ok === false || typeof result.titles !== "object" || result.titles === null) return;
+      for (const id of missing) {
+        recallTitles.set(id, result.titles[id] ?? null);
+        recallFetched.set(id, asked);
+      }
       if (alive) setVersion((value) => value + 1);
     });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ids.join("|")]);
+  }, [ids.join("|"), generation]);
   const shown = recalled.filter((item) => recallTitles.get(item.conversationId));
   if (!shown.length) return null;
   return (
@@ -981,7 +1012,7 @@ export function Conversation({
 }: {
   messages: Message[];
   /** A button under something NANO said by itself. */
-  onNotice?: (notice: NoticeInfo, action: NoticeAction) => void;
+  onNotice?: NoticeHandler;
   /** Open an older conversation from a "Lembrei-me de" chip (Memory M3). */
   onOpenConversation?: (id: string) => void;
   /** Read an answer aloud; null when NANO's voice can't speak. */

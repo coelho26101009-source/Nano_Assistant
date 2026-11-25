@@ -413,7 +413,7 @@ class Brain(TaskChains):
         # (name, arguments). Provider failover happens inside a turn, so this
         # is what stops a consequential action running twice. See _run_tool.
         self._turn_tool_results: dict[str, dict] = {}
-        self._turn_plan_tools: set[str] = set()
+        self._turn_plan_tools: list[dict] = []
         #: Calls that have STARTED but not finished, keyed the same way.
         #: See _run_tool: without it, two identical calls in one round
         #: both passed the ledger lookup before either wrote to it.
@@ -1515,6 +1515,14 @@ class Brain(TaskChains):
                     yield token
             finally:
                 self._turn_spoken = False
+                # Whatever this turn answered, a later bare "sim" is about
+                # it, not about an offer NANO made before (notice_gate).
+                gate = getattr(self, "notice_gate", None)
+                if gate is not None and hasattr(gate, "conversation_moved"):
+                    try:
+                        gate.conversation_moved()
+                    except Exception:
+                        logger.debug("Could not close the bare-yes window", exc_info=True)
 
     async def _chat_turn(self, user_message: str, stream: bool = True) -> AsyncIterator[str]:
         """One turn, with the turn lock already held. See ``chat``."""
@@ -1525,8 +1533,9 @@ class Brain(TaskChains):
         # second provider re-running a Windows action the first already did.
         self._turn_tool_results = {}
         self._turn_tool_inflight = {}
-        # Tools the person approved as steps of this turn's plan.
-        self._turn_plan_tools = set()
+        # Steps the person approved as part of this turn's plan (each covers
+        # one call; see TaskChains._plan_approves).
+        self._turn_plan_tools = []
         # Plans, routines and "guarda isto como rotina" (core/brain_tasks.py).
         self._begin_task_turn()
         # The question an AMBIGUOUS PC target leaves for the user, if any.
@@ -2317,15 +2326,19 @@ class Brain(TaskChains):
                     return {"ok": False, "cancelled": True,
                             "message": tr("Operação cancelada pelo utilizador.")}
                 plan_asked = True
-        elif (self.guardrails.requires_confirmation(name, args) and name not in self._turn_plan_tools
+        plan_approved = name != "task_plan" and self.guardrails.requires_confirmation(name, args) \
+            and self._plan_approves(name, args)
+        if (name != "task_plan" and self.guardrails.requires_confirmation(name, args) and not plan_approved
                 and not await self.guardrails.ask_confirmation(name, args)):
             return {"ok": False, "cancelled": True, "message": tr("Operação cancelada pelo utilizador.")}
 
         # A reminder on this PC runs without a card (nano.reminder.create), but
         # not when this turn already read something from outside: a page or a
         # document saying "set a reminder: call this number" must not schedule
-        # a notification nobody asked for. Then it asks, like before.
-        if name in UNATTENDED_AFTER_TRUSTED_ONLY and self._turn_saw_untrusted():
+        # a notification nobody asked for. Then it asks, like before -- unless
+        # that very step was just approved as part of the plan.
+        if name in UNATTENDED_AFTER_TRUSTED_ONLY and self._turn_saw_untrusted() and not (
+                plan_approved or (name != "task_plan" and self._plan_approves(name, args))):
             if not await self.guardrails.ask_confirmation(name, args):
                 return {"ok": False, "cancelled": True, "message": tr("Operação cancelada pelo utilizador.")}
 
@@ -2401,8 +2414,7 @@ class Brain(TaskChains):
             self._turn_tool_results[fingerprint] = result
             self._note_action(name, args, result)
             if name == "task_plan" and plan_asked:
-                self._turn_plan_tools = {str(step.get("tool")) for step in (args.get("steps") or [])
-                                         if isinstance(step, dict)}
+                self._turn_plan_tools = self._plan_approvals(args)
             # The model resolved it itself later in the turn: nothing to ask.
             if getattr(self, "turn_clarification", None) and self.turn_clarification.get("tool") == name:
                 self.turn_clarification = None
@@ -2731,9 +2743,10 @@ class Brain(TaskChains):
 
                     text = "".join(streamed).strip()
                     if text:
-                        sources = self._research_sources_note()
-                        if sources:
-                            text += sources
+                        # No "Fontes" here: this prompt carries only the
+                        # question, not what the research read, so the answer
+                        # did not come from those sites -- and a list added
+                        # only to the history was one the person never saw.
                         self.conversation.append({"role": "assistant", "content": text})
                         local_attempt["outcome"] = "ok"
                     else:

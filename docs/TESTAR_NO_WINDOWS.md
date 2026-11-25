@@ -204,6 +204,13 @@ Precisa de um modelo com ferramentas (Groq/Gemini/Mistral, ou o local).
 - [ ] 87. Depois da meia-noite, ainda ao PC: aparece "Já é tarde" (sem som e sem voz), com o que tens de manhã se houver algo na agenda antes das 11h.
 - [ ] 88. **Definições → Geral → Não incomodar → Últimos avisos**: vês o que o NANO mostrou, guardou para depois ou não mostrou, e porquê.
 
+### Revisão total: segurança e pequenos erros (2026-11-25)
+- [ ] 89. Escreve `abre a pasta \\192.168.1.1\partilha`. O NANO responde que só mexe em pastas deste PC, **sem** o Windows tentar ligar-se a esse endereço (não aparece janela de rede nem pedido de palavra-passe).
+- [ ] 90. Escreve `abre o Windows PowerShell` e depois `abre o Windows PowerShell ISE`. O NANO recusa os dois: "é uma linha de comandos".
+- [ ] 91. Escreve `esquece que a minha cor favorita é azul` (depois de lhe teres dito isso). Aparece o pedido de autorização; ao aceitar, o facto desaparece de **Memória**. Antes era sempre bloqueado.
+- [ ] 92. Pede um plano que feche duas janelas da mesma app (ex.: `fecha o Bloco de notas "a" e o Bloco de notas "b"`). Aceitar o plano conta para esses dois fechos, não para outros que o NANO tente a seguir.
+- [ ] 93. Pede uma resposta em voz alta comprida e carrega em **parar** logo na primeira frase. Não se ouve mais nenhuma frase depois de parar.
+
 ---
 
 ## O que já sabemos que ainda não está perfeito

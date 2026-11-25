@@ -303,6 +303,11 @@ test('a failed update is reported, retried, then left for the person', async () 
   assert.strictEqual(automatic.error, 'install_failed');
   const manual = await after.updater.check({ manual: true });
   assert.strictEqual(manual.status, 'ready', 'the person can still ask for it');
+  // The failure is told once: the next start keeps counting it, quietly.
+  const later = makeUpdater({ dataDir });
+  later.updater.readInstallOutcome();
+  assert.strictEqual(later.updater.publicState().lastResult.reported, true);
+  assert.strictEqual(later.updater.publicState().lastResult.attempts, MAX_INSTALL_ATTEMPTS);
 });
 
 test('a network failure is an error state, never an exception', async () => {

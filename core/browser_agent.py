@@ -43,6 +43,11 @@ def validate_public_http_url(url: str) -> tuple[bool, str]:
             ip = ipaddress.ip_address(resolved)
         except ValueError:
             return False, "invalid_ip"
+        if ip.version == 6 and ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped           # ::ffff:127.0.0.1 is 127.0.0.1
+        # ``is_global`` also refuses what ``is_private`` lets through: the
+        # 100.64.0.0/10 shared range, where Tailscale puts the person's own
+        # devices (and 100.100.100.100, its DNS).
         if (
             ip.is_loopback
             or ip.is_private
@@ -50,6 +55,7 @@ def validate_public_http_url(url: str) -> tuple[bool, str]:
             or ip.is_reserved
             or ip.is_multicast
             or ip.is_unspecified
+            or not ip.is_global
         ):
             return False, "private_or_reserved_destination"
     return True, ""

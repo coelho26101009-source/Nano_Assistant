@@ -193,8 +193,12 @@ def describe(capability: str, args: dict | None = None, *,
     renders it; nothing here decides anything.
     """
     args = dict(args or {})
-    resolved_target = target or args.get("_pc_target") or args.get("target") \
-        or args.get("path") or args.get("url") or args.get("command")
+    # What the call really acts on comes first, the same order the grant binds
+    # to (PermissionManager._resolve_target). A free-form ``target`` the model
+    # wrote is only a label: shown first, it let a card read "old-installer.tmp"
+    # while ``path`` deleted the Taxes folder.
+    resolved_target = target or args.get("_pc_target") or args.get("path") \
+        or args.get("url") or args.get("command") or args.get("target")
 
     return {
         "capability": capability,

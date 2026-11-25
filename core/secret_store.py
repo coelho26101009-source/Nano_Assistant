@@ -18,6 +18,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from typing import Any
 
 from core.app_paths import DATA_DIR
@@ -102,33 +103,72 @@ def _dpapi(encrypt: bool, payload: bytes) -> bytes | None:
 # Store
 # --------------------------------------------------------------------------
 
-def _read_store() -> dict[str, str]:
+class _StoreBusy(Exception):
+    """The file is there but could not be read right now (locked, no access)."""
+
+
+class _StoreUnreadable(Exception):
+    """The file was read but is not a store this PC can open."""
+
+
+def _load_store() -> dict[str, str]:
+    """The stored secrets, or an exception saying why there are none to show."""
     if not _STORE_PATH.exists():
         return {}
     try:
         raw = _STORE_PATH.read_bytes()
-    except OSError:
-        return {}
+    except OSError as exc:
+        raise _StoreBusy(str(exc)) from exc
     if not raw:
         return {}
 
     decrypted = _dpapi(False, raw)
     if decrypted is None:
         if _dpapi_available():
-            logger.warning("Windows secret store could not be decrypted; re-enter credentials in Settings.")
-            return {}
+            raise _StoreUnreadable("dpapi")
         # The documented non-Windows fallback. Windows never treats plaintext
         # as an encrypted credential store, including old failed-DPAPI writes.
         decrypted = raw
     try:
         data = json.loads(decrypted.decode("utf-8"))
-        return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
-    except Exception:
-        logger.warning("Secret store unreadable; ignoring it.")
+    except Exception as exc:
+        raise _StoreUnreadable("json") from exc
+    if not isinstance(data, dict):
+        raise _StoreUnreadable("shape")
+    return {str(k): str(v) for k, v in data.items()}
+
+
+def _read_store() -> dict[str, str]:
+    try:
+        return _load_store()
+    except _StoreBusy:
+        return {}
+    except _StoreUnreadable:
+        logger.warning("Secret store could not be opened; re-enter credentials in Settings.")
         return {}
 
 
-def _write_store(values: dict[str, str]) -> bool:
+_UNREADABLE = object()
+
+
+def _read_for_update() -> dict[str, str] | object | None:
+    """What a change starts from: the keys, `_UNREADABLE`, or None (do not write).
+
+    Reading "nothing" and then writing one key would replace EVERY stored key
+    with that one. So a store that is only busy is left alone (the change
+    fails and can be retried), and a store that can never be opened again is
+    kept aside by `_write_store` -- only once the new one is sure to be written.
+    """
+    try:
+        return _load_store()
+    except _StoreBusy:
+        logger.error("Secret store is busy; change not saved.")
+        return None
+    except _StoreUnreadable:
+        return _UNREADABLE
+
+
+def _write_store(values: dict[str, str], *, keep_old: bool = False) -> bool:
     payload = json.dumps(values, ensure_ascii=False).encode("utf-8")
     encrypted = _dpapi(True, payload)
     if encrypted is None and _dpapi_available():
@@ -137,6 +177,16 @@ def _write_store(values: dict[str, str]) -> bool:
         logger.error("Could not protect credentials with Windows DPAPI; store unchanged.")
         return False
     blob = encrypted if encrypted is not None else payload
+
+    if keep_old and _STORE_PATH.exists():
+        backup = _STORE_PATH.with_name(f"{_STORE_PATH.name}.unreadable-{int(time.time())}")
+        try:
+            backup.write_bytes(_STORE_PATH.read_bytes())
+        except OSError:
+            logger.error("Secret store could not be opened or kept aside; change not saved.")
+            return False
+        logger.warning("Secret store could not be opened; kept as %s, starting a new one.",
+                       backup.name)
 
     try:
         write_bytes(_STORE_PATH, blob)
@@ -168,23 +218,38 @@ def get_secret(name: str) -> str:
 
 
 def set_secret(name: str, value: str) -> bool:
+    cleaned = (value or "").strip()
+    register_secret(cleaned)
+    if not cleaned:
+        return delete_secret(name)
     with _LOCK:
-        values = _read_store()
-        cleaned = (value or "").strip()
-        register_secret(cleaned)
-        if not cleaned:
-            return delete_secret(name)
+        values = _read_for_update()
+        if values is None:
+            return False
+        unreadable = values is _UNREADABLE
+        values = {} if unreadable else dict(values)
         values[name] = cleaned
-        return _write_store(values)
+        return _write_store(values, keep_old=unreadable)
 
 
 def delete_secret(name: str) -> bool:
     with _LOCK:
-        values = _read_store()
+        values = _read_for_update()
+        if values is None:
+            return False
+        if values is _UNREADABLE:
+            # Nothing readable to delete from; the store is left as it is.
+            return True
         if name not in values:
             return True
         del values[name]
         return _write_store(values)
+
+
+def get_stored_secret(name: str) -> str:
+    """Only what the encrypted store holds -- never the environment fallback.
+    For putting a value back exactly as it was."""
+    return _read_store().get(name) or ""
 
 
 def has_secret(name: str) -> bool:

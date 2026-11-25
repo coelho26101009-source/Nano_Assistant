@@ -387,7 +387,7 @@ def make_brain(executor=None, approve=True):
     brain = Brain("", guard, MemoryEngine(), {"ollama_enabled": False}, tool_executor=executor)
     brain._sync_plugin_tools = lambda _name: None
     brain._begin_task_turn()
-    brain._turn_tool_results, brain._turn_tool_inflight, brain._turn_plan_tools = {}, {}, set()
+    brain._turn_tool_results, brain._turn_tool_inflight, brain._turn_plan_tools = {}, {}, []
     return brain, executor, asked
 
 

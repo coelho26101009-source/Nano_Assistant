@@ -69,6 +69,9 @@ export function useChat(link: NanoLink, hooks: ChatHooks) {
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const hooksRef = useRef(hooks);
+  /** What an unsent message really was (its text and photo), by its bubble id:
+   *  the bubble shows "📷 …", and a retry must send the photo again too. */
+  const unsentRef = useRef(new Map<string, { text: string; photo?: Photo | null }>());
   hooksRef.current = hooks;
 
   const showHistory = useCallback((rows: HistoryRow[], active: string | null) => {
@@ -223,6 +226,7 @@ export function useChat(link: NanoLink, hooks: ChatHooks) {
       // The PC got it on another address; the answer arrives on the feed.
       if (code === "already_sent") return true;
       setBusy(false);
+      unsentRef.current.set(userId(msgId), { text: clean, photo });
       setMessages((prev) => prev.map((m) => m.id === msgId ? {
         ...m, streaming: false, error: true,
         content: code === "unreachable" ? t("Não consegui chegar ao teu PC. A mensagem não foi enviada.")
@@ -237,10 +241,12 @@ export function useChat(link: NanoLink, hooks: ChatHooks) {
     const index = messages.map((m) => m.role).lastIndexOf("user");
     if (index < 0) return;
     if (messages[index].unsent) {
-      // Nothing of it is stored on the PC: send it as a new message.
-      const text = messages[index].content;
+      // Nothing of it is stored on the PC: send it as a new message, with
+      // its photo (the bubble's "📷 " was only how it was shown).
+      const original = unsentRef.current.get(messages[index].id);
+      unsentRef.current.delete(messages[index].id);
       setMessages(messages.slice(0, index));
-      await send(text);
+      await send(original?.text ?? messages[index].content, original?.photo ?? null);
       return;
     }
     const before = messages;

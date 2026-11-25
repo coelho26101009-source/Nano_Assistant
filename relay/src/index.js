@@ -37,18 +37,20 @@
  */
 import { DurableObject } from "cloudflare:workers";
 
-import { MAX_PHONES, ROOM_RE, TOKEN_RE, pcFrame, phoneFrame, plain, roomForToken } from "./protocol.js";
+import { MAX_PHONES, TOKEN_RE, currentPc, parsePath, pcFrame, phoneFrame, plain, roomForToken } from "./protocol.js";
+
+/** WebSocket.READY_STATE_OPEN */
+const OPEN = 1;
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const parts = url.pathname.split("/").filter(Boolean);
-    if (parts.length === 0) return plain(200, "NANO relay. It only passes sealed messages it cannot read.\n");
-    if (parts.length !== 3 || parts[0] !== "v1" || !["pc", "phone"].includes(parts[1])) {
-      return plain(404, "not_found");
+    if (url.pathname === "/" || url.pathname === "") {
+      return plain(200, "NANO relay. It only passes sealed messages it cannot read.\n");
     }
-    const [, role, room] = parts;
-    if (!ROOM_RE.test(room)) return plain(404, "not_found");
+    const target = parsePath(url.pathname);
+    if (!target) return plain(404, "not_found");
+    const { role, room } = target;
     if (request.method !== "GET" || (request.headers.get("Upgrade") || "").toLowerCase() !== "websocket") {
       return plain(426, "websocket_required");
     }
@@ -69,21 +71,32 @@ export class Room extends DurableObject {
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
   }
 
+  /** The PC socket phones' messages go to, or null. */
+  pcSocket() {
+    return currentPc(this.ctx.getWebSockets("pc").map((ws) => ({
+      ws, tags: this.ctx.getTags(ws), open: ws.readyState === OPEN,
+    })));
+  }
+
   async fetch(request) {
-    const role = new URL(request.url).pathname.split("/")[2];
-    const pc = this.ctx.getWebSockets("pc");
+    // Same parse as the Worker: anything else is refused here too.
+    const target = parsePath(new URL(request.url).pathname);
+    if (!target) return plain(404, "not_found");
+    const { role } = target;
     if (role === "phone") {
       // A phone only joins a room whose PC is here: unknown rooms stay empty.
-      if (pc.length === 0) return plain(503, "pc_offline");
-      if (this.ctx.getWebSockets("phone").length >= MAX_PHONES) return plain(429, "too_many_phones");
+      if (!this.pcSocket()) return plain(503, "pc_offline");
+      const phones = this.ctx.getWebSockets("phone").filter((ws) => ws.readyState === OPEN);
+      if (phones.length >= MAX_PHONES) return plain(429, "too_many_phones");
     }
     const [client, server] = Object.values(new WebSocketPair());
     if (role === "pc") {
       // One PC per room: a reconnecting PC replaces its own stale socket.
-      for (const old of pc) {
+      for (const old of this.ctx.getWebSockets("pc")) {
         try { old.close(4000, "replaced"); } catch { /* already gone */ }
       }
-      this.ctx.acceptWebSocket(server, ["pc"]);
+      // A generation number: phones' messages go to the newest PC socket.
+      this.ctx.acceptWebSocket(server, ["pc", `g:${Date.now()}`]);
     } else {
       const id = crypto.randomUUID().replace(/-/g, "");
       this.ctx.acceptWebSocket(server, ["phone", `c:${id}`]);
@@ -104,7 +117,7 @@ export class Room extends DurableObject {
     const conn = tags.find((tag) => tag.startsWith("c:"));
     const request = phoneFrame(message);
     if (!conn || !request) return;
-    const [pc] = this.ctx.getWebSockets("pc");
+    const pc = this.pcSocket();
     if (!pc) {
       try { ws.send(JSON.stringify({ q: request.q, s: 503, b: { error: "pc_offline" } })); } catch { /* gone */ }
       return;

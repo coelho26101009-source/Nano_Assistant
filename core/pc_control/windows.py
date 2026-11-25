@@ -367,6 +367,7 @@ _TERMINAL_PROCESSES = frozenset({
     "sh.exe", "mintty.exe", "wsl.exe", "wslhost.exe", "putty.exe",
     "python.exe", "pythonw.exe", "node.exe", "cmder.exe", "alacritty.exe",
     "wezterm-gui.exe", "hyper.exe", "conemu64.exe", "conemu.exe",
+    "powershell_ise.exe",
 })
 
 _TERMINAL_CLASSES = frozenset({

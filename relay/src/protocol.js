@@ -33,6 +33,42 @@ export async function roomForToken(token) {
   return b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", data)));
 }
 
+const PATH_RE = /^\/v1\/(pc|phone)\/([A-Za-z0-9_-]{43})$/;
+
+/**
+ * The role and room a request is for, or null. Exactly "/v1/pc/<room>" or
+ * "/v1/phone/<room>": the Worker and the room read the path with this ONE
+ * function. They used to parse it two ways, and "//v1/phone/<room>" passed the
+ * Worker as a phone but reached the room with no role, skipping both the
+ * "PC must be online" check and the phone limit.
+ */
+export function parsePath(pathname) {
+  const match = PATH_RE.exec(typeof pathname === "string" ? pathname : "");
+  return match ? { role: match[1], room: match[2] } : null;
+}
+
+/**
+ * The PC socket phones should reach: the newest one that is still open. A PC
+ * that reconnects after sleep replaces its old socket, but the old one can
+ * still be listed while its close handshake hangs; sending to it threw, and
+ * phones were told "pc_offline" while the PC was connected.
+ * `sockets` are [{ ws, tags, open }].
+ */
+export function currentPc(sockets) {
+  let best = null;
+  let bestGen = -1;
+  for (const item of sockets) {
+    if (!item.open) continue;
+    const tag = (item.tags || []).find((t) => t.startsWith("g:"));
+    const gen = tag ? Number(tag.slice(2)) : 0;
+    if (Number.isFinite(gen) && gen >= bestGen) {
+      best = item.ws;
+      bestGen = gen;
+    }
+  }
+  return best;
+}
+
 export function plain(status, text) {
   return new Response(text, {
     status,

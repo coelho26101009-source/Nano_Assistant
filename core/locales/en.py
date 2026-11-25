@@ -394,6 +394,8 @@ EN: dict[str, str] = {
     "Em {city} estão {temp} graus, máxima de {high}.": "It's {temp} degrees in {city}, with a high of {high}.",
     "Enquanto estavas fora: {titles}.": "While you were away: {titles}.",
     "Enquanto estavas ocupado:": "While you were busy:",
+    "Avisos que ficaram para depois:": "Notices that waited:",
+    "Avisos que ficaram para depois: {titles}.": "Notices that waited: {titles}.",
     "Enquanto estavas ocupado: {titles}.": "While you were busy: {titles}.",
     "Escolhe pelo menos um dia.": "Pick at least one day.",
     "Escolhe um dos teus protocolos.": "Pick one of your protocols.",

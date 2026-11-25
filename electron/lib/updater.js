@@ -428,8 +428,19 @@ class Updater {
       this.log(`Atualização para ${pending.version} concluída.`);
     } else {
       this.installAttempts = Number(pending.attempts) || 1;
-      this.set({ lastResult: { ok: false, version: pending.version, attempts: this.installAttempts } });
-      this.log(`A atualização para ${pending.version} não ficou instalada (tentativa ${this.installAttempts}).`);
+      // Said once per attempt: the file stays (it counts the attempts), so
+      // without this mark every later start showed "A atualização falhou"
+      // again, even after NANO stopped retrying that version.
+      const reported = pending.reported === true;
+      this.set({ lastResult: { ok: false, version: pending.version, attempts: this.installAttempts,
+        ...(reported ? { reported: true } : {}) } });
+      if (!reported) {
+        try {
+          this.fs.writeFileSync(path.join(this.dir, PENDING_FILE),
+            JSON.stringify({ ...pending, reported: true }), 'utf8');
+        } catch (_) { /* said again next time: harmless */ }
+        this.log(`A atualização para ${pending.version} não ficou instalada (tentativa ${this.installAttempts}).`);
+      }
     }
   }
 }

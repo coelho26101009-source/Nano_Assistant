@@ -359,7 +359,7 @@ def test_a_research_turn_ends_with_the_report_and_nanos_list_of_sources(monkeypa
             yield step["text"]
 
     monkeypatch.setattr(brain, "_cloud_round", fake_round)
-    brain._turn_tool_results, brain._turn_tool_inflight, brain._turn_plan_tools = {}, {}, set()
+    brain._turn_tool_results, brain._turn_tool_inflight, brain._turn_plan_tools = {}, {}, []
     brain.turn_clarification = None
     brain.last_metadata = {"provider_attempts": []}
 

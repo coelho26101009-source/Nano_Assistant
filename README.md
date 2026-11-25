@@ -649,16 +649,19 @@ aplicação real. Ver [`docs/RELEASING.md`](docs/RELEASING.md).
 - **Start with Windows** depende do fluxo de aplicação empacotada
 - a primeira execução apresenta um guia opcional; o chat exige pelo menos
   um provedor cloud configurado ou um modelo disponível no Ollama
-- não existe mecanismo de atualização
+- as atualizações automáticas só instalam versões assinadas; uma release
+  publicada sem a chave de assinatura não é oferecida
 - automação de browser existe mas depende do `playwright` opcional; não é
   instalada por omissão
-- não há clique por coordenadas nem OCR: o Nano não vê o ecrã, e não finge ver
+- não há clique por coordenadas: o Nano lê e descreve o ecrã só quando ligas
+  essa opção em Privacidade, e cada captura pede autorização
 - PC Control é deliberadamente estreito e não oferece shell arbitrária
 - o brilho por software depende do monitor (DDC/CI); onde não existe, é
   reportado como tal
 - o Second Brain está implementado e testado, mas na prática ainda é esparso
-- anexos ainda não existem
-- wake phrase permanece experimental e desativada por omissão
+- o "Ei Nano" vem desligado por omissão; liga-se em Definições → Voz
+- ainda não foi corrido num telemóvel Android real com dados móveis, nem num
+  Windows limpo de raiz
 - o fallback local é mais lento que a cloud (≈19 s por turno contra ≈0,45 s)
 - os provedores cloud continuam sujeitos aos respetivos rate limits
 - a validação numa máquina Windows limpa continua a ser trabalho em aberto
@@ -671,7 +674,7 @@ Sem ordem rígida, e sem prometer datas:
 
 - **Validação limpa** — instalação, configuração, uso e desinstalação fora da máquina de desenvolvimento
 - **Code signing** — a Beta não está assinada e pode mostrar um aviso SmartScreen
-- **Vision / OCR** — ler o ecrã, com controlos de privacidade próprios
+- **Modelo automático** — escolher sozinho o modelo e o provedor certos para cada pedido
 - **Coding / GitHub** — workflows de desenvolvimento assistido
 - **Produtividade** — calendário, email e integrações externas
 

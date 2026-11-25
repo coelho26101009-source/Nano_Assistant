@@ -215,7 +215,11 @@ class PcAlerts:
                  memory: Callable[[], dict | None] = read_memory,
                  top_app: Callable[[], tuple[str, float] | None] = top_memory_app,
                  uptime_days: Callable[[], float | None] = read_uptime_days,
-                 clock: Callable[[], float] = time.time) -> None:
+                 clock: Callable[[], float] = time.time,
+                 now: Callable[[], Any] | None = None) -> None:
+        from datetime import datetime as _datetime
+
+        self._now = now or _datetime.now
         self._emit = emit
         self._settings = settings
         self._battery = battery
@@ -229,6 +233,7 @@ class PcAlerts:
         self._memory_ticks = 0
         self._memory_said_at: float | None = None
         self._full_said = False
+        self._charging_seen = False
         self._uptime_said_at: float | None = None
         self._battery_level_said: int | None = None
         self._disk_said_at: float | None = None
@@ -288,10 +293,15 @@ class PcAlerts:
         if reading is None:
             return []
         if not reading["plugged"] or int(reading["percent"]) < 100:
+            # Seen charging (or unplugged): reaching 100% next is a new charge.
+            # A laptop that NANO first sees already full on the charger (docked
+            # all day) has not "just finished charging", so nothing is said.
+            self._charging_seen = True
             if not reading["plugged"]:
                 self._full_said = False     # next charge may say it again
             return []
-        if self._full_said:
+        if self._full_said or not self._charging_seen:
+            self._full_said = True
             return []
         self._full_said = True
         return [notice("battery_full", tr("Bateria carregada"),
@@ -331,9 +341,12 @@ class PcAlerts:
         if self._uptime_said_at is not None and now - self._uptime_said_at < UPTIME_REPEAT_SECONDS:
             return []
         self._uptime_said_at = now
-        from datetime import date, timedelta as _delta
+        from datetime import timedelta as _delta
 
-        booted = (date.today() - _delta(days=int(days))).isoformat()
+        # The day the PC started, from the exact uptime: whole days alone made
+        # the key name the next day whenever now's time of day was earlier
+        # than the boot's, so the same boot and week said it twice.
+        booted = (self._now() - _delta(days=float(days))).date().isoformat()
         return [notice("uptime", tr("Reiniciar o PC"),
                        tr("O PC está ligado há {days} dias sem reiniciar. Quando der jeito, um "
                           "reinício acaba as atualizações do Windows e liberta memória.",

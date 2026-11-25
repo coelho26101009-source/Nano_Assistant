@@ -190,9 +190,11 @@ class PolicyEngine:
         "routine_delete": "nano.routine.write",
         "cancel_reminder": "external.send",
         "organize_downloads": "filesystem.write",
-        "clean_windows_cache": "filesystem.delete",
+        # Both used to map to capabilities that demand a target, and neither
+        # tool ever has one, so the policy blocked them every time.
+        "clean_windows_cache": "pc.cache.clean",
         "rename_file_smart": "filesystem.write",
-        "forget_fact": "credential.write",
+        "forget_fact": "nano.memory.forget",
         "remember_fact": "filesystem.write",
         "monitor_start": "process.start",
         "self.authorize": "credential.write",
@@ -396,6 +398,8 @@ class PolicyEngine:
             "nano.data.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Reading NANO's own agenda, facts and history changes nothing."),
             "nano.plan.show": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "A plan is shown to the person; it runs nothing by itself."),
             "nano.routine.write": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Saving or removing one of the person's routines runs nothing; every step is gated when it runs."),
+            "nano.memory.forget": (AuthorityDecision.APPROVAL_REQUIRED.value, RiskLevel.MEDIUM, "current_workspace", "Forgetting a saved fact removes the person's own data, so it asks first."),
+            "pc.cache.clean": (AuthorityDecision.APPROVAL_REQUIRED.value, RiskLevel.HIGH, "system", "Emptying the Windows temporary folders deletes files, so it asks first."),
             "nano.reminder.create": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "A reminder only shows a notification on this PC and is cancelled in one click."),
             "nano.documents.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Searching documents the user indexed changes nothing; the text is untrusted."),
             "pc.window.read": (AuthorityDecision.AUTONOMOUS.value, RiskLevel.LOW, "current_workspace", "Listing open windows is read-only."),
@@ -549,7 +553,7 @@ class PolicyEngine:
             ), agent=agent, task_id=task_id)
 
         if normalized in TARGET_REQUIRED_CAPABILITIES:
-            if resolved_target is None or str(resolved_target).strip() == "":
+            if _target_is_missing(resolved_target):
                 return self._record(PolicyEvaluation(normalized, AuthorityDecision.BLOCKED, RiskLevel.CRITICAL, policy_scope, resolved_target, "Target is missing or ambiguous for a destructive or critical action.", True, False), agent=agent, task_id=task_id)
 
         if self.autonomy_mode == AutonomyMode.SAFE:
@@ -574,6 +578,17 @@ class PolicyEngine:
                     "Filesystem mutation outside the workspace and data directory is blocked.", True, True,
                 ), agent=agent, task_id=task_id)
             if context and context.get("protected_target"):
+                if normalized != "filesystem.read":
+                    # Secrets, the permission store, NANO's own databases and
+                    # the OS: no prompt can make writing or deleting them safe,
+                    # and a prompt is exactly what an injected page would ask
+                    # the user to click through.
+                    return self._record(PolicyEvaluation(
+                        normalized, AuthorityDecision.BLOCKED, RiskLevel.CRITICAL,
+                        resolved_scope, resolved_target,
+                        "That file or folder is protected and is never changed or removed.",
+                        True, True,
+                    ), agent=agent, task_id=task_id)
                 decision = AuthorityDecision.APPROVAL_REQUIRED
             if resolved_scope not in AUTONOMOUS_SCOPES:
                 decision = AuthorityDecision.APPROVAL_REQUIRED
@@ -650,8 +665,42 @@ class PolicyEngine:
         return list(self._audit_events)
 
 
+# The last part of a capability that only LOOKS: everything else changes
+# something on the PC (opens an app, presses a key, plays music, adds a
+# reminder) and full supervision has to ask first.
+_LOOK_ONLY_ACTIONS = frozenset({
+    "read", "search", "show", "inspect", "list", "get", "status", "watch_stop",
+})
+# ...except these, which are named like a look but open something on screen.
+_OPENS_SOMETHING = frozenset({"pc.web.search"})
+
+
+def _target_is_missing(target: Any) -> bool:
+    """No target, or only the "*" a binding writes when the model gave none.
+
+    "window:*" and "file:* -> D:\\x" name nothing the person could have
+    meant, so a destructive action must not count them as a target. A real
+    title that merely contains "*" ("*Sem título - Bloco de notas") is kept.
+    """
+    text = str(target or "").strip()
+    if not text or text == "*":
+        return True
+    pieces = re.split(r"\s*->\s*", text)
+    return any(piece.split(":", 1)[-1].strip() in ("", "*") for piece in pieces)
+
+
 def execution_is_mutating(capability: str | None) -> bool:
-    return bool(capability_tokens(capability or "") & _MUTATING_TOKENS)
+    """Whether running this capability changes anything, for full supervision.
+
+    Fails closed: a capability is mutating unless its action is a known
+    look-only one, so a new capability nobody added to a list is supervised.
+    """
+    text = str(capability or "").lower()
+    tokens = capability_tokens(text)
+    if tokens & _MUTATING_TOKENS or text in _OPENS_SOMETHING:
+        return True
+    action = text.rsplit(".", 1)[-1]
+    return action not in _LOOK_ONLY_ACTIONS
 
 
 def max_risk(left: RiskLevel, right: RiskLevel) -> RiskLevel:

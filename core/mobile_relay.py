@@ -43,6 +43,7 @@ import json
 import logging
 import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
 from urllib.parse import urlsplit
@@ -68,6 +69,12 @@ MAX_WORKERS = 16
 HEARTBEAT_SECONDS = 30
 RETRY_MIN_SECONDS = 2
 RETRY_MAX_SECONDS = 60
+#: A connection that lasted this long was a real one: reconnect at once after
+#: it. A shorter one (accepted, then closed straight away) backs off instead.
+STABLE_SECONDS = 30
+#: The relay closes with this code when ANOTHER NANO took this PC's room (the
+#: source copy and the installed app both running with the same token).
+REPLACED_CLOSE_CODE = 4000
 
 _TOKEN_SECRET = "mobile_relay_token"
 _ROOM_PREFIX = b"nano-relay-room-v1|"
@@ -189,6 +196,7 @@ class RelayClient:
         self._url = url
         self.state = "off"          # off | connecting | connected | offline | unavailable
         self.error = ""
+        self._close_code: int | None = None
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._wake: asyncio.Event | None = None
@@ -271,12 +279,20 @@ class RelayClient:
                     await self._pause(10)
                     continue
                 self.state = "connecting"
+                began = time.monotonic()
+                self._close_code = None
                 served = await self._connect_once(url)
                 if self._stopping:
                     break
-                if served:
+                if served and time.monotonic() - began >= STABLE_SECONDS \
+                        and self._close_code != REPLACED_CLOSE_CODE:
                     retry = RETRY_MIN_SECONDS
                     continue
+                if served and self._close_code == REPLACED_CLOSE_CODE:
+                    # Two NANOs replacing each other in one room looped as fast
+                    # as TLS allowed, using up the relay's free daily quota.
+                    retry = RETRY_MAX_SECONDS
+                    self.error = "replaced"
                 self.state = "offline"
                 await self._pause(retry)
                 retry = min(retry * 2, RETRY_MAX_SECONDS)
@@ -303,7 +319,10 @@ class RelayClient:
                         autoping=True) as ws:
                     self.state, self.error = "connected", ""
                     logger.info("Away-from-home relay connected")
-                    await self._serve(ws)
+                    try:
+                        await self._serve(ws)
+                    finally:
+                        self._close_code = ws.close_code
                     return True
         except aiohttp.WSServerHandshakeError as exc:
             self.error = "refused" if exc.status in (401, 403) else f"http_{exc.status}"

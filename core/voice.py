@@ -632,7 +632,10 @@ class LocalTTSProvider(TextToSpeechProvider):
         try:
             for index in range(len(pieces)):
                 try:
-                    path, _engine = await pending
+                    # Shielded: if this speech is cancelled from outside, the
+                    # synthesis still ends and its file is deleted (below),
+                    # instead of a thread writing a file nobody removes.
+                    path, _engine = await asyncio.shield(pending)
                 except speech_engines.SynthesisError as exc:
                     pending = None
                     logger.warning("local TTS failed: %s", exc)
@@ -655,9 +658,11 @@ class LocalTTSProvider(TextToSpeechProvider):
         finally:
             if pending is not None:
                 # A piece made for nothing (stopped, or playback failed): its
-                # file is deleted whenever the synthesis ends.
+                # file is deleted when the synthesis ends. Not cancelled: a
+                # cancelled Edge download skipped its own cleanup, and an
+                # offline voice keeps writing in its thread anyway, so each
+                # interruption left an orphan nano-audio file in %TEMP%.
                 pending.add_done_callback(_discard_unused_piece)
-                pending.cancel()
 
     def stop(self) -> None:
         self._generation += 1
@@ -2145,6 +2150,10 @@ _SENTENCE_END = re.compile(r"(?<=[.!?…])[\"'”»)]*\s+|\n+")
 #: The first sentence is spoken alone, as early as possible; a piece shorter
 #: than this waits for the next one ("Ok." on its own sounds clipped).
 MIN_FIRST_CHUNK = 12
+#: Where NANO's list of sources starts under a research answer: nothing from
+#: there on is spoken (speech_text drops it from a whole answer; a streamed
+#: answer is cut into lines first, so it must stop here instead).
+_SOURCES_START = re.compile(r"(?:^|\n)\*\*(?:Fontes|Sources)\b")
 
 
 class SentenceSpeaker:
@@ -2175,15 +2184,21 @@ class SentenceSpeaker:
         self._wake = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._fed = False
+        self._sources = False
 
     # ── input ────────────────────────────────────────────────────────────
     def has_text(self) -> bool:
         return self._fed
 
     def feed(self, token: str) -> None:
-        if self._cancelled or self._finished or not token:
+        if self._cancelled or self._finished or self._sources or not token:
             return
         self._buffer += token
+        start = _SOURCES_START.search(self._buffer)
+        if start is not None:
+            # "Fontes 1. Liga Portugal — ligaportugal.pt…" was read aloud.
+            self._buffer = self._buffer[:start.start()]
+            self._sources = True
         if self._buffer.strip():
             self._fed = True
         self._cut()

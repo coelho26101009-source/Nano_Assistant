@@ -228,6 +228,7 @@ class SuggestionEngine:
         self._state = self._load()
         self._active_since: float | None = None
         self._last_break_nudge: float | None = None
+        self._break_checked: float | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -413,8 +414,15 @@ class SuggestionEngine:
         if idle is None:
             return []
         mono = self._clock()
-        if idle >= BREAK_RESET_SECONDS:
+        # A long gap since the last look (breaks were off, or the PC slept)
+        # is a break too: the stretch of use starts again from here, instead
+        # of "Estás ao PC há 5 h" the minute breaks are turned back on.
+        gap = mono - self._break_checked if self._break_checked is not None else 0.0
+        self._break_checked = mono
+        if idle >= BREAK_RESET_SECONDS or gap >= BREAK_RESET_SECONDS:
             self._active_since = None
+            if gap >= BREAK_RESET_SECONDS and idle < BREAK_RESET_SECONDS:
+                self._active_since = mono - idle
             return []
         if self._active_since is None:
             self._active_since = mono - idle

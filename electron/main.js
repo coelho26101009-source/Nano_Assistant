@@ -1301,7 +1301,7 @@ function startUpdater() {
   });
   updater.start({ enabled: shellState.autoUpdate });
   const result = updater.publicState().lastResult;
-  if (result) {
+  if (result && (result.ok || !result.reported)) {
     const text = updateText();
     showNativeNotification(result.ok
       ? { title: text.doneTitle, body: text.doneBody(result.version), silent: true }

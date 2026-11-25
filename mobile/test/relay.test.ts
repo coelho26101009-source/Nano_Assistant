@@ -74,6 +74,31 @@ describe("RelayChannel", () => {
   });
 });
 
+describe("RelayChannel after close()", () => {
+  it("an old socket's late goodbye does not fail the new socket's requests", async () => {
+    const sockets: FakeSocket[] = [];
+    class SlowClose extends FakeSocket {
+      // The close handshake ends later, as on a real network.
+      close() { this.readyState = 2; }
+      finishClose() { this.readyState = 3; this.onclose?.({}); }
+    }
+    const channel = new RelayChannel({ url: "https://r.example", room: ROOM },
+      (url) => { const s = new SlowClose(url); sockets.push(s); return s; });
+    const first = channel.post("rpc", {}, 5000);
+    await new Promise((r) => setTimeout(r, 5));
+    sockets[0].reply({ q: 1, s: 200, b: {} });
+    await first;
+    channel.close();                                   // unpair: stop()...
+    const unpair = channel.post("rpc", { unpair: true }, 5000);   // ...then device.unpair
+    await new Promise((r) => setTimeout(r, 5));
+    expect(sockets).toHaveLength(2);
+    (sockets[0] as SlowClose).finishClose();          // A's goodbye arrives late
+    sockets[1].reply({ q: 2, s: 200, b: { ok: true } });
+    await expect(unpair).resolves.toEqual({ ok: true });
+    channel.close();
+  });
+});
+
 describe("pairing QR with a relay", async () => {
   const { parsePairLink } = await import("../src/lib/link");
   const base = "nano://pair?v=2&p=47821&i=0123456789abcdef&s=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8&n=PC";

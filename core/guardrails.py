@@ -185,7 +185,9 @@ class GuardrailsEngine:
 
         def _settle() -> None:
             if not future.done():
-                future.set_result(bool(confirmed))
+                # Only a real True approves: a stray "false" string from a
+                # bridge must never read as yes.
+                future.set_result(confirmed is True)
 
         loop.call_soon_threadsafe(_settle)
         return True

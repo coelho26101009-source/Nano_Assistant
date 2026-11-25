@@ -50,7 +50,10 @@ class RetryPolicy(str):
 
 # Argument keys that always carry a filesystem target and must be resolved and
 # classified centrally before the handler ever sees them.
-_PATH_ARGUMENT_KEYS = ("path", "destination", "dest", "src", "source", "cwd", "target_path")
+# `folder` is NOT here: it carries known folder NAMES ("Ambiente de Trabalho")
+# that pc_control.files resolves itself, through the same network-path check.
+_PATH_ARGUMENT_KEYS = ("path", "file_path", "destination", "dest", "src", "source", "cwd",
+                       "target_path")
 # Argument keys that always carry a network target.
 _URL_ARGUMENT_KEYS = ("url", "webhook_url", "endpoint")
 
@@ -183,13 +186,11 @@ def _pc_control_target(tool_name: str, args: dict) -> str | None:
 
     # ---------------------------------------------------------------- files
     if tool_name in {"pc_folder_open", "pc_file_open"}:
-        # A real `path` is already preferred by _resolve_target. A known-folder
-        # NAME arrives as `folder` (see the handler for why) and still has to
-        # bind the grant to something specific.
-        if not str(args.get("path") or "").strip():
-            folder = str(args.get("folder") or "").strip()
-            return clamp(f"folder:{folder}") if folder else None
-        return None
+        # A known-folder NAME arrives as `folder` (see the handler for why).
+        # The handler opens `folder` when both are given, so the grant binds
+        # to `folder` too; a lone `path` is already bound by _resolve_target.
+        folder = str(args.get("folder") or "").strip()
+        return clamp(f"folder:{folder}") if folder else None
     if tool_name in {"pc_folder_create", "pc_file_create_text"}:
         parent = str(args.get("folder") or args.get("path") or "").strip()
         name = str(args.get("name") or "").strip()
@@ -767,6 +768,10 @@ class ToolExecutor:
         try:
             output = future.result(timeout=timeout)
         except concurrent.futures.TimeoutError:
+            # Still queued behind other tools? Then it must never start: the
+            # caller is told it failed, and an action carried out minutes
+            # later, after a "falhou", is worse than either outcome.
+            future.cancel()
             return self._failure(name, auth, task_id, start, "tool_timeout")
         except Exception as exc:
             return self._failure(name, auth, task_id, start, str(exc))

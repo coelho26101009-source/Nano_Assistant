@@ -163,10 +163,7 @@ def _existing(value: str, *, must_be_file: bool = False,
     text = str(value or "").strip()
     if not text:
         raise PCControlError("invalid_input", "É preciso indicar o ficheiro.")
-    try:
-        path = Path(os.path.expandvars(text)).expanduser().resolve()
-    except OSError as exc:
-        raise PCControlError("invalid_input", "Esse caminho não é válido.") from exc
+    path = files.local_path(text)
     if not path.exists():
         raise PCControlError("not_found", f"'{text}' não existe.")
     if files.is_protected(path):
@@ -256,10 +253,7 @@ def _destination_for(source: Path, destination: str) -> Path:
     text = str(destination or "").strip()
     if not text:
         raise PCControlError("invalid_input", "É preciso indicar o destino.")
-    try:
-        candidate = Path(os.path.expandvars(text)).expanduser().resolve()
-    except OSError as exc:
-        raise PCControlError("invalid_input", "Esse destino não é válido.") from exc
+    candidate = files.local_path(text, invalid="Esse destino não é válido.")
 
     if candidate.is_dir():
         target = (candidate / source.name).resolve()

@@ -62,6 +62,9 @@ logger = logging.getLogger("nano.notice_gate")
 # ── priorities ──────────────────────────────────────────────────────────────
 CRITICAL, HIGH, NORMAL, LOW = "critical", "high", "normal", "low"
 _RANK = {CRITICAL: 3, HIGH: 2, NORMAL: 1, LOW: 0}
+#: Marks a line folded into a summary in the "sent" log: it keeps the line's
+#: repeat key without counting towards the hourly limit.
+_FOLDED = "folded"
 
 #: The priority of each kind when the notice does not say. A kind not listed
 #: here is NORMAL.
@@ -198,7 +201,7 @@ _SILENCE = re.compile(
     r"stop notifying me|no notifications)"
     r"(?: (?:por favor|please|nano))?"
     r"(?: (?:durante|por|for|during)(?: (?:a|o|os|as|the))? (?P<amount>\d+|[a-z]+)(?: (?:e meia|and a half))?"
-    r" (?P<unit>minutos?|mins?|horas?|h|minutes?|hours?))?"
+    r" (?P<unit>minutos?|mins?|horas?|h|minutes?|hours?)(?: (?:e meia|and a half))?)?"
     r"(?: (?P<tomorrow>ate amanha|until tomorrow|ate de manha|until the morning|hoje|today|for today))?"
     r"(?: (?:por favor|please|nano))?$")
 _RESUME = re.compile(
@@ -360,6 +363,8 @@ class NoticeGate:
             if kind not in self._state["muted"]:
                 self._state["muted"].append(kind)
                 self._save()
+            self._held = [held for held in self._held
+                          if held.get("priority") == CRITICAL or held.get("kind") != kind]
         return True
 
     def unmute(self, kind: str) -> bool:
@@ -458,14 +463,28 @@ class NoticeGate:
             if priority == LOW and not notice.get("keep"):
                 return "drop", "away", False
             return "hold", "away", False
-        hour = [entry for entry in self._sent if now - entry[0] < 3600 and entry[1] != CRITICAL]
-        if priority != HIGH and len(hour) >= HOURLY_CAP.get(level, 4):
+        if priority != HIGH and self._hour_room(level, now) <= 0:
             return ("drop" if priority == LOW else "hold"), "rate", False
         if priority == LOW:
             today = [entry for entry in self._sent if entry[1] == LOW]
             if len(today) >= DAILY_LOW_CAP.get(level, 3):
                 return "drop", "daily", False
         return "deliver", "", self._may_speak(settings, priority, kind, quiet=False)
+
+    def _hour_room(self, level: str, now: float) -> int:
+        """How many more non-critical notices fit in the rolling hour."""
+        used = [entry for entry in self._sent
+                if now - entry[0] < 3600 and entry[1] not in (CRITICAL, _FOLDED)]
+        return HOURLY_CAP.get(level, 4) - len(used)
+
+    def _still_wanted(self, notice: dict, settings: dict) -> bool:
+        """A held notice the person has since turned off (its kind muted, or
+        a level that no longer lets it through) is not given later."""
+        priority = notice.get("priority") or priority_of(notice)
+        level = settings.get("proactive_level") or DEFAULT_LEVEL
+        if _RANK[priority] < _RANK[LEVEL_FLOOR.get(level, LOW)]:
+            return False
+        return priority == CRITICAL or str(notice.get("kind") or "") not in self._state["muted"]
 
     @staticmethod
     def _may_speak(settings: dict, priority: str, kind: str, *, quiet: bool) -> bool:
@@ -491,7 +510,7 @@ class NoticeGate:
             decision, reason, speak = self.decide(notice)
             self._record(notice, decision, reason)
             if decision == "hold":
-                self._hold(notice)
+                self._hold(notice, reason)
                 return "hold"
             if decision == "drop":
                 return "drop"
@@ -499,8 +518,12 @@ class NoticeGate:
         self._send(notice, speak=speak, silent=bool(reason))
         return "deliver"
 
-    def _mark_sent(self, notice: dict) -> None:
-        self._sent.append((self._clock(), notice["priority"], self._repeat_key(notice)))
+    def _mark_sent(self, notice: dict, *, counted: bool = True) -> None:
+        """Record a notice that reached the person. ``counted=False`` is a
+        line folded into a summary: its repeat and once keys are kept, but
+        only the summary itself counts towards the hourly limit."""
+        self._sent.append((self._clock(), notice["priority"] if counted else _FOLDED,
+                           self._repeat_key(notice)))
         if notice.get("once"):
             self._state["once"] = (self._state["once"] + [str(notice["once"])])[-100:]
             self._save()
@@ -531,7 +554,8 @@ class NoticeGate:
         }])[-HISTORY_MAX:]
         self._save()
 
-    def _hold(self, notice: dict) -> None:
+    def _hold(self, notice: dict, reason: str = "") -> None:
+        notice["held_for"] = reason
         expires = notice.get("expires_at")
         notice["expires_at"] = float(expires) if isinstance(expires, (int, float)) else \
             self._clock() + HELD_TTL_SECONDS
@@ -548,34 +572,68 @@ class NoticeGate:
     # ── giving back what was held ──────────────────────────────────────────
     def tick(self) -> list[dict]:
         """Expire old held notices and, once the person is back and nothing
-        stops it, give them: one alone as itself, several as one summary."""
+        stops it, give them: one alone as itself, several as one summary.
+
+        A notice that carries an offer ("Começar", "Fechar o Chrome") always
+        comes on its own, so its button and a plain "sim" still work. What
+        was held only because the hour's limit was reached waits until the
+        hour has room again; and what the person turned off in the meantime
+        (a muted kind, a lower level) is dropped, not given."""
         settings = self._settings()
+        level = settings.get("proactive_level") or DEFAULT_LEVEL
         with self._lock:
             now = self._clock()
             self._held = [item for item in self._held if item.get("expires_at", now + 1) > now]
+            for item in [item for item in self._held if not self._still_wanted(item, settings)]:
+                self._held.remove(item)
+                self._record(item, "drop", "muted" if item.get("kind") in self._state["muted"] else "level")
             ctx = self._context(settings)
             away_now = ctx["away"]
             back = self._was_away and not away_now
             self._was_away = away_now
             if not self._held or ctx["snoozed"] or ctx["quiet"] or ctx["busy"] or away_now:
                 return []
-            reason = "away" if back else ""
-            items, self._held = self._held, []
+            room = self._hour_room(level, now)
+            # Important notices never wait for the hour's limit; the rest
+            # only go out while it has room.
+            ready = [item for item in self._held if item.get("priority") == HIGH or room > 0]
+            if not ready:
+                return []
+            urgent = [item for item in ready if item.get("priority") == HIGH]
+            offers = [item for item in ready if item not in urgent and item.get("offer")]
+            rest = [item for item in ready if item not in urgent and item not in offers]
+            plan: list[list[dict]] = [[item] for item in urgent]
+            for item in offers:
+                if room <= 0:
+                    break
+                plan.append([item])
+                room -= 1
+            if rest and room > 0:
+                plan.append(rest)
+            given = [item for group in plan for item in group]
+            self._held = [item for item in self._held if item not in given]
+            # The summary's first line says why these waited.
+            reasons = {str(item.get("held_for") or "") for item in given}
         out: list[dict] = []
-        if len(items) == 1:
-            item = items[0]
+        for group in plan:
+            if len(group) == 1:
+                item = {key: value for key, value in group[0].items() if key != "held_for"}
+                with self._lock:
+                    self._mark_sent(item)
+                    self._record(item, "deliver", "later")
+                self._send(item, speak=self._may_speak(settings, item["priority"], str(item.get("kind")),
+                                                       quiet=False), silent=False)
+                out.append(item)
+                continue
+            digest = build_digest(group, back_from_away=back,
+                                  busy=bool(reasons & {"quiet", "busy", "away"}))
             with self._lock:
-                self._mark_sent(item)
-                self._record(item, "deliver", "later")
-            self._send(item, speak=self._may_speak(settings, item["priority"], str(item.get("kind")),
-                                                   quiet=False), silent=False)
-            return [item]
-        digest = build_digest(items, back_from_away=bool(reason))
-        with self._lock:
-            self._mark_sent(digest)
-            self._record(digest, "deliver", "later")
-        self._send(digest, speak=self._may_speak(settings, NORMAL, "digest", quiet=False), silent=False)
-        out.append(digest)
+                self._mark_sent(digest)
+                for item in group:
+                    self._mark_sent(item, counted=False)
+                self._record(digest, "deliver", "later")
+            self._send(digest, speak=self._may_speak(settings, NORMAL, "digest", quiet=False), silent=False)
+            out.append(digest)
         return out
 
     # ── answers to an offer ────────────────────────────────────────────────
@@ -592,6 +650,15 @@ class NoticeGate:
             if not item or self._clock() - item["at"] > OFFER_SECONDS:
                 return None
             return self._last_offer, dict(item)
+
+    def conversation_moved(self) -> None:
+        """NANO answered something after the last offer, so a bare "sim" now
+        answers that answer, not the older offer (its button still works).
+        Measured: an offer to start a routine, then a question to the model
+        that ended "Queres que abra o Windows Update?", then "sim" started
+        the routine."""
+        with self._lock:
+            self._last_offer = None
 
     def close_offer(self, notice_id: str) -> None:
         with self._lock:
@@ -629,10 +696,16 @@ class NoticeGate:
                             "away": ctx["away"]}}
 
 
-def build_digest(items: list[dict], *, back_from_away: bool) -> dict:
-    """Several held notices as one short message."""
-    lines = [tr("Bem-vindo de volta. Enquanto estavas fora:") if back_from_away
-             else tr("Enquanto estavas ocupado:")]
+def build_digest(items: list[dict], *, back_from_away: bool, busy: bool = True) -> dict:
+    """Several held notices as one short message. ``busy`` False: they only
+    waited for a silence the person asked for, or for the hour's limit."""
+    if back_from_away:
+        header = tr("Bem-vindo de volta. Enquanto estavas fora:")
+    elif busy:
+        header = tr("Enquanto estavas ocupado:")
+    else:
+        header = tr("Avisos que ficaram para depois:")
+    lines = [header]
     for item in items[:8]:
         first = str(item.get("text") or "").strip().split("\n")[0]
         title = str(item.get("title") or "").strip()
@@ -640,8 +713,14 @@ def build_digest(items: list[dict], *, back_from_away: bool) -> dict:
     if len(items) > 8:
         lines.append(tr("• e mais {count}", count=len(items) - 8))
     titles = ", ".join(str(item.get("title") or "") for item in items[:3] if item.get("title"))
-    speech = (tr("Enquanto estavas fora: {titles}.", titles=titles) if back_from_away
-              else tr("Enquanto estavas ocupado: {titles}.", titles=titles)) if titles else ""
+    if not titles:
+        speech = ""
+    elif back_from_away:
+        speech = tr("Enquanto estavas fora: {titles}.", titles=titles)
+    elif busy:
+        speech = tr("Enquanto estavas ocupado: {titles}.", titles=titles)
+    else:
+        speech = tr("Avisos que ficaram para depois: {titles}.", titles=titles)
     return {"id": f"n-{uuid.uuid4().hex[:12]}", "kind": "digest", "priority": NORMAL,
             "title": tr("Resumo dos avisos"), "text": "\n".join(lines), "speech": speech}
 

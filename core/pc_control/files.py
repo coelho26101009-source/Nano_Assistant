@@ -56,6 +56,14 @@ EXECUTABLE_EXTENSIONS = frozenset({
     ".chm", ".hlp", ".xll", ".iqy", ".slk",
     # Access databases that run code on open
     ".ade", ".adp", ".mde", ".accde",
+    # automation scripts whose installers register them to run on open
+    ".ahk", ".au3", ".a3x",
+    # packages Windows installs or applies on open
+    ".appinstaller", ".msu", ".ppkg", ".theme", ".themepack", ".deskthemepack",
+    # saved searches that can point Explorer at a remote share
+    ".search-ms",
+    # disk images: opening one mounts it and shows what is inside unchecked
+    ".iso", ".img", ".vhd", ".vhdx",
 })
 
 #: Known-folder names the user can say out loud, mapped to the environment
@@ -141,6 +149,30 @@ def _protected(path: Path) -> bool:
 is_protected = _protected
 
 
+def local_path(text: str, *, invalid: str = "Esse caminho não é válido.") -> Path:
+    """A path the user (or the model) wrote, expanded and resolved, never a network one.
+
+    `%VAR%` and `~` are expanded first, and the text is checked before AND
+    after that, because a variable can hold `\\\\host\\share`. The check runs
+    before anything touches the disk: on Windows even asking whether
+    `\\\\host\\x` exists makes the PC connect to that host and offer the
+    user's login. A mapped drive letter the user set up himself stays allowed.
+    """
+    from core.execution_scope import network_or_device_path
+
+    raw = str(text or "").strip()
+    expanded = os.path.expandvars(raw)
+    candidate = Path(expanded).expanduser()
+    for form in (raw, expanded, str(candidate)):
+        if network_or_device_path(form):
+            raise PCControlError("network_path_refused",
+                                 "O Nano só mexe em pastas deste PC, não em caminhos de rede.")
+    try:
+        return candidate.resolve()
+    except (OSError, RuntimeError) as exc:
+        raise PCControlError("invalid_input", invalid) from exc
+
+
 def resolve_folder(value: str) -> Path:
     """A known folder name or an explicit directory path, validated."""
     text = str(value or "").strip()
@@ -149,11 +181,7 @@ def resolve_folder(value: str) -> Path:
 
     resolved = known_folder(text)
     if resolved is None:
-        candidate = Path(os.path.expandvars(text)).expanduser()
-        try:
-            resolved = candidate.resolve()
-        except OSError as exc:
-            raise PCControlError("invalid_input", "Esse caminho não é válido.") from exc
+        resolved = local_path(text)
 
     if not resolved.exists():
         raise PCControlError("not_found", f"A pasta '{text}' não existe.")
@@ -273,10 +301,7 @@ def open_file(value: str) -> dict:
     if not text:
         raise PCControlError("invalid_input", "É preciso indicar o ficheiro.")
 
-    try:
-        path = Path(os.path.expandvars(text)).expanduser().resolve()
-    except OSError as exc:
-        raise PCControlError("invalid_input", "Esse caminho não é válido.") from exc
+    path = local_path(text)
 
     if not path.exists():
         raise PCControlError("not_found", f"O ficheiro '{text}' não existe.")

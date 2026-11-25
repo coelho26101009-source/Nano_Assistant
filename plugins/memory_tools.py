@@ -124,8 +124,9 @@ def search_history(query: str, limit: int = 10) -> dict:
 
     if stack is not None:
         conversations = _recalled_conversations(stack, query)
-        forgotten = {row["conversationId"] for row in
-                     stack.recaps.list(limit=500) if row.get("forgotten")}
+        # Every forgotten conversation, however old (a list of recaps stops
+        # at the 500 most recent, and an older forgotten one leaked).
+        forgotten = stack.recaps.excluded_ids()
         hits = [hit for hit in stack.conversations.search_messages(query, limit=limit)
                 if hit.scope not in forgotten]
         if hits or conversations:

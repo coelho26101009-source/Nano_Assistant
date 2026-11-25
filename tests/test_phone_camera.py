@@ -81,7 +81,8 @@ def test_the_phone_is_asked_with_the_question_and_where_it_is_seen(broker, phone
     assert info["seenBy"] == {"local": True, "provider": "ollama"}
     assert broker.respond(request_id, declined=False, data=JPEG, mime="image/jpeg") == {"ok": True}
     thread.join(2)
-    assert out == {"ok": True, "data": JPEG, "mime": "image/jpeg"}
+    # "local": the card said "seen on your PC", which binds where it is looked at.
+    assert out == {"ok": True, "data": JPEG, "mime": "image/jpeg", "local": True}
     assert ("on_camera_closed", request_id, "answered") in phone.events
     assert broker.pending_id is None
 

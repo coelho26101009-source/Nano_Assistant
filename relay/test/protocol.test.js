@@ -1,7 +1,7 @@
 // The relay's wire rules on plain Node: `npm test`.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { pcFrame, phoneFrame, roomForToken } from "../src/protocol.js";
+import { currentPc, parsePath, pcFrame, phoneFrame, roomForToken } from "../src/protocol.js";
 
 // Shared with tests/test_mobile_relay.py: the PC and the relay must agree on
 // which room a token owns, or the PC is refused at the door.
@@ -26,4 +26,29 @@ test("PC frames must name a real connection and a status", () => {
     { q: 1.5, c, s: 200, b: {} }]) {
     assert.equal(pcFrame(JSON.stringify(bad)), null, JSON.stringify(bad));
   }
+});
+
+test("the path is read one way: exactly /v1/<pc|phone>/<room>", () => {
+  const room = "os4_ZZLglcyzI3aTrp6Q2vQecsaZEc8pR0_If--cIc8";
+  assert.deepEqual(parsePath(`/v1/phone/${room}`), { role: "phone", room });
+  assert.deepEqual(parsePath(`/v1/pc/${room}`), { role: "pc", room });
+  // Empty segments used to pass the Worker as a phone and reach the room
+  // with no role, skipping the "PC online" check and the phone limit.
+  for (const bad of [`//v1/phone/${room}`, `/v1//phone/${room}`, `/v1/phone//${room}`,
+    `/v1/phone/${room}/`, `/v1/admin/${room}`, `/v2/phone/${room}`, `/v1/phone/${room.slice(1)}`,
+    "/", "", null]) {
+    assert.equal(parsePath(bad), null, String(bad));
+  }
+});
+
+test("phones reach the newest open PC socket, never a closing one", () => {
+  const old = { id: "old" };
+  const fresh = { id: "new" };
+  assert.equal(currentPc([{ ws: old, tags: ["pc", "g:100"], open: true },
+    { ws: fresh, tags: ["pc", "g:200"], open: true }]), fresh);
+  assert.equal(currentPc([{ ws: fresh, tags: ["pc", "g:200"], open: false },
+    { ws: old, tags: ["pc", "g:100"], open: true }]), old);
+  assert.equal(currentPc([{ ws: old, tags: ["pc"], open: false }]), null);
+  // A socket from before generations were tagged still counts.
+  assert.equal(currentPc([{ ws: old, tags: ["pc"], open: true }]), old);
 });

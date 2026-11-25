@@ -36,8 +36,8 @@ import { BRAND_NAME } from "../lib/brand";
 import FirstRunGuide from "../components/FirstRunGuide";
 import DiagnosticsPanel from "../components/DiagnosticsPanel";
 import {
-  Composer, Conversation, Message, SidePanel, ToolEvent, cleanAssistantText, type PanelDoc,
-  type NoticeAction, type NoticeInfo,
+  Composer, Conversation, Message, SidePanel, ToolEvent, cleanAssistantText, refreshRecallTitles,
+  type PanelDoc, type NoticeAction, type NoticeInfo,
 } from "../components/Conversation";
 import {
   ActivityPage, AgentsPage, IntegrationsPage,
@@ -776,17 +776,24 @@ export default function Home() {
   /** A button under something NANO said by itself (core/notice_gate.py).
    *  Accepting asks the backend for the sentence to send and sends it as the
    *  person's own message, so it meets every approval like anything typed. */
-  const answerNotice = useCallback(async (notice: NoticeInfo, action: NoticeAction) => {
+  const answerNotice = useCallback(async (notice: NoticeInfo, action: NoticeAction): Promise<boolean> => {
     if (action === "mute") {
       const res = await call<{ ok?: boolean }>("mute_notice_kind", notice.kind);
       if (res?.ok) notify(t("Não volto a avisar disto. Podes voltar a ligar em Definições → Geral."), "success");
-      return;
+      return Boolean(res?.ok);
+    }
+    if (action === "accept" && (thinking || !ready)) {
+      // Accepting closes the offer on the backend, and sendMessage drops
+      // a message while a turn runs: the routine would be lost silently.
+      notify(t("Espera que eu acabe esta resposta e carrega outra vez."), "default");
+      return false;
     }
     const res = await call<{ ok?: boolean; send?: string; detail?: string }>("proactive_action", notice.id, action);
-    if (action !== "accept") return;
+    if (action !== "accept") return true;
     if (res?.ok && res.send) sendMessage(res.send);
     else notify(res?.detail ?? t("Esta sugestão já não está ativa."), "default");
-  }, [notify, sendMessage]);
+    return true;
+  }, [notify, sendMessage, thinking, ready]);
 
   /**
    * Ask the last question again, as it was or with new text.
@@ -965,7 +972,7 @@ export default function Home() {
 
   const renameThread = useCallback((thread: Thread, title: string) => {
     call<any>("rename_conversation", thread.id, title).then((result) => {
-      if (result?.ok) { reloadThreads(); notify(t("Conversa renomeada")); }
+      if (result?.ok) { reloadThreads(); refreshRecallTitles(); notify(t("Conversa renomeada")); }
       else notify(t("Não foi possível mudar o nome"), "error");
     });
   }, [notify, reloadThreads]);
@@ -989,6 +996,7 @@ export default function Home() {
     call<any>("delete_conversation", thread.id).then((result) => {
       if (!result?.ok) { notify(t("Não foi possível apagar"), "error"); return; }
       notify(t("Conversa apagada ({0} mensagens)", { 0: result.messages }));
+      refreshRecallTitles();
       if (thread.id === activeThreadId) {
         // The backend has already moved the Brain to another thread; ask it
         // which one rather than guessing, so the two never disagree about
@@ -1013,6 +1021,7 @@ export default function Home() {
     const hadActive = activeThreadId != null && ids.includes(activeThreadId);
     call<any>("delete_conversations", ids).then((result) => {
       const removed = Number(result?.removed ?? 0);
+      if (removed) refreshRecallTitles();
       const failed = (result?.failed ?? []).length;
       if (!removed) {
         notify(t("Não foi possível apagar as conversas"), "error");

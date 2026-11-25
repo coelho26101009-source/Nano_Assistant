@@ -1425,6 +1425,8 @@ export const EN: Record<string, string> = {
   "Sugere reiniciar quando o PC está ligado há uma semana ou mais, no máximo uma vez por semana.": "Suggests a restart when the PC has been on for a week or more, at most once a week.",
   "Não volto a avisar disto. Podes voltar a ligar em Definições → Geral.": "I won't mention this again. You can turn it back on in Settings → General.",
   "Esta sugestão já não está ativa.": "This suggestion is no longer active.",
+  "parado": "stopped",
+  "Espera que eu acabe esta resposta e carrega outra vez.": "Wait until I finish this answer, then press it again.",
   // NANO's voice (components/VoiceEngineCard.tsx).
   "Voz do NANO": "NANO's voice",
   "Se a voz escolhida falhar (sem internet, sem créditos), o NANO passa logo para a seguinte. Nunca fica calado.": "If the chosen voice fails (no internet, no credits), NANO switches to the next one at once. It is never silent.",

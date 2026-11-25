@@ -302,8 +302,11 @@ def check_image(image_b64: str, mime: str) -> str | None:
 
 
 def describe(image_b64: str, mime: str = "image/png", *, question: str | None = None,
-             settings: dict[str, Any] | None = None, prefer_local: bool = False) -> dict[str, Any]:
+             settings: dict[str, Any] | None = None, prefer_local: bool = False,
+             local_only: bool = False) -> dict[str, Any]:
     """Ask the first available vision model about one image. Blocking.
+
+    ``local_only``: only a model on this PC may look (the person was told so).
 
     Returns ``{"ok", "text", "provider", "model", "local", "masked", "message"}``.
     ``text`` is masked and bounded; the caller fences it as untrusted.
@@ -316,6 +319,8 @@ def describe(image_b64: str, mime: str = "image/png", *, question: str | None = 
                 "message": tr("Esta imagem não pode ser lida (formato ou tamanho).")}
     settings = settings if settings is not None else SETTINGS_SOURCE()
     found = candidates(settings, prefer_local=prefer_local)
+    if local_only:
+        found = [(provider, model) for provider, model in found if provider == "ollama"]
     if not found:
         return {"ok": False, "error": "no_vision_model", "text": "", "provider": "",
                 "model": "", "local": False, "masked": 0,

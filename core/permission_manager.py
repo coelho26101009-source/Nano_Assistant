@@ -1,6 +1,8 @@
 """Central permission/risk policy for the Nano agent."""
 from __future__ import annotations
 
+from collections import deque
+
 import json
 import uuid
 from dataclasses import dataclass
@@ -60,6 +62,9 @@ class PermissionDecision:
     requires_confirmation: bool
     risk: RiskLevel
     reason: str
+    # A refusal no prompt can turn into a yes. `requires_confirmation` stays
+    # True on these for the callers that read it as "not autonomous".
+    blocked: bool = False
 
 
 # Capabilities that always require explicit confirmation per execution.
@@ -167,7 +172,8 @@ class PermissionManager:
         self.policy_engine = PolicyEngine(autonomy_mode=autonomy_mode)
         self._policies: dict[str, dict[str, Any]] = {}
         self._pending_requests: dict[str, dict[str, Any]] = {}
-        self._audit_log: list[dict[str, Any]] = []
+        # Bounded: NANO runs for days, and one entry is kept per decision.
+        self._audit_log: deque[dict[str, Any]] = deque(maxlen=2000)
         # ALLOW_ONCE grants: key -> monotonic deadline. See ONCE_GRANT_TTL_SECONDS.
         self._once_grants: dict[tuple[str, str], float] = {}
         self._task_grants: dict[str, set[TaskGrant]] = {}
@@ -577,7 +583,7 @@ class PermissionManager:
         policy_name = self._canonical_capability(action_name)
         evaluation = self.policy_engine.evaluate(policy_name, target=target, scope=scope, arguments=args or {}, context=context, task_id=task_id)
         if evaluation.decision == AuthorityDecision.BLOCKED:
-            return PermissionDecision(False, True, evaluation.risk, evaluation.reason)
+            return PermissionDecision(False, True, evaluation.risk, evaluation.reason, blocked=True)
         if evaluation.decision == AuthorityDecision.APPROVAL_REQUIRED or policy_name in _APPROVAL_GATED_CAPABILITIES:
             # A one-shot grant must remain pending until confirmation consumes it.
             # Task grants are reusable, but only for their matching task id.
@@ -686,6 +692,9 @@ class PermissionManager:
             prepared["_task_id"] = task_id
 
         decision = self.evaluate(action_name, prepared, task_id=task_id, scope=(context or {}).get("scope"), context=context)
+        if decision.blocked:
+            # Never put a blocked action in front of the user as a question.
+            return False, prepared
         if decision.allowed and not decision.requires_confirmation:
             return True, prepared
         if not decision.requires_confirmation:
@@ -705,7 +714,10 @@ class PermissionManager:
             return result
         if self.confirmation_callback is None:
             return False
-        return bool(self.confirmation_callback(action_name, prepared))
+        approved = bool(self.confirmation_callback(action_name, prepared))
+        # The prompt can stay open for minutes. An emergency stop pressed
+        # meanwhile wins over a "yes" clicked after it.
+        return approved and not self.is_emergency_stopped()
 
     async def ask_for_confirmation_async(self, action_name: str, args: dict | None = None, *, task_id: str | None = None, context: dict | None = None) -> bool:
         """Await a confirmation without ever blocking the calling event loop.
@@ -727,8 +739,11 @@ class PermissionManager:
             return result
 
         if self.async_confirmation_callback is not None:
-            return bool(await self.async_confirmation_callback(action_name, prepared))
-        if self.confirmation_callback is None:
+            approved = bool(await self.async_confirmation_callback(action_name, prepared))
+        elif self.confirmation_callback is None:
             return False
-        callback = self.confirmation_callback
-        return bool(await asyncio.to_thread(callback, action_name, prepared))
+        else:
+            callback = self.confirmation_callback
+            approved = bool(await asyncio.to_thread(callback, action_name, prepared))
+        # See ask_for_confirmation: a stop pressed while the prompt was open wins.
+        return approved and not self.is_emergency_stopped()

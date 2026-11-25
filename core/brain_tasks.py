@@ -220,6 +220,7 @@ class TaskChains:
         """
         queue: asyncio.Queue[str] = asyncio.Queue()
         task = asyncio.ensure_future(start(queue.put_nowait))
+        getter: asyncio.Future | None = None
         try:
             while True:
                 getter = asyncio.ensure_future(queue.get())
@@ -234,6 +235,8 @@ class TaskChains:
                 yield f"_thinking_:{queue.get_nowait()}"
             holder["result"] = task.result()
         finally:
+            if getter is not None and not getter.done():
+                getter.cancel()
             if not task.done():
                 task.cancel()
 
@@ -268,11 +271,13 @@ class TaskChains:
                                                      return_exceptions=True)
             return
         results: list[Any] = []
-        covered: set[tuple[str, str]] = set()
+        covered: set[str] = set()
         for call, name in zip(calls, names):
-            if (name, task_runner.step_target({"args": self._call_args(call)})) in covered:
-                # The model also called a step the plan already ran: the plan's
-                # result stands, nothing runs twice.
+            if self._step_key(name, self._call_args(call)) in covered:
+                # The model also called a step the plan already ran AND that
+                # worked: the plan's result stands, nothing runs twice. Only
+                # the same call counts ("volume 20" is not "volume 40"), and a
+                # step that failed is the model's to try again.
                 results.append({"success": True, "status": "covered_by_plan",
                                 "output": {"ok": True, "message": tr("Já foi feito como passo do plano.")}})
                 continue
@@ -286,11 +291,56 @@ class TaskChains:
                 async for line in self._run_runner_result(name, call, result, inner):
                     yield line
                 if inner.get("steps"):
-                    covered.update((step["tool"], task_runner.step_target(step))
-                                   for step in inner["steps"])
+                    covered.update(self._step_key(step["tool"], step.get("args") or {})
+                                   for step, outcome in zip(inner["steps"], inner.get("outcomes") or [])
+                                   if isinstance(outcome, dict) and outcome.get("ok"))
                 result = inner.get("result", result)
             results.append(result)
         holder["results"] = results
+
+    def _step_key(self, tool: str, args: dict) -> str:
+        """One identity for "this tool with these arguments", as the turn
+        ledger sees it, with app and window names compared loosely
+        ("notion" is the "Notion" the plan opened)."""
+        effective = self._effective_arguments(tool, dict(args or {}))
+        loose = {key: (task_runner.fold(value) if key in ("name", "app", "query") and isinstance(value, str)
+                       else value) for key, value in effective.items()}
+        return self._call_fingerprint(tool, loose)
+
+    def _plan_approves(self, name: str, args: dict) -> bool:
+        """Whether the plan the person approved this turn covers this call.
+
+        Each approved step covers ONE call: of that tool with those arguments
+        when the plan gave them, or of that tool once when the model fills
+        the arguments in itself. A second call, or one with other arguments
+        (a page read mid-turn steering a "type" after an approved "click"),
+        is asked about like any other."""
+        approvals = getattr(self, "_turn_plan_tools", None)
+        if not approvals:
+            return False
+        key = None
+        for index, approval in enumerate(approvals):
+            if approval.get("tool") != name:
+                continue
+            if approval.get("key") is not None:
+                key = key or self._step_key(name, args)
+                if approval["key"] != key:
+                    continue
+            del approvals[index]
+            return True
+        return False
+
+    def _plan_approvals(self, args: dict) -> list[dict]:
+        out = []
+        for step in args.get("steps") or []:
+            if not isinstance(step, dict) or not step.get("tool"):
+                continue
+            tool = str(step["tool"])
+            step_args = step.get("args")
+            out.append({"tool": tool,
+                        "key": self._step_key(tool, step_args) if isinstance(step_args, dict) and step_args
+                        else None})
+        return out
 
     @staticmethod
     def _call_name(call: Any) -> str:
@@ -340,6 +390,7 @@ class TaskChains:
         run = holder.get("result") or {"ok": False, "steps": [], "done": 0, "total": len(steps)}
         self._remember_run(title, steps, run, name)
         inner["steps"] = steps
+        inner["outcomes"] = run.get("steps") or []
         inner["result"] = self._run_result_for_model(name, title, run, closing)
 
     @staticmethod

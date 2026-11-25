@@ -18,7 +18,8 @@ export type WorkMode = {
   id: string; name: string; description?: string; error?: string; steps: WorkModeStep[];
 };
 export type WorkModeOutcome = {
-  label: string; tool: string; ok: boolean; status: "ok" | "skipped" | "denied" | "failed"; message?: string;
+  label: string; tool: string; ok: boolean; status: "ok" | "skipped" | "denied" | "failed" | "cancelled";
+  message?: string;
 };
 export type WorkModeResult = {
   ok: boolean; id?: string; name?: string; message?: string; done?: number; total?: number; skipped?: number;
@@ -27,7 +28,13 @@ export type WorkModeResult = {
 
 const OUTCOME_LABEL: Record<WorkModeOutcome["status"], string> = {
   ok: t("feito"), skipped: t("já estava"), denied: t("recusado"), failed: t("não feito"),
+  cancelled: t("parado"),
 };
+
+/** "já estava" only for a step skipped because it was already done; a step
+ *  skipped because the one it needed failed (ok false) was not done. */
+const outcomeLabel = (step: WorkModeOutcome) =>
+  step.status === "skipped" && !step.ok ? t("não feito") : OUTCOME_LABEL[step.status] ?? step.status;
 
 /* ── Protocols (core/protocols.py) ───────────────────────────────────── */
 
@@ -394,7 +401,7 @@ export default function WorkModesPage({
           <ul className="work-mode__outcomes">
             {result.steps.map((step, index) => (
               <li key={`${step.tool}-${index}`} className={`work-mode__outcome work-mode__outcome--${step.status}`}>
-                <span className="work-mode__outcome-state">{OUTCOME_LABEL[step.status] ?? step.status}</span>
+                <span className="work-mode__outcome-state">{outcomeLabel(step)}</span>
                 <span className="work-mode__outcome-label">{step.label}</span>
                 {step.message && step.status !== "ok" && <span className="dim">· {step.message}</span>}
               </li>

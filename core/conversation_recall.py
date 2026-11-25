@@ -310,7 +310,10 @@ class ConversationRecaps:
                         "  decisions=excluded.decisions, topics=excluded.topics,"
                         "  message_count=excluded.message_count,"
                         "  covered_through=excluded.covered_through,"
-                        "  updated_at=excluded.updated_at",
+                        "  updated_at=excluded.updated_at"
+                        # An edit or a "forget" that landed while this
+                        # background refresh was reading wins over it.
+                        " WHERE conversation_recaps.edited = 0 AND conversation_recaps.excluded = 0",
                         (conversation_id, recap["summary"],
                          json.dumps(recap["decisions"], ensure_ascii=False),
                          json.dumps(recap["topics"], ensure_ascii=False),
@@ -320,7 +323,7 @@ class ConversationRecaps:
             logger.exception("Falha a guardar a recordação da conversa %s", conversation_id)
             return None
         stored = self.get(conversation_id)
-        if stored:
+        if stored and not stored["forgotten"]:
             self._index(stored, title=title)
         return stored
 
@@ -390,14 +393,28 @@ class ConversationRecaps:
         return {"ok": True}
 
     def forget_all(self) -> dict:
-        """Forget every existing recap. Conversations started later are recalled."""
+        """Forget every existing conversation. Conversations started later are recalled.
+
+        Every conversation that exists now is marked, not only the ones that
+        already had a recap: one with no recap yet (a single message, made
+        while recall was off, or past the back-fill's 200) was otherwise
+        quoted on the next "lembras-te…?" and recapped by the next back-fill.
+        """
         try:
             with self._lock:
+                stamp = _now()
                 cursor = self.conn.execute(
                     "UPDATE conversation_recaps SET summary='', decisions='[]', topics='[]',"
-                    " edited=0, excluded=1, updated_at=? WHERE excluded=0", (_now(),))
-                self.conn.commit()
+                    " edited=0, excluded=1, updated_at=? WHERE excluded=0", (stamp,))
                 forgotten = cursor.rowcount or 0
+                cursor = self.conn.execute(
+                    "INSERT INTO conversation_recaps (conversation_id, summary, decisions, topics,"
+                    " message_count, covered_through, edited, excluded, updated_at)"
+                    " SELECT c.id, '', '[]', '[]', 0, 0, 0, 1, ? FROM conversations c"
+                    " LEFT JOIN conversation_recaps r ON r.conversation_id = c.id"
+                    " WHERE r.conversation_id IS NULL", (stamp,))
+                forgotten += cursor.rowcount or 0
+                self.conn.commit()
         except sqlite3.Error as exc:
             logger.exception("Falha a esquecer as recordações")
             return {"ok": False, "error": "write_failed", "detail": str(exc)}
@@ -420,14 +437,29 @@ class ConversationRecaps:
         if self.index is not None:
             self.index.remove(f"{RECAP_KIND}:{conversation_id}")
 
+    def excluded_ids(self) -> set[str]:
+        """Every conversation the user told NANO not to recall."""
+        try:
+            with self._lock:
+                rows = self.conn.execute(
+                    "SELECT conversation_id FROM conversation_recaps WHERE excluded = 1").fetchall()
+        except sqlite3.Error:
+            logger.exception("Falha a ler as conversas esquecidas")
+            return set()
+        return {row[0] for row in rows}
+
     def missing(self, *, limit: int = 200) -> list[str]:
-        """Conversations with messages and no recap row yet. For the back-fill."""
+        """Conversations with messages and no recap yet. For the back-fill.
+
+        Includes one restored ("Voltar a lembrar") while recall was off: its
+        row is empty and waits for a rebuild (message_count -1)."""
         try:
             with self._lock:
                 rows = self.conn.execute(
                     "SELECT c.id FROM conversations c"
                     " LEFT JOIN conversation_recaps r ON r.conversation_id = c.id"
-                    " WHERE r.conversation_id IS NULL AND c.message_count >= ?"
+                    " WHERE (r.conversation_id IS NULL OR (r.excluded = 0 AND r.message_count < 0))"
+                    " AND c.message_count >= ?"
                     " ORDER BY COALESCE(c.last_message_at, c.created_at) DESC LIMIT ?",
                     (MIN_USER_MESSAGES * 2 - 1, max(1, int(limit)))).fetchall()
         except sqlite3.Error:

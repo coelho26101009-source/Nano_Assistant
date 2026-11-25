@@ -1,6 +1,8 @@
 """Nano Assistant plugin loader with defensive contract validation."""
 from __future__ import annotations
 
+import re
+
 import importlib.util
 import logging
 import weakref
@@ -189,6 +191,10 @@ def list_plugins() -> dict[str, list[str]]:
 def get_plugin_source(plugin_name: str, plugins_dir: Path | None = None) -> dict:
     """Lê o código-fonte de um plugin para exibição na UI."""
     plugins_dir = plugins_dir or Path(__file__).parent.parent / "plugins"
+    # A plugin NAME, never a path: "../core/secret_store" must not read
+    # another file through the plugin viewer.
+    if not re.fullmatch(r"[A-Za-z0-9_]{1,64}", str(plugin_name or "")):
+        return {"ok": False, "error": "Plugin not found"}
     plugin_path = plugins_dir / f"{plugin_name}.py"
     if not plugin_path.exists():
         return {"ok": False, "error": "Plugin not found"}
