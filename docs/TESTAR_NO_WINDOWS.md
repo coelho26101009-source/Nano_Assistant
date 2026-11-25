@@ -192,7 +192,7 @@ Precisa de um modelo com ferramentas (Groq/Gemini/Mistral, ou o local).
 - [ ] 77. `que rotinas tenho?` lista as tuas rotinas; `apaga a rotina teste` pede confirmação antes de apagar.
 
 ### NANO proativo, sem ser chato (2026-11-24)
-- [ ] 78. **Definições → Geral → O NANO fala primeiro**: escreve a tua cidade em "Cidade para o tempo" (ex.: `Porto`) e carrega em **Mostrar o resumo agora**. O resumo traz uma linha **Tempo** com a temperatura e, se for chover, "leva guarda-chuva".
+- [ ] 78. **Definições → Geral → O NANO fala primeiro**: escreve a tua cidade em "Cidade para o tempo" (ex.: `Porto`) e carrega em **Mostrar o resumo agora**. O resumo traz uma linha **Tempo** com a temperatura e, se for chover, "leva guarda-chuva". A linha acaba em "Dados: Open-Meteo.com." (o crédito que a licença dos dados pede), mas essa parte não é dita em voz alta.
 - [ ] 79. Com "Dizer os avisos em voz alta" em **Só o resumo e os importantes** e a voz ligada: muda a hora do resumo para daqui a 2 minutos e espera ao PC. O NANO diz bom dia **em voz alta** (curto) e mostra o resumo completo no chat.
 - [ ] 80. Muda a hora do resumo para daqui a 2 minutos e **afasta-te do PC 12 minutos** (sem mexer no rato). Quando voltas e mexes no rato, o resumo aparece nessa altura, não antes.
 - [ ] 81. Escreve `não me incomodes durante uma hora`. O NANO responde "fico calado até às …". Em **Definições → Geral → Não incomodar** aparece "Em silêncio até às …". Escreve `podes voltar a falar`: o silêncio acaba.
