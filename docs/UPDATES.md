@@ -45,7 +45,8 @@ canonicalisation question.
    phone's copy is `mobile/src/lib/updateKeys.ts`; a test keeps them equal).
 2. The product: a phone feed can never update the PC and the other way round.
 3. The download URL: HTTPS, `github.com`, this repository's
-   `/releases/download/`, no port, user, query or `..`. Where the download
+   `/releases/download/` under its current name (`coelho97sc`) or its former
+   one (`coelho26101009-source`, see RELEASING.md), no port, user, query or `..`. Where the download
    lands after GitHub's redirect must be GitHub's own asset hosts.
 4. Newer than what is installed. An older signed feed is valid but ignored,
    which is what stops a replayed old feed from forcing a downgrade.

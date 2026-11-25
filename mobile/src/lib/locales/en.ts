@@ -55,7 +55,7 @@ export const EN: Record<string, string> = {
   "Definições → Geral → Telemóvel": "Settings → General → Phone",
   "Desligadas: os lembretes não tocam no telemóvel": "Off: reminders won't ring on your phone",
   "Diz ao NANO \"lembra-te que…\" ou carrega em Novo.": "Tell NANO \"remember that…\" or tap New.",
-  "Dúvidas ou pedidos: abre uma questão em github.com/coelho26101009-source/Nano_Assistant.": "Questions or requests: open an issue at github.com/coelho26101009-source/Nano_Assistant.",
+  "Dúvidas ou pedidos: abre uma questão em github.com/coelho97sc/Nano_Assistant.": "Questions or requests: open an issue at github.com/coelho97sc/Nano_Assistant.",
   "Em Definições → Esquecer este PC, o telemóvel apaga a chave e o PC deixa de o aceitar. Desinstalar a app apaga tudo o que ela guardou. As conversas e memórias vivem no PC e apagam-se lá.": "In Settings → Forget this PC, the phone deletes its key and the PC stops accepting it. Uninstalling the app deletes everything it stored. Conversations and memories live on your PC and are deleted there.",
   "Em casa, o telemóvel fala com o PC pelo Wi-Fi. Para funcionar em qualquer lado sem abrir o teu PC à internet, usa o Tailscale: uma rede privada só tua, gratuita para uso pessoal.": "At home, your phone talks to your PC over Wi-Fi. To use it anywhere without opening your PC to the internet, use Tailscale: a private network of your own, free for personal use.",
   "Endereço adicionado.": "Address added.",

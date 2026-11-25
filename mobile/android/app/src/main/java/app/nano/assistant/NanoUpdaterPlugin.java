@@ -52,7 +52,13 @@ import javax.net.ssl.HttpsURLConnection;
 @CapacitorPlugin(name = "NanoUpdater")
 public class NanoUpdaterPlugin extends Plugin {
 
-    private static final String REPO_PATH = "/coelho26101009-source/Nano_Assistant/releases/download/";
+    // The GitHub account was renamed (coelho26101009-source -> coelho97sc, 2026-11-25).
+    // Older apps accept only the old path; this one trusts both. Keep in step with
+    // updates.ts and electron/lib/update-feed.js (a desktop test compares them).
+    private static final String[] REPO_PATHS = {
+        "/coelho97sc/Nano_Assistant/releases/download/",
+        "/coelho26101009-source/Nano_Assistant/releases/download/"
+    };
     private static final long MAX_SIZE = 300L * 1024 * 1024;
     private static final Set<String> DOWNLOAD_HOSTS = new HashSet<>(Arrays.asList(
         "github.com",
@@ -249,11 +255,18 @@ public class NanoUpdaterPlugin extends Plugin {
                 && url.getUserInfo() == null
                 && url.getQuery() == null
                 && url.getRef() == null
-                && url.getPath().startsWith(REPO_PATH)
+                && hasRepoPath(url.getPath())
                 && !url.getPath().contains("..");
         } catch (Exception e) {
             return false;
         }
+    }
+
+    private static boolean hasRepoPath(String path) {
+        for (String repoPath : REPO_PATHS) {
+            if (path.startsWith(repoPath)) return true;
+        }
+        return false;
     }
 
     private static Set<String> signerSet(Signature[] signers) throws UpdateException {

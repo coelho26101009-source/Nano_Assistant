@@ -24,8 +24,15 @@ import { b64d } from "./crypto";
 import { getPref, setPref } from "./storage";
 import { UPDATE_KEYS } from "./updateKeys";
 
-export const FEED_URL = "https://github.com/coelho26101009-source/Nano_Assistant/releases/download/android-test/nano-update.json";
-const REPO_PATH = "/coelho26101009-source/Nano_Assistant/releases/download/";
+export const FEED_URL = "https://github.com/coelho97sc/Nano_Assistant/releases/download/android-test/nano-update.json";
+// The GitHub account was renamed (coelho26101009-source -> coelho97sc, 2026-11-25).
+// Older apps accept only the old path and the release workflow still signs it;
+// this app trusts both. Keep in step with electron/lib/update-feed.js and
+// NanoUpdaterPlugin.java (a desktop test compares the three).
+const REPO_PATHS = [
+  "/coelho97sc/Nano_Assistant/releases/download/",
+  "/coelho26101009-source/Nano_Assistant/releases/download/",
+];
 const MAX_SIZE = 300 * 1024 * 1024;
 const AUTO_INTERVAL_MS = 12 * 60 * 60 * 1000;
 
@@ -57,7 +64,7 @@ export function isAllowedDownloadUrl(value: unknown): boolean {
   try { url = new URL(String(value)); } catch { return false; }
   return url.protocol === "https:" && url.hostname === "github.com"
     && !url.username && !url.password && !url.port
-    && url.pathname.startsWith(REPO_PATH) && !url.pathname.includes("..")
+    && REPO_PATHS.some((repoPath) => url.pathname.startsWith(repoPath)) && !url.pathname.includes("..")
     && !url.search && !url.hash;
 }
 

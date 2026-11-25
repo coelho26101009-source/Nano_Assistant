@@ -36,7 +36,7 @@ export function PrivacyPolicy() {
       <h2>{t("Apagar os teus dados")}</h2>
       <p>{t("Em Definições → Esquecer este PC, o telemóvel apaga a chave e o PC deixa de o aceitar. Desinstalar a app apaga tudo o que ela guardou. As conversas e memórias vivem no PC e apagam-se lá.")}</p>
       <h2>{t("Contacto")}</h2>
-      <p>{t("Dúvidas ou pedidos: abre uma questão em github.com/coelho26101009-source/Nano_Assistant.")}</p>
+      <p>{t("Dúvidas ou pedidos: abre uma questão em github.com/coelho97sc/Nano_Assistant.")}</p>
       <p className="dim">{t("Última atualização: 20 de novembro de 2026.")}</p>
     </div>
   );

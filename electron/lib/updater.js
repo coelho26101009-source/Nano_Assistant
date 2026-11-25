@@ -37,8 +37,8 @@ const crypto = require('crypto');
 const path = require('path');
 const feed = require('./update-feed');
 
-const FEED_URL = 'https://github.com/coelho26101009-source/Nano_Assistant/releases/download/desktop-update/nano-update.json';
-const RELEASES_URL = 'https://github.com/coelho26101009-source/Nano_Assistant/releases';
+const FEED_URL = 'https://github.com/coelho97sc/Nano_Assistant/releases/download/desktop-update/nano-update.json';
+const RELEASES_URL = 'https://github.com/coelho97sc/Nano_Assistant/releases';
 const PRODUCT = 'nano-desktop';
 
 const FIRST_CHECK_DELAY_MS = 90 * 1000;

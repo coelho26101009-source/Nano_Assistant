@@ -1,4 +1,18 @@
-**Current public release: [`0.4.0-beta.3`](https://github.com/coelho26101009-source/Nano_Assistant/releases/tag/v0.4.0-beta.3)**
+**Prepared, not published yet: `0.4.0-beta.4`** ("Beta 4", third update). It is
+published by one click (Actions → Build Nano Windows (manual) → Run workflow on
+`main`, publish ticked). Release notes:
+[RELEASE_NOTES_0.4.0-beta.4.md](RELEASE_NOTES_0.4.0-beta.4.md). Once it is out,
+this paragraph becomes the "Current public release" entry with its SHA-256.
+
+**Updates and the renamed account.** The apps trust update downloads under both
+`/coelho97sc/` (new) and `/coelho26101009-source/` (old), but the release
+workflows still sign OLD-path URLs, because `0.4.0-beta.3` and earlier accept
+only the old path (a test in `electron/test/updater.test.js` holds this). Once
+`0.4.0-beta.4` is what people run, a later Beta can switch `NANO_RELEASE_REPO`
+(`build-windows.yml`, `release-finish.yml`) and the Android feed URL
+(`android.yml`) to `coelho97sc/Nano_Assistant`, and the test is updated with it.
+
+**Previous release: [`0.4.0-beta.3`](https://github.com/coelho97sc/Nano_Assistant/releases/tag/v0.4.0-beta.3)**
 ("Beta 4", second update), published on 2026-11-22 as a GitHub **pre-release**
 by Build Windows on `main` (`4df09d1`): the island stays hidden until it is
 needed, "Ei Nano" works on an installed NANO (the speech pack now ships in the
@@ -14,9 +28,10 @@ The installer is bigger than before (~200 MB; the speech pack adds about
 
 **The account was renamed.** GitHub now calls the repository
 `coelho97sc/Nano_Assistant`; the old `coelho26101009-source` URLs redirect.
-Installed NANO apps only accept update downloads under the OLD path
+NANO apps up to `0.4.0-beta.3` only accept update downloads under the OLD path
 (`electron/lib/update-feed.js`, `mobile/src/lib/updates.ts`), so the feed
-signers use that path explicitly, never `github.repository`. The first
+signers use that path explicitly, never `github.repository` (`0.4.0-beta.4` and
+later accept both). The first
 publish of 0.4.0-beta.3 used `github.repository`, the signer refused it
 (`feed_bad_url`), and the release came out without its update feed or APK.
 **Finish a release (update feed + Android)** (`.github/workflows/release-finish.yml`,

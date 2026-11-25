@@ -343,7 +343,7 @@ export function AboutSection({ settings, onOpenFirstRun }: {
       <Panel title={t("Projeto")}>
         <MetricRow
           label={t("Código")}
-          value={<code className="mono">github.com/coelho26101009-source/Nano_Assistant</code>}
+          value={<code className="mono">github.com/coelho97sc/Nano_Assistant</code>}
         />
         <p className="dim" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>{tj("A documentação de arquitetura e a política de segurança acompanham o código, em {0}.", { 0: <code>docs/</code> })}
         </p>
