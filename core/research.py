@@ -49,6 +49,7 @@ from urllib.parse import parse_qs, quote, quote_plus, urljoin, urlparse, urlunpa
 
 import httpx
 
+from core import safe_http
 from core.browser_agent import validate_public_http_url
 from core.i18n import tr
 
@@ -481,7 +482,9 @@ def shared_figures(sources: list[Source], *, minimum: int = 2, limit: int = 8,
 # ---------------------------------------------------------------- network
 
 def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(
+    # Pinned: the address checked is the address connected to, on every hop
+    # (core/safe_http.py), so a page cannot rebind to the router mid-read.
+    return safe_http.public_async_client(
         timeout=httpx.Timeout(FETCH_TIMEOUT, connect=6.0),
         headers={"User-Agent": USER_AGENT,
                  "Accept": "text/html,application/xhtml+xml;q=0.9,text/plain;q=0.8",

@@ -10,7 +10,8 @@ never open a public issue for a vulnerability.
 ## Development setup
 
 Nano needs **Windows** for the PC Control features, **Python 3.12** and
-**Node 20**. The Python test suite runs on any platform; the Windows-specific
+**Node 22** (22.12 or newer: Electron's install chain requires it). The
+Python test suite runs on any platform; the Windows-specific
 tests skip elsewhere.
 
 ```bash
@@ -91,6 +92,20 @@ House rules that came from real incidents:
 * **Prove a new guard is not vacuous.** Reintroduce the defect, watch the guard
   fail, then restore the fix.
 
+### Review before merging
+
+The 2026-11-25 total review found 35 bugs, almost all in features merged less
+than a week earlier. So every new feature gets, before it reaches `main`:
+
+1. a test that fails on the old code and passes on the new one, for each fix;
+2. a second, separate review of the whole diff: correctness first (lost
+   state, wrong branch, races, timeouts), then security (paths, URLs,
+   approvals, what a web page or the model could make it do);
+3. the suites its area touches, green;
+4. the documentation in the same change: the feature list in `README.md`,
+   `CHANGELOG.md`, and a numbered item in `docs/TESTAR_NO_WINDOWS.md` or
+   `docs/TESTAR_NO_TELEMOVEL.md` for whatever needs a real PC or phone.
+
 ## Security expectations for contributors
 
 These are not style preferences. A pull request that breaks one of them will not
@@ -152,8 +167,10 @@ carry the full checklist.
 
 ## Branches and commits
 
-Work on a branch off `main` and open a pull request; `main` is not committed to
-directly.
+Outside contributors work on a branch off `main` and open a pull request. The
+maintainer's own work lands on `main` as soon as the suites above are green
+(a pull request is only the vehicle for CI); `main`'s history is never
+rewritten or force-pushed.
 
 Commit messages in this repository are short, imperative and describe the
 outcome — `Harden core execution path and redesign the command center UI`,

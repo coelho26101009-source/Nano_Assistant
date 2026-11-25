@@ -76,12 +76,10 @@ def _part_of_day(hour: int) -> str:
 
 
 def _http_get_json(url: str, params: dict) -> dict:
-    import httpx
+    from core import safe_http
 
-    from core import http_tls
-
-    with httpx.Client(timeout=TIMEOUT_SECONDS, verify=http_tls.shared_context(),
-                      headers={"User-Agent": "NANO-assistant"}, follow_redirects=False) as client:
+    with safe_http.public_client(timeout=TIMEOUT_SECONDS, headers={"User-Agent": "NANO-assistant"},
+                                 follow_redirects=False) as client:
         response = client.get(f"{url}?{urlencode(params)}")
         response.raise_for_status()
         data = response.json()

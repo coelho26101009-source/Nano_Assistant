@@ -27,6 +27,15 @@ else:
 if str(_bootstrap_root) not in sys.path:
     sys.path.insert(0, str(_bootstrap_root))
 
+# Started as a script (``python core/main.py``, which is how Electron and
+# NANO.bat start it), this module is ``__main__``. The area modules split out
+# of it (core/main_phone.py) read the app's shared state from ``core.main``;
+# without this line that import would load a SECOND copy of this whole file,
+# with its own Brain and databases. Registering the running module under its
+# package name first makes ``core.main`` this one.
+if __name__ == "__main__":
+    sys.modules.setdefault("core.main", sys.modules[__name__])
+
 import eel
 import psutil
 from dotenv import load_dotenv
@@ -1988,6 +1997,56 @@ def set_local_model(model: str) -> dict:
     return {"ok": True, "model": chosen, "providers": _providers_after_change()}
 
 
+@eel.expose
+def set_local_fast_model(model: str = "") -> dict:
+    """Choose a smaller installed model for short answers, or "" for none.
+
+    The main local model takes ~20 s per answer on a CPU. A 1-2 GB model
+    answers "olá" or a quick question in a few seconds, and Brain uses it only
+    for small talk and plain questions with no tools (Brain._local_model_for).
+    Validated exactly like set_local_model: only a model Ollama really has.
+    """
+    chosen = (model or "").strip()
+    if not chosen:
+        # Take a ticket too: a choice still waiting on Ollama must not land
+        # after this and switch the fast model back on.
+        _begin_selection("local_fast_model")
+        result = user_settings.set_value("local_fast_model", "")
+        if not result.get("ok"):
+            return {"ok": False, "error": result.get("error", "write_failed")}
+        CONFIG.setdefault("local", {})["fast_model"] = ""
+        brain.ollama_fast_model = ""
+        return {"ok": True, "model": ""}
+    if not brain.local_enabled:
+        return {"ok": False, "error": "local_disabled",
+                "detail": tr("Os modelos locais estão desativados; ativa-os para escolher um.")}
+    base_url = brain.ollama_url.removesuffix("/api/chat")
+    ticket = _begin_selection("local_fast_model")
+    try:
+        status = _off_hub(ollama_service.STATUS.measure, brain.ollama_model, base_url,
+                          max_age=ollama_service.STATUS_TTL_SECONDS,
+                          timeout=_LOCAL_MODEL_CHECK_SECONDS)
+    except TimeoutError:
+        status = {"state": ollama_service.OllamaState.UNKNOWN}
+    if status.get("state") == ollama_service.OllamaState.UNKNOWN:
+        return {"ok": False, "error": "ollama_status_unknown",
+                "detail": tr("Ainda não foi possível confirmar os modelos do Ollama; tenta novamente dentro de momentos.")}
+    if not status.get("ollamaUp"):
+        return {"ok": False, "error": "ollama_unavailable",
+                "detail": tr("O Ollama não está a responder; não é possível validar o modelo.")}
+    if not ollama_service.model_installed(chosen, list(status.get("installed") or [])):
+        return {"ok": False, "error": "model_not_installed"}
+    if not _selection_is_latest("local_fast_model", ticket):
+        return _superseded()
+    result = user_settings.set_value("local_fast_model", chosen)
+    if not result.get("ok"):
+        return {"ok": False, "error": result.get("error", "write_failed")}
+    CONFIG.setdefault("local", {})["fast_model"] = chosen
+    brain.ollama_fast_model = chosen
+    logger.info("Modelo local rapido: %s", chosen)
+    return {"ok": True, "model": chosen}
+
+
 local_downloader = local_setup.Downloader()
 _LOCAL_HARDWARE: dict | None = None
 
@@ -2024,6 +2083,7 @@ def get_local_setup() -> dict:
                    "up": bool(status.get("ollamaUp")),
                    "installed": installed,
                    "currentModel": brain.ollama_model,
+                   "fastModel": getattr(brain, "ollama_fast_model", ""),
                    "downloadUrl": local_setup.OLLAMA_DOWNLOAD_URL},
         "download": local_downloader.status(),
     }
@@ -3728,70 +3788,57 @@ def get_system_stats() -> dict:
 
 
 # ===========================================================================
-#  NANO ON THE PHONE
+#  NANO ON THE PHONE  ->  core/main_phone.py
 # ===========================================================================
-# The phone app is a remote for this NANO (core/mobile_link.py explains the
-# pairing and the encryption, core/mobile_server.py the network side). The
-# methods below are the WHOLE surface a paired phone has: each is a thin,
-# typed wrapper over the same function the PC window calls, so a message sent
-# from the phone is answered by the same Brain, with the same memory, and every
-# tool it triggers goes through the same policy, guardrails and approvals.
-# Nothing here changes settings, keys, permissions or the emergency stop.
-
-def _mobile_pair_requested(info: dict) -> None:
-    _notify_ui("on_mobile_pair_request", info)
-
-
-MOBILE = mobile_link.MobileLink(on_pair_request=_mobile_pair_requested)
-_MOBILE_SERVER: mobile_server.MobileServer | None = None
-_MOBILE_LOCK = threading.Lock()
-_SECRETISH = re.compile(r"secret|token|password|key|credential", re.I)
-
-
-def _mobile_relay_wanted() -> bool:
-    """Should the PC sit in its relay room right now? (core/mobile_relay.py)
-
-    Only while phone access is on and listening, "Away from home" is on, and
-    there is something to serve: a paired phone, or a QR code on the screen.
-    """
-    if not MOBILE.active:
-        return False
-    if user_settings.get("mobile_relay_enabled", True) is False:
-        return False
-    return MOBILE.devices.has_devices() or MOBILE.pairing_open()
-
-
-_MOBILE_RELAY = mobile_relay.RelayClient(MOBILE, _mobile_relay_wanted)
-
-
-def _mobile_port() -> int:
-    try:
-        port = int(os.getenv("NANO_MOBILE_PORT") or 0)
-    except ValueError:
-        port = 0
-    return port if 1024 <= port <= 65535 else mobile_link.DEFAULT_PORT
-
-
-def _mobile_confirm_listener(phase: str, request_id: str, message, meta) -> bool:
-    """Show the PC's approval requests on the phone too, and take them down."""
-    if phase == "resolved":
-        # Both screens take the card down, whichever one answered it.
-        _notify_ui("on_confirm_resolved", request_id)
-        return True
-    server = _MOBILE_SERVER
-    if server is None or not server.running or not MOBILE.devices.has_devices():
-        return False
-    meta = dict(meta or {})
-    args = meta.get("args") if isinstance(meta.get("args"), dict) else {}
-    meta["args"] = {str(k): str(v)[:200] for k, v in args.items()
-                    if not str(k).startswith("_") and not _SECRETISH.search(str(k))}
-    for key in ("_task_id", "_pc_target"):
-        meta.pop(key, None)
-    MOBILE.publish("on_confirm_request", request_id, str(message or "")[:600], meta)
-    return True
-
-
-guardrails.add_confirm_listener(_mobile_confirm_listener)
+# The phone's whole surface moved to its own module (2026-11-25 review: this
+# file was 5,500 lines). Re-exported here so core.main.MOBILE, the eel
+# functions and every existing caller keep working. The phone server itself
+# is core.main_phone._MOBILE_SERVER: it is rebound when access is switched,
+# so read it there, never through a copy in this module.
+from core import main_phone  # noqa: E402
+from core.main_phone import (  # noqa: E402,F401
+    MOBILE,
+    _MOBILE_LOCK,
+    _MOBILE_RELAY,
+    _SECRETISH,
+    _mobile_pair_requested,
+    _mobile_relay_wanted,
+    _mobile_port,
+    _mobile_confirm_listener,
+    _text,
+    _m_hello,
+    _m_status,
+    _m_chat_send,
+    _m_camera_respond,
+    _m_chat_retry,
+    _m_chat_history,
+    _m_conversations_list,
+    _m_conversations_open,
+    _m_conversations_create,
+    _m_conversations_delete,
+    _m_confirm,
+    _m_agenda,
+    _m_agenda_add_reminder,
+    _m_agenda_delete_reminder,
+    _m_agenda_add_event,
+    _m_agenda_delete_event,
+    _m_memory_list,
+    _m_memory_add,
+    _m_memory_delete,
+    _m_relay_info,
+    _camera_ready,
+    _apply_mobile_access,
+    _qr_svg,
+    _mobile_missing_packages,
+    get_mobile_status,
+    set_mobile_access,
+    mobile_start_pairing,
+    set_mobile_relay,
+    mobile_pairing_state,
+    mobile_decide_pairing,
+    mobile_cancel_pairing,
+    mobile_remove_device,
+)
 
 
 def _island_confirm_listener(phase: str, request_id: str, message, meta) -> bool:
@@ -3818,322 +3865,6 @@ def _island_confirm_listener(phase: str, request_id: str, message, meta) -> bool
 
 
 guardrails.add_confirm_listener(_island_confirm_listener)
-
-
-def _text(value, limit: int) -> str:
-    return str(value if value is not None else "")[:limit]
-
-
-def _m_hello() -> dict:
-    try:
-        name = (user_settings.get("display_name") or "").strip()
-    except Exception:
-        name = ""
-    return {"pcName": mobile_link.pc_name(), "version": nano_version.display(),
-            "language": i18n.current(), "displayName": name,
-            "protocol": mobile_link.PROTOCOL, "methods": MOBILE.methods(),
-            # What this PC understands beyond the methods: "camera" = chat.send
-            # takes a photo, and camera requests arrive on the feed.
-            "features": ["camera"]}
-
-
-def _m_status() -> dict:
-    try:
-        route = (describe_providers(stale_ok=True) or {}).get("route") or {}
-    except Exception:
-        route = {}
-    return {"route": {"provider": route.get("provider"), "model": route.get("model"),
-                      "usable": bool(route.get("usable")), "fallback": bool(route.get("fallback"))},
-            "emergencyStop": bool(get_emergency_stop_state().get("enabled"))}
-
-
-def _m_chat_send(text: str = "", msgId: str = "", photo: dict | None = None) -> dict:  # noqa: N803 - wire name
-    """A message from the phone, optionally with ONE photo from its camera.
-
-    The photo is the person's own request (they pressed the camera button and
-    the shutter): it goes through the same path as a picture attached on the
-    PC -- described by a vision model, local first, and only the description is
-    kept (core/attachments.py, core/phone_camera.py).
-    """
-    msg_id = _text(msgId, 64) or None
-    if msg_id and not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", msg_id):
-        msg_id = None
-    attachments = None
-    if photo is not None:
-        if not isinstance(photo, dict) or not isinstance(photo.get("data"), str):
-            return {"ok": False, "accepted": False, "error": "bad_attachments"}
-        # A plain name on purpose: "foto da câmara" in the turn's text would
-        # offer the model the camera tool, which would ask for ANOTHER photo.
-        attachments = [{"name": tr("foto") + ".jpg", "kind": "image", "camera": True,
-                        "mime": _text(photo.get("mime"), 32).lower(), "data": photo["data"]}]
-    return send_message(_text(text, 8000), msg_id, attachments)
-
-
-def _m_camera_respond(requestId: str = "", declined: bool = False,  # noqa: N803 - wire names
-                      data: str = "", mime: str = "") -> dict:
-    """The phone's answer to NANO asking to see: one photo, or no."""
-    return phone_camera.BROKER.respond(_text(requestId, 64), declined=declined is True,
-                                       data=data if isinstance(data, str) else "",
-                                       mime=_text(mime, 32))
-
-
-def _m_chat_retry(text: str = "", msgId: str = "") -> dict:  # noqa: N803
-    msg_id = _text(msgId, 64) or None
-    if msg_id and not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", msg_id):
-        msg_id = None
-    return retry_last_turn(_text(text, 8000), msg_id)
-
-
-def _m_chat_history() -> dict:
-    messages = get_conversation_history() or []
-    rows = [{"id": m.get("id"), "role": m.get("role"), "content": _text(m.get("content"), 20000),
-             "timestamp": m.get("timestamp")}
-            for m in messages if m.get("role") in ("user", "assistant")]
-    return {"activeId": memory_stack.active_conversation_id if memory_stack.ready else None,
-            "messages": rows[-100:]}
-
-
-def _m_conversations_list(query: str = "") -> dict:
-    result = list_conversations(_text(query, 200), 60)
-    rows = [{"id": t.get("id"), "title": t.get("title"), "updatedAt": t.get("updatedAt") or t.get("updated_at"),
-             "pinned": bool(t.get("pinned")), "project": t.get("project") or ""}
-            for t in result.get("conversations", [])]
-    return {"ok": result.get("ok", False), "conversations": rows, "activeId": result.get("activeId")}
-
-
-def _m_conversations_open(id: str = "") -> dict:  # noqa: A002 - wire name
-    result = _from_phone(open_conversation, _text(id, 80))
-    if not result.get("ok"):
-        return {"ok": False, "error": result.get("error")}
-    return {"ok": True, **_m_chat_history()}
-
-
-def _m_conversations_create() -> dict:
-    result = _from_phone(create_conversation)
-    return {"ok": bool(result.get("ok")), "activeId": (result.get("conversation") or {}).get("id")}
-
-
-def _m_conversations_delete(id: str = "") -> dict:  # noqa: A002
-    result = _from_phone(delete_conversation, _text(id, 80))
-    return {"ok": bool(result.get("ok")), "activeId": memory_stack.active_conversation_id
-            if memory_stack.ready else None}
-
-
-def _m_confirm(requestId: str = "", confirmed: bool = False) -> dict:  # noqa: N803
-    return confirm_action(_text(requestId, 64), confirmed is True)
-
-
-def _m_agenda(days: int = 30) -> dict:
-    try:
-        days = max(1, min(90, int(days)))
-    except (TypeError, ValueError):
-        days = 30
-    return get_agenda(days)
-
-
-def _m_agenda_add_reminder(text: str = "", when: str = "", repeat: str = "") -> dict:
-    return agenda_create_reminder(_text(text, 300), _text(when, 64), _text(repeat, 16) or None)
-
-
-def _m_agenda_delete_reminder(id: int = 0) -> dict:  # noqa: A002
-    return agenda_delete_reminder(id)
-
-
-def _m_agenda_add_event(title: str = "", start: str = "", end: str = "", location: str = "") -> dict:
-    return agenda_create_event(_text(title, 200), _text(start, 64), _text(end, 64) or None,
-                               _text(location, 200))
-
-
-def _m_agenda_delete_event(id: int = 0) -> dict:  # noqa: A002
-    return agenda_delete_event(id)
-
-
-def _m_memory_list(query: str = "") -> dict:
-    result = list_memories(_text(query, 200), "", "active", 150)
-    rows = [{"id": m.get("id"), "text": m.get("text"), "kind": m.get("kind"),
-             "pinned": bool(m.get("pinned")), "updatedAt": m.get("updated_at") or m.get("updatedAt")}
-            for m in result.get("memories", [])]
-    return {"ok": result.get("ok", False), "memories": rows}
-
-
-def _m_memory_add(text: str = "") -> dict:
-    return create_memory(_text(text, 1000), "fact", 3, [])
-
-
-def _m_memory_delete(id: str = "") -> dict:  # noqa: A002
-    return delete_memory(_text(id, 80))
-
-
-def _m_relay_info() -> dict | None:
-    """Where this PC waits away from home, for a phone paired before it had a
-    relay. Asked over the sealed link, so only a paired phone ever learns it."""
-    if user_settings.get("mobile_relay_enabled", True) is False:
-        return None
-    room = _MOBILE_RELAY.room()
-    return {"url": mobile_relay.relay_url(), "room": room} if room else None
-
-
-for _name, _fn in {
-    "hello": _m_hello,
-    "relay.info": _m_relay_info,
-    "status": _m_status,
-    "chat.send": _m_chat_send,
-    "chat.retry": _m_chat_retry,
-    "chat.history": _m_chat_history,
-    "conversations.list": _m_conversations_list,
-    "conversations.open": _m_conversations_open,
-    "conversations.create": _m_conversations_create,
-    "conversations.delete": _m_conversations_delete,
-    "confirm.respond": _m_confirm,
-    "camera.respond": _m_camera_respond,
-    "agenda.get": _m_agenda,
-    "agenda.addReminder": _m_agenda_add_reminder,
-    "agenda.deleteReminder": _m_agenda_delete_reminder,
-    "agenda.addEvent": _m_agenda_add_event,
-    "agenda.deleteEvent": _m_agenda_delete_event,
-    "memory.list": _m_memory_list,
-    "memory.add": _m_memory_add,
-    "memory.delete": _m_memory_delete,
-}.items():
-    MOBILE.register(_name, _fn)
-
-
-def _camera_ready() -> bool:
-    server = _MOBILE_SERVER
-    return bool(MOBILE.active and server is not None and server.running and MOBILE.devices.has_devices())
-
-
-phone_camera.BROKER.configure(publish=MOBILE.publish, ready=_camera_ready,
-                              seen_by=phone_camera._seen_by)
-
-
-def _apply_mobile_access(enabled: bool) -> dict:
-    """Start or stop the phone server. Returns the new status."""
-    global _MOBILE_SERVER
-    with _MOBILE_LOCK:
-        if enabled:
-            if _MOBILE_SERVER is None:
-                _MOBILE_SERVER = mobile_server.MobileServer(MOBILE, _mobile_port())
-            MOBILE.active = bool(_MOBILE_SERVER.start())
-            if MOBILE.active:
-                _MOBILE_RELAY.start()
-        else:
-            MOBILE.active = False
-            MOBILE.cancel_pairing()
-            phone_camera.BROKER.cancel()
-            _MOBILE_RELAY.poke()          # it sees access is off and leaves
-            if _MOBILE_SERVER is not None:
-                _MOBILE_SERVER.stop()
-            # Nothing said while access is off is kept for the phone, and what
-            # was buffered before goes too.
-            MOBILE.feed.clear()
-    return get_mobile_status()
-
-
-def _qr_svg(text: str) -> str:
-    try:
-        import segno
-    except ImportError:
-        return ""
-    import io
-    buffer = io.BytesIO()
-    segno.make(text, error="m").save(buffer, kind="svg", scale=6, border=2,
-                                     dark="#000000", light="#ffffff", xmldecl=False,
-                                     svgns=True, nl=False)
-    return buffer.getvalue().decode("utf-8")
-
-
-def _mobile_missing_packages() -> list[str]:
-    """Packages phone access needs that this Python does not have yet.
-
-    An install updated by copying files keeps its old interpreter packages, so
-    the panel names the command instead of failing at the first pairing.
-    """
-    import importlib.util
-    return [name for name in ("cryptography", "segno") if importlib.util.find_spec(name) is None]
-
-
-@eel.expose
-def get_mobile_status() -> dict:
-    """Settings → Phone: is access on, is it listening, which phones are paired."""
-    server = _MOBILE_SERVER
-    return {
-        "ok": True,
-        "missing": _mobile_missing_packages(),
-        "enabled": user_settings.get("mobile_access_enabled", False) is True,
-        "running": bool(server and server.running),
-        "error": (server.error if server else "") or "",
-        "port": server.port if server else _mobile_port(),
-        "addresses": mobile_link.local_addresses(),
-        "devices": MOBILE.devices.list(),
-        "pcName": mobile_link.pc_name(),
-        "relay": {**_MOBILE_RELAY.info(),
-                  "enabled": user_settings.get("mobile_relay_enabled", True) is not False},
-    }
-
-
-@eel.expose
-def set_mobile_access(enabled: bool) -> dict:
-    if enabled is True and _mobile_missing_packages():
-        return {**get_mobile_status(), "ok": False, "error": "missing_packages"}
-    result = user_settings.set_value("mobile_access_enabled", enabled is True)
-    if not result.get("ok"):
-        return {"ok": False, "error": "invalid_value"}
-    return _apply_mobile_access(enabled is True)
-
-
-@eel.expose
-def mobile_start_pairing() -> dict:
-    """A fresh QR code. Only while phone access is on and listening."""
-    server = _MOBILE_SERVER
-    if server is None or not server.running:
-        return {"ok": False, "error": "access_off"}
-    relay = None
-    room = _MOBILE_RELAY.room() if user_settings.get("mobile_relay_enabled", True) is not False else None
-    if room:
-        relay = {"url": mobile_relay.relay_url(), "room": room}
-    result = MOBILE.start_pairing(server.port, relay=relay)
-    result["qrSvg"] = _qr_svg(result["link"])
-    _MOBILE_RELAY.poke()              # a QR on screen: be reachable for it
-    return result
-
-
-@eel.expose
-def set_mobile_relay(enabled: bool) -> dict:
-    """Settings → Phone → Away from home. On by default; off keeps NANO home-only."""
-    result = user_settings.set_value("mobile_relay_enabled", enabled is True)
-    if not result.get("ok"):
-        return {"ok": False, "error": "invalid_value"}
-    _MOBILE_RELAY.poke()
-    return get_mobile_status()
-
-
-@eel.expose
-def mobile_pairing_state(session_id: str) -> dict:
-    return MOBILE.pairing_state(str(session_id or ""))
-
-
-@eel.expose
-def mobile_decide_pairing(session_id: str, approve: bool) -> dict:
-    """The yes or no on the PC. A phone can never answer this for itself."""
-    return MOBILE.decide_pairing(str(session_id or ""), approve is True)
-
-
-@eel.expose
-def mobile_cancel_pairing() -> dict:
-    MOBILE.cancel_pairing()
-    return {"ok": True}
-
-
-@eel.expose
-def mobile_remove_device(device_id: str) -> dict:
-    removed = MOBILE.devices.remove(str(device_id or ""))
-    if removed and not MOBILE.devices.has_devices():
-        # No phone left: the next pairing gets a fresh relay room, so a phone
-        # removed today does not even know where to knock tomorrow.
-        _MOBILE_RELAY.token.forget()
-    _MOBILE_RELAY.poke()
-    return {"ok": removed, "devices": MOBILE.devices.list()}
 
 
 _NOOP_CALLBACK = lambda *_args: None
@@ -5237,9 +4968,9 @@ def shutdown() -> None:
     notice_gate_instance.stop()
     now_playing_watcher.stop()
     screen_watch.WATCHER.shutdown()
-    if _MOBILE_SERVER is not None:
+    if main_phone._MOBILE_SERVER is not None:
         try:
-            _MOBILE_SERVER.stop()
+            main_phone._MOBILE_SERVER.stop()
         except Exception:
             logger.debug("Falha ao parar o acesso do telemóvel", exc_info=True)
     try:

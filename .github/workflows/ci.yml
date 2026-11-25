@@ -134,8 +134,15 @@ jobs:
 
   # ---------------------------------------------------------- desktop shell
   electron:
-    name: Electron tests
-    runs-on: ubuntu-latest
+    name: Electron tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # Windows too: the shell's paths, single-instance lock and spawn of
+    # core\main.py are Windows code first, and until 2026-11-25 they were
+    # only ever exercised on Linux (review "Windows só simulado").
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7
 
@@ -259,6 +266,67 @@ jobs:
         with:
           name: chromium-results
           path: chromium-results.xml
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ------------------------------------------- the shipped UI, on Windows
+  # The same Chromium harnesses on a real Windows desktop: fonts, DPI, window
+  # chrome and paths as the person's PC has them. On Linux they prove the
+  # layout; here they prove it on the platform NANO actually ships for.
+  # Windows runners have a desktop session, so no virtual display is needed,
+  # and Electron's own sandbox needs no setup there.
+  chromium-ui-windows:
+    name: Chromium UI tests (windows-latest)
+    runs-on: windows-latest
+    needs: frontend
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: electron/package-lock.json
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements/build.lock
+            requirements/test.lock
+
+      - name: Fetch the built frontend
+        uses: actions/download-artifact@v8
+        with:
+          name: frontend-out
+          path: frontend/out
+
+      - name: Install Electron
+        working-directory: electron
+        run: npm ci
+
+      - name: Fetch the Electron binary
+        working-directory: electron
+        run: npm run fetch-electron
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --require-hashes -r requirements/build.lock
+          python -m pip install --require-hashes --no-build-isolation -r requirements/test.lock
+
+      - name: Drive the shipped UI in real Chromium
+        env:
+          NANO_REQUIRE_CHROMIUM: '1'
+        run: python -m pytest -q -ra -m chromium --junitxml=chromium-results-windows.xml
+
+      - name: Upload the harness report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: chromium-results-windows
+          path: chromium-results-windows.xml
           retention-days: 7
           if-no-files-found: ignore
 

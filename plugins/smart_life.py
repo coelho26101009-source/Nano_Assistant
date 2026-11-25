@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 
 from core.memory import get_memory
+from core.safe_http import public_async_client
 
 logger = logging.getLogger("nano.plugins.smart_life")
 
@@ -30,7 +31,7 @@ async def send_iot_command(device: str, action: str,
         payload["value"] = value
 
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with public_async_client(timeout=10) as client:
             resp = await client.post(webhook_url, json=payload)
             resp.raise_for_status()
             return {
@@ -53,7 +54,7 @@ async def phone_notification(message: str, webhook_url: str | None = None) -> di
     if not webhook_url:
         return {"error": "webhook_url não configurado para notificações mobile."}
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with public_async_client(timeout=10) as client:
             resp = await client.post(webhook_url, json={"message": message, "title": "Nano"})
             return {"success": resp.status_code < 400, "message": message}
     except Exception as exc:

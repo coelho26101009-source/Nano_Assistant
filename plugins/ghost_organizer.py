@@ -131,51 +131,213 @@ def organize_downloads(dry_run: bool = False) -> dict:
     }
 
 
-def clean_windows_cache() -> dict:
-    """Limpa caches do Windows (temp, prefetch, thumbnails)."""
-    results = []
-    paths_to_clean = [
+#: Files younger than this are left alone. The temp folders also hold the
+#: working files of an installer that is half-way through, of an app that is
+#: open right now and of a download being unpacked; deleting those breaks the
+#: thing that is running. Windows' own Disk Cleanup uses a similar rule.
+CACHE_MIN_AGE_SECONDS = 24 * 60 * 60
+
+#: In Explorer's folder only the thumbnail and icon caches are cache; the
+#: other files there are settings Windows keeps for Explorer.
+_EXPLORER_CACHE_PREFIXES = ("thumbcache_", "iconcache_")
+
+
+def _cache_folders() -> list[Path]:
+    """The temp folders, each once (TEMP is usually AppData/Local/Temp)."""
+    candidates = [
         Path(os.environ.get("TEMP", r"C:\Windows\Temp")),
         Path(r"C:\Windows\Temp"),
         Path.home() / "AppData" / "Local" / "Temp",
-        Path.home() / "AppData" / "Local" / "Microsoft" / "Windows" / "Explorer",  # thumbnails
     ]
-
-    total_freed = 0
-
-    for cache_path in paths_to_clean:
-        if not cache_path.exists():
+    seen: set[str] = set()
+    folders: list[Path] = []
+    for folder in candidates:
+        try:
+            key = os.path.normcase(str(folder.resolve()))
+        except OSError:
+            key = os.path.normcase(str(folder))
+        if key in seen:
             continue
-        freed = 0
-        deleted = 0
-        for item in cache_path.iterdir():
-            try:
-                size = item.stat().st_size if item.is_file() else _dir_size(item)
-                if item.is_file():
-                    item.unlink(missing_ok=True)
-                elif item.is_dir():
-                    shutil.rmtree(str(item), ignore_errors=True)
-                freed += size
-                deleted += 1
-            except Exception:
-                pass
+        seen.add(key)
+        folders.append(folder)
+    return folders
 
-        total_freed += freed
+
+def _explorer_cache_folder() -> Path:
+    return Path.home() / "AppData" / "Local" / "Microsoft" / "Windows" / "Explorer"
+
+
+def _newest_time(info: os.stat_result) -> float:
+    """The most recent of written, created (Windows) or changed (Linux).
+
+    An installer that unpacks a zip keeps the ORIGINAL dates on the files, so
+    the modification date alone would call a file unpacked a minute ago "two
+    years old". The creation date says when it really arrived.
+    """
+    return max(info.st_mtime, info.st_ctime, getattr(info, "st_birthtime", 0.0) or 0.0)
+
+
+def _is_link(entry: os.DirEntry) -> bool:
+    try:
+        return entry.is_symlink() or bool(getattr(entry, "is_junction", lambda: False)())
+    except OSError:
+        return True
+
+
+class _CleanTally:
+    def __init__(self) -> None:
+        self.freed = 0
+        self.deleted = 0
+        self.kept_recent = 0
+        self.in_use = 0
+        self.no_access = 0
+
+    def refused(self, exc: OSError) -> None:
+        """Count a file Windows would not delete, under the right reason.
+
+        Windows says "in use" with error 32 (sharing violation) or 33 (lock
+        violation); "access denied" (5) is a file that belongs to another
+        account, like most of C:\\Windows\\Temp for a normal user. Python
+        raises PermissionError for all three, so the number decides.
+        """
+        import errno
+        winerror = getattr(exc, "winerror", None)
+        if winerror in (32, 33) or exc.errno in (errno.EBUSY, errno.ETXTBSY):
+            self.in_use += 1
+        else:
+            self.no_access += 1
+
+
+def _clean_folder(folder: Path, now: float, tally: _CleanTally, *, top: bool) -> bool:
+    """Delete what is old inside ``folder``. True when ``folder`` ends up empty.
+
+    Links (symlinks and junctions) are never followed and never deleted: they
+    point somewhere else, and that somewhere is not cache.
+    """
+    try:
+        with os.scandir(folder) as listing:
+            entries = list(listing)
+    except OSError:
+        return False
+    empty = True
+    for entry in entries:
+        if _is_link(entry):
+            empty = False
+            continue
+        try:
+            info = entry.stat(follow_symlinks=False)
+        except OSError:
+            empty = False
+            continue
+        old = now - _newest_time(info) >= CACHE_MIN_AGE_SECONDS
+        if entry.is_dir(follow_symlinks=False):
+            child_empty = _clean_folder(Path(entry.path), now, tally, top=False)
+            if child_empty and old:
+                try:
+                    os.rmdir(entry.path)
+                    continue
+                except OSError:
+                    pass
+            empty = False
+            continue
+        if not old:
+            tally.kept_recent += 1
+            empty = False
+            continue
+        try:
+            os.unlink(entry.path)
+        except OSError as exc:
+            # Open in some program right now, or not ours to delete.
+            tally.refused(exc)
+            empty = False
+            continue
+        tally.freed += info.st_size
+        tally.deleted += 1
+    return empty and not top
+
+
+def clean_windows_cache(now: float | None = None) -> dict:
+    """Empty the Windows temp folders and thumbnail cache, gently.
+
+    Only files older than 24 hours go; anything newer, or open in a program,
+    stays. ``now`` exists for the tests.
+    """
+    import time as _time
+    moment = _time.time() if now is None else float(now)
+    results = []
+    total = _CleanTally()
+
+    for cache_path in _cache_folders():
+        if not cache_path.is_dir():
+            continue
+        tally = _CleanTally()
+        _clean_folder(cache_path, moment, tally, top=True)
         results.append({
-            "path":    str(cache_path),
-            "deleted": deleted,
-            "freed_mb": round(freed / 1e6, 1),
+            "path": str(cache_path),
+            "deleted": tally.deleted,
+            "freed_mb": round(tally.freed / 1e6, 1),
+            "kept_recent": tally.kept_recent,
+            "in_use": tally.in_use,
+            "no_access": tally.no_access,
         })
+        for name in ("freed", "deleted", "kept_recent", "in_use", "no_access"):
+            setattr(total, name, getattr(total, name) + getattr(tally, name))
 
+    explorer = _explorer_cache_folder()
+    if explorer.is_dir():
+        tally = _CleanTally()
+        try:
+            names = [p for p in explorer.iterdir()
+                     if p.name.lower().startswith(_EXPLORER_CACHE_PREFIXES)
+                     and p.suffix.lower() == ".db" and p.is_file() and not p.is_symlink()]
+        except OSError:
+            names = []
+        for item in names:
+            try:
+                info = item.stat()
+            except OSError:
+                continue
+            if moment - _newest_time(info) < CACHE_MIN_AGE_SECONDS:
+                tally.kept_recent += 1
+                continue
+            try:
+                item.unlink()
+            except OSError as exc:
+                tally.refused(exc)
+                continue
+            tally.freed += info.st_size
+            tally.deleted += 1
+        results.append({
+            "path": str(explorer),
+            "deleted": tally.deleted,
+            "freed_mb": round(tally.freed / 1e6, 1),
+            "kept_recent": tally.kept_recent,
+            "in_use": tally.in_use,
+            "no_access": tally.no_access,
+        })
+        for name in ("freed", "deleted", "kept_recent", "in_use", "no_access"):
+            setattr(total, name, getattr(total, name) + getattr(tally, name))
+
+    summary = f"Libertei {total.freed / 1e6:.0f} MB de cache do Windows"
+    kept = []
+    if total.kept_recent:
+        kept.append(f"{total.kept_recent} ficheiro(s) com menos de 24 horas")
+    if total.in_use:
+        kept.append(f"{total.in_use} em uso")
+    if total.no_access:
+        kept.append(f"{total.no_access} sem permissão para apagar")
+    if kept:
+        summary += "; deixei " + " e ".join(kept)
     return {
-        "cleaned":        results,
-        "total_freed_mb": round(total_freed / 1e6, 1),
-        "summary":        f"Libertei {total_freed/1e6:.0f} MB de cache do Windows",
+        "cleaned": results,
+        "total_freed_mb": round(total.freed / 1e6, 1),
+        "deleted": total.deleted,
+        "kept_recent": total.kept_recent,
+        "in_use": total.in_use,
+        "no_access": total.no_access,
+        "min_age_hours": CACHE_MIN_AGE_SECONDS // 3600,
+        "summary": summary,
     }
-
-
-def _dir_size(path: Path) -> int:
-    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
 
 def rename_file_smart(file_path: str, new_name: str) -> dict:
@@ -214,7 +376,7 @@ def get_tools() -> list[dict]:
         }},
         {"type": "function", "function": {
             "name": "clean_windows_cache",
-            "description": "Limpa ficheiros temporários e cache do Windows para libertar espaço.",
+            "description": "Limpa ficheiros temporários e a cache de miniaturas do Windows para libertar espaço. Só apaga ficheiros com mais de 24 horas que não estejam em uso.",
             "parameters": {"type": "object", "properties": {}},
         }},
         {"type": "function", "function": {

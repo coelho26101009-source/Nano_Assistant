@@ -18,7 +18,8 @@
  * that answered last is tried first next time.
  */
 import {
-  AAD, b64d, b64e, importKey, newPairingKeys, openFromPc, openSealed, pairingCode, randomId, seal,
+  AAD, b64d, b64e, importKey, newPairingKeys, newPairingNonce, openFromPc, openSealed, pairingCode,
+  pairingCommitment, randomId, seal,
   type Envelope, type PhoneBox,
 } from "./crypto";
 import { httpPost, HttpError } from "./http";
@@ -46,7 +47,7 @@ export type LinkState = "unpaired" | "connecting" | "online" | "offline" | "revo
 export type NanoEvent = { seq: number; name: string; data: any[] };
 
 /** The pairing protocol this app speaks: core/mobile_link.PROTOCOL. */
-export const PAIR_PROTOCOL = 2;
+export const PAIR_PROTOCOL = 3;
 
 const HOST_RE = /^[0-9a-zA-Z.:\-[\]]{1,80}$/;
 
@@ -67,7 +68,8 @@ export function parsePairLink(text: string): PairLink {
     throw new Error("not_a_nano_code");
   }
   // An older NANO on the PC would send the key sealed with the QR secret
-  // alone; this app refuses that rather than fall back to it.
+  // alone (1) or show a code that can be steered (2); this app refuses that
+  // rather than fall back to it.
   if (version < PAIR_PROTOCOL) throw new Error("old_pc");
   if (version !== PAIR_PROTOCOL) throw new Error("unsupported_version");
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("not_a_nano_code");
@@ -96,7 +98,11 @@ export function parseManualAddress(text: string, defaultPort: number): { host: s
 
 type PairReply = {
   state: string; code?: string; deviceId?: string; pcName?: string; protocol?: number; box?: PhoneBox;
+  /** The PC's random number, in the answer to "commit" (protocol 3). */
+  pn?: string;
 };
+
+type PairOp = "commit" | "request" | "status";
 
 /**
  * Pair with the PC. Calls onState as the PC moves from "asked" to an answer,
@@ -112,14 +118,17 @@ export async function pair(
 ): Promise<Pairing | null> {
   const key = await importKey(link.secret);
   const mine = await newPairingKeys();
+  const nonce = newPairingNonce();
   const pk = b64e(mine.publicRaw);
-  const code = await pairingCode(link.session, mine.publicRaw);
-  onCode?.(code);
+  const commitment = b64e(await pairingCommitment(link.session, mine.publicRaw, nonce));
   const channel = link.relay ? new RelayChannel(link.relay) : null;
-  const call = async (route: Route, op: "request" | "status", extra: Record<string, unknown> = {}) => {
+  const call = async (route: Route, op: PairOp, extra: Record<string, unknown> = {}) => {
     const id = randomId();
+    // The commitment goes alone: the key and the number are revealed only
+    // after the PC has fixed its own number.
+    const fields = op === "commit" ? { cm: commitment } : { pk, ...extra };
     const body: Envelope & { i?: string } = await seal(
-      key, { op, id, ts: Date.now(), pk, ...extra }, AAD.pair(link.session));
+      key, { op, id, ts: Date.now(), ...fields }, AAD.pair(link.session));
     body.i = link.session;
     const reply = route.kind === "relay"
       ? await channel!.post("pair", body, 8000)
@@ -128,19 +137,27 @@ export async function pair(
   };
   const routes: Route[] = link.hosts.map((host) => ({ kind: "direct" as const, host, port: link.port }));
   if (channel) routes.push({ kind: "relay" });
+  const codeFor = async (pcNonce: string) => {
+    const code = await pairingCode(link.session, mine.publicRaw, nonce, b64d(pcNonce));
+    onCode?.(code);
+    return code;
+  };
   try {
-    return await pairOver(routes, call, link, mine.privateKey, code, deviceName, platform, onState, signal);
+    return await pairOver(routes, call, link, mine.privateKey, b64e(nonce), codeFor,
+      deviceName, platform, onState, signal);
   } finally {
     channel?.close();
   }
 }
 
+/** The pairing conversation, over whichever route answers first. */
 async function pairOver(
   routes: Route[],
-  call: (route: Route, op: "request" | "status", extra?: Record<string, unknown>) => Promise<PairReply>,
+  call: (route: Route, op: PairOp, extra?: Record<string, unknown>) => Promise<PairReply>,
   link: PairLink,
   privateKey: CryptoKey,
-  code: string,
+  nonce: string,
+  codeFor: (pcNonce: string) => Promise<string>,
   deviceName: string,
   platform: string,
   onState: (state: PairState, host?: string) => void,
@@ -149,10 +166,10 @@ async function pairOver(
   onState("connecting");
   let route: Route | null = null;
   let host = "";
-  let first: PairReply | null = null;
+  let committed: PairReply | null = null;
   for (const candidate of routes) {
     try {
-      first = await call(candidate, "request", { name: deviceName, platform });
+      committed = await call(candidate, "commit");
       route = candidate;
       host = candidate.kind === "relay" ? "relay" : candidate.host;
       break;
@@ -161,12 +178,42 @@ async function pairOver(
       if (error instanceof HttpError && error.status !== 0) { onState("error"); return null; }
     }
   }
+  if (!committed) { onState("unreachable"); return null; }
+  if (typeof committed.pn !== "string") { onState("error"); return null; }
+  let code = "";
+  try {
+    code = await codeFor(committed.pn);
+  } catch {
+    onState("error");
+    return null;
+  }
+
+  // The reveal. If its reply is lost, ask again with the SAME key and number
+  // (on this route, then the others): the PC answers a repeat with the same
+  // code, while a new commitment would be refused and need a new QR.
+  let first: PairReply | null = null;
+  const order = [route!, ...routes.filter((candidate) => candidate !== route)];
+  for (let attempt = 0; attempt < 3 && !first; attempt += 1) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 800));
+    for (const candidate of order) {
+      if (signal?.cancelled) return null;
+      try {
+        first = await call(candidate, "request", { name: deviceName, platform, nn: nonce });
+        route = candidate;
+        host = candidate.kind === "relay" ? "relay" : candidate.host;
+        break;
+      } catch (error) {
+        if (error instanceof HttpError && error.status === 410) { onState("expired"); return null; }
+        if (!(error instanceof HttpError) || error.status !== 0) { onState("error"); return null; }
+      }
+    }
+  }
   if (!first) { onState("unreachable"); return null; }
 
   const deadline = Date.now() + 200_000;
   let reply: PairReply = first;
-  // The PC derived the same digits from the key it received. Different digits
-  // mean it is not asking about THIS phone's key, so this phone stops here.
+  // The PC derived the same digits from what it received. Different digits
+  // mean it is not asking about THIS phone, so this phone stops here.
   if (reply.code && reply.code !== code) { onState("error"); return null; }
   while (reply.state === "pending" || reply.state === "waiting") {
     onState("pending", host);

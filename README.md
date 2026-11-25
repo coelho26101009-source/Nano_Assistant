@@ -355,7 +355,13 @@ sub-medido por limites de utilização. Não é uma afirmação de que um fornec
 é objetivamente melhor do que outro.
 
 Em AUTO, o Nano respeita o `Retry-After` real de um 429 e mantém um cooldown por
-fornecedor, para não insistir num provedor que sabe estar limitado. O fallback
+fornecedor, para não insistir num provedor que sabe estar limitado. Quando a
+resposta vem de outro fornecedor que não o escolhido, aparece por baixo dela
+quem respondeu e porquê (por exemplo "Groq: limite atingido. Respondeu Mistral.").
+
+Com Ollama, podes escolher um **modelo local rápido** (Definições → IA →
+"Modelo rápido para respostas curtas", por exemplo `qwen3:1.7b`): cumprimentos e perguntas curtas usam-no; tools, trabalho
+longo e o meio de um turno com tools continuam no modelo principal. O fallback
 preserva o mesmo turno, os resultados de tools e as permissões — o
 **Execution Ledger** garante que uma ação já executada não é repetida quando o
 turno muda de fornecedor.
@@ -525,6 +531,14 @@ A autorização é centralizada e inclui, conforme a ação:
 
 Uma permissão para fechar uma janela específica não se transforma numa
 autorização genérica para fechar qualquer outra janela.
+
+Tudo o que o NANO lê da web (pesquisa, "lê esta página", investigação
+profunda, o tempo) passa por `core/safe_http.py`: o nome é procurado uma só
+vez, no momento de ligar, é recusado se der um endereço privado (o router, o
+próprio PC, um aparelho Tailscale) e a ligação vai para o endereço que foi
+verificado. O navegador sem janela verifica cada pedido e cada WebSocket que
+uma página abre. Escrever um ficheiro que corre ao abrir (`.bat`, `.ps1`, `.lnk`,
+`.exe`, …) fora da pasta do projeto é recusado sem perguntar.
 
 Os handlers de plugin nunca são invocados diretamente: o `plugin_loader` recusa
 executar um handler a menos que quem chama apresente o ToolExecutor como

@@ -482,6 +482,9 @@ class Brain(TaskChains):
                 "requires_reasoning": False,
                 "local_only": True,
             }).get("model") or self.local_profile.model
+        # A second, smaller local model for short answers, chosen by the person
+        # in Definições → IA (off when empty). See _local_model_for.
+        self.ollama_fast_model = str(local_cfg.get("fast_model") or "").strip()
         self.ollama_url = _ollama_chat_url(str(local_cfg.get("url") or cfg.get("ollama_url") or OLLAMA_BASE_URL))
         self.local_context = max(1024, int(local_cfg.get("max_context", 4096)))
         self.history_messages = max(2, int(mem_cfg.get("history_messages", 20)))
@@ -2553,6 +2556,33 @@ class Brain(TaskChains):
         """
         return httpx.AsyncClient(**kwargs)
 
+    #: Task classes short enough for the small local model.
+    _FAST_LOCAL_TASKS = frozenset({model_selection.TaskClass.SMALL_TALK,
+                                   model_selection.TaskClass.QUESTION})
+
+    def _local_model_for(self, message: str, tools: list | None, *,
+                         continue_turn: bool = False) -> str:
+        """The local model for this turn: the fast one only when it fits.
+
+        A small model answers "olá" or "o que é um byte?" in a few seconds on
+        a CPU, where the main 8B model takes ~20. It is used only when the
+        person picked one, it is really installed, the message is small talk
+        or a plain question, no tool is in play and this is not the second
+        half of a tool turn; everything else keeps the main model, which is
+        far better at tools and long answers.
+        """
+        fast = (self.ollama_fast_model or "").strip()
+        if not fast or fast == self.ollama_model or continue_turn or tools:
+            return self.ollama_model
+        if model_selection.classify(message) not in self._FAST_LOCAL_TASKS:
+            return self.ollama_model
+        from core import ollama_service
+        status = ollama_service.STATUS.peek(self.ollama_model,
+                                            self.ollama_url.removesuffix("/api/chat"))
+        if not ollama_service.model_installed(fast, list(status.get("installed") or [])):
+            return self.ollama_model
+        return fast
+
     async def _ollama_fallback(self, message: str, reason: str = "",
                                system_prompt: str | None = None,
                                *, continue_turn: bool = False) -> AsyncIterator[str]:
@@ -2570,7 +2600,10 @@ class Brain(TaskChains):
             return
         # The configured local model is an instruction, not a hint: scoring the
         # installed models here could silently substitute a different one.
-        selected_model = self.ollama_model
+        # The one exception is the person's OWN second choice, the fast model
+        # for short answers, which is just as much an instruction.
+        tools = model_selection.select_tools(message, get_all_tools())
+        selected_model = self._local_model_for(message, tools, continue_turn=continue_turn)
         yield f"_thinking_:🧠 {reason + ' — ' if reason else ''}a usar {selected_model} local..."
         self.last_metadata["local_model"] = selected_model
 
@@ -2601,8 +2634,8 @@ class Brain(TaskChains):
         local_attempt: dict[str, Any] = {"provider": "ollama", "model": selected_model}
         attempts.append(local_attempt)
         # Local models are far weaker at ignoring irrelevant tools, and the
-        # local context window is small, so the same scoped subset applies.
-        tools = model_selection.select_tools(message, get_all_tools())
+        # local context window is small, so the same scoped subset (chosen
+        # above) applies.
         sys_p = system_prompt or (SYSTEM_PROMPT + i18n.reply_language_instruction() + "\n"
                                   + self._facts_block())
 

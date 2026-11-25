@@ -593,6 +593,44 @@ const CHEVRON = "m6 9 6 6 6-6";
  * read. The affordance comes from a hairline surface that only fills in on
  * hover, focus and open — not from size.
  */
+/**
+ * Did this answer come from another AI because the usual one FAILED?
+ *
+ * Tagged only when something actually failed on the way: a provider attempt
+ * that did not answer, or a reason other than "the cloud was never set up".
+ * A local-only setup records fallback_used with nothing having failed.
+ */
+export function failedOver(meta: ResponseMeta): boolean {
+  const attempts = meta.provider_attempts ?? [];
+  const failedHop = attempts.some((attempt) => attempt.outcome && attempt.outcome !== "ok");
+  const rawReason = String(meta.fallback_reason ?? "");
+  return Boolean(meta.fallback_used)
+    && (failedHop || (Boolean(rawReason) && !EXPECTED_FALLBACK.has(rawReason)));
+}
+
+/**
+ * One quiet line under an answer that another AI gave because the usual one
+ * failed, e.g. "Groq: temporary limit reached. Mistral answered."
+ *
+ * The free cloud plans have daily limits, and NANO switching on its own is
+ * the right thing to do; but a person whose answers suddenly get slower or
+ * different deserves to know why without opening Modo avançado.
+ */
+export function FallbackNote({ meta }: { meta: ResponseMeta }) {
+  if (!meta.provider || !failedOver(meta)) return null;
+  const from = meta.fallback_from ?? meta.attempted_provider;
+  const reason = reasonText(meta.fallback_reason) || t("não respondeu");
+  const text = from && from !== meta.provider
+    ? t("{0}: {1}. Respondeu {2}.", { 0: providerName(from), 1: reason, 2: providerName(meta.provider) })
+    : t("Respondeu {0} ({1}).", { 0: providerName(meta.provider), 1: reason });
+  return (
+    <p className="msg__fallback" role="note">
+      <span className="msg__fallback-dot" aria-hidden="true" />
+      <span>{text}</span>
+    </p>
+  );
+}
+
 function TechnicalDetails({ meta, id }: { meta: ResponseMeta; id: string }) {
   const [open, setOpen] = useState(false);
   const panelId = `meta-${id}`;
@@ -604,12 +642,7 @@ function TechnicalDetails({ meta, id }: { meta: ResponseMeta; id: string }) {
   const crossed = attempts.length > 1;
   const reason = reasonText(meta.fallback_reason);
   const fellBack = Boolean(meta.fallback_used);
-  // Tagged only when something actually FAILED on the way: a provider attempt
-  // that did not answer, or a reason other than "the cloud was never set up".
-  // A local-only setup records fallback_used with nothing having failed.
-  const failedHop = attempts.some((attempt) => attempt.outcome && attempt.outcome !== "ok");
-  const rawReason = String(meta.fallback_reason ?? "");
-  const surprising = fellBack && (failedHop || (Boolean(rawReason) && !EXPECTED_FALLBACK.has(rawReason)));
+  const surprising = failedOver(meta);
   const from = meta.fallback_from ?? meta.attempted_provider;
 
   return (
@@ -942,6 +975,8 @@ function MessageBubble({
           )}
         </div>
       )}
+
+      {!isUser && !message.streaming && message.meta ? <FallbackNote meta={message.meta} /> : null}
 
       {!isUser && !message.streaming && message.meta?.recalled?.length ? (
         <RecallChips recalled={message.meta.recalled} />

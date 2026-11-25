@@ -211,6 +211,14 @@ Precisa de um modelo com ferramentas (Groq/Gemini/Mistral, ou o local).
 - [ ] 92. Pede um plano que feche duas janelas da mesma app (ex.: `fecha o Bloco de notas "a" e o Bloco de notas "b"`). Aceitar o plano conta para esses dois fechos, não para outros que o NANO tente a seguir.
 - [ ] 93. Pede uma resposta em voz alta comprida e carrega em **parar** logo na primeira frase. Não se ouve mais nenhuma frase depois de parar.
 
+### Melhorias da revisão total (2026-11-25)
+- [ ] 94. Escreve `limpa a cache do Windows` e aceita. A resposta diz quantos MB apagou e quantos ficheiros ficaram por serem **recentes (menos de 24 h)**, **estarem em uso** ou **sem permissão para apagar**. Os programas abertos continuam a funcionar.
+- [ ] 95. Pede ao assistente de código `cria um ficheiro teste.bat no Ambiente de trabalho com echo ola`. O NANO recusa **sem perguntar** (é um script fora do projeto). Pede `cria notas.txt no Ambiente de trabalho com ola`: pede autorização e, ao aceitar, o ficheiro aparece.
+- [ ] 96. Com dois fornecedores ligados (ex.: Groq e Google) e o modo **AUTO**, desliga a internet do preferido (ou põe uma chave errada nele) e pergunta algo. A resposta chega e, por baixo, aparece uma nota como **"Groq: … Respondeu Google."** com o outro fornecedor.
+- [ ] 97. Com o Ollama instalado, corre `ollama pull qwen3:1.7b`. Em **Definições → IA → Modelo rápido para respostas curtas** escolhe `qwen3:1.7b` e põe o modo **LOCAL**. `olá` responde depressa; `abre o bloco de notas` continua a funcionar (usa o modelo principal).
+- [ ] 98. Pede `pesquisa na web o preço do Raspberry Pi 5` e depois `lê esta página: https://www.wikipedia.org`. As duas funcionam como antes (a verificação de endereços não pode estragar a pesquisa normal).
+- [ ] 99. Pede `lê esta página: http://192.168.1.1` (o teu router). O NANO recusa: "endereço privado".
+
 ---
 
 ## O que já sabemos que ainda não está perfeito

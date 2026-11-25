@@ -40,17 +40,24 @@ def link(store):
 
 
 class _Phone:
-    """The phone's half of pairing protocol 2: a P-256 key that never leaves it.
+    """The phone's half of pairing protocol 3: a P-256 key that never leaves it,
+    a random number it commits to first, and the PC's number it gets back.
 
-    Mirrors mobile/src/lib/crypto.ts (newPairingKeys, openFromPc)."""
+    Mirrors mobile/src/lib/crypto.ts (newPairingKeys, openFromPc, pairingCommitment)."""
 
     def __init__(self):
+        import os
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.asymmetric import ec
         self.private = ec.generate_private_key(ec.SECP256R1())
         self.public = self.private.public_key().public_bytes(
             serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
         self.pk = b64e(self.public)
+        self.nonce = os.urandom(32)
+        self.pc_nonce = b""
+
+    def code(self, session_id: str) -> str:
+        return mobile_link.pairing_code(session_id, self.public, self.nonce, self.pc_nonce)
 
     def open(self, salt: bytes, context: str, box: dict) -> dict:
         from cryptography.hazmat.primitives import hashes
@@ -66,6 +73,10 @@ class _Phone:
 
 ADDRESSES = [{"address": "192.168.1.20", "kind": "lan"}]
 
+#: Shared with mobile/test/crypto.test.ts: the phone must derive the same.
+COMMITMENT_VECTOR = "6Ze6GJqlsSisqLoqD4GlAHN--E3kcJQbmRqxjOheH3w"
+CODE_VECTOR = "193468"
+
 
 def _qr(link: MobileLink) -> dict:
     info = link.start_pairing(47821, ADDRESSES)
@@ -79,17 +90,40 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _pair_call(link: MobileLink, qr: dict, op: str, phone=None, **extra) -> dict:
-    """One pairing request. ``phone=False`` leaves the public key out (protocol 1)."""
-    phone = qr["phone"] if phone is None else phone
+def _send(link: MobileLink, qr: dict, payload: dict) -> dict:
     request_id = mobile_link.new_request_id()
-    payload = {"op": op, "id": request_id, "ts": _now_ms(), **extra}
-    if phone is not False:
-        payload["pk"] = phone.pk
+    payload = {**payload, "id": request_id, "ts": _now_ms()}
     body = seal(qr["secret"], payload, "nano-pair-v1|" + qr["id"])
     body["i"] = qr["id"]
     reply = link.handle_pair(body)
     return open_sealed(qr["secret"], reply, f"nano-pair-reply-v1|{qr['id']}|{request_id}")
+
+
+def _commit(link: MobileLink, qr: dict, phone=None, commitment: bytes | None = None) -> dict:
+    """Step one of protocol 3: the phone sends only a hash of its key and number."""
+    phone = qr["phone"] if phone is None else phone
+    if commitment is None:
+        commitment = mobile_link.pairing_commitment(qr["id"], phone.public, phone.nonce)
+    reply = _send(link, qr, {"op": "commit", "cm": b64e(commitment)})
+    phone.pc_nonce = b64d(reply["pn"])
+    return reply
+
+
+def _pair_call(link: MobileLink, qr: dict, op: str, phone=None, commit: bool = True,
+               **extra) -> dict:
+    """One pairing request. A "request" commits first, as the phone does.
+
+    ``phone=False`` leaves the public key out (protocol 1); ``commit=False``
+    skips the commitment (protocol 2)."""
+    phone = qr["phone"] if phone is None else phone
+    payload = {"op": op, **extra}
+    if phone is not False:
+        if op == "request" and commit:
+            _commit(link, qr, phone)
+        payload["pk"] = phone.pk
+        if op == "request":
+            payload.setdefault("nn", b64e(phone.nonce))
+    return _send(link, qr, payload)
 
 
 def _key_context(qr: dict, device_id: str) -> str:
@@ -162,9 +196,9 @@ def test_only_home_and_private_network_addresses_are_offered(address, kind):
 def test_pairing_needs_the_qr_and_a_yes_on_the_pc(link):
     qr = _qr(link)
     assert qr["hosts"] == "192.168.1.20" and qr["port"] == 47821
-    assert len(qr["secret"]) == 32 and qr["version"] == mobile_link.PROTOCOL == 2
+    assert len(qr["secret"]) == 32 and qr["version"] == mobile_link.PROTOCOL == 3
     first = _pair_call(link, qr, "request", name="Pixel 9", platform="android")
-    code = mobile_link.pairing_code(qr["id"], qr["phone"].public)
+    code = qr["phone"].code(qr["id"])
     assert first["state"] == "pending" and "key" not in first and "box" not in first
     assert first["code"] == code and len(code) == 6 and code.isdigit()
     assert link.pair_requests == [{"sessionId": qr["id"], "deviceName": "Pixel 9",
@@ -208,9 +242,9 @@ def test_a_phone_that_slips_in_first_shows_a_different_code(link):
     qr = _qr(link)
     intruder = _Phone()
     first = _pair_call(link, qr, "request", phone=intruder, name="Pixel 9")
-    # The PC shows the intruder's code; the person's phone computes its own.
-    assert first["code"] == mobile_link.pairing_code(qr["id"], intruder.public)
-    assert first["code"] != mobile_link.pairing_code(qr["id"], qr["phone"].public)
+    # The PC shows the intruder's code; the person's phone is refused at its
+    # very first step, so it never shows a code to compare with.
+    assert first["code"] == intruder.code(qr["id"])
     with pytest.raises(LinkError) as refused:
         _pair_call(link, qr, "request", name="Pixel 9")
     assert refused.value.code == "unauthorized"
@@ -224,8 +258,63 @@ def test_a_protocol_1_phone_is_told_to_update(link):
     assert link.pair_requests == []
 
 
+def test_a_protocol_2_phone_that_skips_the_commitment_is_told_to_update(link):
+    qr = _qr(link)
+    with pytest.raises(LinkError) as old:
+        _pair_call(link, qr, "request", commit=False, name="app from beta 4")
+    assert old.value.code == "upgrade_required" and old.value.status == 426
+    assert link.pair_requests == []
+
+
+def test_revealing_anything_other_than_what_was_committed_is_refused(link):
+    qr = _qr(link)
+    _commit(link, qr)
+    # Another key with the committed number...
+    with pytest.raises(LinkError) as other_key:
+        _send(link, qr, {"op": "request", "pk": _Phone().pk, "nn": b64e(qr["phone"].nonce)})
+    assert other_key.value.code == "unauthorized"
+    # ...or the committed key with another number.
+    with pytest.raises(LinkError) as other_nonce:
+        _send(link, qr, {"op": "request", "pk": qr["phone"].pk, "nn": b64e(bytes(32))})
+    assert other_nonce.value.code == "unauthorized"
+    assert link.pair_requests == []
+    # The honest reveal still works afterwards.
+    assert _pair_call(link, qr, "request", commit=False, name="Pixel")["state"] == "pending"
+
+
+def test_one_commitment_per_qr_and_the_pc_number_never_changes(link):
+    """The grind needs either several PC numbers for one QR or a code that
+    can be chosen after the PC's number is known. Neither is possible."""
+    qr = _qr(link)
+    first = _commit(link, qr)
+    assert first["state"] == "committed" and len(b64d(first["pn"])) == 32
+    # A lost reply: the same commitment again gets the same number.
+    assert _commit(link, qr)["pn"] == first["pn"]
+    # Anybody else's commitment is refused: no second PC number to try against.
+    with pytest.raises(LinkError) as second:
+        _commit(link, qr, phone=_Phone())
+    assert second.value.code == "unauthorized"
+    # Asking for a status before revealing is refused too.
+    with pytest.raises(LinkError) as early:
+        _pair_call(link, qr, "status")
+    assert early.value.code == "unauthorized"
+    # The PC screen still says "waiting for a phone" until the reveal.
+    assert link.pairing_state(qr["id"])["state"] == "waiting"
+    reply = _pair_call(link, qr, "request", commit=False, name="Pixel")
+    assert reply["code"] == qr["phone"].code(qr["id"])
+    assert _commit(link, qr)["pn"] == first["pn"]
+
+
+@pytest.mark.parametrize("bad", ["", "abc", b64e(bytes(31)), b64e(bytes(33)), 42])
+def test_malformed_commitments_are_bad_requests(link, bad):
+    qr = _qr(link)
+    with pytest.raises(LinkError) as refused:
+        _send(link, qr, {"op": "commit", "cm": bad})
+    assert refused.value.code == "bad_request"
+
+
 def test_pairing_vector_matches_the_phone():
-    """mobile/test/crypto.test.ts opens this box and derives this code."""
+    """mobile/test/crypto.test.ts opens this box and derives this commitment and code."""
     from cryptography.hazmat.primitives.asymmetric import ec
     phone = ec.derive_private_key(
         0x1F2E3D4C5B6A79881F2E3D4C5B6A79881F2E3D4C5B6A79881F2E3D4C5B6A7988, ec.SECP256R1())
@@ -243,7 +332,9 @@ def test_pairing_vector_matches_the_phone():
         "n": "AAECAwQFBgcICQoL",
         "c": "57ncfJbEqIvfOcEunXAl1WnbiTUyhvRNmiQnMyYiIpgIvNFkS9I6EJpKJMinU7FGu9foPycuETXAF8RjvQ2Bbu89lG_X",
     }
-    assert mobile_link.pairing_code("0123456789abcdef", public) == "175500"
+    phone_nonce, pc_nonce = bytes([1] * 32), bytes([2] * 32)
+    assert b64e(mobile_link.pairing_commitment("0123456789abcdef", public, phone_nonce)) == COMMITMENT_VECTOR
+    assert mobile_link.pairing_code("0123456789abcdef", public, phone_nonce, pc_nonce) == CODE_VECTOR
 
 
 def test_a_no_on_the_pc_issues_nothing(link):
@@ -446,9 +537,19 @@ def test_http_server_end_to_end(link):
     try:
         base = f"http://127.0.0.1:{server.port}"
         qr = _qr(link)
+        phone = qr["phone"]
+        request_id = mobile_link.new_request_id()
+        commitment = mobile_link.pairing_commitment(qr["id"], phone.public, phone.nonce)
+        body = seal(qr["secret"], {"op": "commit", "id": request_id, "ts": _now_ms(),
+                                   "cm": b64e(commitment)},
+                    "nano-pair-v1|" + qr["id"])
+        body["i"] = qr["id"]
+        status, reply, _ = _post(base + "/v1/pair", body)
+        assert status == 200
+        assert open_sealed(qr["secret"], reply, f"nano-pair-reply-v1|{qr['id']}|{request_id}")["state"] == "committed"
         request_id = mobile_link.new_request_id()
         body = seal(qr["secret"], {"op": "request", "id": request_id, "ts": _now_ms(), "name": "Pixel",
-                                   "pk": qr["phone"].pk},
+                                   "pk": phone.pk, "nn": b64e(phone.nonce)},
                     "nano-pair-v1|" + qr["id"])
         body["i"] = qr["id"]
         status, reply, _ = _post(base + "/v1/pair", body)

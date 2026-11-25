@@ -625,7 +625,9 @@ def test_every_function_the_ui_calls_actually_exists(drive_report):
     `call()` resolves null for an unknown name, so the page renders an empty
     state instead of an error and the mistake can live for a long time.
     """
-    main_source = _read(ROOT / "core" / "main.py")
+    # The phone link's functions live in core/main_phone.py, which core.main
+    # imports, so their @eel.expose runs with the rest.
+    main_source = _read(ROOT / "core" / "main.py") + "\n" + _read(ROOT / "core" / "main_phone.py")
     exposed = set(re.findall(r"^def ([a-z_0-9]+)\(", main_source, re.M))
     for name in drive_report["calledFunctions"]:
         assert name in exposed, f"the UI calls {name}(), which core/main.py does not expose"

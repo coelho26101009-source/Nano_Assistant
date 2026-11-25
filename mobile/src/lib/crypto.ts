@@ -2,7 +2,7 @@
  * Sealing every message between the phone and the PC.
  *
  * Pairing (protocol 2) adds ECDH P-256 + HKDF-SHA256: see newPairingKeys,
- * openFromPc and pairingCode below.
+ * openFromPc, pairingCommitment and pairingCode below.
  *
  * AES-256-GCM through WebCrypto, byte-for-byte compatible with
  * core/mobile_link.py on the PC: a 12-byte random nonce, base64url without
@@ -98,17 +98,45 @@ export async function openFromPc<T = any>(
   return openSealed<T>(aes, { n: box.n, c: box.c }, context);
 }
 
+function concat(...parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, part) => n + part.length, 0));
+  let at = 0;
+  for (const part of parts) { out.set(part, at); at += part.length; }
+  return out;
+}
+
+async function sha256(data: Uint8Array): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", data as BufferSource));
+}
+
+/** A fresh 32-byte random number: this phone's half of the pairing code. */
+export function newPairingNonce(): Uint8Array {
+  return crypto.getRandomValues(new Uint8Array(32));
+}
+
+/**
+ * Step one of pairing protocol 3 (core/mobile_link.pairing_commitment): a hash
+ * that binds this phone to its key and random number BEFORE it sees the PC's
+ * number. Neither side can then steer the six digits.
+ */
+export async function pairingCommitment(
+  session: string, phonePublicRaw: Uint8Array, phoneNonce: Uint8Array,
+): Promise<Uint8Array> {
+  return sha256(concat(enc.encode(`nano-pair-commit-v3|${session}|`), phonePublicRaw, phoneNonce));
+}
+
 /**
  * The six digits both screens show (core/mobile_link.pairing_code): SHA-256 of
- * the session and this phone's public key. The person compares them; a phone
- * that slipped in first with a photo of the QR shows different digits.
+ * the session, this phone's public key, this phone's random number and the
+ * PC's random number. The person compares them; a phone that slipped in first
+ * with a photo of the QR shows different digits, and nobody can search for a
+ * key that gives the same ones.
  */
-export async function pairingCode(session: string, phonePublicRaw: Uint8Array): Promise<string> {
-  const prefix = enc.encode(`nano-pair-code-v2|${session}|`);
-  const data = new Uint8Array(prefix.length + phonePublicRaw.length);
-  data.set(prefix);
-  data.set(phonePublicRaw, prefix.length);
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", data as BufferSource));
+export async function pairingCode(
+  session: string, phonePublicRaw: Uint8Array, phoneNonce: Uint8Array, pcNonce: Uint8Array,
+): Promise<string> {
+  const digest = await sha256(concat(
+    enc.encode(`nano-pair-code-v3|${session}|`), phonePublicRaw, phoneNonce, pcNonce));
   const value = ((digest[0] << 24) >>> 0) + (digest[1] << 16) + (digest[2] << 8) + digest[3];
   return String(value % 1_000_000).padStart(6, "0");
 }

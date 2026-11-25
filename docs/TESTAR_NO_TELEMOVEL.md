@@ -64,7 +64,12 @@ telemóvel Android 7 ou mais recente, e os dois no **mesmo Wi-Fi**.
 
 > Se o telemóvel disser que **a app tem de ser atualizada**, instala a versão
 > de teste mais recente: um NANO atualizado no PC já não liga telemóveis com a
-> app antiga (os que já estavam ligados continuam a funcionar).
+> app antiga (os que já estavam ligados continuam a funcionar). Desde
+> 2026-11-25 o emparelhamento usa o protocolo 3: o telemóvel compromete-se com
+> a sua chave antes de o PC escolher um número à sorte, e o código depende dos
+> dois. Para experimentar: liga um telemóvel **novo** com a app de teste mais
+> recente (tem de funcionar como acima) e confirma que um telemóvel com a app
+> antiga recebe "atualiza a app" em vez de um código.
 
 ## O que experimentar
 
