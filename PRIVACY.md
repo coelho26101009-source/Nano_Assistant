@@ -4,12 +4,14 @@ What Nano stores, where it stores it, and what leaves your computer.
 
 This is project documentation describing the behaviour of the code in this
 repository. It is **not a legal privacy policy** and not a substitute for
-professional legal advice for a commercial or public deployment. It also
-describes `main`, not a released version — there is no released version.
+professional legal advice for a commercial or public deployment. It
+describes `main`; the public Betas on the releases page follow it, and a
+change lands here in the same commit as the code.
 
 ## The short version
 
-Five kinds of thing leave your computer, and nothing else does:
+These are the things that leave your computer, and nothing else does (the
+full list of services is under [Third parties](#third-parties)):
 
 1. **Your message and the context Nano builds around it**, sent to whichever
    **cloud provider** answers the turn — **Groq**, **Mistral** or
@@ -26,7 +28,14 @@ Five kinds of thing leave your computer, and nothing else does:
    the new installer when there is one. GitHub sees your IP address, as with
    any download; nothing about you, your settings or your conversations is
    sent. Turn it off in **Settings → About → Updates**; see
-   [docs/UPDATES.md](docs/UPDATES.md).
+   [docs/UPDATES.md](docs/UPDATES.md). The phone app does the same check
+   against GitHub.
+6. **Downloads you start yourself**: "Preparar a voz" (the speech pack from
+   PyPI and the speech model from Hugging Face), "Instalar voz offline"
+   (GitHub), and installing a local model (Ollama's registry).
+7. **Features you switch on**: the weather (your city, to Open-Meteo),
+   ElevenLabs (the text to read, with your key), and the phone "away from
+   home" relay (sealed messages it cannot read).
 
 Everything else — your conversation history, your remembered facts, the Second
 Brain, your voice recordings, the transcription of what you said, screenshots,
@@ -306,7 +315,8 @@ the data directory, where writable. Uninstalling preserves this directory and
 its conversations, memories, settings, encrypted credentials and policies.
 
 **Voice.** Wake-phrase detection and transcription both run locally with
-faster-whisper. There is no cloud speech-to-text path in the code: the runtime
+faster-whisper. There is no cloud speech-to-text path in the PC code (the phone
+app is different: see [The phone app](#the-phone-app-android)): the runtime
 constructs a local provider unconditionally. Audio is written to a unique
 temporary file and deleted immediately after transcription. Recordings are never
 uploaded and never kept. Wake-phrase listening is **off by default**, because it
@@ -398,7 +408,9 @@ model can neither see nor trigger it.
 | **Google / Gemini** (`generativelanguage.googleapis.com`) | AUTO and CLOUD, when it is asked | The same |
 | **Microsoft** (`speech.platform.bing.com`) | Spoken replies with the default voice, **any mode** (in LOCAL mode only when the offline voice is not installed or fails) | The text to be read aloud — including a notice NANO says by itself (the briefing's short spoken version, "Daqui a pouco: …"), unless Definições → Geral → "Dizer os avisos em voz alta" is "Não, só mostrar" |
 | **ElevenLabs** (`api.elevenlabs.io`) | Spoken replies, **only** when you chose ElevenLabs and saved your own key | The text to be read aloud, with your key |
-| **GitHub** (`github.com`, release downloads) | Once, when you press "Instalar voz offline" | A normal download of the voice files (checked against a fixed SHA-256) |
+| **GitHub** (`github.com`, release downloads) | Once, when you press "Instalar voz offline"; the update checks of the desktop and phone apps | A normal download of the voice files (checked against a fixed SHA-256), the signed update file and, when there is one, the new installer |
+| **PyPI** (`pypi.org`, `files.pythonhosted.org`) and **Hugging Face** (`huggingface.co`) | Once, when you press "Preparar a voz" (and "Melhor" quality) | Normal downloads of the speech pack (hash-checked) and of the faster-whisper model |
+| **Ollama's registry** (`registry.ollama.ai`) | Only when you press the button that installs a local model | A normal model download, made by Ollama on your PC |
 | **Open-Meteo** (`geocoding-api.open-meteo.com`, `api.open-meteo.com`) | Only with a city typed in Definições → Geral → "Cidade para o tempo", **any mode** | The city name (once), then its coordinates rounded to ~1 km, at most every 30 minutes. No key, no account, nothing about you. `core/weather.py` |
 | **Ollama** | LOCAL, and the AUTO fallback | Message text — but it runs on your machine |
 | **Websites** | Only when you ask Nano to open, search or read one | A normal web request |
@@ -409,6 +421,24 @@ its status is reported without a network call.
 
 Ollama is listed for completeness: it is a local server, and the request never
 leaves `127.0.0.1`.
+
+## The phone app (Android)
+
+The phone app is a remote for the NANO on your PC. It keeps no conversations of
+its own: it asks the PC, and the PC answers.
+
+| Data | Where it goes |
+| --- | --- |
+| Your messages, agenda, memory and approvals | To **your PC only**, sealed with AES-256-GCM (at home over the Wi-Fi; away from home through NANO's relay, which cannot read them). From the PC on, the same rules as above apply |
+| What you **say** to the microphone | To **Android's own speech recognition** (on most phones, Google's). Depending on the phone and on whether offline speech is installed, the audio may be processed on Google's servers. NANO never receives or keeps the audio, only the words |
+| Answers read aloud | Android's text-to-speech engine, usually on the phone |
+| A photo from the camera | To your PC, sealed. The PC describes it with a local vision model first; otherwise the cloud vision provider you use sees it (the card on the phone says which). The photo is not stored, only the description |
+| The pairing QR | Read by Google's code scanner (Google Play services); the app itself has no camera permission for this |
+| Update check | GitHub, as on the PC |
+| The phone's key | The Android Keystore, excluded from backups |
+
+If you want nothing to reach Google from the phone, type instead of using the
+microphone.
 
 ## Verifying this yourself
 

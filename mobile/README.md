@@ -18,16 +18,21 @@ memory, conversations, agenda and tools, and streams the answer back.
    The PC listens on port 47821 on the local network and shows a one-time QR code
    (`nano://pair?...`: PC addresses, port, session id, 256-bit secret, 5 minutes).
 2. The app scans it (Google code scanner: no camera permission), proves it has the
-   secret and waits. The PC asks "<phone> wants to connect". Only after **Allow on
-   the PC** does the phone get its own 256-bit key.
+   secret, commits to its own key, gets the PC's random number and only then
+   reveals the key (protocol 3). Both screens show the same 6-digit code and the
+   PC asks "<phone> wants to connect". Only after **Allow on the PC** does the
+   phone get its own 256-bit key, sealed to the key it committed to.
 3. Every request and answer is AES-256-GCM sealed (`src/lib/crypto.ts`), bound to
    the device, the request id and the direction, with replay protection. HTTP goes
    through Android's native stack (CapacitorHttp).
 4. Answers arrive through a long-polled event feed (`events.poll`), the same events
    the PC window receives (stream chunks, approval requests, reminders, notices).
 
-Away from home: install Tailscale on the PC and the phone. The QR already lists the
-PC's Tailscale address (100.x); nothing is exposed to the internet.
+Away from home: with "Away from home" on (the default), the PC keeps one outgoing
+connection to NANO's relay (`relay/`, a Cloudflare Worker) and the phone meets it
+there; the relay only forwards sealed messages it cannot read, and no port is
+opened. Tailscale still works as an alternative: the QR lists the PC's Tailscale
+address (100.x) too.
 
 ## Develop
 

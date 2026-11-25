@@ -3,7 +3,8 @@ import { AAD, b64d, b64e, importKey, openSealed, pairingCode, seal } from "../sr
 import { pair, parsePairLink } from "../src/lib/link";
 
 const SESSION = "0123456789abcdef";
-const SECRET = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
+// A fresh QR secret for every run, as the PC makes one per pairing.
+const SECRET = b64e(crypto.getRandomValues(new Uint8Array(32)));
 const LINK = `nano://pair?v=3&h=192.168.1.20&p=47821&i=${SESSION}&s=${SECRET}&n=PC`;
 
 /** A PC that follows protocol 3, closely enough for the phone's side. */

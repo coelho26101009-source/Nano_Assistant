@@ -120,10 +120,14 @@ it never executes in practice. See `docs/SECURITY_POLICY.md`.
 * **`core/mobile_link.py` and `core/mobile_server.py`** — NANO on the phone.
   Off by default. When on, a small HTTP server listens on the local network.
   Pairing needs the one-time QR secret (256-bit, 5 minutes) AND an approval on
-  the PC; each phone then has its own 256-bit key, and every request and answer
+  the PC, after the person compares the same 6-digit code on both screens.
+  Since protocol 3 the phone commits to its key before the PC picks a random
+  number of its own, and the code depends on both, so a phone that slipped in
+  with a photo of the QR cannot search for a key that gives the real phone's
+  code. Each phone then has its own 256-bit key, and every request and answer
   is AES-256-GCM sealed and bound to the device, the request id and the
   direction, with a ±5-minute window and replay rejection. A phone can call only
-  the methods registered in `core/main.py` (chat, conversations, agenda, memory,
+  the methods registered in `core/main_phone.py` (chat, conversations, agenda, memory,
   approvals, status, and the answer to a camera request): never settings, keys,
   permissions or the emergency stop.
   Approvals it answers are the same approvals the PC shows. Removing a phone on

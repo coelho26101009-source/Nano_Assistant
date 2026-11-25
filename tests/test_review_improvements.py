@@ -237,6 +237,11 @@ def test_every_tool_that_reads_the_web_uses_a_pinned_client():
     assert "public_async_client" in inspect.getsource(research._client)
 
 
+def _host_of(url: str) -> str:
+    from urllib.parse import urlparse
+    return urlparse(url).hostname or ""
+
+
 class _FakeRoute:
     def __init__(self, url):
         self.request = type("R", (), {"url": url})()
@@ -254,7 +259,7 @@ def test_the_headless_browser_refuses_requests_to_private_addresses(monkeypatch)
 
     monkeypatch.setattr(web_vision, "_HOST_VERDICTS", {})
     monkeypatch.setattr(web_vision, "validate_public_http_url",
-                        lambda url: (("public.example" in url), ""))
+                        lambda url: (_host_of(url) == "public.example", ""))
 
     async def run(url):
         route = _FakeRoute(url)
@@ -287,7 +292,7 @@ def test_the_headless_browser_refuses_websockets_to_private_addresses(monkeypatc
 
     def verdict(url):
         checked.append(url)
-        return ("public.example" in url), ""
+        return _host_of(url) == "public.example", ""
 
     monkeypatch.setattr(web_vision, "validate_public_http_url", verdict)
 

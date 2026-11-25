@@ -179,9 +179,14 @@ conversas fica à esquerda, e a cápsula de voz funciona fora da janela principa
 | **Modos** | AUTO / CLOUD / LOCAL, com uma única autoridade de routing |
 | **Failover** | Em AUTO: cloud preferida → restantes clouds → Ollama, sempre visível |
 | **Conversas** | Threads reais: criar, abrir, renomear, apagar uma ou várias |
-| **Memória** | Memória de longo prazo com extração determinística e recuperação (RAG) |
-| **Second Brain** | Nós e relações derivados das memórias ativas |
-| **Voz** | Hotkey global, STT local com faster-whisper, TTS através do Edge |
+| **Memória** | Memória de longo prazo com extração determinística e recuperação (RAG), e lembrança de conversas antigas (M3) |
+| **Second Brain** | Nós e relações derivados das memórias ativas, num grafo 3D |
+| **Voz** | Hotkey global e "Ei Nano", STT local com faster-whisper, voz Microsoft, voz offline (Piper/Kokoro) ou ElevenLabs, nunca calado |
+| **Ilha do NANO** | Modo ambiente no topo do ecrã: estado da voz, música, volume, lembretes e aprovações |
+| **Proativo** | Resumo da manhã com o tempo, avisos do PC, sugestões e rotinas com hora, com um filtro anti-incómodo |
+| **Tarefas** | Planos de vários passos, protocolos e rotinas por voz, com paragem de emergência |
+| **Investigação** | Investigação profunda com relatório, citações e fontes |
+| **Telemóvel** | App Android ligada ao PC, cifrada de ponta a ponta, em casa e fora de casa, com câmara a pedido |
 | **PC Control** | 60 ferramentas estreitas: apps, janelas, áudio, teclado, ficheiros, web, ecrã, sistema, energia e capturas |
 | **Segurança** | Validação de esquema + PolicyEngine + PermissionManager + ToolExecutor + target binding |
 | **Extensibilidade** | Sistema de plugins/tools com autorização centralizada |
@@ -678,7 +683,6 @@ aplicação real. Ver [`docs/RELEASING.md`](docs/RELEASING.md).
   Windows limpo de raiz
 - o fallback local é mais lento que a cloud (≈19 s por turno contra ≈0,45 s)
 - os provedores cloud continuam sujeitos aos respetivos rate limits
-- a validação numa máquina Windows limpa continua a ser trabalho em aberto
 
 ---
 
@@ -690,7 +694,7 @@ Sem ordem rígida, e sem prometer datas:
 - **Code signing** — a Beta não está assinada e pode mostrar um aviso SmartScreen
 - **Modelo automático** — escolher sozinho o modelo e o provedor certos para cada pedido
 - **Coding / GitHub** — workflows de desenvolvimento assistido
-- **Produtividade** — calendário, email e integrações externas
+- **Produtividade** — email, Home Assistant e outras integrações externas (a Agenda local já existe)
 
 ---
 
