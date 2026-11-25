@@ -417,7 +417,11 @@ def test_no_status_call_waits_on_a_hung_cloud_provider(bridge, main_module, hung
     """First snapshot, configured provider that never answers: nothing waits."""
     bridge.configure_cloud("GROQ_API_KEY", via=hung_endpoint.url)
     (slow_s, value), (cheap_s, _) = dispatch((name, args), ("get_voice_diagnostics", []))
-    assert cheap_s < CHEAP_LIMIT, (
+    # The wait this guards is the hung endpoint's: the hub blocked on Groq stalls
+    # the cheap call for the whole timeout (10 s), or for the settings refresh
+    # (3 s) -- both above SLOW_RUNNER_LIMIT. A stalled Windows runner measured
+    # 0.54 s here on update_setting, in code that never touches the network.
+    assert cheap_s < SLOW_RUNNER_LIMIT, (
         f"get_voice_diagnostics waited {cheap_s:.2f}s behind {name}: the hub waited on Groq")
     # The call itself answers too: a settings change waits for its refresh at
     # most _SETTINGS_REFRESH_WAIT_SECONDS, cooperatively; a poll not at all.
