@@ -449,19 +449,27 @@ class LocalSTTProvider(SpeechToTextProvider):
             if hint:
                 options["initial_prompt"] = hint
 
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fp:
-                fp.write(audio_bytes)
-                tmp_path = fp.name
+            # Samples, not a file path: the path route goes through PyAV, and
+            # faster-whisper 1.2.1 + av 19 fail there (see core/whisper_audio).
+            from core.whisper_audio import wav_samples
+
+            samples = wav_samples(audio_bytes)
+            tmp_path: str | None = None
+            if samples is None:
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fp:
+                    fp.write(audio_bytes)
+                    tmp_path = fp.name
             try:
                 started = time.perf_counter()
-                segments, _info = model.transcribe(tmp_path, **options)
+                segments, _info = model.transcribe(samples if samples is not None else tmp_path, **options)
                 text = " ".join(part.text.strip() for part in segments if part.text and part.text.strip()).strip()
                 elapsed = time.perf_counter() - started
             finally:
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
+                if tmp_path is not None:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
             # Lengths and timings only -- never the transcript itself, which is
             # the user's private speech.
             logger.info("STT transcribe: model=%s %.2fs -> %d chars",
@@ -686,8 +694,14 @@ class AudioInputProvider(BaseProvider):
     # The background refresh of an expired cache (see list_devices).
     _device_refreshing: bool = False
     _device_refresh_tried_at: float = float("-inf")
+    # PortAudio's default host API (MME on Windows), from the last enumeration.
+    _default_host_api: int | None = None
 
     _FRAMES_PER_BUFFER = 1024
+    # A chosen device that hands back audio faster than real time is not
+    # recording (see _flows_in_real_time). Checked once per device and rate.
+    _REALTIME_CHECK_BLOCKS = 6
+    _device_verdicts: dict[tuple[int, int], bool] = {}
 
     def __init__(self, config: dict | None = None):
         self.config = config or {}
@@ -747,6 +761,82 @@ class AudioInputProvider(BaseProvider):
             cls._refresh_devices_in_background()
         return cached
 
+    def input_devices(self) -> list[dict[str, Any]]:
+        """The microphones to offer in Definições: ONE entry per microphone.
+
+        PortAudio lists every microphone once per Windows audio system (MME,
+        DirectSound, WASAPI, WDM-KS), so a headset appeared four times under
+        almost the same name. Only the default one (MME) is safe to record
+        from at any sample rate: on Simão's PC the DirectSound copy of a
+        HyperX headset returned junk instantly (2026-11-24), so the NANO
+        "heard" loud noise, never speech. Only the default system's entries
+        are offered; the chosen device stays listed even if it is another one.
+        """
+        devices = [d for d in self.list_devices() if int(d.get("maxInputChannels") or 0) > 0]
+        default_api = type(self)._default_host_api
+        if default_api is None or not any(d.get("hostApi") is not None for d in devices):
+            return devices
+        return [d for d in devices
+                if d.get("hostApi") == default_api or d.get("index") == self.device_index]
+
+    #: Set when the chosen microphone failed the real-time check and NANO is
+    #: recording from the system default instead (shown in Definições).
+    device_problem: str | None = None
+
+    def _flows_in_real_time(self, stream: Any, rate: int) -> bool:
+        """Does this stream deliver audio at the speed of time?
+
+        A real microphone needs ~0.38 s to fill six 1024-sample blocks at
+        16 kHz. A broken one (a DirectSound headset, measured 2026-11-24)
+        returns seconds of junk in no time, which looked like constant loud
+        "audio" with no speech in it: the island opened and closed at once.
+        """
+        blocks = self._REALTIME_CHECK_BLOCKS
+        started = time.perf_counter()
+        for _ in range(blocks):
+            stream.read(self._FRAMES_PER_BUFFER, exception_on_overflow=False)
+        elapsed = time.perf_counter() - started
+        expected = blocks * self._FRAMES_PER_BUFFER / float(rate)
+        return elapsed >= expected * 0.4
+
+    def _open_input(self, pa: Any, rate: int) -> Any:
+        """Open the capture stream on the chosen microphone, or the default if it is broken."""
+        import pyaudio
+
+        def open_on(index: Any) -> Any:
+            return pa.open(format=pyaudio.paInt16, channels=self.channels, rate=rate, input=True,
+                           input_device_index=index, frames_per_buffer=self._FRAMES_PER_BUFFER)
+
+        index = self.device_index
+        if index is None:
+            return open_on(None)
+        key = (int(index), int(rate))
+        verdict = type(self)._device_verdicts.get(key)
+        try:
+            stream = open_on(index)
+        except Exception as exc:
+            logger.warning("[Mic] chosen device %s could not open (%s); using the system default", index, exc)
+            self.device_problem = "open_failed"
+            return open_on(None)
+        if verdict is None:
+            try:
+                verdict = self._flows_in_real_time(stream, rate)
+            except Exception:
+                verdict = False
+            type(self)._device_verdicts[key] = verdict
+        if verdict:
+            self.device_problem = None
+            return stream
+        logger.warning("[Mic] chosen device %s returns audio faster than real time (not a working "
+                       "recording); using the system default microphone instead", index)
+        self.device_problem = "not_recording"
+        try:
+            stream.stop_stream()
+            stream.close()
+        except Exception:
+            pass
+        return open_on(None)
+
     @classmethod
     def _enumerate_devices(cls) -> list[dict[str, Any]] | None:
         """One PortAudio enumeration into the shared cache. None when skipped or failed."""
@@ -772,7 +862,12 @@ class AudioInputProvider(BaseProvider):
                         "index": idx,
                         "name": info.get("name", f"device-{idx}"),
                         "maxInputChannels": info.get("maxInputChannels", 0),
+                        "hostApi": info.get("hostApi"),
                     })
+                try:
+                    cls._default_host_api = int(pa.get_default_host_api_info().get("index"))
+                except Exception:
+                    cls._default_host_api = None
             finally:
                 pa.terminate()
             cls._device_cache = devices
@@ -828,18 +923,12 @@ class AudioInputProvider(BaseProvider):
 
                 rate = sample_rate or self.sample_rate
                 self._pyaudio = pyaudio.PyAudio()
-                self._stream = self._pyaudio.open(
-                    format=pyaudio.paInt16,
-                    channels=self.channels,
-                    rate=rate,
-                    input=True,
-                    input_device_index=self.device_index,
-                    frames_per_buffer=self._FRAMES_PER_BUFFER,
-                )
+                self._stream = self._open_input(self._pyaudio, rate)
                 self._stream_rate = rate
                 _MIC_STREAM_OPEN.set()
-                logger.info("[Mic] persistent stream open (rate=%d device=%s)",
-                            rate, self.device_index)
+                logger.info("[Mic] persistent stream open (rate=%d device=%s%s)",
+                            rate, self.device_index,
+                            " -> system default" if self.device_problem else "")
                 return True
             except Exception as exc:
                 self._teardown_stream_locked()
@@ -944,14 +1033,7 @@ class AudioInputProvider(BaseProvider):
                 import pyaudio
 
                 audio = pyaudio.PyAudio()
-                stream = audio.open(
-                    format=pyaudio.paInt16,
-                    channels=self.channels,
-                    rate=rate,
-                    input=True,
-                    input_device_index=self.device_index,
-                    frames_per_buffer=self._FRAMES_PER_BUFFER,
-                )
+                stream = self._open_input(audio, rate)
                 one_shot = stream
 
                 def read_block() -> bytes | None:
@@ -1006,14 +1088,7 @@ class AudioInputProvider(BaseProvider):
 
                 rate = sample_rate or self.sample_rate
                 audio = pyaudio.PyAudio()
-                stream = audio.open(
-                    format=pyaudio.paInt16,
-                    channels=self.channels,
-                    rate=rate,
-                    input=True,
-                    input_device_index=self.device_index,
-                    frames_per_buffer=1024,
-                )
+                stream = self._open_input(audio, rate)
                 frames = []
                 for _ in range(int(rate / 1024 * duration_seconds)):
                     frames.append(stream.read(1024, exception_on_overflow=False))

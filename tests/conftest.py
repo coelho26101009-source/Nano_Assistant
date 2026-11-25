@@ -269,3 +269,23 @@ def _no_real_microphone_mute_state(monkeypatch):
     except Exception:
         return
     monkeypatch.setattr(wake_phrase, "microphone_muted", lambda *a, **k: None)
+
+
+@_pytest.fixture(autouse=True)
+def _no_real_chimes(monkeypatch):
+    """Never play NANO's chimes out loud while the tests run.
+
+    The voice-turn tests drive the real choreography, which plays the
+    "listening" chime through the PC's speakers: one full run on Simão's PC
+    beeped about 50 times in his headset while he was talking to NANO
+    (2026-11-24). The chime is still rendered and its backends still chosen;
+    only the sound card is left alone.
+    """
+    import importlib
+
+    try:
+        audio_feedback = importlib.import_module("core.audio_feedback")
+    except Exception:
+        return
+    monkeypatch.setattr(audio_feedback, "_play_winsound", lambda payload: True)
+    monkeypatch.setattr(audio_feedback, "_play_pygame", lambda payload: True)

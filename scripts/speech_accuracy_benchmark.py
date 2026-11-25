@@ -270,8 +270,14 @@ def run_worker(job_path: Path, output_path: Path) -> int:
             item = {"phrase_id": entry["phrase_id"], "text": "",
                     "seconds": None, "error": None}
             try:
+                # Same route as production (core/voice.py): decoded samples,
+                # never PyAV, which faster-whisper 1.2.1 + av 19 break.
+                from core.whisper_audio import wav_file_samples
+
+                samples = wav_file_samples(entry["path"])
                 begin = time.perf_counter()
-                segments, _info = model.transcribe(entry["path"], **options)
+                segments, _info = model.transcribe(
+                    samples if samples is not None else entry["path"], **options)
                 text = " ".join(
                     part.text.strip() for part in segments if part.text and part.text.strip()
                 ).strip()
@@ -630,19 +636,13 @@ def run_gpu_probe(output_path: Path) -> int:
     try:
         from faster_whisper import WhisperModel
 
+        from core.whisper_audio import wav_samples
+
         model = WhisperModel("tiny", device="cuda", compute_type="float16")
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as handle:
-            handle.write(synthetic_wav_bytes(1.0, 16000))
-            probe_path = handle.name
-        try:
-            segments, _info = model.transcribe(probe_path, language="pt", vad_filter=False)
-            list(segments)           # force the encoder to actually run
-            payload["ok"] = True
-        finally:
-            try:
-                os.unlink(probe_path)
-            except OSError:
-                pass
+        segments, _info = model.transcribe(wav_samples(synthetic_wav_bytes(1.0, 16000)),
+                                           language="pt", vad_filter=False)
+        list(segments)           # force the encoder to actually run
+        payload["ok"] = True
     except Exception as exc:
         payload["error"] = f"{type(exc).__name__}: {exc}"
     output_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
