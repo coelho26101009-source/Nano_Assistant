@@ -76,7 +76,7 @@ Open this page on the phone, tap the `.apk`, and allow installs from your
 browser when Android asks. If Play Protect says the app is unknown, choose
 **More details → Install anyway**: this build is not from the Play Store and is
 signed with NANO's test key, so it installs over earlier test builds. The full
-guide is in [docs/TESTAR_NO_TELEMOVEL.md](https://github.com/coelho26101009-source/Nano_Assistant/blob/main/docs/TESTAR_NO_TELEMOVEL.md).
+guide is in [docs/TESTAR_NO_TELEMOVEL.md](https://github.com/coelho97sc/Nano_Assistant/blob/main/docs/TESTAR_NO_TELEMOVEL.md).
 
 ## What leaves your computer
 
@@ -93,7 +93,7 @@ guide is in [docs/TESTAR_NO_TELEMOVEL.md](https://github.com/coelho26101009-sour
   few hours. Switch it off in Settings → About → Updates.
 - **The island's music** stays on the PC: nothing is asked of Spotify or any web
   service.
-- Everything else is as described in [PRIVACY.md](https://github.com/coelho26101009-source/Nano_Assistant/blob/main/PRIVACY.md).
+- Everything else is as described in [PRIVACY.md](https://github.com/coelho97sc/Nano_Assistant/blob/main/PRIVACY.md).
 
 ## New things that act on the computer
 
@@ -201,7 +201,7 @@ quando o Android perguntar. Se o Play Protect disser que a app é desconhecida,
 escolhe **Mais detalhes → Instalar mesmo assim**: esta versão não vem da Play
 Store e está assinada com a chave de teste do NANO, por isso instala por cima
 das versões de teste anteriores. O guia completo está em
-[docs/TESTAR_NO_TELEMOVEL.md](https://github.com/coelho26101009-source/Nano_Assistant/blob/main/docs/TESTAR_NO_TELEMOVEL.md).
+[docs/TESTAR_NO_TELEMOVEL.md](https://github.com/coelho97sc/Nano_Assistant/blob/main/docs/TESTAR_NO_TELEMOVEL.md).
 
 ### O que sai do teu computador
 

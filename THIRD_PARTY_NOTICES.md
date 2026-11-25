@@ -193,6 +193,12 @@ Licences as declared in each package's `package.json`; the Android build also
 pulls AndroidX and Google Play services libraries through Gradle, whose notices
 are not reproduced here yet (**REVIEW** before a Play Store release).
 
+## Data services
+
+| Service | Terms | How NANO complies |
+| --- | --- | --- |
+| [Open-Meteo](https://open-meteo.com/) weather and geocoding API (free tier) | Free API for non-commercial use only; data under [CC BY 4.0](https://open-meteo.com/en/licence) | NANO is free and has no ads or subscriptions; the weather line in the briefing ends with "Dados: Open-Meteo.com." If NANO is ever monetised, the free tier no longer applies |
+
 ## Assets
 
 | Asset | Source | Status |

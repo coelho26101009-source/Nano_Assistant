@@ -32,7 +32,7 @@ Enter) e escreve `python --version` e depois `node --version`. Tem de aparecer
 
 ### 2. Descarregar o NANO
 
-1. Abre <https://github.com/coelho26101009-source/Nano_Assistant>.
+1. Abre <https://github.com/coelho97sc/Nano_Assistant>.
 2. Botão verde **Code → Download ZIP**.
 3. Extrai o ZIP para uma pasta simples, por exemplo `C:\NANO`
    (evita a pasta Transferências e pastas com OneDrive).

@@ -124,6 +124,9 @@ def summarise(forecast: dict, now: datetime, city: str) -> dict | None:
         when = _part_of_day(rain_hour)
         line += " " + tr("Chuva provável {when} ({chance}%): leva guarda-chuva.", when=when, chance=rain_chance)
         speech += " " + tr("Deve chover {when}, leva guarda-chuva.", when=when)
+    # Open-Meteo's data is CC BY 4.0: every place that shows it credits the
+    # source (https://open-meteo.com/en/licence). The spoken version needn't.
+    line += " " + tr("Dados: Open-Meteo.com.")
     return {"line": line, "speech": speech, "rain": rain_hour is not None}
 
 
