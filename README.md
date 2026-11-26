@@ -183,7 +183,7 @@ conversas fica à esquerda, e a cápsula de voz funciona fora da janela principa
 | **Conversas** | Threads reais: criar, abrir, renomear, apagar uma ou várias |
 | **Memória** | Memória de longo prazo com extração determinística e recuperação (RAG), e lembrança de conversas antigas (M3) |
 | **Second Brain** | Nós e relações derivados das memórias ativas, num grafo 3D |
-| **Voz** | Hotkey global e "Ei Nano", STT local com faster-whisper, voz Microsoft, voz offline (Piper/Kokoro) ou ElevenLabs, nunca calado |
+| **Voz** | Hotkey global e "Ei Nano", STT local com faster-whisper, voz Microsoft, voz offline (Piper/Kokoro, com a voz inglesa "mordomo" calma e elegante) ou ElevenLabs, nunca calado |
 | **Ilha do NANO** | Modo ambiente no topo do ecrã: estado da voz, música, volume, lembretes e aprovações |
 | **Proativo** | Resumo da manhã com o tempo, avisos do PC, sugestões e rotinas com hora, com um filtro anti-incómodo |
 | **Tarefas** | Planos de vários passos, protocolos e rotinas por voz, com paragem de emergência |

@@ -18,11 +18,13 @@ from __future__ import annotations
 import asyncio
 import importlib.machinery
 import io
+import math
 import os
 import sys
 import tarfile
 import types
 import wave
+from array import array
 from pathlib import Path
 
 import pytest
@@ -129,10 +131,15 @@ def test_user_settings_accept_the_speech_keys():
 
 def test_the_local_voice_follows_the_language():
     request = se.SpeechRequest(language="en", local_voice="dii")
-    assert se.local_voice_for(request) == "george"       # dii speaks Portuguese
+    assert se.local_voice_for(request) == "butler"       # dii speaks Portuguese
     request = se.SpeechRequest(language="pt-PT", local_voice="")
     assert se.local_voice_for(request) == "dii"
-    assert {v["id"] for v in se.local_voice_options("en")} >= {"george", "lewis"}
+    assert se.local_voice_for(se.SpeechRequest(language="en", local_voice="george")) == "george"
+    assert {v["id"] for v in se.local_voice_options("en")} >= {"butler", "george", "lewis"}
+    # The butler style is George plus core/voice_style.py, first in the English list.
+    assert se.local_voice_options("en")[0]["id"] == "butler"
+    assert se.LOCAL_VOICES["butler"][:2] == se.LOCAL_VOICES["george"][:2]
+    assert se.valid_setting("tts_local_voice", "butler") is True
 
 
 def test_the_request_reads_the_live_config():
@@ -516,6 +523,57 @@ def test_the_local_engine_synthesises_with_sherpa(monkeypatch, tmp_path):
     with pytest.raises(se.SynthesisError) as info:
         run(engine.synthesize("Hi.", se.SpeechRequest(language="en")))
     assert info.value.reason == "not_installed" and info.value.cooldown == 0
+
+
+def _fake_sherpa(monkeypatch, made, samples):
+    class OfflineTts:
+        def __init__(self, config):
+            made["config"] = config
+
+        def generate(self, text, sid=0, speed=1.0):
+            made["call"] = (text, sid, speed)
+            return types.SimpleNamespace(samples=list(samples), sample_rate=24000)
+
+    fake = types.ModuleType("sherpa_onnx")
+    fake.__spec__ = importlib.machinery.ModuleSpec("sherpa_onnx", None)
+    fake.OfflineTts = OfflineTts
+    for name in ("OfflineTtsConfig", "OfflineTtsModelConfig", "OfflineTtsVitsModelConfig",
+                 "OfflineTtsKokoroModelConfig"):
+        setattr(fake, name, lambda **kw: dict(kw))
+    monkeypatch.setitem(sys.modules, "sherpa_onnx", fake)
+
+
+def _wav_frames(path):
+    with wave.open(path) as reader:
+        rate = reader.getframerate()
+        frames = array("h", reader.readframes(reader.getnframes()))
+    os.unlink(path)
+    return rate, frames
+
+
+def test_the_english_default_is_george_in_the_butler_style(monkeypatch, tmp_path):
+    from core import voice_style
+
+    _fake_model(tmp_path, "kokoro-multi-lang-v1_0")
+    made = {}
+    tone = [0.5 * math.sin(2 * math.pi * 440 * i / 24000) for i in range(2400)]
+    _fake_sherpa(monkeypatch, made, tone)
+    engine = se.LocalEngine(models_dir=lambda: tmp_path, threads=2)
+    rate, frames = _wav_frames(run(engine.synthesize("Good morning, sir.", se.SpeechRequest(language="en"))))
+    text, sid, speed = made["call"]
+    assert (text, sid) == ("Good morning, sir.", se.LOCAL_VOICES["george"][1])
+    assert speed == pytest.approx(voice_style.SPEED)              # calmer than plain George
+    assert rate == 24000 and len(frames) > len(tone)              # the room tail
+    assert 0.3 * 32767 < max(abs(x) for x in frames) <= voice_style.PEAK * 32767 + 1
+
+    # Plain George keeps the voice exactly as generated, at the person's speed.
+    rate, frames = _wav_frames(run(engine.synthesize(
+        "Hi.", se.SpeechRequest(language="en", local_voice="george", speed=10))))
+    assert made["call"][2] == pytest.approx(1.1) and len(frames) == len(tone)
+
+    # The style speed multiplies the person's speed and stays inside the clamp.
+    os.unlink(run(engine.synthesize("Hi.", se.SpeechRequest(language="en", speed=-30))))
+    assert made["call"][2] == pytest.approx(max(0.6, 0.7 * voice_style.SPEED))
 
 
 def test_the_pack_installs_only_the_locked_sherpa_closure():

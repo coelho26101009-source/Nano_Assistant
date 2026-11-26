@@ -179,7 +179,7 @@ tem de estar preparada (item 31).
 - [ ] 67. Mexe na **Velocidade** (+15%) e carrega em **Ouvir**: fala mais depressa.
 - [ ] 68. Pede uma resposta comprida por voz (ex.: "explica-me a fotossíntese"). Repara se há pausas entre as frases: devia falar seguido.
 - [ ] 69. (Opcional, precisa de conta) Motor **ElevenLabs**: cola a tua chave, escolhe uma voz e carrega em **Ouvir**. Anota se soa melhor que o Duarte.
-- [ ] 70. Põe a língua em inglês e carrega em **Ouvir**: a voz passa a "Ryan (UK)". Com a voz offline em inglês, descarrega o Kokoro (350 MB) e experimenta "George (UK)".
+- [ ] 70. Põe a língua em inglês e carrega em **Ouvir**: a voz passa a "Ryan (UK)". Com a voz offline em inglês, descarrega o Kokoro (350 MB) e experimenta "George · Butler (UK)" (a voz por defeito em inglês, ver o item 101) e "George (UK)".
 - [ ] 71. **Ei Nano + voz offline juntos:** com "Ouvir “ei nano”" ligado e o motor em **Voz offline natural**, diz "Ei Nano, que horas são?". O NANO responde com a voz offline e **não fecha** (as duas partes usam o mesmo motor de IA por baixo, o onnxruntime; no Linux funcionam juntas, no Windows ainda não foi visto).
 
 ### Tarefas encadeadas e rotinas por voz (2026-11-24)
@@ -219,6 +219,7 @@ Precisa de um modelo com ferramentas (Groq/Gemini/Mistral, ou o local).
 - [ ] 98. Pede `pesquisa na web o preço do Raspberry Pi 5` e depois `lê esta página: https://www.wikipedia.org`. As duas funcionam como antes (a verificação de endereços não pode estragar a pesquisa normal).
 - [ ] 99. Pede `lê esta página: http://192.168.1.1` (o teu router). O NANO recusa: "endereço privado".
 - [ ] 100. **A atualização automática, de ponta a ponta.** Com a **0.4.0-beta.3 instalada** (a do instalador, não a da pasta do projeto) e a 0.4.0-beta.4 já publicada: Definições → Sobre → Atualizações → **Procurar agora**. Deve dizer que há a 0.4.0-beta.4, descarregar, e instalar quando fechas o NANO (**Reiniciar e atualizar**). Depois confirma em Sobre que a versão é a 0.4.0-beta.4. É a primeira vez que isto se experimenta num PC real e, com o nome novo do GitHub, é o teste mais importante da Beta.
+- [ ] 101. **A voz "mordomo" (estilo Jarvis).** Põe a língua em **inglês**, em Definições → Voz → Voz do NANO escolhe o motor **Voz offline natural** (instala o Kokoro se ainda não estiver) e a voz **George · Butler (UK)**. Carrega em **Ouvir**: deve soar calma, cheia e com um eco muito leve de sala, como a amostra `voz-realista/estilo-jarvis/1-EN-George-estilo-Jarvis-RECOMENDADA.mp3`. Compara com "George (UK)". Depois faz uma pergunta por voz e anota se a primeira frase começa a falar tão depressa como antes (o estilo acrescenta só uns centésimos de segundo).
 
 ---
 
