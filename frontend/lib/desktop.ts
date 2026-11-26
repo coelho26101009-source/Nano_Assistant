@@ -39,6 +39,8 @@ export type DesktopStatus = {
   overlayEnabled: boolean;
   /* Absent in shells older than the NANO island. */
   islandAlwaysVisible?: boolean;
+  /* Nubi, the mascot. Absent in shells older than her: she shows. */
+  mascot?: boolean;
   autoLaunch: AutoLaunchState;
   dataDir: string;
   packaged: boolean;
@@ -79,6 +81,7 @@ type NanoAppApi = {
   retryShortcut: () => Promise<{ registered: boolean; error: string | null }>;
   setOverlayEnabled: (enabled: boolean) => Promise<boolean>;
   setIslandAlwaysVisible?: (enabled: boolean) => Promise<boolean>;
+  setMascot?: (enabled: boolean) => Promise<boolean>;
   setAutoLaunch: (enabled: boolean) => Promise<AutoLaunchState>;
   /* Absent in shells older than the updater; every caller checks. */
   getUpdateStatus?: () => Promise<UpdateState | null>;
@@ -165,6 +168,51 @@ export const setOverlayEnabled = (enabled: boolean) =>
   desktop()?.setOverlayEnabled(enabled) ?? Promise.resolve(null);
 export const setIslandAlwaysVisible = (enabled: boolean) =>
   desktop()?.setIslandAlwaysVisible?.(enabled) ?? Promise.resolve(null);
+
+/* ── Nubi, the mascot ──────────────────────────────────────────────────── */
+
+// One answer for the whole page: every avatar and the voice mode follow the
+// same switch, and a change in Settings reaches them without a reload.
+let mascotOn: boolean | null = null;
+let mascotAsked = false;
+const mascotListeners = new Set<(on: boolean) => void>();
+
+function publishMascot(on: boolean) {
+  mascotOn = on;
+  mascotListeners.forEach((listener) => listener(on));
+}
+
+/**
+ * Whether Nubi is shown. On by default; the desktop shell remembers the
+ * switch (Settings > Geral). Outside the shell there is no switch: she shows.
+ */
+export function useMascot(): boolean {
+  const [on, setOn] = useState<boolean>(mascotOn ?? true);
+  useEffect(() => {
+    mascotListeners.add(setOn);
+    if (mascotOn === null) {
+      // Every avatar mounts at once: ask the shell only one time.
+      if (mascotAsked) return () => { mascotListeners.delete(setOn); };
+      mascotAsked = true;
+      const api = desktop();
+      if (!api) publishMascot(true);
+      else api.getDesktopStatus().then((status) => publishMascot(status?.mascot !== false), () => {});
+    } else {
+      setOn(mascotOn);
+    }
+    return () => { mascotListeners.delete(setOn); };
+  }, []);
+  return on;
+}
+
+export async function setMascot(enabled: boolean): Promise<boolean | null> {
+  const api = desktop();
+  if (!api?.setMascot) return null;
+  const on = await api.setMascot(enabled);
+  publishMascot(on !== false);
+  return on;
+}
+
 export const setAutoLaunch = (enabled: boolean) =>
   desktop()?.setAutoLaunch(enabled) ?? Promise.resolve(null);
 

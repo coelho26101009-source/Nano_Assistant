@@ -154,7 +154,7 @@ function recordFailure(code) {
 const shortcutState = { accelerator: ACTIVATION_ACCELERATOR, registered: false, error: null };
 
 /** Persisted desktop-shell preferences. Not user data — that lives in DATA_DIR. */
-let shellState = { bounds: null, overlayEnabled: true, islandMode: 'hidden', autoUpdate: true };
+let shellState = { bounds: null, overlayEnabled: true, islandMode: 'hidden', autoUpdate: true, mascot: true };
 
 /**
  * Calling the hidden island with the mouse: push the pointer against the top
@@ -191,22 +191,27 @@ function loadShellState() {
   try {
     const raw = fs.readFileSync(shellStatePath(), 'utf8');
     const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object') {
-      shellState = {
-        bounds: parsed.bounds && typeof parsed.bounds === 'object' ? parsed.bounds : null,
-        overlayEnabled: parsed.overlayEnabled !== false,
-        // The island at rest: 'hidden' (the default, also for anyone who had
-        // the old "Modo ambiente" switched on -- Simão asked for the island to
-        // stay out of the way) or 'always'. The old islandAlwaysVisible key is
-        // deliberately not read: it was saved as true for everybody.
-        islandMode: parsed.islandMode === 'always' ? 'always' : 'hidden',
-        // On unless the person switched it off in Settings.
-        autoUpdate: parsed.autoUpdate !== false,
-      };
-    }
+    if (parsed && typeof parsed === 'object') shellState = parseShellState(parsed);
   } catch (_) {
     // No file yet, or it is unreadable. Defaults are correct and safe.
   }
+}
+
+/** desktop-state.json, as read back. Anything unexpected falls to its default. */
+function parseShellState(parsed) {
+  return {
+    bounds: parsed.bounds && typeof parsed.bounds === 'object' ? parsed.bounds : null,
+    overlayEnabled: parsed.overlayEnabled !== false,
+    // The island at rest: 'hidden' (the default, also for anyone who had
+    // the old "Modo ambiente" switched on -- Simão asked for the island to
+    // stay out of the way) or 'always'. The old islandAlwaysVisible key is
+    // deliberately not read: it was saved as true for everybody.
+    islandMode: parsed.islandMode === 'always' ? 'always' : 'hidden',
+    // On unless the person switched it off in Settings.
+    autoUpdate: parsed.autoUpdate !== false,
+    // Nubi, the mascot: on unless the person switched her off in Settings.
+    mascot: parsed.mascot !== false,
+  };
 }
 
 function saveShellState() {
@@ -958,7 +963,10 @@ function currentIslandView() {
     peek: peekActive && islandReady && !isQuitting,
   });
   if (view && view.layer === 'idle' && wakeState.listening) view.wake = wakeDisplayPhrase();
-  return view ? island.translate(view, islandLanguage || systemLanguage()) : null;
+  const shown = view ? island.translate(view, islandLanguage || systemLanguage()) : null;
+  // Nubi in place of the N mark (the island page picks her face by state).
+  if (shown) shown.mascot = shellState.mascot !== false;
+  return shown;
 }
 
 function systemLanguage() {
@@ -1134,6 +1142,24 @@ function onIslandMedia(event, action) {
   backend.request('media_control', { action }).catch((err) => log('media_control failed:', err.message));
 }
 
+/** What Settings shows about the desktop shell, measured here. */
+function desktopStatus() {
+  return {
+    ...desktopDiagnostics(),
+    isDesktop: true,
+    version: app.getVersion(),
+    shortcut: humanAccelerator(),
+    shortcutRegistered: shortcutState.registered,
+    shortcutError: shortcutState.error,
+    overlayEnabled: shellState.overlayEnabled,
+    islandAlwaysVisible: shellState.islandMode === 'always',
+    mascot: shellState.mascot !== false,
+    autoLaunch: autoLaunchInfo(),
+    dataDir: canonicalDataDir(process.env),
+    packaged: !IS_DEV,
+  };
+}
+
 /** The pill was clicked: bring NANO forward. Nothing else, ever. */
 function onIslandOpen(event) {
   if (!overlayWindow || overlayWindow.isDestroyed() || event.sender !== overlayWindow.webContents) return;
@@ -1152,6 +1178,17 @@ function setIslandAlwaysVisible(enabled) {
   renderIsland();
   refreshTrayMenu();
   return shellState.islandMode === 'always';
+}
+
+/**
+ * Nubi, the mascot, on or off. The island is redrawn at once; the chat and
+ * voice mode read the same switch from the desktop status.
+ */
+function setMascot(enabled) {
+  shellState.mascot = Boolean(enabled);
+  saveShellState();
+  renderIsland();
+  return shellState.mascot;
 }
 
 /* ── Global activation shortcut ─────────────────────────────────────────── */
@@ -1616,19 +1653,7 @@ function registerRendererIpc() {
 
   ipcMain.handle('nano:window-state', () => currentWindowState());
 
-  ipcMain.handle('nano:desktop-status', () => ({
-    ...desktopDiagnostics(),
-    isDesktop: true,
-    version: app.getVersion(),
-    shortcut: humanAccelerator(),
-    shortcutRegistered: shortcutState.registered,
-    shortcutError: shortcutState.error,
-    overlayEnabled: shellState.overlayEnabled,
-    islandAlwaysVisible: shellState.islandMode === 'always',
-    autoLaunch: autoLaunchInfo(),
-    dataDir: canonicalDataDir(process.env),
-    packaged: !IS_DEV,
-  }));
+  ipcMain.handle('nano:desktop-status', () => desktopStatus());
 
   ipcMain.handle('nano:set-overlay-enabled', (_event, enabled) => {
     shellState.overlayEnabled = Boolean(enabled);
@@ -1641,6 +1666,7 @@ function registerRendererIpc() {
   });
 
   ipcMain.handle('nano:set-island-always-visible', (_event, enabled) => setIslandAlwaysVisible(enabled));
+  ipcMain.handle('nano:set-mascot', (_event, enabled) => setMascot(enabled));
 
   // The island's own two signals (overlay/preload.js). Both check that they
   // really come from the island window, and neither carries data that could
@@ -1807,6 +1833,9 @@ module.exports = {
     onIslandOpen,
     onIslandMedia,
     setIslandAlwaysVisible,
+    setMascot,
+    parseShellState,
+    desktopStatus,
     syncPeekWatcher,
     peekTick,
     setBackend: (value) => { backend = value; },
@@ -1830,7 +1859,7 @@ module.exports = {
       overlayWindow = null; mainWindow = null; overlayReady = false;
       pendingOverlayView = null; isQuitting = false;
       frontendReady = false; lastErrorCode = null;
-      shellState = { bounds: null, overlayEnabled: true, islandMode: 'hidden', autoUpdate: true };
+      shellState = { bounds: null, overlayEnabled: true, islandMode: 'hidden', autoUpdate: true, mascot: true };
       clearInterval(peekTimer); peekTimer = null; peekActive = false; peekZoneSince = 0; peekAwaySince = 0;
       islandPointerInside = false;
       wakeState = { enabled: false, listening: false, phrase: '' };

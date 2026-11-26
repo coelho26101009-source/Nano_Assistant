@@ -34,7 +34,7 @@ const ALLOWED_PRELOAD_KEYS = [
   'minimize', 'toggleMaximize', 'hide', 'quit',
   'getWindowState', 'onWindowState',
   'getDesktopStatus', 'retryShortcut',
-  'setOverlayEnabled', 'setIslandAlwaysVisible', 'setAutoLaunch',
+  'setOverlayEnabled', 'setIslandAlwaysVisible', 'setMascot', 'setAutoLaunch',
   'getUpdateStatus', 'onUpdateState', 'checkForUpdates', 'restartToUpdate',
   'setAutoUpdate', 'openUpdatePage',
 ];
@@ -153,7 +153,7 @@ suite('main process IPC surface');
 const ALLOWED_IPC = [
   'nano:minimize', 'nano:toggle-maximize', 'nano:hide',
   'nano:window-state', 'nano:desktop-status', 'nano:set-overlay-enabled',
-  'nano:set-island-always-visible', 'nano:island-pointer', 'nano:island-open', 'nano:island-media',
+  'nano:set-island-always-visible', 'nano:set-mascot', 'nano:island-pointer', 'nano:island-open', 'nano:island-media',
   'nano:set-auto-launch', 'nano:retry-shortcut', 'nano:quit',
   'nano:update-status', 'nano:update-check', 'nano:update-install',
   'nano:set-auto-update', 'nano:open-update-page',

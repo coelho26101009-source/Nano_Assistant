@@ -185,6 +185,7 @@ conversas fica à esquerda, e a cápsula de voz funciona fora da janela principa
 | **Second Brain** | Nós e relações derivados das memórias ativas, num grafo 3D |
 | **Voz** | Hotkey global e "Ei Nano", STT local com faster-whisper, voz Microsoft, voz offline (Piper/Kokoro, com a voz inglesa "mordomo" calma e elegante) ou ElevenLabs, nunca calado |
 | **Ilha do NANO** | Modo ambiente no topo do ecrã: estado da voz, música, volume, lembretes e aprovações |
+| **Nubi, a mascote** | Uma pequena nuvem com cara na ilha, no chat e no modo de voz: ouve, pensa e sorri com o estado real do NANO (desligável) |
 | **Proativo** | Resumo da manhã com o tempo, avisos do PC, sugestões e rotinas com hora, com um filtro anti-incómodo |
 | **Tarefas** | Planos de vários passos, protocolos e rotinas por voz, com paragem de emergência |
 | **Investigação** | Investigação profunda com relatório, citações e fontes |
@@ -426,6 +427,20 @@ multimédia do Windows) e o volume quando muda. Em repouso fica pequena e pronta
 ("Modo ambiente", desligável). Clicar abre o NANO; aprovações decidem-se sempre
 no NANO, nunca na ilha. Cada estado vem de um evento real do backend. Ver
 [DESKTOP.md](docs/architecture/DESKTOP.md#the-nano-island-modo-ambiente).
+
+### Nubi, a mascote
+
+<p align="center">
+  <img src="docs/assets/screenshots/nano-nubi.png" alt="A Nubi, a mascote do NANO: a sorrir no ecrã inicial, no modo de voz e na ilha a pensar e a falar" width="700" />
+</p>
+
+A **Nubi** é a mascote do NANO: uma pequena nuvem branca e azul, macia como o
+símbolo N. Aparece na ilha (em vez do N), como avatar das respostas no chat, a
+cumprimentar no ecrã inicial e grande no modo de voz. A cara segue o estado
+real: a ouvir, a pensar enquanto a resposta não chega e a sorrir enquanto o
+NANO fala. Enquanto o microfone está aberto a ilha continua a mostrar o
+microfone, para que isso nunca fique escondido. Desliga-se em **Definições →
+Geral → Modo desktop → Mascote (Nubi)**, e aí volta o símbolo N.
 
 Documentação: [Voice](docs/VOICE.md) · [Speech Accuracy](docs/architecture/SPEECH_ACCURACY.md)
 

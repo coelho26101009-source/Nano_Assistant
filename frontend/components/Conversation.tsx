@@ -13,9 +13,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Icon from "./Icon";
 import NanoLogo from "./NanoLogo";
+import Nubi from "./Nubi";
 import { Button, formatTime } from "./ui";
 import { BRAND_NAME } from "../lib/brand";
 import { call } from "../lib/backend";
+import { useMascot } from "../lib/desktop";
 import { t } from "../lib/i18n";
 import {
   ACCEPT, MAX_FILES, formatSize, readAttachment,
@@ -846,6 +848,7 @@ function MessageBubble({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const isUser = message.role === "user";
+  const mascot = useMascot();
   const text = isUser ? message.content : cleanAssistantText(message.content);
   const initials = initialsOf(userName);
 
@@ -880,6 +883,9 @@ function MessageBubble({
           <span className="msg__avatar msg__avatar--user" aria-hidden="true">
             {initials ?? <Icon name="user" size={14} />}
           </span>
+        ) : mascot ? (
+          // While the answer is on its way she thinks; then she is calm again.
+          <Nubi size={24} mood={message.streaming && !text ? "thinking" : "calm"} className="msg__avatar" />
         ) : (
           <NanoLogo size={22} className="msg__avatar" />
         )}
@@ -1069,6 +1075,7 @@ export function Conversation({
   /** Send a clarification choice as the next message. */
   onChoose?: (reply: string) => void;
 }) {
+  const mascot = useMascot();
   const endRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   /* FOLLOW THE ANSWER ONLY WHILE THE READER IS AT THE END.
@@ -1131,7 +1138,9 @@ export function Conversation({
             below it (rendered by the shell). No dashboard and no cards: the
             one thing to do here is start talking. */}
         <div className="chat-hero">
-          <NanoLogo size={56} className="chat-hero__mark" />
+          {mascot
+            ? <Nubi size={84} mood="happy" className="chat-hero__mark chat-hero__nubi" />
+            : <NanoLogo size={56} className="chat-hero__mark" />}
           <h1 className="chat-hero__title">{greeting(userName)}</h1>
           <p className="chat-hero__sub">{t("Como posso ajudar?")}</p>
           {connecting && (
@@ -1170,7 +1179,9 @@ export function Conversation({
         })}
         {standalone && (
           <div className="thinking thinking--standalone" role="status" aria-live="polite">
-            <span className="thinking__mark" aria-hidden="true"><NanoLogo size={22} /></span>
+            {mascot
+              ? <span className="thinking__nubi" aria-hidden="true"><Nubi size={26} mood="thinking" /></span>
+              : <span className="thinking__mark" aria-hidden="true"><NanoLogo size={22} /></span>}
             <span className="thinking__text">{status?.trim() || t("A pensar…")}</span>
           </div>
         )}

@@ -20,6 +20,8 @@ import React, { useEffect, useRef } from "react";
 
 import Icon from "./Icon";
 import NanoLogo from "./NanoLogo";
+import Nubi, { type NubiMood } from "./Nubi";
+import { useMascot } from "../lib/desktop";
 import { t } from "../lib/i18n";
 import { BRAND_NAME } from "../lib/brand";
 
@@ -42,6 +44,11 @@ export function voiceModeState(phase: string | undefined, listening: boolean): V
   return "idle";
 }
 
+/** Nubi's face for each state: she listens, thinks, and smiles while she speaks. */
+export const NUBI_MOOD: Record<VoiceModeState, NubiMood> = {
+  idle: "calm", listening: "listening", working: "thinking", speaking: "happy",
+};
+
 export default function VoiceMode({
   open, phase, listening, voiceReady, lastQuestion, lastAnswer,
   onTalk, onStop, onClose,
@@ -59,6 +66,7 @@ export default function VoiceMode({
   onClose: () => void;
 }) {
   const state = voiceModeState(phase, listening);
+  const mascot = useMascot();
   const talkRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => { if (open) talkRef.current?.focus(); }, [open]);
@@ -95,7 +103,7 @@ export default function VoiceMode({
       <div className="voice-mode__stage">
         <div className="voice-mode__orb" data-state={state} aria-hidden="true">
           <span className="voice-mode__ring" />
-          <NanoLogo size={88} />
+          {mascot ? <Nubi size={150} mood={NUBI_MOOD[state]} /> : <NanoLogo size={88} />}
         </div>
         <p className="voice-mode__status" role="status" aria-live="polite">{label}</p>
 

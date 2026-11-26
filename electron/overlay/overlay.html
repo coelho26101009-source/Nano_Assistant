@@ -147,6 +147,25 @@
   }
   #island[data-hover="true"] #idle-text { opacity: 1; transform: none; transition-delay: 120ms; }
 
+  /* Nubi, the mascot (on unless switched off in Settings): a small cloud
+     with a face in place of the N mark. The face is picked by the state the
+     main process sent, never by data. Listening keeps the microphone. */
+  #l-idle .nubi { width: 19px; height: 19px; flex: none; display: block; }
+  .lead svg.nubi { width: 21px; height: 21px; color: inherit; }
+  #island[data-size="wide"] .lead svg.nubi { width: 27px; height: 27px; }
+  .nubi .nubi-think, .nubi .nubi-happy { display: none; }
+  #island[data-state="thinking"] .nubi .nubi-think,
+  #island[data-state="processing"] .nubi .nubi-think,
+  #island[data-state="transcribing"] .nubi .nubi-think,
+  #island[data-state="speaking"] .nubi .nubi-happy { display: inline; }
+  #island[data-state="thinking"] .nubi .nubi-calm,
+  #island[data-state="processing"] .nubi .nubi-calm,
+  #island[data-state="transcribing"] .nubi .nubi-calm,
+  #island[data-state="speaking"] .nubi .nubi-calm { display: none; }
+  #island[data-state="speaking"] .lead .nubi { animation: nubi-talk 900ms ease-in-out infinite; }
+  #island:not([data-mascot="true"]) .nubi { display: none !important; }
+  #island[data-mascot="true"] img.mark { display: none !important; }
+
   /* Pill: lead icon, text, trailing live sign. */
   #l-pill { padding: 0 16px 0 7px; gap: 10px; }
   #island[data-size="wide"] #l-pill { padding-left: 11px; gap: 12px; }
@@ -377,6 +396,7 @@
   @keyframes drop { 0% { transform: translateY(-9px); opacity: 0; } 100% { transform: translateY(0); opacity: 1; } }
   @keyframes spin-in { 0% { transform: rotate(-90deg) scale(.4); opacity: 0; } 100% { transform: none; opacity: 1; } }
   @keyframes eq { 0%, 100% { height: 4px; } 30% { height: 15px; } 60% { height: 8px; } 80% { height: 12px; } }
+  @keyframes nubi-talk { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.04, .94); } }
   @keyframes pop { 0% { transform: scale(.7); } 100% { transform: scale(1); } }
   @keyframes art-in { 0% { transform: scale(.6); border-radius: 30px; opacity: .3; } 100% { transform: none; opacity: 1; } }
   @keyframes text-in { 0% { opacity: 0; filter: blur(4px); transform: translateY(3px); } 100% { opacity: 1; filter: blur(0); transform: none; } }
@@ -423,6 +443,14 @@
       <g id="g-check"><path d="m5 12.5 4.5 4.5L19 7.5"/></g>
       <g id="g-music"><path d="M9 18V5.5l11-2v12.5"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></g>
       <g id="g-speaker"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4.5 4.5 0 0 1 0 6M18.3 6.5a8 8 0 0 1 0 11"/></g>
+      <!-- Nubi, the mascot: body and three faces (calm, thinking, happy). -->
+      <radialGradient id="nubi-fill" gradientUnits="userSpaceOnUse" cx="9.6" cy="8" r="17">
+        <stop offset="0" stop-color="#FFFFFF"/><stop offset=".5" stop-color="#EEF3FA"/><stop offset="1" stop-color="#9DB7E0"/>
+      </radialGradient>
+      <g id="g-nubi-body" fill="url(#nubi-fill)"><circle cx="8.4" cy="9.6" r="4.4"/><circle cx="14.6" cy="8.2" r="5.2"/><ellipse cx="12" cy="14.6" rx="10.2" ry="7.2"/></g>
+      <g id="g-nubi-calm" fill="#0C0C0D"><ellipse cx="9.2" cy="14.4" rx="1.25" ry="1.7"/><ellipse cx="14.8" cy="14.4" rx="1.25" ry="1.7"/><path d="M10.9 17.3q1.1.9 2.2 0" fill="none" stroke="#0C0C0D" stroke-width=".9" stroke-linecap="round"/></g>
+      <g id="g-nubi-think" fill="#0C0C0D"><ellipse cx="9.9" cy="13.5" rx="1.1" ry="1.4"/><ellipse cx="15.5" cy="13.5" rx="1.1" ry="1.4"/><path d="M11 17.6l2.3-.35" fill="none" stroke="#0C0C0D" stroke-width=".9" stroke-linecap="round"/></g>
+      <g id="g-nubi-happy"><path d="M8 15q1.2-1.7 2.4 0M13.6 15q1.2-1.7 2.4 0" fill="none" stroke="#0C0C0D" stroke-width="1" stroke-linecap="round"/><path d="M10.6 16.6q1.4 2.3 2.8 0z" fill="#0C0C0D"/></g>
       <g id="g-mute"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="m16 9.5 5 5M21 9.5l-5 5"/></g>
     </defs>
   </svg>
@@ -433,6 +461,7 @@
     <div class="layout" id="l-idle" aria-hidden="true">
       <!-- The approved N, generated from the same master as the app icon. -->
       <img class="mark" src="nano-mark.png" alt="" draggable="false" />
+      <svg class="nubi" viewBox="0 0 24 24" aria-hidden="true"><use href="#g-nubi-body"/><use class="nubi-calm" href="#g-nubi-calm"/><use class="nubi-think" href="#g-nubi-think"/><use class="nubi-happy" href="#g-nubi-happy"/></svg>
       <div id="idle-text"><b id="idle-name">NANO</b><span id="idle-hint"></span></div>
       <span class="ready"></span>
     </div>
@@ -441,6 +470,7 @@
       <div class="lead" aria-hidden="true">
         <span class="disc"></span><span class="pulse"></span><span class="ring"></span>
         <img class="icon icon-mark mark" src="nano-mark.png" alt="" draggable="false" />
+        <svg class="icon icon-mark nubi" viewBox="0 0 24 24" aria-hidden="true"><use href="#g-nubi-body"/><use class="nubi-calm" href="#g-nubi-calm"/><use class="nubi-think" href="#g-nubi-think"/><use class="nubi-happy" href="#g-nubi-happy"/></svg>
         <svg class="icon icon-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#g-mic"/></svg>
         <svg class="icon icon-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><use href="#g-gear"/></svg>
         <svg class="icon icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>

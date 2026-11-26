@@ -107,6 +107,8 @@
     island.dataset.tone = pick(view.tone, 'neutral');
     island.dataset.icon = pick(view.icon, 'mark');
     island.dataset.wake = view.wake ? 'true' : 'false';
+    // Nubi, the mascot, in place of the N mark. Her face follows data-state.
+    island.dataset.mascot = view.mascot === true ? 'true' : 'false';
     if (view.lang) document.documentElement.lang = view.lang === 'en' ? 'en' : 'pt';
     layout(view);
 

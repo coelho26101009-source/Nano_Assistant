@@ -69,6 +69,8 @@ const nanoApp = Object.freeze({
   setOverlayEnabled: (enabled) => ipcRenderer.invoke('nano:set-overlay-enabled', Boolean(enabled)),
   /** Modo ambiente: keep the NANO island on screen while nothing is happening. */
   setIslandAlwaysVisible: (enabled) => ipcRenderer.invoke('nano:set-island-always-visible', Boolean(enabled)),
+  /** Nubi, the mascot, on the island, in the chat and in voice mode. */
+  setMascot: (enabled) => ipcRenderer.invoke('nano:set-mascot', Boolean(enabled)),
   setAutoLaunch: (enabled) => ipcRenderer.invoke('nano:set-auto-launch', Boolean(enabled)),
 
   /*

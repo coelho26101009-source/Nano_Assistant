@@ -20,6 +20,22 @@ versioning policy.
 
 ## [Unreleased]
 
+### Added — Nubi, the mascot (2026-11-26)
+- **Nubi**, a small white-and-blue cloud with a face, chosen by Simão from
+  three proposals. She replaces the N mark on the island (resting pill and the
+  pill's lead), as NANO's avatar in the chat, on the empty chat's greeting and,
+  large, in voice mode (`frontend/components/Nubi.tsx`). Her face follows real
+  states only: listening, thinking while an answer is pending or NANO
+  processes, happy while NANO speaks. While the microphone is open the island
+  keeps the microphone icon, so that privacy sign is never hidden.
+- One switch turns her off everywhere: **Definições → Geral → Modo desktop →
+  Mascote (Nubi)**. It is kept in `desktop-state.json` (`mascot`, on by
+  default) and reached through a new boolean-only channel `nano:set-mascot`
+  (preload `setMascot`), added to both IPC allow-lists in the security tests.
+- Tests: `electron/test/mascot.test.js` (the switch, persistence, the island
+  page) and three new steps in `chat-drive.js` (greeting, thinking avatar,
+  calm avatar), all failing before the change.
+
 ### Added — a calm "butler" English voice (2026-11-26)
 - **"George · Butler (UK)"** is the new default English offline voice
   (`core/voice_style.py`): Kokoro George, a little slower, with an equaliser

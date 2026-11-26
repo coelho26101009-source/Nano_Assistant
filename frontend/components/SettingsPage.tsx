@@ -12,7 +12,7 @@ import type {
 } from "../lib/backend";
 import { call } from "../lib/backend";
 import {
-  retryShortcut, setAutoLaunch, setIslandAlwaysVisible, setOverlayEnabled, useDesktopStatus,
+  retryShortcut, setAutoLaunch, setIslandAlwaysVisible, setMascot, setOverlayEnabled, useDesktopStatus,
 } from "../lib/desktop";
 import {
   AboutSection, EraseAllDataPanel, MemorySection, PcControlSection,
@@ -144,6 +144,15 @@ function DesktopPanel() {
           checked={status.islandAlwaysVisible}
           disabled={!status.overlayEnabled || busy}
           onChange={(value) => run(() => setIslandAlwaysVisible(value))}
+        />
+      )}
+      {status.mascot !== undefined && (
+        <Toggle
+          label={t("Mascote (Nubi)")}
+          hint={t("A Nubi é a mascote do NANO: uma pequena nuvem que mostra na ilha, no chat e no modo de voz se ele está a ouvir, a pensar ou a falar. Desligada, volta o símbolo N.")}
+          checked={status.mascot}
+          disabled={busy}
+          onChange={(value) => run(() => setMascot(value))}
         />
       )}
       <Toggle
