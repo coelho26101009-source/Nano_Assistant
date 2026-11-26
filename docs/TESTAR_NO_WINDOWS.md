@@ -220,6 +220,12 @@ Precisa de um modelo com ferramentas (Groq/Gemini/Mistral, ou o local).
 - [ ] 99. Pede `lê esta página: http://192.168.1.1` (o teu router). O NANO recusa: "endereço privado".
 - [ ] 100. **A atualização automática, de ponta a ponta.** Com a **0.4.0-beta.3 instalada** (a do instalador, não a da pasta do projeto) e a 0.4.0-beta.4 já publicada: Definições → Sobre → Atualizações → **Procurar agora**. Deve dizer que há a 0.4.0-beta.4, descarregar, e instalar quando fechas o NANO (**Reiniciar e atualizar**). Depois confirma em Sobre que a versão é a 0.4.0-beta.4. É a primeira vez que isto se experimenta num PC real e, com o nome novo do GitHub, é o teste mais importante da Beta.
 
+### Nubi, a mascote (2026-11-26)
+- [ ] 101. Abre o NANO e carrega em **Nova conversa**. Em cima de "Bom dia" aparece a **Nubi** (uma nuvem branca e azul) a sorrir. Envia `olá`: enquanto a resposta não chega, o avatar do NANO é a Nubi com cara de pensar; quando a resposta chega, fica com a cara calma.
+- [ ] 102. Com o NANO minimizado, carrega em **Ctrl + Shift + Espaço** e fala. A ilha mostra o **microfone** enquanto ouve, a Nubi com cara de pensar em "A processar…" e a Nubi a sorrir em "A falar…". Ela tem de se ver bem no ecrã (não pode ficar pixelizada nem cortada).
+- [ ] 103. Abre o modo de voz (**Ctrl + Shift + M**): a Nubi aparece grande no círculo e muda de cara quando falas (ondas a ouvir, pontinhos a pensar, sorriso a falar).
+- [ ] 104. Em **Definições → Geral → Modo desktop**, desliga **Mascote (Nubi)**. A ilha, o chat e o modo de voz voltam a mostrar o símbolo **N**. Fecha e volta a abrir o NANO: continua desligada. Liga outra vez e ela volta.
+
 ---
 
 ## O que já sabemos que ainda não está perfeito

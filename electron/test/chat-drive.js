@@ -350,6 +350,9 @@ app.whenReady().then(async () => {
     ok('a pending turn shows exactly ONE thinking indicator', countThinking() === 1,
        'indicators=' + countThinking() + ' :: ' +
        qa('.thinking').map((el) => el.textContent.trim()).join(' | '));
+    ok('Nubi is the pending answer\'s avatar, and she is thinking',
+       !!qa('.msg--assistant').slice(-1)[0]?.querySelector('.msg__avatar.nubi--thinking'),
+       qa('.msg--assistant').slice(-1)[0]?.querySelector('.msg__head')?.innerHTML.slice(0, 160) || 'no bubble');
 
     /* Tool activity used to be the reason the second indicator existed. It has
        to keep narrating itself, in the one indicator that remains. */
@@ -393,6 +396,9 @@ app.whenReady().then(async () => {
     await sleep(500);
     ok('a finished turn shows no thinking indicator', countThinking() === 0,
        'indicators=' + countThinking());
+    ok('once answered, Nubi is calm again',
+       !!qa('.msg--assistant').slice(-1)[0]?.querySelector('.msg__avatar.nubi--calm'),
+       qa('.msg--assistant').slice(-1)[0]?.querySelector('.msg__head')?.innerHTML.slice(0, 160) || 'no bubble');
 
     /* "LER EM VOZ ALTA" under an answer (never under the user's own message).
        The button turns into "Parar a leitura" while NANO reads, and goes back
@@ -827,6 +833,12 @@ app.whenReady().then(async () => {
       ok('starting a new conversation leaves selection mode',
          inModeBeforeNew && qa('.chat-item__check').length === 0,
          'before=' + inModeBeforeNew + ' after=' + qa('.chat-item__check').length);
+
+      /* NUBI, THE MASCOT (on by default): the new, empty chat greets with
+         her smiling, in place of the N. */
+      ok('Nubi greets on the empty chat, smiling',
+         !!q('.chat-hero .chat-hero__nubi.nubi--happy') && !q('.chat-hero img.nano-mark'),
+         q('.chat-hero')?.innerHTML.slice(0, 160) || 'no hero');
 
       /* Escape leaves selection mode. */
       byText('.rail__select-action', 'Selecionar')?.click();

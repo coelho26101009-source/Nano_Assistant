@@ -1067,6 +1067,7 @@ kbd {
   filter: drop-shadow(0 14px 12px rgba(47, 111, 237, .12));
   animation: nano-enter var(--motion-slow) var(--motion-ease) both;
 }
+.chat-hero__nubi { filter: drop-shadow(0 1px 1.5px rgba(18, 32, 58, .3)) drop-shadow(0 14px 14px rgba(47, 111, 237, .16)); }
 .chat-hero__title { animation: nano-enter var(--motion-slow) var(--motion-ease) 45ms both; }
 @keyframes nano-enter { from { opacity: 0; transform: translateY(7px) scale(.98); } to { opacity: 1; transform: none; } }
 
@@ -1287,6 +1288,8 @@ kbd {
   .thinking__text { animation: none; background: none; color: var(--text-muted); }
 }
 .thinking--standalone { display: flex; padding: var(--sp-4) 0; }
+/* Nubi in the thinking row: her thinking face beside the shimmering text. */
+.thinking__nubi { display: inline-grid; place-items: center; width: 27px; height: 26px; flex: none; }
 .thinking__mark {
   position: relative; display: inline-grid; place-items: center; width: 27px; height: 24px;
   flex: none; overflow: hidden;
@@ -2320,6 +2323,30 @@ kbd {
 @media (max-width: 640px) {
   .voice-mode__orb { width: 150px; height: 150px; }
   .voice-mode__answer { font-size: 16px; }
+}
+
+/* ============================================================================
+   NUBI — the mascot (components/Nubi.tsx). Motion only where it says
+   something true: her waves while the microphone is open, her dots while
+   NANO thinks, and one small settle when her face changes.
+   ========================================================================== */
+/* A soft edge so the white cloud still reads on the light theme. */
+.nubi { display: block; flex: none; overflow: visible; filter: drop-shadow(0 1px 1.5px rgba(18, 32, 58, .3)); }
+.nubi * { transform-box: fill-box; transform-origin: center; }
+.nubi__face { animation: nubi-settle 320ms var(--motion-ease) 1; }
+.nubi__waves { animation: nubi-wave 1.2s ease-in-out infinite; }
+.nubi__dots circle { animation: nubi-dot 1.2s ease-in-out infinite; }
+.nubi__dots circle:nth-child(2) { animation-delay: .2s; }
+.nubi__dots circle:nth-child(3) { animation-delay: .4s; }
+.voice-mode__orb .nubi { position: relative; }
+@keyframes nubi-settle { from { transform: scale(.92); opacity: .4; } to { transform: none; opacity: 1; } }
+@keyframes nubi-wave { 50% { opacity: .3; } }
+@keyframes nubi-dot { 50% { transform: translateY(-6px); opacity: .35; } }
+@media (prefers-reduced-motion: reduce) {
+  .nubi *, .nubi__face, .nubi__waves { animation: none !important; }
+}
+@media (max-width: 640px) {
+  .voice-mode__orb .nubi { width: 112px; height: 112px; }
 }
 
 /* ============================================================================

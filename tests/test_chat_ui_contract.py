@@ -72,7 +72,7 @@ def _passed(report: dict, needle: str) -> None:
 #: to 78 was observed while the harness reported itself green. Every one of
 #: those preconditions is now its own named step, so a miss is a failure; this
 #: floor is the second lock, catching a whole section going missing at once.
-MINIMUM_CHAT_STEPS = 97
+MINIMUM_CHAT_STEPS = 100
 
 
 def test_the_real_chat_view_passes_every_driven_step(chat_report):
@@ -110,6 +110,19 @@ def test_a_pending_turn_shows_exactly_one_thinking_indicator(chat_report):
     """The defect human testing found: two at once, "O Nano está a pensar…"
     inside the bubble and "A pensar…" underneath it."""
     _passed(chat_report, "exactly ONE thinking indicator")
+
+
+def test_nubi_greets_on_the_empty_chat(chat_report):
+    """Nubi, the mascot, replaces the N on the home screen while she is on."""
+    _passed(chat_report, "Nubi greets on the empty chat")
+
+
+def test_nubi_thinks_while_the_answer_is_pending(chat_report):
+    _passed(chat_report, "Nubi is the pending answer's avatar")
+
+
+def test_nubi_is_calm_once_answered(chat_report):
+    _passed(chat_report, "once answered, Nubi is calm again")
 
 
 def test_an_idle_conversation_shows_none(chat_report):

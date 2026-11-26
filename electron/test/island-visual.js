@@ -61,6 +61,8 @@ async function run() {
   const timeline = [];
   const show = (name) => {
     const view = island.translate(stack.current({ alwaysVisible: true }), LANG);
+    // Nubi, the mascot, as the shell sends her (on by default). NANO_ISLAND_MASCOT=0 shows the plain N.
+    if (view) view.mascot = process.env.NANO_ISLAND_MASCOT !== '0';
     window.webContents.send('nano:overlay-state', view);
     timeline.push({ name, at: (Date.now() - t0) / 1000, state: view && view.state });
   };
