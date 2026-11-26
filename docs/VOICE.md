@@ -200,6 +200,19 @@ Measured in the cloud (4 slow cores, 2026-11-24): Piper "dii" 14 s of audio in
 pt-PT voice) got 43 % wrong and is not offered. Kokoro has no European
 Portuguese voice (pt-BR only), so it is used for English only.
 
+**The English default offline voice is "George · Butler (UK)"** (id `butler`,
+`core/voice_style.py`, 2026-11-26): Kokoro George, 7 % slower, through an
+equaliser (high-pass 80 Hz, -3 dB at 180 Hz, +4 dB around 1.2 kHz, +2 dB at
+3.5 kHz, -3 dB shelf above 9 kHz) and three faint early reflections (11, 23 and
+37 ms). The owner asked for a voice like the butler-AI of the films; the real
+one belongs to an actor, so nothing is cloned or trained on it. Of 28 free
+offline candidates (Kokoro, Piper, blends of Kokoro voices) compared with two
+speaker-embedding models against the sample the owner liked, plain George
+scored 0.47 and the butler style 0.53; Whisper still got every word. The
+style runs in pure Python (the voice pack does not install NumPy): about 0.02 s
+per second of speech, at the same loudness (RMS) as plain George. Plain
+"George (UK)" stays in the list.
+
 **The class name is misleading and is kept for compatibility.** It is "local" in
 the sense that it runs in this process without a configured cloud account; the
 synthesis itself is performed by `edge-tts` against Microsoft's Edge voice

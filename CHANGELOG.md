@@ -36,6 +36,14 @@ versioning policy.
   page) and three new steps in `chat-drive.js` (greeting, thinking avatar,
   calm avatar), all failing before the change.
 
+### Added — a calm "butler" English voice (2026-11-26)
+- **"George · Butler (UK)"** is the new default English offline voice
+  (`core/voice_style.py`): Kokoro George, a little slower, with an equaliser
+  (less boom, more body, a little presence) and a faint room. It is the
+  closest of 28 free offline voices to the film-butler sample the owner liked
+  (speaker similarity 0.47 → 0.53), with every word still understood. Nothing
+  is cloned from an actor. Plain "George (UK)" is still in the list.
+
 ## [0.4.0-beta.4] - 2026-11-25
 
 The third update to "Beta 4". The release notes are in

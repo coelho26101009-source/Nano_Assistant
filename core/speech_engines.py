@@ -70,6 +70,7 @@ MIN_SPEED, MAX_SPEED = -30, 30
 #: id -> (model, speaker id, label, language)
 LOCAL_VOICES: dict[str, tuple[str, int, str, str]] = {
     "dii": ("piper-pt_PT-dii-high", 0, "Dii (Portugal)", "pt-PT"),
+    "butler": ("kokoro-multi-lang-v1_0", 26, "George · Butler (UK)", "en"),
     "george": ("kokoro-multi-lang-v1_0", 26, "George (UK)", "en"),
     "lewis": ("kokoro-multi-lang-v1_0", 27, "Lewis (UK)", "en"),
     "daniel": ("kokoro-multi-lang-v1_0", 24, "Daniel (UK)", "en"),
@@ -77,7 +78,11 @@ LOCAL_VOICES: dict[str, tuple[str, int, str, str]] = {
     "emma": ("kokoro-multi-lang-v1_0", 21, "Emma (UK)", "en"),
     "heart": ("kokoro-multi-lang-v1_0", 3, "Heart (US)", "en"),
 }
-DEFAULT_LOCAL_VOICE = {"pt-PT": "dii", "en": "george"}
+DEFAULT_LOCAL_VOICE = {"pt-PT": "dii", "en": "butler"}
+#: Voices that are another voice plus a style (core/voice_style.py): id -> style.
+#: "butler" is George, calmer, with the equaliser and room of the style: the
+#: closest free voice to the film butler-AI Simão asked for (2026-11-26).
+VOICE_STYLES: dict[str, str] = {"butler": "butler"}
 
 # ── ElevenLabs ───────────────────────────────────────────────────────────────
 ELEVENLABS_API = "https://api.elevenlabs.io/v1"
@@ -313,7 +318,7 @@ class LocalEngine(Engine):
             return False
 
     def ready_for(self, language: str) -> bool:
-        model = LOCAL_VOICES[DEFAULT_LOCAL_VOICE.get(language, "george")][0]
+        model = LOCAL_VOICES[DEFAULT_LOCAL_VOICE.get(language, "butler")][0]
         return self._package() and self._model_ready(model)
 
     def _model_ready(self, model: str) -> bool:
@@ -349,13 +354,21 @@ class LocalEngine(Engine):
         if not self._model_ready(model):
             raise SynthesisError(f"local voice {model} is not downloaded", reason="not_installed", cooldown=0)
         tts = self._tts(model)
-        speed = max(0.6, min(1.5, 1.0 + request.speed / 100.0))
+        style = VOICE_STYLES.get(voice, "")
+        speed = 1.0 + request.speed / 100.0
+        if style:
+            from core import voice_style
+
+            speed *= voice_style.SPEED
+        speed = max(0.6, min(1.5, speed))
         with self._generate_lock:
             audio = tts.generate(text, sid=speaker, speed=speed)
         samples = getattr(audio, "samples", None)
         rate = int(getattr(audio, "sample_rate", 0) or 0)
-        if not samples or rate <= 0:
+        if samples is None or len(samples) == 0 or rate <= 0:
             raise SynthesisError("local voice produced no audio", reason="empty", cooldown=0)
+        if style:
+            samples = voice_style.STYLES[style](samples, rate)
         path = scratch_path(".wav")
         try:
             write_wav(path, samples, rate)
@@ -376,7 +389,7 @@ class LocalEngine(Engine):
     def warm(self, language: str) -> bool:
         """Load the voice for ``language`` now, so the first answer does not wait
         2-3 s for it. Safe to call from any thread; False when not installed."""
-        model = LOCAL_VOICES[DEFAULT_LOCAL_VOICE.get(language, "george")][0]
+        model = LOCAL_VOICES[DEFAULT_LOCAL_VOICE.get(language, "butler")][0]
         if not (self._package() and self._model_ready(model)):
             return False
         try:

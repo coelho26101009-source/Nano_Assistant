@@ -179,7 +179,7 @@ tem de estar preparada (item 31).
 - [ ] 67. Mexe na **Velocidade** (+15%) e carrega em **Ouvir**: fala mais depressa.
 - [ ] 68. Pede uma resposta comprida por voz (ex.: "explica-me a fotossíntese"). Repara se há pausas entre as frases: devia falar seguido.
 - [ ] 69. (Opcional, precisa de conta) Motor **ElevenLabs**: cola a tua chave, escolhe uma voz e carrega em **Ouvir**. Anota se soa melhor que o Duarte.
-- [ ] 70. Põe a língua em inglês e carrega em **Ouvir**: a voz passa a "Ryan (UK)". Com a voz offline em inglês, descarrega o Kokoro (350 MB) e experimenta "George (UK)".
+- [ ] 70. Põe a língua em inglês e carrega em **Ouvir**: a voz passa a "Ryan (UK)". Com a voz offline em inglês, descarrega o Kokoro (350 MB) e experimenta "George · Butler (UK)" (a voz por defeito em inglês, ver o item 105) e "George (UK)".
 - [ ] 71. **Ei Nano + voz offline juntos:** com "Ouvir “ei nano”" ligado e o motor em **Voz offline natural**, diz "Ei Nano, que horas são?". O NANO responde com a voz offline e **não fecha** (as duas partes usam o mesmo motor de IA por baixo, o onnxruntime; no Linux funcionam juntas, no Windows ainda não foi visto).
 
 ### Tarefas encadeadas e rotinas por voz (2026-11-24)
@@ -225,6 +225,9 @@ Precisa de um modelo com ferramentas (Groq/Gemini/Mistral, ou o local).
 - [ ] 102. Com o NANO minimizado, carrega em **Ctrl + Shift + Espaço** e fala. A ilha mostra o **microfone** enquanto ouve, a Nubi com cara de pensar em "A processar…" e a Nubi a sorrir em "A falar…". Ela tem de se ver bem no ecrã (não pode ficar pixelizada nem cortada).
 - [ ] 103. Abre o modo de voz (**Ctrl + Shift + M**): a Nubi aparece grande no círculo e muda de cara quando falas (ondas a ouvir, pontinhos a pensar, sorriso a falar).
 - [ ] 104. Em **Definições → Geral → Modo desktop**, desliga **Mascote (Nubi)**. A ilha, o chat e o modo de voz voltam a mostrar o símbolo **N**. Fecha e volta a abrir o NANO: continua desligada. Liga outra vez e ela volta.
+
+### Voz "mordomo" em inglês (2026-11-26)
+- [ ] 105. **A voz "mordomo" (estilo Jarvis).** Põe a língua em **inglês**, em Definições → Voz → Voz do NANO escolhe o motor **Voz offline natural** (instala o Kokoro se ainda não estiver) e a voz **George · Butler (UK)**. Carrega em **Ouvir**: deve soar calma, cheia e com um eco muito leve de sala, como a amostra `voz-realista/estilo-jarvis/1-EN-George-estilo-Jarvis-RECOMENDADA.mp3`. Compara com "George (UK)". Depois faz uma pergunta por voz e anota se a primeira frase começa a falar tão depressa como antes (o estilo acrescenta só uns centésimos de segundo).
 
 ---
 
